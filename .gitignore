@@ -1,0 +1,7 @@
+.omx/
+.data/
+__pycache__/
+*.pyc
+.env
+node_modules/
+tests/artifacts/

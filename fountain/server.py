@@ -47,9 +47,13 @@ class Application:
                     if exc.name != "fountain.advanced": raise
                 else:
                     self.advanced = Advanced(self.store, self.workspace)
-            transaction = self.store.transaction() if method in {'POST', 'PATCH', 'PUT', 'DELETE'} else nullcontext()
-            with transaction:
-                return self._dispatch(method, path, body, query)
+            # Provider inference only reads a page snapshot and later appends an audit event.
+            # Keep its network wait outside the workspace lock so family edits can continue.
+            if not (method == 'POST' and path == '/api/ai' and self.advanced):
+                transaction = self.store.transaction() if method in {'POST', 'PATCH', 'PUT', 'DELETE'} else nullcontext()
+                with transaction:
+                    return self._dispatch(method, path, body, query)
+        return self.advanced.dispatch(method, path, body, query)
 
     def _dispatch(self, method, path, body, query):
         w, s = self.workspace, self.store

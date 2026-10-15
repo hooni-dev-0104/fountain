@@ -65,6 +65,26 @@ class EnterpriseHTTPTests(unittest.TestCase):
         self.assertEqual(self.request('GET', '/api/export')[0], 403)
         self.assertEqual(self.request('GET', '/sites/guide')[0], 404)
 
+    def test_ai_provider_wait_does_not_block_family_document_reads(self):
+        from concurrent.futures import ThreadPoolExecutor
+        entered, release = threading.Event(), threading.Event()
+        # Initialize workflows before replacing only the external inference boundary.
+        self.server.application.dispatch('GET', '/api/capabilities', {}, {})
+        def slow_provider(body):
+            entered.set()
+            if not release.wait(5):
+                raise AssertionError('test provider was not released')
+            return {'text': 'TEST FIXTURE'}
+        with patch.object(self.server.application.advanced, 'ai', slow_provider):
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                pending = pool.submit(self.request, 'POST', '/api/ai', {'prompt': '검증'}, {'X-Fountain-Request': '1'})
+                try:
+                    self.assertTrue(entered.wait(2))
+                    self.assertEqual(self.request('GET', '/api/workspace')[0], 200)
+                finally:
+                    release.set()
+                self.assertEqual(pending.result(timeout=2)[0], 200)
+
 
 if __name__ == '__main__':
     unittest.main()

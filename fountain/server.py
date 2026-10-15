@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import base64
 import io
 import shutil
@@ -17,11 +18,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse, quote
 
-from .core import APIError, Store, Workspace, require
+from .core import APIError, Store, Workspace, require, AUDIT_ACTOR
+from .access import Access
+from .authorization import Authorization
 
 LOG = logging.getLogger("fountain")
 STATIC = Path(__file__).resolve().parent.parent / "static"
 MAX_BODY = 10_000_000
+_INTERNAL_PRINCIPAL = object()
 
 
 @dataclass
@@ -38,26 +42,101 @@ class Application:
         self.auth = Auth(store)
         self.advanced = None
 
-    def dispatch(self, method, path, body, query):
+    def dispatch(self, method, path, body, query, principal=_INTERNAL_PRINCIPAL):
+        body = copy.deepcopy(body)
         with self.store.lock:
+            if principal is _INTERNAL_PRINCIPAL:
+                principal = {'id': 'local', 'role': 'owner', 'active': True, '_service': True}
+            else:
+                require(isinstance(principal, dict), 'Authentication required', 401)
+            if self.auth.accounts_required and not principal.get('_service'):
+                principal = self.auth._member(principal.get('id'))
+                require(principal is not None, 'Authentication required', 401)
+            access = Access(self.store, principal)
+            authority = Authorization(access)
             if self.advanced is None:
-                try:
-                    from .advanced import Advanced
-                except ImportError as exc:
-                    if exc.name != "fountain.advanced": raise
-                else:
-                    self.advanced = Advanced(self.store, self.workspace)
-            # Provider inference only reads a page snapshot and later appends an audit event.
-            # Keep its network wait outside the workspace lock so family edits can continue.
-            if not (method == 'POST' and path == '/api/ai' and self.advanced):
+                from .advanced import Advanced
+                self.advanced = Advanced(self.store, self.workspace)
+            authority.prepare(method, path, body)
+            if not (method == 'POST' and path == '/api/ai'):
                 transaction = self.store.transaction() if method in {'POST', 'PATCH', 'PUT', 'DELETE'} else nullcontext()
-                with transaction:
-                    return self._dispatch(method, path, body, query)
-        return self.advanced.dispatch(method, path, body, query)
+                token = AUDIT_ACTOR.set(access.member_id)
+                try:
+                    with transaction:
+                        status, payload = self._dispatch(method, path, body, query, access)
+                        if method in {'POST', 'PATCH', 'PUT', 'DELETE'} and (path.startswith('/api/members') or path.startswith('/scim/v2/Users') or path.startswith('/api/accounts')):
+                            require(not self.auth.accounts_required or self.auth._owners(), 'Cannot remove the last active owner account', 409)
+                        return status, authority.project(path, payload)
+                finally:
+                    AUDIT_ACTOR.reset(token)
+        # Inference has no write transaction or workspace-wide lock across the network.
+        token = AUDIT_ACTOR.set(access.member_id)
+        try:
+            status, payload = self.advanced.dispatch(method, path, body, query)
+            return status, authority.project(path, payload)
+        finally:
+            AUDIT_ACTOR.reset(token)
 
-    def _dispatch(self, method, path, body, query):
+    def remove_access_references(self, kind, identity):
+        field = 'members' if kind == 'member' else 'groups'
+        for entity_kind in ('page', 'database', 'row', 'teamspace', 'group'):
+            for item in self.store.list(entity_kind):
+                changed = False
+                grants = (item.get('permissions') or {}).get(field, {})
+                if identity in grants:
+                    del grants[identity]
+                    changed = True
+                if entity_kind in {'teamspace', 'group'} and isinstance(item.get(field), list) and identity in item[field]:
+                    item[field].remove(identity)
+                    changed = True
+                if changed: self.store.put(entity_kind, item)
+
+    @staticmethod
+    def row_policy(body, database):
+        require(isinstance(body, dict) and set(body) <= {'mode', 'property_id', 'edit_assigned', 'allow_create'}, 'Invalid row permissions')
+        require(body.get('mode', 'all') in {'all', 'assigned'}, 'Invalid row permission mode')
+        for key in ('edit_assigned', 'allow_create'):
+            if key in body: require(type(body[key]) is bool, 'Row permission flags must be boolean')
+        if body.get('mode') == 'assigned':
+            require(any(p.get('id') == body.get('property_id') and p.get('type') in {'person', 'text', 'email', 'multi_select'} for p in database['properties']), 'Choose an assignment property')
+        return copy.deepcopy(body)
+
+    def _dispatch(self, method, path, body, query, access):
         w, s = self.workspace, self.store
         parts = path.strip("/").split("/")
+        if path == '/api/accounts' and method == 'GET':
+            return 200, {'accounts': self.auth.list_accounts(), 'required': self.auth.accounts_required}
+        if path == '/api/accounts' and method == 'POST':
+            result = self.auth.create_account(body.get('member_id'), body.get('password'))
+            s.audit('account.created', {'member_id': result['id']})
+            return 201, result
+        if path == '/api/accounts/enable' and method == 'POST':
+            result = self.auth.enable_accounts()
+            s.audit('account.login.required', {})
+            return 200, result
+        if len(parts) == 3 and parts[:2] == ['api', 'accounts']:
+            if method == 'PATCH':
+                result = self.auth.set_password(parts[2], body.get('password'))
+                s.audit('account.password.changed', {'member_id': parts[2]})
+                return 200, result
+            if method == 'DELETE':
+                result = self.auth.remove_account(parts[2])
+                s.audit('account.removed', {'member_id': parts[2]})
+                return 200, result
+        if len(parts) == 4 and parts[0] == 'api' and parts[1] in {'pages', 'databases'} and parts[3] == 'permissions':
+            kind = 'page' if parts[1] == 'pages' else 'database'
+            item = access.require_resource(kind, parts[2], 4 if method == 'PATCH' else 1)
+            if method == 'PATCH':
+                if 'permissions' in body: item['permissions'] = access.validate_permissions(body['permissions'])
+                if 'row_permissions' in body and kind == 'database': item['row_permissions'] = self.row_policy(body['row_permissions'], item)
+                s.put(kind, item)
+                s.audit(kind + '.permissions.changed', {'id': item['id']})
+            require(method in {'GET', 'PATCH'}, 'Unsupported permissions method', 405)
+            safe_members = access.filter_workspace({'members': s.list('member')})['members']
+            return 200, {'permissions': item.get('permissions') or {'default': 'workspace', 'members': {}, 'groups': {}, 'inherit': bool(item.get('parent_id'))},
+                         'row_permissions': item.get('row_permissions', {}), 'owner_id': item.get('owner_id', 'local'),
+                         'can_manage': access.can(kind, item, 4), 'members': safe_members,
+                         'groups': s.list('group') if access.can(kind, item, 4) else []}
         if path == "/api/health" and method == "GET":
             return 200, {"ok": True}
         if path == "/api/workspace" and method == "GET":
@@ -86,12 +165,14 @@ class Application:
             require(comment, "Comment not found", 404)
             require(type(body.get("resolved")) is bool, "resolved must be boolean")
             comment["resolved"] = body["resolved"]
+            s.audit("comment.resolved", {"page_id": comment["page_id"], "id": comment["id"]})
             return 200, s.put("comment", comment)
         if path == "/api/search" and method == "GET":
             result = w.search(query.get("q", [""])[0])
             s.audit('workspace.searched', {'results': len(result['results'])})
             return 200, result
         if path == "/api/databases" and method == "POST":
+            if "row_permissions" in body: body["row_permissions"] = self.row_policy(body["row_permissions"], {"properties": w.validate_properties(body.get("properties", []))})
             return 201, w.create_database(body)
         if len(parts) >= 3 and parts[:2] == ["api", "databases"]:
             database_id = parts[2]
@@ -99,7 +180,7 @@ class Application:
                 def parse_option(key):
                     try: return json.loads(query[key][0]) if key in query else None
                     except ValueError: raise APIError(400, f"Invalid {key} JSON")
-                return 200, w.database_detail(database_id, parse_option("filters"), parse_option("sorts"))
+                return 200, w.database_detail(database_id, parse_option("filters"), parse_option("sorts"), lambda row: access.can("row", row))
             if len(parts) == 3 and method == "PATCH":
                 database = w.database(database_id)
                 if "name" in body:
@@ -161,11 +242,28 @@ class Application:
         if len(parts) == 3 and parts[:2] == ['api', 'attachments'] and method == 'DELETE':
             require(s.get('attachment', parts[2]), 'Attachment not found', 404)
             require(not any(block.get('attachment_id') == parts[2] for page in s.list('page') + s.list('version') for block in page.get('blocks', [])), 'Attachment is still referenced by a document', 409)
+            for row in s.list('row'):
+                database = s.get('database', row.get('database_id')) or {}
+                file_fields = [prop['id'] for prop in database.get('properties', []) if prop.get('type') == 'files']
+                require(not any(parts[2] in (row.get('properties', {}).get(key) or []) for key in file_fields), 'Attachment is still referenced by a database row', 409)
             s.delete('attachment', parts[2])
             return 200, {'deleted': True}
         if self.advanced:
             response = self.advanced.dispatch(method, path, body, query)
-            if response is not None: return response
+            if response is not None:
+                member_change = len(parts) == 3 and parts[:2] == ['api', 'members']
+                scim_change = len(parts) == 4 and parts[:3] == ['scim', 'v2', 'Users']
+                if method in {'DELETE', 'PATCH', 'PUT'} and (member_change or scim_change):
+                    member_id = parts[-1]
+                    member = s.get('member', member_id)
+                    if method == 'DELETE' or (member and member.get('active', True) is not True):
+                        self.auth._revoke(member_id)
+                    if method == 'DELETE':
+                        s.delete('credential', member_id)
+                        self.remove_access_references('member', member_id)
+                group_deleted = method == 'DELETE' and ((len(parts) == 3 and parts[:2] == ['api', 'groups']) or (len(parts) == 4 and parts[:3] == ['scim', 'v2', 'Groups']))
+                if group_deleted: self.remove_access_references('group', parts[-1])
+                return response
         raise APIError(404, "Route not found")
 
 
@@ -257,7 +355,7 @@ def handler_for(application):
                     if method == 'POST':
                         token = auth.login(body, self.client_address[0])
                         self._cookie_header = 'fountain_session=' + token + '; Max-Age=604800; HttpOnly; SameSite=Strict; Path=/'
-                        self.send_payload(200, {'authenticated': True, 'required': True, 'mode': 'family'})
+                        self.send_payload(200, auth.session_info('fountain_session=' + token))
                         return
                     if method == 'DELETE':
                         auth.logout(cookie)
@@ -268,7 +366,10 @@ def handler_for(application):
                 if path.startswith(('/api/', '/sites/', '/forms/')) and path != '/api/health':
                     require(application.auth.authenticate(cookie), '가족 로그인 후 사용할 수 있습니다', 401)
                 if path.startswith(("/api/", "/sites/", "/forms/", "/scim/v2/")):
-                    status, payload = application.dispatch(method, path, body, parse_qs(url.query, keep_blank_values=True))
+                    principal = {'id': 'scim', 'role': 'owner', 'active': True, '_service': True} if is_scim else application.auth.principal(cookie)
+                    if principal is None and path == '/api/health': principal = {'id': 'health', 'role': 'guest', 'active': True, '_service': True}
+                    require(principal is not None, 'Authentication required', 401)
+                    status, payload = application.dispatch(method, path, body, parse_qs(url.query, keep_blank_values=True), principal=principal)
                     if isinstance(payload, Download):
                         self.send_download(payload)
                     elif path.startswith(("/sites/", "/forms/")) and isinstance(payload, dict) and "_html" in payload:
@@ -301,7 +402,7 @@ def create_server(host="127.0.0.1", port=8787, db_path=".data/fountain.db", stat
     require(all(isinstance(h, str) and h and not any(c in h for c in '/:@ \t\r\n') for h in allowed_hosts), 'Invalid allowed host')
     if host not in {'127.0.0.1', 'localhost'}:
         require(host == '0.0.0.0', 'Use 0.0.0.0 for family network access')
-        require(bool(os.environ.get('FOUNTAIN_ACCESS_TOKEN')) and allowed_hosts, 'Family network access requires FOUNTAIN_ACCESS_TOKEN and --allowed-host')
+        require(allowed_hosts, 'Family network access requires --allowed-host')
     if str(db_path) != ':memory:':
         database_path = Path(db_path)
         database_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -312,7 +413,13 @@ def create_server(host="127.0.0.1", port=8787, db_path=".data/fountain.db", stat
         else:
             os.close(descriptor)
     store = Store(db_path)
-    application = Application(store, static)
+    try:
+        application = Application(store, static)
+        if host not in {'127.0.0.1', 'localhost'}:
+            require(application.auth.enabled, 'Family network access requires FOUNTAIN_ACCESS_TOKEN or individual accounts')
+    except Exception:
+        store.close()
+        raise
     server = ThreadingHTTPServer((host, port), handler_for(application))
     server.application = application
     server.allowed_hosts = allowed_hosts

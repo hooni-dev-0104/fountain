@@ -5,7 +5,7 @@ def scim_resource(service, method, path, body, query):
     schemas = {'Users': 'urn:ietf:params:scim:schemas:core:2.0:User', 'Groups': 'urn:ietf:params:scim:schemas:core:2.0:Group'}
     if resource == ['ServiceProviderConfig']:
         return 200, {'schemas': ['urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig'], 'patch': {'supported': True}, 'filter': {'supported': False}, 'bulk': {'supported': False}}
-    require(resource and resource[0] in schemas, 'SCIM 리소스를 찾을 수 없습니다', 404)
+    require(resource and len(resource) <= 2 and resource[0] in schemas, 'SCIM 리소스를 찾을 수 없습니다', 404)
     category = resource[0]
     kind = 'members' if category == 'Users' else 'groups'
     identity = resource[1] if len(resource) > 1 else None
@@ -33,7 +33,9 @@ def scim_resource(service, method, path, body, query):
     require((method == 'POST') == (identity is None), 'SCIM 주소가 올바르지 않습니다')
     if method == 'PATCH':
         current = represent(service.item(kind, identity))
-        for op in body.get('Operations', []):
+        operations = body.get('Operations')
+        require(isinstance(operations, list) and operations and all(isinstance(op, dict) for op in operations), 'SCIM 작업 목록이 필요합니다')
+        for op in operations:
             require(op.get('op', '').lower() in {'replace', 'add'}, '지원하지 않는 SCIM 작업입니다')
             if op.get('path'):
                 require(op['path'] in {'active', 'displayName', 'userName', 'members'}, '지원하지 않는 SCIM 경로입니다')
@@ -48,13 +50,19 @@ def scim_resource(service, method, path, body, query):
                     current[op['path']] = op.get('value')
             else:
                 require(isinstance(op.get('value'), dict), 'SCIM 값 객체가 필요합니다')
-                current.update(op['value'])
+                incoming = dict(op['value'])
+                if op.get('op', '').lower() == 'add' and 'members' in incoming:
+                    require(isinstance(incoming['members'], list) and all(isinstance(m, dict) and isinstance(m.get('value'), str) for m in incoming['members']), '멤버 ID가 필요합니다')
+                    existing = {m['value']: m for m in current.get('members', [])}
+                    existing.update({m['value']: m for m in incoming['members']})
+                    incoming['members'] = list(existing.values())
+                current.update(incoming)
         body = current
     if category == 'Users':
         require(type(body.get('active', True)) is bool, 'active 값이 올바르지 않습니다')
         data = {'email': body.get('userName', ''), 'name': body.get('displayName', ''), 'active': body.get('active', True)}
     else:
-        require(isinstance(body.get('members', []), list), '멤버 목록이 필요합니다')
+        require(isinstance(body.get('members', []), list) and all(isinstance(m, dict) and isinstance(m.get('value'), str) for m in body.get('members', [])), '멤버 목록이 필요합니다')
         data = {'name': body.get('displayName', ''), 'members': [m.get('value') for m in body.get('members', []) if isinstance(m, dict)]}
     result = service.save(kind, data, identity)
     return (201 if method == 'POST' else 200), represent(result)

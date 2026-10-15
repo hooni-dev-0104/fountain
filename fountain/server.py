@@ -97,12 +97,16 @@ class Application:
                 return 200, s.put("database", database)
             if len(parts) == 4 and parts[3] == "rows" and method == "POST":
                 row = w.create_row(database_id, body)
-                if self.advanced: self.advanced.trigger("row.created", database_id, row)
+                if self.advanced:
+                    self.advanced.trigger("row.created", database_id, row)
+                    row = s.get("row", row["id"])
                 return 201, s.get("row", row["id"])
             if len(parts) == 5 and parts[3] == "rows":
                 if method == "PATCH":
                     row = w.update_row(database_id, parts[4], body)
-                    if self.advanced: self.advanced.trigger("row.updated", database_id, row)
+                    if self.advanced:
+                        self.advanced.trigger("row.updated", database_id, row)
+                        row = s.get("row", row["id"])
                     return 200, s.get("row", row["id"])
                 if method == "DELETE":
                     w.database(database_id)

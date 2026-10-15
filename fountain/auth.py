@@ -1,4 +1,4 @@
-"""Optional shared-family access gate; identity is shared, with no per-person ACL."""
+"""Local, shared-family, and individual member authentication."""
 from __future__ import annotations
 
 import hashlib
@@ -31,7 +31,103 @@ class Auth:
 
     @property
     def enabled(self):
-        return bool(self._secret)
+        return bool(self._secret) or self.accounts_required
+
+    @property
+    def accounts_required(self):
+        return self.store.meta("auth_accounts_required", False) is True
+
+    @staticmethod
+    def _safe(member):
+        return {key: member.get(key, True if key == "active" else None)
+                for key in ("id", "name", "email", "role", "active")}
+
+    def list_accounts(self):
+        return [{**self._safe(member), "has_account": self.store.get("credential", member["id"]) is not None}
+                for member in self.store.list("member")]
+
+    @staticmethod
+    def _password_hash(password, salt):
+        return hashlib.scrypt(password.encode(), salt=salt, n=16384, r=8, p=1, dklen=32).hex()
+
+    def _member(self, member_id):
+        member = self.store.get("member", member_id)
+        return member if member and member.get("active", True) is True and member.get("role") in {"owner", "admin", "member", "guest"} else None
+
+    def _revoke(self, member_id=None):
+        for session in self.store.list("session"):
+            if member_id is None or session.get("member_id") == member_id:
+                self.store.delete("session", session["id"])
+
+    def create_account(self, member_id, password):
+        with self.store.transaction():
+            require(self.store.get("credential", member_id) is None, "Account already exists", 409)
+            return self.set_password(member_id, password)
+
+    def set_password(self, member_id, password):
+        require(isinstance(password, str) and 10 <= len(password) <= 1024,
+                "Password must contain between 10 and 1024 characters")
+        with self.store.transaction():
+            member = self._member(member_id)
+            require(member is not None, "Active member not found", 404)
+            email = member.get("email")
+            require(isinstance(email, str) and "@" in email and len(email) <= 254, "Member needs a valid email")
+            email = email.strip().casefold()
+            require(not any(other["id"] != member_id and isinstance(other.get("email"), str)
+                            and other["email"].strip().casefold() == email and other.get("active", True) is True
+                            and self.store.get("credential", other["id"]) for other in self.store.list("member")),
+                    "Another active account uses this email", 409)
+            salt = secrets.token_bytes(32)
+            self.store.put("credential", {"id": member_id, "salt": salt.hex(),
+                "password_hash": self._password_hash(password, salt), "algorithm": "scrypt"})
+            self._revoke(member_id)
+            return {**self._safe(member), "has_account": True}
+
+    def _owners(self):
+        return [member for member in self.store.list("member") if member.get("role") == "owner"
+                and self._member(member["id"]) and self.store.get("credential", member["id"])]
+
+    def remove_account(self, member_id):
+        with self.store.transaction():
+            require(self.store.get("credential", member_id), "Account not found", 404)
+            owners = self._owners()
+            require(not self.accounts_required or any(member["id"] != member_id for member in owners),
+                    "Cannot remove the last active owner account", 409)
+            self.store.delete("credential", member_id)
+            self._revoke(member_id)
+            member = self.store.get("member", member_id)
+            return {**self._safe(member), "has_account": False} if member else {"id": member_id, "has_account": False}
+
+    def enable_accounts(self):
+        with self.store.transaction():
+            require(self._owners(), "Create an active owner account first", 409)
+            self.store.set_meta("auth_accounts_required", True)
+            self._revoke()
+        return {"required": True, "mode": "accounts"}
+
+    @staticmethod
+    def _account_tag(digest, credential):
+        material = (credential["salt"] + credential["password_hash"]).encode()
+        return hmac.new(material, digest.encode(), hashlib.sha256).hexdigest()
+
+    def _account_login(self, body):
+        email, password = body.get("email"), body.get("password")
+        well_formed = isinstance(email, str) and len(email) <= 254 and isinstance(password, str) and len(password) <= 1024
+        matches = [member for member in self.store.list("member") if well_formed and self._member(member["id"])
+                   and self.store.get("credential", member["id"])
+                   and isinstance(member.get("email"), str)
+                   and member["email"].strip().casefold() == email.strip().casefold()]
+        member = self._member(matches[0]["id"]) if len(matches) == 1 else None
+        credential = self.store.get("credential", member["id"]) if member else None
+        try:
+            salt = bytes.fromhex(credential["salt"]) if credential else b"fountain-missing-account-salt-32!"
+            expected = credential["password_hash"] if credential else "0" * 64
+            derived = self._password_hash(password if well_formed else "invalid", salt)
+            valid = credential is not None and hmac.compare_digest(derived, expected)
+        except (KeyError, ValueError, TypeError):
+            valid = False
+        require(valid, "Email or password is incorrect", 401)
+        return member, credential
 
     def _limit(self, client):
         current = time.monotonic()
@@ -52,23 +148,28 @@ class Auth:
         return hmac.new(self._secret.encode(), digest.encode(), hashlib.sha256).hexdigest()
 
     def login(self, body, client="local"):
-        require(self.enabled, "Login is unnecessary in local mode", 409)
+        account_login = self.accounts_required or isinstance(body, dict) and ("email" in body or "password" in body)
+        require(self.enabled or account_login, "Login is unnecessary in local mode", 409)
         self._limit(client)
-        require(isinstance(body, dict) and isinstance(body.get("token"), str)
-                and len(body["token"]) <= 4096, "A valid access token is required", 400)
-        require(hmac.compare_digest(body["token"].encode(), self._secret.encode()),
-                "Access token is incorrect", 401)
+        member, credential = None, None
+        if account_login:
+            member, credential = self._account_login(body if isinstance(body, dict) else {})
+        else:
+            require(isinstance(body, dict) and isinstance(body.get("token"), str)
+                    and len(body["token"]) <= 4096, "A valid access token is required", 400)
+            require(hmac.compare_digest(body["token"].encode(), self._secret.encode()), "Access token is incorrect", 401)
         token = secrets.token_urlsafe(32)
         digest = hashlib.sha256(token.encode()).hexdigest()
         expires = datetime.now(timezone.utc) + timedelta(seconds=SESSION_SECONDS)
         with self.store.transaction():
-            # Expired sessions are removed during successful logins.
             current = datetime.now(timezone.utc).isoformat()
             for session in self.store.list("session"):
                 if session.get("expires_at", "") <= current:
                     self.store.delete("session", session["id"])
-            self.store.put("session", {"id": digest, "expires_at": expires.isoformat(),
-                                       "credential_tag": self._tag(digest)})
+            session = {"id": digest, "expires_at": expires.isoformat(),
+                       "credential_tag": self._account_tag(digest, credential) if member else self._tag(digest)}
+            if member: session["member_id"] = member["id"]
+            self.store.put("session", session)
         return token
 
     @staticmethod
@@ -96,8 +197,14 @@ class Auth:
         if not session:
             return None
         try:
-            valid = (datetime.fromisoformat(session["expires_at"]) > datetime.now(timezone.utc)
-                     and hmac.compare_digest(session.get("credential_tag", ""), self._tag(digest)))
+            if session.get("member_id"):
+                member = self._member(session["member_id"])
+                credential = self.store.get("credential", session["member_id"])
+                expected = self._account_tag(digest, credential) if credential and member else None
+            else:
+                expected = self._tag(digest) if self._secret and not self.accounts_required else None
+            valid = (expected is not None and datetime.fromisoformat(session["expires_at"]) > datetime.now(timezone.utc)
+                     and hmac.compare_digest(session.get("credential_tag", ""), expected))
         except (ValueError, TypeError, KeyError):
             valid = False
         if not valid:
@@ -113,10 +220,55 @@ class Auth:
         if digest:
             self.store.delete("session", digest)
 
+    def principal(self, cookie):
+        session = self._session(cookie)
+        if session and session.get("member_id"):
+            member = self._member(session["member_id"])
+            return self._safe(member) if member else None
+        if self.enabled and not session:
+            return None
+        return {"id": "local", "name": "나" if not self._secret else "가족 공용",
+                "email": "local@fountain.local", "role": "owner", "active": True}
+
     def session_info(self, cookie):
-        session = self._session(cookie) if self.enabled else None
-        authenticated = not self.enabled or session is not None
-        return {"enabled": self.enabled, "authenticated": authenticated,
-                "mode": "family" if self.enabled else "local",
-                "identity": ("가족 공용" if self.enabled else "나") if authenticated else None,
+        session = self._session(cookie)
+        member = self.principal(cookie)
+        account = self.accounts_required or bool(session and session.get("member_id"))
+        return {"enabled": self.enabled, "required": self.enabled, "authenticated": member is not None,
+                "mode": "accounts" if account else "family" if self._secret else "local",
+                "identity": member["name"] if member else None, "member": member,
                 "expires_at": session["expires_at"] if session else None}
+
+
+def main(argv=None):
+    """Offline recovery requires filesystem access to the private database."""
+    import argparse
+    import getpass
+    import sys
+    from pathlib import Path
+    from .core import Store
+    parser = argparse.ArgumentParser(description="Reset an individual Fountain account password offline")
+    parser.add_argument("action", choices=["reset"])
+    parser.add_argument("member", help="Existing member id, such as local")
+    parser.add_argument("--data", default=".data/fountain.db")
+    args = parser.parse_args(argv)
+    if not Path(args.data).is_file():
+        print("Fountain account: database does not exist", file=sys.stderr)
+        return 1
+    store = None
+    try:
+        first = getpass.getpass("새 비밀번호: ")
+        require(first == getpass.getpass("비밀번호 확인: "), "Passwords do not match")
+        store = Store(args.data)
+        member = Auth(store).set_password(args.member, first)
+        print(f"Password reset for {member['email']}. Previous sessions were revoked.")
+        return 0
+    except (APIError, OSError, EOFError) as error:
+        print(f"Fountain account: {error}", file=sys.stderr)
+        return 1
+    finally:
+        if store is not None: store.close()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

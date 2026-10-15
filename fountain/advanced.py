@@ -87,7 +87,7 @@ class Advanced:
                 'features': self.capabilities()['features']}
 
     def capabilities(self):
-        return {'mode': 'local-single-user', 'features': [dict(zip(
+        return {'mode': 'trusted-family-shared' if os.environ.get('FOUNTAIN_ACCESS_TOKEN') else 'local-single-user', 'features': [dict(zip(
             ('id', 'name', 'plan', 'status', 'detail'), item)) for item in FEATURES],
             'ai_configured': bool(os.environ.get('FOUNTAIN_AI_MODEL') and (os.environ.get('FOUNTAIN_AI_KEY') or self.local_ai())),
             'scim_configured': bool(os.environ.get('FOUNTAIN_SCIM_TOKEN')),

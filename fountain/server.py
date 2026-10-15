@@ -2,6 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import io
+import shutil
+import tempfile
+from dataclasses import dataclass
 import json
 import logging
 import hmac
@@ -10,13 +15,20 @@ from contextlib import nullcontext
 import mimetypes
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse, quote
 
 from .core import APIError, Store, Workspace, require
 
 LOG = logging.getLogger("fountain")
 STATIC = Path(__file__).resolve().parent.parent / "static"
 MAX_BODY = 10_000_000
+
+
+@dataclass
+class Download:
+    filename: str
+    data: bytes | Path
+    cleanup_dir: str | None = None
 
 
 class Application:
@@ -117,6 +129,18 @@ class Application:
         if path == "/api/export" and method == "GET":
             require(not self.advanced or not self.advanced.settings().get("disable_export"), "Workspace export is disabled", 403)
             return 200, w.export(query.get("format", ["json"])[0], query.get("database", [None])[0])
+        if path == '/api/backup' and method == 'GET':
+            from .backup import create_backup, BackupError
+            require(not self.advanced or not self.advanced.settings().get('disable_export'), 'Workspace export is disabled', 403)
+            directory = tempfile.mkdtemp(prefix='fountain-download-')
+            target = Path(directory) / 'fountain-backup.db'
+            try:
+                create_backup(s.db, target)
+            except (BackupError, OSError) as error:
+                shutil.rmtree(directory)
+                raise APIError(503, '전체 백업을 생성하지 못했습니다') from error
+            s.audit('workspace.backup.created', {})
+            return 200, Download('fountain-backup.db', target, directory)
         if path == "/api/import" and method == "POST":
             return 201, w.import_data(body)
         if path == "/api/attachments" and method == "POST":
@@ -126,6 +150,15 @@ class Application:
             attachment = s.get("attachment", parts[2])
             require(attachment, "Attachment not found", 404)
             return 200, attachment
+        if len(parts) == 4 and parts[:2] == ['api', 'attachments'] and parts[3] == 'download' and method == 'GET':
+            attachment = s.get('attachment', parts[2])
+            require(attachment, 'Attachment not found', 404)
+            return 200, Download(attachment['name'], base64.b64decode(attachment['data']))
+        if len(parts) == 3 and parts[:2] == ['api', 'attachments'] and method == 'DELETE':
+            require(s.get('attachment', parts[2]), 'Attachment not found', 404)
+            require(not any(block.get('attachment_id') == parts[2] for page in s.list('page') + s.list('version') for block in page.get('blocks', [])), 'Attachment is still referenced by a document', 409)
+            s.delete('attachment', parts[2])
+            return 200, {'deleted': True}
         if self.advanced:
             response = self.advanced.dispatch(method, path, body, query)
             if response is not None: return response
@@ -155,6 +188,24 @@ def handler_for(application):
             self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
             self.end_headers()
             if self.command != "HEAD": self.wfile.write(data)
+
+        def send_download(self, download):
+            try:
+                size = download.data.stat().st_size if isinstance(download.data, Path) else len(download.data)
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/octet-stream')
+                self.send_header('Content-Disposition', "attachment; filename=download; filename*=UTF-8''" + quote(download.filename, safe=''))
+                self.send_header('Content-Length', str(size))
+                self.send_header('Cache-Control', 'no-store')
+                self.send_header('X-Content-Type-Options', 'nosniff')
+                self.end_headers()
+                if self.command != 'HEAD':
+                    source = download.data.open('rb') if isinstance(download.data, Path) else io.BytesIO(download.data)
+                    with source:
+                        shutil.copyfileobj(source, self.wfile, length=64 * 1024)
+            finally:
+                if download.cleanup_dir:
+                    shutil.rmtree(download.cleanup_dir)
 
         def handle_request(self):
             try:
@@ -214,7 +265,9 @@ def handler_for(application):
                     require(application.auth.authenticate(cookie), '가족 로그인 후 사용할 수 있습니다', 401)
                 if path.startswith(("/api/", "/sites/", "/forms/", "/scim/v2/")):
                     status, payload = application.dispatch(method, path, body, parse_qs(url.query, keep_blank_values=True))
-                    if path.startswith(("/sites/", "/forms/")) and isinstance(payload, dict) and "_html" in payload:
+                    if isinstance(payload, Download):
+                        self.send_download(payload)
+                    elif path.startswith(("/sites/", "/forms/")) and isinstance(payload, dict) and "_html" in payload:
                         self.send_bytes(status, payload["_html"].encode(), "text/html; charset=utf-8")
                     else:
                         self.send_payload(status, payload)
@@ -245,7 +298,15 @@ def create_server(host="127.0.0.1", port=8787, db_path=".data/fountain.db", stat
     if host not in {'127.0.0.1', 'localhost'}:
         require(host == '0.0.0.0', 'Use 0.0.0.0 for family network access')
         require(bool(os.environ.get('FOUNTAIN_ACCESS_TOKEN')) and allowed_hosts, 'Family network access requires FOUNTAIN_ACCESS_TOKEN and --allowed-host')
-    if str(db_path) != ":memory:": Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    if str(db_path) != ':memory:':
+        database_path = Path(db_path)
+        database_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        try:
+            descriptor = os.open(database_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            pass
+        else:
+            os.close(descriptor)
     store = Store(db_path)
     application = Application(store, static)
     server = ThreadingHTTPServer((host, port), handler_for(application))

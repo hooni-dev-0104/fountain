@@ -14,3 +14,30 @@ node --check static/app.js
 ```
 
 분석 근거, 기능별 구현 상태, 외부 서비스 의존성은 `docs/`에서 관리합니다. Notion의 서버 소스나 유료 서비스 접근 권한을 포함하지 않습니다.
+
+개인·가족용으로 앱 안의 모든 기능을 무료로 사용합니다. 결제나 플랜 제한이 없습니다. 실제 구현 범위와 Notion과의 차이는 [기능 현황](docs/FEATURES.md), 역공학 근거는 [REA 조사](docs/research/notion-rea.md)에 있습니다.
+
+가족 공용 비밀번호를 설정하려면 `FOUNTAIN_ACCESS_TOKEN`에 16자 이상 값을 지정하고 실행합니다. 세션은 HttpOnly 쿠키로 관리하며, 가족은 같은 신뢰 영역을 공유합니다. 기본 접속은 이 PC로 제한됩니다.
+
+```sh
+# 실제 비밀번호는 터미널에서 직접 입력합니다.
+read -s FOUNTAIN_ACCESS_TOKEN
+export FOUNTAIN_ACCESS_TOKEN
+python3 -m fountain.server --host 0.0.0.0 --allowed-host 192.168.0.10
+```
+
+`--allowed-host`에는 서버 PC의 실제 LAN 주소를 사용합니다. 다른 기기는 `http://서버주소:8787`에 접속합니다. LAN 모드는 비밀번호와 허용 호스트가 모두 있어야 실행됩니다. 외부 인터넷 공유는 배포하지 않았습니다. 신뢰하는 사설망에서 사용하고 원격 공유에는 HTTPS/VPN 구성이 필요합니다. PC가 켜져 있어야 가족이 접속할 수 있습니다.
+
+AI는 기본 비활성 상태이며 무료 로컬 모델 또는 호환 API를 명시적으로 설정할 수 있습니다. Gemini Pro 구독 연동 검토와 API 과금 구분은 [AI 안내](docs/AI.md)에 있습니다. `.env.example`은 설정 설명이며 서버가 자동으로 읽지는 않습니다.
+
+전체 백업은 설정 → 가져오기 / 내보내기 → 전체 백업 다운로드에서 받을 수 있습니다. 댓글·문서 이력·첨부·설정이 포함되고 로그인 세션·임시 클립보드는 제외됩니다. JSON은 문서와 데이터베이스의 이동용 내보내기입니다.
+
+```sh
+# 실행 중인 DB도 일관된 시점으로 백업합니다. 대상 파일은 새 이름이어야 합니다.
+python3 -m fountain.backup create .data/fountain.db .data/fountain-backup.db
+# 복원도 기존 파일을 덮어쓰지 않습니다. 복원한 경로로 서버를 시작합니다.
+python3 -m fountain.backup restore .data/fountain-backup.db .data/restored.db
+python3 -m fountain.server --data .data/restored.db
+```
+
+브라우저 통합 검증은 별도의 테스트 DB로 실행한 서버를 대상으로 `node tests/browser.mjs`를 실행합니다. Chrome과 Playwright가 이미 설치된 환경을 사용하며, 필요한 경우 `FOUNTAIN_PLAYWRIGHT`와 `FOUNTAIN_CHROME`으로 경로를 지정합니다. `tests/browser-advanced.mjs`는 `FOUNTAIN_URL`과 테스트용 `FOUNTAIN_ACCESS_TOKEN`이 설정된 가족 인증 서버를 대상으로 실행합니다. 테스트는 데이터를 추가·수정하므로 실제 가족 DB 대신 임시 DB를 사용하세요.

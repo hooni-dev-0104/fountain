@@ -158,7 +158,7 @@ async function loadHomeData() {
 function renderPage() {
   const p=state.page;
   renderTopbar(p.title,p.icon);
-  $('#main').innerHTML=`${p.cover?'<div class="page-cover"></div>':''}<article class="editor-wrap ${p.cover?'has-cover':''}"><button class="page-emoji" data-action="change-icon" aria-label="페이지 아이콘 변경">${esc(p.icon||'📄')}</button><h1 class="page-title" id="page-title" contenteditable="${!p.locked}" role="textbox" aria-label="페이지 제목">${esc(p.title)}</h1><div class="page-tools"><span>${icon('clock')}</span><span>${date(p.updated_at)} 수정</span><button data-action="favorite" class="${p.favorite?'favorite-on':''}">${p.favorite?'★ 즐겨찾기':'☆ 즐겨찾기'}</button><button data-action="toggle-cover">${p.cover?'커버 제거':'커버 추가'}</button>${p.locked?'<span>🔒 잠긴 페이지</span>':''}<button data-action="ai" style="margin-left:auto">✦ AI 도우미</button></div><div id="blocks" aria-label="페이지 블록">${state.blocks.map(blockHTML).join('')}</div>${!p.locked?'<button class="editor-end" data-action="add-block"><span>+</span> 글을 쓰거나 ‘/’로 블록을 추가하세요</button>':''}<section class="comment-section"><h3>댓글 <span class="muted">${state.comments.filter(c=>!c.resolved).length}</span></h3><div id="comments">${commentsHTML()}</div><form class="comment-form" id="comment-form"><input name="text" aria-label="댓글 내용" placeholder="생각을 나눠보세요…" required maxlength="10000"><button class="outline-btn">보내기 ${icon('arrow')}</button></form></section></article>`;
+  $('#main').innerHTML=`${p.cover?'<div class="page-cover"></div>':''}<article class="editor-wrap ${p.cover?'has-cover':''}"><button class="page-emoji" data-action="change-icon" aria-label="페이지 아이콘 변경">${esc(p.icon||'📄')}</button><h1 class="page-title" id="page-title" contenteditable="${!p.locked}" role="textbox" aria-label="페이지 제목">${esc(p.title)}</h1><div class="page-tools" style="flex-wrap:wrap"><span>${icon('clock')}</span><span>${date(p.updated_at)} 수정</span><button data-action="favorite" class="${p.favorite?'favorite-on':''}">${p.favorite?'★ 즐겨찾기':'☆ 즐겨찾기'}</button><button data-action="toggle-cover">${p.cover?'커버 제거':'커버 추가'}</button>${p.locked?'<span>🔒 잠긴 페이지</span>':'<button data-action="add-file" title="파일당 최대 5 MB">📎 파일 추가</button><input id="attachment-input" type="file" aria-label="첨부할 파일 (최대 5 MB)" hidden>'}<button data-action="ai" style="margin-left:auto">✦ AI 도우미</button></div><div id="blocks" aria-label="페이지 블록">${state.blocks.map(blockHTML).join('')}</div>${!p.locked?'<button class="editor-end" data-action="add-block"><span>+</span> 글을 쓰거나 ‘/’로 블록을 추가하세요</button>':''}<section class="comment-section"><h3>댓글 <span class="muted">${state.comments.filter(c=>!c.resolved).length}</span></h3><div id="comments">${commentsHTML()}</div><form class="comment-form" id="comment-form"><input name="text" aria-label="댓글 내용" placeholder="생각을 나눠보세요…" required maxlength="10000"><button class="outline-btn">보내기 ${icon('arrow')}</button></form></section></article>`;
 }
 function commentsHTML() {
   return state.comments.filter(c=>!c.resolved).map(c=>`<div class="comment-item"><button data-action="resolve-comment" data-id="${esc(c.id)}">해결 ✓</button><strong>${esc(c.author_name||c.author||'나')}</strong> <span class="muted small">${date(c.created_at)}</span><div>${esc(c.text)}</div></div>`).join('');
@@ -171,7 +171,7 @@ function blockHTML(b,i) {
   else if(type==='bullet')marker='<span class="block-marker">•</span>';
   else if(type==='numbered')marker=`<span class="block-marker">${i+1}.</span>`;
   else if(type==='toggle')marker=`<button class="block-marker" data-action="toggle-block" data-id="${esc(b.id)}">▸</button>`;
-  return `<div class="block ${b.checked?'checked':''}" data-id="${esc(b.id)}" data-type="${esc(type)}" draggable="${!state.page.locked}">${!state.page.locked?`<span class="block-handle"><button data-action="block-menu" data-id="${esc(b.id)}" aria-label="블록 메뉴">⠿</button></span>`:''}${type==='divider'?'<hr>':marker+`<div class="block-content" contenteditable="${!state.page.locked}" role="textbox" aria-multiline="true" data-placeholder="글을 쓰거나 ‘/’로 명령어를 입력하세요">${esc(b.text||'')}</div>`}</div>`;
+  return `<div class="block ${b.checked?'checked':''}" data-id="${esc(b.id)}" data-type="${esc(type)}" draggable="${!state.page.locked}">${!state.page.locked?`<span class="block-handle"><button data-action="block-menu" data-id="${esc(b.id)}" aria-label="블록 메뉴">⠿</button></span>`:''}${type==='file'?`<a class="outline-btn attachment-link" href="/api/attachments/${esc(encodeURIComponent(b.attachment_id||''))}/download" download="${esc(b.text||'첨부 파일')}">📎 ${esc(b.text||'첨부 파일')}<span class="muted small">${Number.isFinite(b.size)?(b.size/1000).toLocaleString('ko-KR',{maximumFractionDigits:1})+' KB':''} ↓</span></a>`:type==='divider'?'<hr>':marker+`<div class="block-content" contenteditable="${!state.page.locked}" role="textbox" aria-multiline="true" data-placeholder="글을 쓰거나 ‘/’로 명령어를 입력하세요">${esc(b.text||'')}</div>`}</div>`;
 }
 function readBlocks() {
   if(state.route!=='page')return;
@@ -219,6 +219,36 @@ async function savePage() {
   }
   finally {
     state.saving=null;
+  }
+}
+// File bytes stay on the local server; page blocks store only attachment references.
+async function attachFile(file) {
+  if(state.route!=='page'||state.page?.locked)throw new Error('잠긴 페이지에는 파일을 추가할 수 없습니다.');
+  if(!file)return;
+  if(file.size>5_000_000)throw new Error('파일당 최대 5 MB까지 첨부할 수 있습니다.');
+  if(state.uploading)throw new Error('이전 파일 업로드가 끝난 후 다시 시도해 주세요.');
+  const pageId=state.page.id;
+  state.uploading=true;
+  try {
+    const data=await new Promise((resolve,reject)=>{
+      const reader=new FileReader();
+      reader.onload=()=>resolve(String(reader.result).split(',')[1]);
+      reader.onerror=()=>reject(new Error('파일을 읽지 못했습니다. 다시 선택해 주세요.'));
+      reader.readAsDataURL(file);
+    });
+    if(state.route!=='page'||state.page.id!==pageId||state.page.locked)throw new Error('페이지가 변경되어 파일 첨부를 취소했습니다.');
+    const attachment=await api('/attachments',{name:file.name,data});
+    if(state.route!=='page'||state.page.id!==pageId||state.page.locked){
+      await api('/attachments/'+encodeURIComponent(attachment.id),{},'DELETE');
+      throw new Error('페이지가 변경되어 파일 첨부를 취소했습니다.');
+    }
+    readBlocks();
+    state.blocks.push({id:uid(),type:'file',text:attachment.name,attachment_id:attachment.id,size:attachment.size});
+    renderBlocks();
+    scheduleSave();
+    toast('파일을 첨부했습니다.');
+  } finally {
+    state.uploading=false;
   }
 }
 function focusBlock(id,atEnd=true) {
@@ -387,7 +417,7 @@ async function renderSettings() {
   }
   else if(tab==='automations')content.innerHTML=header('작업에 흐름을 더하세요','조건에 맞는 데이터베이스 항목을 자동으로 업데이트합니다.',add('automations','자동화 만들기'))+items('automations',i=>`${i.enabled===false?'일시 중지':'활성'} · ${i.trigger||i.event||'수동 실행'}`);
   else if(tab==='forms')content.innerHTML=header('질문을 모아, 다음 단계로','폼을 만들고 응답을 데이터베이스에 수집하세요.',add('forms','폼 만들기'))+items('forms',i=>`${i.database_id||'연결된 데이터베이스 없음'} · ${(i.fields||[]).length}개 질문`);
-  else if(tab==='sites')content.innerHTML=header('아이디어를 세상에 공유하세요','페이지를 공개 사이트로 게시합니다. 공개 범위를 확인하세요.',add('sites','사이트 만들기'))+items('sites',i=>`${i.published?'게시됨':'초안'} · ${i.slug||i.page_id||''}`);
+  else if(tab==='sites')content.innerHTML=header('아이디어를 세상에 공유하세요','페이지를 게시용 보기로 공유합니다. 가족 로그인 모드에서는 로그인한 가족만 볼 수 있습니다.',add('sites','사이트 만들기'))+items('sites',i=>`${i.published?'게시됨':'초안'} · ${i.slug||i.page_id||''}`);
   else if(tab==='AI') {
     content.innerHTML=header('생각의 다음 한 걸음','페이지 요약, 초안 작성, 번역, 질문을 AI 도우미에서 시작하세요.')+'<button class="solid-btn" data-action="ai">✦ AI 도우미 열기</button><div class="info-box" style="margin-top:20px">무료 로컬 모델(Ollama 등) 또는 호환 API를 연결해 사용할 수 있습니다. 모델이 연결되지 않으면 AI 작업을 실행하지 않습니다. 별도 구독 없이 가족과 함께 사용할 수 있습니다.</div><div class="section-heading" style="margin-top:28px"><h3>연결 및 통합</h3>'+add('integrations','연결 추가')+'</div>'+items('integrations',i=>`${i.provider||i.type||'사용자 정의'} · ${i.status||'연결 설정 필요'}`);
   }
@@ -416,7 +446,7 @@ async function renderSettings() {
     }
   }
   else if(tab==='export') {
-    content.innerHTML=header('데이터는 언제나 내 손에','워크스페이스를 백업하거나 Markdown과 CSV로 데이터를 가져오세요.')+'<div class="form-actions" style="justify-content:flex-start"><button class="outline-btn" data-action="export" data-format="json">JSON 백업</button><button class="outline-btn" data-action="export" data-format="markdown">Markdown</button><button class="outline-btn" data-action="export" data-format="csv">CSV</button></div><form class="form-grid" id="import-form" style="margin-top:25px"><label>가져올 형식<select name="format"><option value="markdown">Markdown</option><option value="csv">CSV</option><option value="json">JSON 백업</option></select></label>'+field('제목','title','가져온 문서')+'<label>내용<textarea name="content" required placeholder="파일 내용을 여기에 붙여넣으세요"></textarea></label><button class="solid-btn">가져오기</button></form>';
+    content.innerHTML=header('데이터는 언제나 내 손에','문서를 내보내거나 댓글·이력·설정을 포함한 전체 백업을 다운로드하세요.')+'<button class="solid-btn" data-action="backup">전체 백업 다운로드</button><div class="form-actions" style="justify-content:flex-start"><button class="outline-btn" data-action="export" data-format="json">문서·DB JSON</button><button class="outline-btn" data-action="export" data-format="markdown">Markdown</button><button class="outline-btn" data-action="export" data-format="csv">CSV</button></div><form class="form-grid" id="import-form" style="margin-top:25px"><label>가져올 형식<select name="format"><option value="markdown">Markdown</option><option value="csv">CSV</option><option value="json">JSON 백업</option></select></label>'+field('제목','title','가져온 문서')+'<label>내용<textarea name="content" required placeholder="파일 내용을 여기에 붙여넣으세요"></textarea></label><button class="solid-btn">가져오기</button></form>';
   }
 }
 function advancedForm(kind,id) {
@@ -532,6 +562,7 @@ async function doAction(target) {
     break;
     case'change-icon':openModal('페이지 아이콘',form(field('이모지','icon','🌿','text',state.page.icon),'icon-form','변경하기'));
     break;
+    case'add-file':if(state.route!=='page'||state.page?.locked)throw new Error('잠긴 페이지에는 파일을 추가할 수 없습니다.');$('#attachment-input')?.click();break;
     case'add-block':addBlock();
     break;
     case'block-menu': {
@@ -658,7 +689,7 @@ async function doAction(target) {
       }
       break;
     }
-    case'share':openModal('페이지 공유',`<p>같은 로컬 서버에 접근할 수 있는 사람에게 이 주소를 공유하세요.</p><input style="width:100%" readonly value="${esc(location.origin+'/#page/'+state.page.id)}"><button class="solid-btn" data-action="copy-link" style="margin-top:15px">${icon('link')}링크 복사</button><div class="info-box" style="margin-top:20px">외부 공개 페이지는 설정의 사이트에서 별도로 게시할 수 있습니다.</div><button class="outline-btn" style="margin-top:15px" data-action="open-sites">사이트 게시 설정</button>`);
+    case'share':openModal('페이지 공유',`<p>같은 로컬 서버에 접근할 수 있는 사람에게 이 주소를 공유하세요.</p><input style="width:100%" readonly value="${esc(location.origin+'/#page/'+state.page.id)}"><button class="solid-btn" data-action="copy-link" style="margin-top:15px">${icon('link')}링크 복사</button><div class="info-box" style="margin-top:20px">게시용 페이지는 사이트 설정에서 만들 수 있습니다. 가족 로그인 모드에서는 게시 링크에도 로그인이 필요합니다.</div><button class="outline-btn" style="margin-top:15px" data-action="open-sites">사이트 게시 설정</button>`);
     break;
     case'copy-link': {
       const el=$('.modal-body input');
@@ -762,6 +793,7 @@ async function doAction(target) {
     break;
     case'new-property':openModal('데이터베이스 속성 추가',form(field('속성 이름','name','마감일')+`<label>속성 종류<select name="type"><option value="text">텍스트</option><option value="number">숫자</option><option value="status">상태</option><option value="select">선택</option><option value="date">날짜</option><option value="person">사람</option><option value="checkbox">체크박스</option><option value="multi_select">다중 선택</option><option value="files">파일 ID 목록</option><option value="url">URL</option><option value="email">이메일</option><option value="relation">관계형</option><option value="formula">수식</option><option value="rollup">롤업</option></select></label>`+field('선택 항목 (쉼표로 구분)','options','시작 전, 진행 중, 완료')+field('수식','expression',"prop('estimate') * 2")+`<label>관계형 대상 데이터베이스<select name="database_id">${state.workspace.databases.map(d=>`<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('')}</select></label><label>롤업에 사용할 관계 속성<select name="relation_property"><option value="">관계 속성을 선택하세요</option>${state.database.properties.filter(p=>p.type==='relation').map(p=>`<option value="${esc(p.id)}">${esc(p.name)} (${esc(p.id)})</option>`).join('')}</select></label>`+field('롤업 대상 속성 ID','target_property','estimate')+`<label>롤업 집계<select name="aggregation"><option value="sum">합계</option><option value="count">개수</option><option value="average">평균</option><option value="min">최솟값</option><option value="max">최댓값</option></select></label>`,'property-form'));
     break;
+    case'backup':{if(state.workspace.settings?.disable_export)throw new Error('워크스페이스에서 내보내기를 제한했습니다.');const link=document.createElement('a');link.href='/api/backup';link.download='fountain-backup.sqlite';link.click();break;}
     case'export': {
       const data=await api('/export?format='+target.dataset.format);
       download(data.filename,data.content,data.mime);
@@ -793,7 +825,9 @@ document.addEventListener('input',event=> {
   }
 });
 document.addEventListener('change',event=> {
-  const el=event.target; if(el.dataset.check) {
+  const el=event.target;
+  if(el.id==='attachment-input'){const file=el.files?.[0];el.value='';attachFile(file).catch(error=>toast(error.message));return;}
+  if(el.dataset.check) {
     const b=state.blocks.find(b=>b.id===el.dataset.check); b.checked=el.checked; el.closest('.block').classList.toggle('checked',el.checked); scheduleSave();
   }
 });

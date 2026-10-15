@@ -1,6 +1,6 @@
 /** Browser integration smoke. Uses the bundled Playwright runtime; no npm install. */
 import { createRequire } from 'node:module';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
@@ -16,6 +16,7 @@ const suffix = Date.now();
 const title = `브라우저 확인 ${suffix}`;
 let createdPageId;
 let createdRowId;
+let createdAttachmentId;
 let originalProperties;
 async function clickAction(action, extra = '') {
   await page.locator(`[data-action="${action}"]${extra}`).first().click();
@@ -68,6 +69,30 @@ try {
   await page.locator('.block-content').last().fill('완료된 작업');
   await page.locator('.block-marker input').last().check();
   await page.waitForFunction(() => document.querySelector('#save-status')?.textContent.includes('모든 변경'));
+  const attachmentText = 'Fountain 첨부 파일 브라우저 확인\n내용을 그대로 보존합니다.\n';
+  await page.locator('#attachment-input').setInputFiles({
+    name: 'fountain-smoke.txt', mimeType: 'text/plain', buffer: Buffer.from(attachmentText),
+  });
+  await page.waitForSelector('.attachment-link');
+  await page.waitForFunction(() => document.querySelector('#save-status')?.textContent.includes('모든 변경'));
+  const attachmentBlock = (await api('/pages/' + createdPageId)).blocks.find(b => b.type === 'file');
+  assert.equal(attachmentBlock.text, 'fountain-smoke.txt');
+  assert.equal(attachmentBlock.size, Buffer.byteLength(attachmentText));
+  createdAttachmentId = attachmentBlock.attachment_id;
+  assert.equal(await page.locator('.attachment-link[contenteditable]').count(), 0);
+  const attachmentDownload = page.waitForEvent('download');
+  await page.locator('.attachment-link').click();
+  const savedAttachment = await attachmentDownload;
+  assert.equal(savedAttachment.suggestedFilename(), 'fountain-smoke.txt');
+  assert.equal((await readFile(await savedAttachment.path())).toString(), attachmentText);
+  await clickAction('page-menu');
+  await clickAction('lock-page');
+  await page.waitForFunction(() => document.querySelector('#page-title')?.getAttribute('contenteditable') === 'false');
+  assert.equal(await page.locator('#attachment-input').count(), 0);
+  assert.equal(await page.locator('[data-action="add-file"]').count(), 0);
+  await clickAction('page-menu');
+  await clickAction('lock-page');
+  await page.waitForSelector('#attachment-input', { state: 'attached' });
   await page.locator('#comment-form input').fill('가족과 공유할 메모');
   await page.locator('#comment-form button').click();
   await page.waitForSelector('.comment-item');
@@ -130,6 +155,10 @@ try {
     await page.waitForTimeout(80);
     assert.ok((await page.locator('#settings-content').innerText()).length > 20, tab);
   }
+  const backupDownload = page.waitForEvent('download');
+  await clickAction('backup');
+  const backup = await backupDownload;
+  assert.equal((await readFile(await backup.path())).subarray(0, 16).toString(), 'SQLite format 3\0');
   await clickAction('settings-tab', '[data-tab="security"]');
   await page.locator('#security-form button.solid-btn').click();
   await page.waitForFunction(() => document.querySelector('#toast').textContent.includes('설정을 저장'));
@@ -147,11 +176,12 @@ try {
   await clickAction('toggle-sidebar');
   await page.waitForFunction(() => document.body.classList.contains('sidebar-open'));
   assert.deepEqual(errors, [], 'browser runtime errors');
-  console.log('PASS: page CRUD, block autosave + slash + todo, comments, history, search, project CRUD + typed properties, five database views, filter, settings, AI configuration, mobile layout');
+  console.log('PASS: page CRUD, block autosave + slash + todo, attachment upload/download + locked page + full backup, comments, history, search, project CRUD + typed properties, five database views, filter, settings, AI configuration, mobile layout');
   console.log('Screenshots: /tmp/fountain-browser/home-desktop.png /tmp/fountain-browser/home-mobile.png');
 } finally {
   if (originalProperties) await api('/databases/projects', { properties: originalProperties }, 'PATCH').catch(() => {});
   if (createdPageId) await api('/pages/' + createdPageId, {}, 'DELETE').catch(() => {});
+  if (createdAttachmentId) await api('/attachments/' + createdAttachmentId, {}, 'DELETE').catch(() => {});
   if (createdRowId) await api('/databases/projects/rows/' + createdRowId, {}, 'DELETE').catch(() => {});
   await browser.close();
 }

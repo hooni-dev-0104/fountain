@@ -12,7 +12,7 @@ import urllib.request
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from .core import APIError
+from .core import APIError, AUDIT_ACTOR
 
 
 class AdvancedError(APIError):
@@ -42,8 +42,8 @@ FEATURES = [
     ('automations', '데이터베이스 자동화', 'Plus', 'implemented', '상태 변경·행 생성·명시적 실행; 주기 실행은 서버 작업 필요'),
     ('sites', '사이트 게시와 메타데이터', 'Plus', 'implemented', '게시한 페이지의 공개 HTML; SEO 제목·설명'),
     ('domains', '사용자 지정 도메인', 'Plus', 'configuration', '호스트명 설정; 실제 DNS·TLS는 운영자 설정 필요'),
-    ('teamspaces', '비공개 팀스페이스와 그룹', 'Business', 'partial', '영구 저장·그룹 구성; 로컬 단일 사용자 모드'),
-    ('permissions', '세분화된 페이지·행 권한', 'Business', 'partial', '권한 정책 저장; 다중 사용자 인증 연동 필요'),
+    ('teamspaces', '비공개 팀스페이스와 그룹', 'Business', 'implemented', '멤버 계정·비공개 공간·그룹 기반 접근 권한'),
+    ('permissions', '세분화된 페이지·행 권한', 'Business', 'implemented', '서버에서 페이지·담당 행 권한 적용; 관계·롤업 결과도 제한'),
     ('ai', 'AI 생성·요약·번역·질의', 'Business', 'provider_required', '무료 로컬 모델 또는 호환 API 연동; 모의 응답 없음'),
     ('meeting', 'AI 회의록', 'Business', 'partial', '입력한 대화록 요약; 음성 전사는 미연동'),
     ('search', '기업 검색', 'Business', 'partial', '로컬 페이지 검색; 연결 앱 색인 미연동'),
@@ -52,7 +52,7 @@ FEATURES = [
     ('scim', 'SCIM 사용자·그룹 프로비저닝', 'Enterprise', 'implemented', 'SCIM 2.0 Users/Groups; FOUNTAIN_SCIM_TOKEN 필수'),
     ('audit', '감사 로그와 CSV 내보내기', 'Enterprise', 'implemented', '서버 변경 기록·검색·CSV; 외부 SIEM 미연동'),
     ('analytics', '워크스페이스 분석', 'Enterprise', 'implemented', '실제 조회·편집 이벤트 집계'),
-    ('security', '공유 제한·게스트·보존 정책', 'Enterprise', 'partial', '게스트·게시·내보내기 제한 적용; 개발 모드 관리자'),
+    ('security', '공유 제한·게스트·보존 정책', 'Enterprise', 'implemented', '소유자·멤버 관리자 분리와 게스트·게시·내보내기 제한'),
     ('retention', '데이터 보존 정책', 'Enterprise', 'implemented', '만료 휴지통·회의 대화록 수동 정리'),
     ('integrations', '연결 앱·SIEM·DLP', 'Enterprise', 'configuration', '연결 설정 저장; 공급자 OAuth·동기화 미연동'),
     ('agents', '사용자 지정 AI 에이전트', 'Business', 'provider_required', '정해진 문서 작업 실행; 자율 외부 도구 실행 미지원'),
@@ -87,7 +87,7 @@ class Advanced:
                 'features': self.capabilities()['features']}
 
     def capabilities(self):
-        return {'mode': 'trusted-family-shared' if os.environ.get('FOUNTAIN_ACCESS_TOKEN') else 'local-single-user', 'features': [dict(zip(
+        return {'mode': 'member-accounts' if self.store.meta('auth_accounts_required', False) else 'trusted-family-shared' if os.environ.get('FOUNTAIN_ACCESS_TOKEN') else 'local-single-user', 'features': [dict(zip(
             ('id', 'name', 'plan', 'status', 'detail'), item)) for item in FEATURES],
             'ai_configured': bool(os.environ.get('FOUNTAIN_AI_MODEL') and (os.environ.get('FOUNTAIN_AI_KEY') or self.local_ai())),
             'scim_configured': bool(os.environ.get('FOUNTAIN_SCIM_TOKEN')),
@@ -105,19 +105,22 @@ class Advanced:
         if kind in {'teamspaces', 'groups', 'automations', 'forms', 'sites', 'integrations'}:
             data['name'] = text(data.get('name', ''), '이름', 200)
         if kind == 'members':
-            email = text(data.get('email', ''), '이메일', 254).lower()
+            if 'active' in data: require(type(data['active']) is bool, '활성 상태는 참·거짓 값이어야 합니다')
+            email = text(data.get('email', ''), '이메일', 254).casefold()
             require(re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', email), '올바른 이메일이 필요합니다')
-            require(not any(m['id'] != data['id'] and m.get('email') == email for m in self.store.list(kind[:-1])), '이미 등록된 이메일입니다', 409)
+            require(not any(m['id'] != data['id'] and isinstance(m.get('email'), str) and m['email'].strip().casefold() == email for m in self.store.list(kind[:-1])), '이미 등록된 이메일입니다', 409)
             require(data.get('role', 'member') in {'owner', 'admin', 'member', 'guest'}, '올바른 역할이 필요합니다')
             require(not (data.get('role') == 'guest' and self.settings().get('disable_guests')), '게스트가 비활성화되었습니다', 403)
             data['email'] = email
-            data.setdefault('name', email.split('@')[0])
+            data['name'] = text(data.get('name') or email.split('@')[0], '이름', 200)
             data.setdefault('role', 'member')
         if kind in {'groups', 'teamspaces'}:
             members = data.get('members', [])
             require(isinstance(members, list) and all(isinstance(m, str) for m in members), '멤버 ID 목록이 필요합니다')
             require(all(self.store.get('member', m) for m in members), '존재하지 않는 멤버입니다')
             if kind == 'teamspaces':
+                groups = data.get('groups', [])
+                require(isinstance(groups, list) and all(isinstance(group, str) and self.store.get('group', group) for group in groups), '유효한 그룹 ID 목록이 필요합니다')
                 require(data.get('visibility', 'open') in {'open', 'closed', 'private'}, '잘못된 공개 범위입니다')
         if kind in {'forms', 'automations'}:
             database_id = data.get('database_id', 'projects')
@@ -351,7 +354,7 @@ class Advanced:
             tag = {'heading1': 'h1', 'heading2': 'h2', 'heading3': 'h3', 'quote': 'blockquote', 'code': 'pre'}.get(block.get('type'), 'p')
             pieces.append(f'<{tag}>{html.escape(value)}</{tag}>')
         identity = str(uuid4())
-        self.store.put('clipboard', {'id': identity, 'blocks': blocks})
+        self.store.put('clipboard', {'id': identity, 'owner_id': AUDIT_ACTOR.get(), 'blocks': blocks})
         for entry in self.store.list('clipboard')[:-20]:
             self.store.delete('clipboard', entry['id'])
         # A local copy token preserves structure without placing executable markup on the clipboard.
@@ -403,7 +406,7 @@ class Advanced:
                         require(parsed.tzinfo is not None and parsed.timestamp() > time.time(), '검증 만료일은 시간대가 있는 미래 시각이어야 합니다')
                     except (TypeError, ValueError) as error:
                         raise AdvancedError('검증 만료일 형식이 잘못되었습니다') from error
-                page['verification'] = {'owner': owner, 'verified_at': now(), 'expires_at': expiry}
+                page['verification'] = {'owner': owner, 'verified_by': AUDIT_ACTOR.get(), 'verified_at': now(), 'expires_at': expiry}
             elif method == 'DELETE':
                 page.pop('verification', None)
             else:

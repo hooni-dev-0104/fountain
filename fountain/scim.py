@@ -38,7 +38,7 @@ def scim_resource(service, method, path, body, query):
         for op in operations:
             require(op.get('op', '').lower() in {'replace', 'add'}, '지원하지 않는 SCIM 작업입니다')
             if op.get('path'):
-                require(op['path'] in {'active', 'displayName', 'userName', 'members'}, '지원하지 않는 SCIM 경로입니다')
+                require(op['path'] in ({'active', 'displayName', 'userName'} if category == 'Users' else {'displayName', 'members'}), '지원하지 않는 SCIM 경로입니다')
                 if op['path'] == 'members' and op.get('op', '').lower() == 'add':
                     incoming = op.get('value')
                     require(isinstance(incoming, list), '멤버 목록이 필요합니다')

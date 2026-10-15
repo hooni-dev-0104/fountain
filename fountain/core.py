@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import ast
 import base64
+from contextvars import ContextVar
 import copy
 import csv
 import io
@@ -16,6 +17,8 @@ from datetime import datetime, timezone
 from contextlib import contextmanager
 from typing import Any
 
+
+AUDIT_ACTOR = ContextVar("fountain_actor", default="local")
 
 def now():
     return datetime.now(timezone.utc).isoformat()
@@ -120,8 +123,8 @@ class Store:
             self.commit()
         return value
 
-    def audit(self, action, details, user="local"):
-        return self.put("audit", {"action": action, "details": details, "user": user})
+    def audit(self, action, details, user=None):
+        return self.put("audit", {"action": action, "details": details, "user": user if user is not None else AUDIT_ACTOR.get()})
 
     def close(self):
         self.db.close()
@@ -264,6 +267,7 @@ class Workspace:
         page = self.store.put("page", {"id": body.get("id") or uid(), "title": title,
             "icon": text(body.get("icon", "📄"), "icon", 80), "cover": text(body.get("cover", ""), "cover", 4000),
             "parent_id": parent, "teamspace_id": body.get("teamspace_id", "general"), "favorite": False,
+            "owner_id": body.get("owner_id", AUDIT_ACTOR.get()), "permissions": copy.deepcopy(body.get("permissions")) if "permissions" in body else None,
             "archived": False, "locked": False, "revision": 0, "blocks": self.validate_blocks(body.get("blocks", []))})
         self.store.audit("page.created", {"page_id": page["id"]})
         return page
@@ -339,8 +343,12 @@ class Workspace:
 
     def create_comment(self, page_id, body):
         self.page(page_id)
-        return self.store.put("comment", {"page_id": page_id, "text": text(body.get("text", ""), "comment", 10000, False),
-            "block_id": body.get("block_id"), "author": "나", "resolved": False})
+        author = AUDIT_ACTOR.get()
+        member = self.store.get('member', author) or {}
+        comment = self.store.put("comment", {"page_id": page_id, "text": text(body.get("text", ""), "comment", 10000, False),
+            "block_id": body.get("block_id"), "author": author, "author_name": member.get('name', '나'), "resolved": False})
+        self.store.audit('comment.created', {'page_id': page_id, 'id': comment['id']})
+        return comment
 
     def database(self, database_id):
         database = self.store.get("database", database_id)
@@ -374,6 +382,9 @@ class Workspace:
         if body.get("id"):
             require(self.store.get("database", body["id"]) is None, "Database id already exists", 409)
         return self.store.put("database", {"id": body.get("id") or uid(), "name": text(body.get("name", "새 데이터베이스"), "name", 500, False),
+            "owner_id": body.get("owner_id", AUDIT_ACTOR.get()), "teamspace_id": body.get("teamspace_id", "general"),
+            "permissions": copy.deepcopy(body.get("permissions")) if "permissions" in body else None,
+            "row_permissions": copy.deepcopy(body.get("row_permissions", {})),
             "icon": body.get("icon", "📊"), "properties": self.validate_properties(copy.deepcopy(body.get("properties", [{"id": "name", "name": "이름", "type": "title"}]))),
             "views": body.get("views", [{"id": "table", "name": "테이블", "type": "table"}])})
 
@@ -405,7 +416,7 @@ class Workspace:
     def create_row(self, database_id, body):
         database = self.database(database_id)
         values = body.get("properties", body.get("values", {}))
-        return self.store.put("row", {"database_id": database_id, "properties": self.validate_values(database, values)})
+        return self.store.put("row", {"database_id": database_id, "owner_id": body.get("owner_id", AUDIT_ACTOR.get()), "properties": self.validate_values(database, values)})
 
     def update_row(self, database_id, row_id, body):
         database = self.database(database_id)
@@ -414,7 +425,7 @@ class Workspace:
         row["properties"].update(self.validate_values(database, body.get("properties", body.get("values", {}))))
         return self.store.put("row", row)
 
-    def computed_rows(self, database, rows):
+    def computed_rows(self, database, rows, can_read_row=None):
         cache, databases = {}, {database["id"]: database}
         def resolve(row, key, trail=()):
             token = (row["id"], key)
@@ -433,6 +444,7 @@ class Workspace:
             elif prop["type"] == "rollup":
                 related = resolve(row, prop["relation_property"], trail) or []
                 targets = [self.store.get("row", identity) for identity in related]
+                if can_read_row: targets = [target for target in targets if target is not None and can_read_row(target)]
                 if any(target is None for target in targets): raise ValueError("Related row was deleted")
                 values = [resolve(target, prop["target_property"], trail) for target in targets]
                 aggregation = prop["aggregation"]
@@ -442,6 +454,8 @@ class Workspace:
                     if any(type(value) not in (int, float) for value in values): raise ValueError("Rollup requires numeric values")
                     result = (sum(values) if aggregation == "sum" else sum(values) / len(values) if aggregation == "average"
                               else min(values) if aggregation == "min" else max(values)) if values or aggregation == "sum" else None
+            elif prop['type'] == 'relation' and can_read_row:
+                result = [identity for identity in row['properties'].get(key, []) if (target := self.store.get('row', identity)) and can_read_row(target)]
             else: result = row["properties"].get(key)
             cache[token] = result
             return result
@@ -456,10 +470,11 @@ class Workspace:
             if errors: row["computed_errors"] = errors
         return rows
 
-    def database_detail(self, database_id, filters=None, sorts=None):
+    def database_detail(self, database_id, filters=None, sorts=None, can_read_row=None):
         database = self.database(database_id)
         rows = [r for r in self.store.list("row") if r["database_id"] == database_id]
-        rows = self.computed_rows(database, rows)
+        if can_read_row: rows = [row for row in rows if can_read_row(row)]
+        rows = self.computed_rows(database, rows, can_read_row)
         if filters:
             require(isinstance(filters, list) and len(filters) <= 50, "Invalid filters")
             for rule in filters:
@@ -515,6 +530,7 @@ class Workspace:
             return self._import_data(body)
 
     def _import_data(self, body):
+        private = {"default": "private", "inherit": False, "members": {}, "groups": {}}
         format, content = body.get("format", "markdown"), text(body.get("content", ""), "content", 2000000)
         if format == "markdown":
             blocks = []
@@ -525,7 +541,7 @@ class Workspace:
                         kind, line = candidate, line[len(prefix):]
                         break
                 blocks.append({"type": kind, "text": line})
-            return {"page": self.create_page({"title": body.get("title", "가져온 문서"), "blocks": blocks})}
+            return {"page": self.create_page({"title": body.get("title", "가져온 문서"), "blocks": blocks, "permissions": private})}
         if format == "csv":
             reader = csv.DictReader(io.StringIO(content))
             require(reader.fieldnames and len(reader.fieldnames) <= 100, "CSV requires a header with at most 100 columns")
@@ -536,7 +552,7 @@ class Workspace:
                 require(None not in row, "CSV row has more fields than header")
                 for value in row.values():
                     if value is not None: text(value, "CSV value", 100000)
-            database = self.create_database({"name": body.get("title", "가져온 데이터"), "properties": props})
+            database = self.create_database({"name": body.get("title", "가져온 데이터"), "properties": props, "permissions": private})
             for row in data:
                 self.create_row(database["id"], {"properties": {str(i): row[name] for i, name in enumerate(reader.fieldnames)}})
             return {"database": database, "count": len(data)}
@@ -584,17 +600,19 @@ class Workspace:
             self.validate_values(db_ids[row["database_id"]], row.get("properties"), imported_rows)
         pages, page_map, database_map = [], {}, {}
         for page in data["pages"]:
-            created = self.create_page({"title": page.get("title", "제목 없음"), "blocks": page.get("blocks", []), "icon": page.get("icon", "📄"), "cover": page.get("cover", "")})
+            created = self.create_page({"title": page.get("title", "제목 없음"), "blocks": page.get("blocks", []), "icon": page.get("icon", "📄"), "cover": page.get("cover", ""), "permissions": private})
             pages.append(created)
             if page.get("id"): page_map[page["id"]] = created["id"]
         for page, created in zip(data["pages"], pages):
             if page.get("parent_id"):
                 created["parent_id"] = page_map[page["parent_id"]]
+                created["permissions"]["inherit"] = True
                 self.store.put("page", created)
         database_map = {database["id"]: uid() for database in databases}
         for database in databases:
             imported = copy.deepcopy(database)
             imported["id"] = database_map[database["id"]]
+            imported.update(owner_id=AUDIT_ACTOR.get(), permissions=copy.deepcopy(private), teamspace_id="general", row_permissions={})
             for prop in imported["properties"]:
                 if prop["type"] == "relation" and prop.get("database_id") in database_map:
                     prop["database_id"] = database_map[prop["database_id"]]
@@ -605,7 +623,7 @@ class Workspace:
             for prop in db_ids[row["database_id"]]["properties"]:
                 if prop["type"] == "relation" and values.get(prop["id"]):
                     values[prop["id"]] = [row_map[identity] for identity in values[prop["id"]]]
-            self.store.put("row", {"id": row_map[row["id"]], "database_id": database_map[row["database_id"]], "properties": values})
+            self.store.put("row", {"id": row_map[row["id"]], "owner_id": AUDIT_ACTOR.get(), "database_id": database_map[row["database_id"]], "properties": values})
         return {"pages": pages, "databases": list(database_map.values()), "count": len(pages), "row_count": len(rows)}
 
     def attachment(self, body):
@@ -616,4 +634,4 @@ class Workspace:
         except ValueError: raise APIError(400, "Invalid base64 attachment")
         require(len(raw) <= 5000000, "Attachment exceeds 5 MB", 413)
         # Download as attachment; never execute uploaded HTML or SVG in this origin.
-        return self.store.put("attachment", {"name": name, "data": encoded, "size": len(raw), "mime": "application/octet-stream"})
+        return self.store.put("attachment", {"name": name, "owner_id": body.get("owner_id", AUDIT_ACTOR.get()), "data": encoded, "size": len(raw), "mime": "application/octet-stream"})

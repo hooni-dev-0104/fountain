@@ -18,8 +18,36 @@ const icons = {
 };
 const icon = name => `<svg viewBox="0 0 18 18" aria-hidden="true">${icons[name] || icons.grid}</svg>`;
 const state = {
-  workspace:null, route:'home',page:null,blocks:[],versions:[],comments:[],database:null,rows:[],view:'table',filter:'',sort:false,saving:null,saveTimer:null,advanced:null,settingsTab:'members',loaded:false,activeBlock:null,trash:false,dirty:false,editSequence:0
+  session:null,workspace:null, route:'home',page:null,blocks:[],versions:[],comments:[],database:null,rows:[],view:'table',filter:'',sort:false,saving:null,saveTimer:null,advanced:null,settingsTab:'members',loaded:false,activeBlock:null,trash:false,dirty:false,editSequence:0
 };
+function isOwner() { return state.session?.member?.role==='owner'; }
+function isAdmin() { return ['owner','admin'].includes(state.session?.member?.role); }
+function resourceLevel(resource) {
+  return Number.isInteger(resource?.access_level)?resource.access_level:(state.session?.mode==='accounts'?0:4);
+}
+function pageEditable() { return resourceLevel(state.page)>=3&&!state.page?.locked; }
+function databaseEditable() { return resourceLevel(state.database)>=3; }
+function canCreateRow() {
+  return state.database?.can_create_row??(databaseEditable()&&state.database?.row_permissions?.allow_create!==false);
+}
+const administrativeActions=new Set(['activity','invite','new-teamspace','teamspace','add-advanced','edit-advanced','run-automation','fill-form','site-link','open-sites','backup','export']);
+function pruneAdministrativeControls() {
+  if(!isOwner())$$('[data-action="activity"],[data-action="backup"],[data-action="export"]').forEach(el=>el.remove());
+  if(!isAdmin()) {
+    for(const el of $$('[data-action]'))if(administrativeActions.has(el.dataset.action))el.remove();
+    $$('.invite-card').forEach(el=>el.remove());
+    const activity=$('.activity-panel');if(activity)activity.remove();
+    const dashboard=$('.dashboard-bottom');if(dashboard)dashboard.style.gridTemplateColumns='1fr';
+    const settings=$('#sidebar .sidebar-bottom [data-action="settings"] .label');if(settings)settings.textContent='내 계정';
+  }
+  if(state.session?.member?.role==='guest') {
+    $$('[data-action="add-page"],[data-action="new-database"]').forEach(el=>el.remove());
+  }
+  $$('[data-action="add-page"][data-parent]').forEach(el=>{
+    const parent=state.workspace?.pages.find(p=>p.id===el.dataset.parent);
+    if(parent&&resourceLevel(parent)<3)el.remove();
+  });
+}
 async function api(path, body, method) {
   const response = await fetch('/api' + path, {
     method:method || (body ? 'POST':'GET'),headers: {
@@ -37,6 +65,11 @@ async function api(path, body, method) {
     const error = new Error(typeof data.error === 'string' ? data.error : data.message || '요청을 처리하지 못했습니다.');
     error.status = response.status;
     error.data=data;
+    if(response.status===401&&path!=='/session'){
+      const session=await fetch('/api/session').then(result=>result.json()).catch(()=>null);
+      if(session)state.session=session;
+      closeModal();renderLogin();
+    }
     throw error;
   }
   return data;
@@ -84,9 +117,11 @@ function renderSidebar() {
   const roots=pages.filter(p=>!p.parent_id);
   const pageItem=(p,depth=0)=>`<div class="nav-item page-nav ${state.page?.id===p.id&&state.route==='page'?'active':''}" style="padding-left:${10+depth*13}px"><button data-action="page" data-id="${esc(p.id)}" class="nav-item" style="padding:0;min-height:23px"><span class="page-icon">${esc(p.icon||'📄')}</span><span class="label">${esc(p.title||'제목 없음')}</span></button><button class="page-menu" aria-label="하위 페이지 추가" data-action="add-page" data-parent="${esc(p.id)}">+</button></div>${pages.filter(q=>q.parent_id===p.id).map(q=>pageItem(q,Math.min(depth+1,4))).join('')}`;
   $('#sidebar').innerHTML=`<div class="brand"><span class="brand-mark">f</span>fountain<span style="font-family:sans-serif;font-size:9px;letter-spacing:1px;color:#a5a497;margin-left:2px;font-weight:400">WORKSPACE</span></div><button class="workspace-switch" data-action="settings"><span class="workspace-avatar">F</span><span class="workspace-name">${esc(w.settings?.name||'Fountain 스튜디오')}<small>함께 만드는 작은 가능성</small></span>${icon('down')}</button><nav><button class="nav-item" data-action="search">${icon('search')}<span class="label">검색</span><span class="shortcut">⌘ K</span></button><button class="nav-item ${state.route==='home'?'active':''}" data-action="home">${icon('home')}<span class="label">홈</span></button><button class="nav-item" data-action="activity">${icon('inbox')}<span class="label">업데이트</span></button><button class="nav-item" data-action="ai">${icon('spark')}<span class="label">Fountain AI</span><span class="badge">AI</span></button></nav><div class="sidebar-pages"><div class="section-label">즐겨찾기<span>${icon('star')}</span></div>${favorite.length?favorite.map(p=>pageItem(p)).join(''):'<div class="small muted" style="padding:5px 12px;font-size:10px">자주 찾는 페이지를 모아보세요</div>'}<div class="section-label">팀스페이스<button data-action="new-teamspace" aria-label="팀스페이스 추가">+</button></div>${(w.teamspaces||[{id:'general',name:'Fountain 팀'}]).map(t=>`<button class="nav-item" data-action="teamspace" data-id="${esc(t.id)}"><span class="team-icon">${esc((t.name||'팀')[0])}</span><span class="label">${esc(t.name||'Fountain 팀')}</span>${icon('down')}</button>`).join('')}${(w.databases||[]).map(d=>`<button class="nav-item ${state.route==='database'&&state.database?.id===d.id?'active':''}" data-action="database" data-id="${esc(d.id)}" style="padding-left:20px"><span class="page-icon">${esc(d.icon||'▤')}</span><span class="label">${esc(d.name||d.title||'프로젝트')}</span></button>`).join('')}<div class="section-label">페이지<button data-action="add-page" aria-label="새 페이지">+</button></div>${roots.map(p=>pageItem(p)).join('')}<button class="nav-item muted" data-action="add-page">${icon('plus')}<span class="label">새 페이지</span></button><button class="nav-item muted" data-action="new-database">${icon('table')}<span class="label">새 데이터베이스</span></button></div><div class="sidebar-bottom"><button class="nav-item" data-action="settings">${icon('settings')}<span class="label">설정 및 멤버</span></button><button class="nav-item" data-action="trash">${icon('trash')}<span class="label">휴지통</span></button><div class="invite-card"><strong>좋은 생각은, 함께 자라니까요.</strong>팀원을 초대하고 한곳에서 시작하세요.<br><button data-action="invite">멤버 초대하기 ↗</button></div></div>`;
+  pruneAdministrativeControls();
 }
 function renderTopbar(title='홈',emoji='') {
-  $('#topbar').innerHTML=`<div class="crumb"><button class="mobile-toggle" data-action="toggle-sidebar" aria-label="메뉴 열기">${icon('menu')}</button><button data-action="home">Fountain 스튜디오</button><span>/</span><span>${esc(emoji)}</span><span class="current">${esc(title)}</span></div><div class="top-actions"><span class="save-status" id="save-status">${state.route==='page'?'모든 변경 사항 저장됨':'나만의 리듬으로, 함께'}</span><div class="avatar-stack" aria-label="워크스페이스 멤버">${(state.workspace?.members||[]).slice(0,3).map(m=>`<span>${esc((m.name||'나')[0])}</span>`).join('')}</div>${state.route==='page'?`<button data-action="favorite" aria-label="즐겨찾기">${icon('star')}</button><button data-action="share">${icon('share')}공유</button><button data-action="history" aria-label="페이지 기록">${icon('clock')}</button><button data-action="page-menu" aria-label="페이지 메뉴">${icon('dots')}</button>`:`<button class="desktop-only" data-action="activity" aria-label="활동 기록">${icon('clock')}</button><button data-action="settings" aria-label="설정">${icon('dots')}</button>`}</div>`;
+  $('#topbar').innerHTML=`<div class="crumb"><button class="mobile-toggle" data-action="toggle-sidebar" aria-label="메뉴 열기">${icon('menu')}</button><button data-action="home">Fountain 스튜디오</button><span>/</span><span>${esc(emoji)}</span><span class="current">${esc(title)}</span></div><div class="top-actions"><span class="save-status" id="save-status">${state.route==='page'?'모든 변경 사항 저장됨':'나만의 리듬으로, 함께'}</span><div class="avatar-stack" aria-label="워크스페이스 멤버">${(state.workspace?.members||[]).slice(0,3).map(m=>`<span>${esc((m.name||'나')[0])}</span>`).join('')}</div>${state.route==='page'?`<button ${resourceLevel(state.page)<3?'disabled':''} data-action="favorite" aria-label="즐겨찾기">${icon('star')}</button><button data-action="share">${icon('share')}공유</button><button data-action="history" aria-label="페이지 기록">${icon('clock')}</button><button data-action="page-menu" aria-label="페이지 메뉴">${icon('dots')}</button>`:`${state.route==='database'?`<button data-action="db-share">${icon('share')}공유</button>`:''}<button class="desktop-only" data-action="activity" aria-label="활동 기록">${icon('clock')}</button><button data-action="settings" aria-label="설정">${icon('dots')}</button>`}</div>`;
+  pruneAdministrativeControls();
 }
 async function navigate(route,id) {
   try {
@@ -131,6 +166,7 @@ function renderHome() {
   });
   $('#main').innerHTML=`<div class="main-inner"><div class="welcome-row"><div><div class="date-label">${esc(today)}</div><h1>반가워요, 오늘도 좋은 하루예요 <span style="font-size:25px">☀️</span></h1><p>생각을 정리하고, 함께 만드는 일에 집중해 보세요.</p></div><button class="outline-btn" data-action="add-page">${icon('plus')}새 페이지</button></div><section class="hero"><div class="hero-text"><div class="eyebrow">A LITTLE SPACE, BIG POSSIBILITIES</div><h2>흩어져 있던 생각이<br>하나의 가능성이 되는 곳.</h2><p>문서부터 프로젝트, 팀의 모든 이야기를 Fountain에 담아보세요.</p><button data-action="page" data-id="${esc(pages[0]?.id||'welcome')}">우리 워크스페이스 둘러보기 ${icon('arrow')}</button></div><div class="hero-art" aria-hidden="true"><div class="art-orbit"></div><div class="art-paper"><i></i><i></i><i></i><i></i></div><div class="art-card"></div><div class="art-flower">✳</div></div></section><section><div class="section-heading"><h2>${icon('clock')}최근 방문한 페이지</h2><button data-action="search">모든 페이지 ${icon('chevron')}</button></div><div class="recent-grid">${pages.map((p,i)=>`<button class="page-card" data-action="page" data-id="${esc(p.id)}"><div class="card-cover c${i}"></div><div class="card-body"><div class="card-title"><span>${esc(p.icon||['🌿','📝','💡'][i])}</span>${esc(p.title||'제목 없음')}</div><div class="card-meta"><span>Fountain 스튜디오</span><span>${date(p.updated_at)} 수정</span></div></div></button>`).join('')}${pages.length<3?`<button class="page-card" data-action="add-page"><div class="card-cover c2"><span style="z-index:1;font-size:23px;color:#8b9da4">+</span></div><div class="card-body"><div class="card-title">새로운 아이디어</div><div class="card-meta">빈 페이지에서 시작해 보세요</div></div></button>`:''}</div></section><div class="dashboard-bottom"><section><div class="section-heading"><h2>${icon('table')}우리 팀 프로젝트</h2><button data-action="database" data-id="${esc(state.workspace.databases?.[0]?.id||'projects')}">전체 보기 ${icon('chevron')}</button></div><div class="panel" id="home-database"><div class="empty">프로젝트를 불러오는 중…</div></div></section><section class="activity-panel"><div class="section-heading"><h2>${icon('inbox')}워크스페이스 소식</h2><button data-action="activity">${icon('dots')}</button></div><div class="activity-list" id="home-activity"><div class="activity"><span class="activity-avatar">F</span><p><strong>Fountain</strong>에 오신 것을 환영해요.<span class="activity-page">🌱 함께 만드는 워크스페이스</span><small>오늘</small></p></div></div><div class="quote-card">“위대한 일은 작은 일들이<br>모여 이루어집니다.”<span>작은 시작을 응원하는 Fountain</span></div></section></div><footer class="footer-line"><span><i></i>모든 변경 사항이 안전하게 저장됩니다</span><span>Made for your flow. &nbsp; ✳ Fountain</span></footer></div>`;
   loadHomeData();
+  pruneAdministrativeControls();
 }
 async function loadHomeData() {
   const id=state.workspace.databases?.[0]?.id;
@@ -140,13 +176,14 @@ async function loadHomeData() {
       if(state.route!=='home')return;
       state.database=data.database;
       state.rows=data.rows||[];
-      $('#home-database').innerHTML=databaseToolbar(true)+tableHTML(state.rows.slice(0,5),true)+`<button class="new-row" data-action="add-row">+ 새 프로젝트</button>`;
+      $('#home-database').innerHTML=databaseToolbar(true)+tableHTML(state.rows.slice(0,5),true)+`<button class="new-row" data-action="add-row">+ 새 프로젝트</button>`;applyDatabaseControls();
     }
     catch(e) {
       if($('#home-database'))$('#home-database').innerHTML=`<div class="empty">${esc(e.message)}<br><button data-action="new-database">데이터베이스 만들기</button></div>`;
     }
   }
   else if($('#home-database'))$('#home-database').innerHTML='<div class="empty"><button data-action="new-database">+ 첫 데이터베이스 만들기</button></div>';
+  if(!isOwner())return;
   try {
     const data=await api('/audit');
     const records=normalizeList(data.events||data.audit||data.entries||data);
@@ -158,20 +195,26 @@ async function loadHomeData() {
 function renderPage() {
   const p=state.page;
   renderTopbar(p.title,p.icon);
-  $('#main').innerHTML=`${p.cover?'<div class="page-cover"></div>':''}<article class="editor-wrap ${p.cover?'has-cover':''}"><button class="page-emoji" data-action="change-icon" aria-label="페이지 아이콘 변경">${esc(p.icon||'📄')}</button><h1 class="page-title" id="page-title" contenteditable="${!p.locked}" role="textbox" aria-label="페이지 제목">${esc(p.title)}</h1><div class="page-tools" style="flex-wrap:wrap"><span>${icon('clock')}</span><span>${date(p.updated_at)} 수정</span><button data-action="favorite" class="${p.favorite?'favorite-on':''}">${p.favorite?'★ 즐겨찾기':'☆ 즐겨찾기'}</button><button data-action="toggle-cover">${p.cover?'커버 제거':'커버 추가'}</button>${p.locked?'<span>🔒 잠긴 페이지</span>':'<button data-action="add-file" title="파일당 최대 5 MB">📎 파일 추가</button><input id="attachment-input" type="file" aria-label="첨부할 파일 (최대 5 MB)" hidden>'}<button data-action="ai" style="margin-left:auto">✦ AI 도우미</button></div><div id="blocks" aria-label="페이지 블록">${state.blocks.map(blockHTML).join('')}</div>${!p.locked?'<button class="editor-end" data-action="add-block"><span>+</span> 글을 쓰거나 ‘/’로 블록을 추가하세요</button>':''}<section class="comment-section"><h3>댓글 <span class="muted">${state.comments.filter(c=>!c.resolved).length}</span></h3><div id="comments">${commentsHTML()}</div><form class="comment-form" id="comment-form"><input name="text" aria-label="댓글 내용" placeholder="생각을 나눠보세요…" required maxlength="10000"><button class="outline-btn">보내기 ${icon('arrow')}</button></form></section></article>`;
+  $('#main').innerHTML=`${p.cover?'<div class="page-cover"></div>':''}<article class="editor-wrap ${p.cover?'has-cover':''}"><button class="page-emoji" data-action="change-icon" aria-label="페이지 아이콘 변경">${esc(p.icon||'📄')}</button><h1 class="page-title" id="page-title" contenteditable="${pageEditable()}" role="textbox" aria-label="페이지 제목">${esc(p.title)}</h1><div class="page-tools" style="flex-wrap:wrap"><span>${icon('clock')}</span><span>${date(p.updated_at)} 수정</span><button data-action="favorite" class="${p.favorite?'favorite-on':''}">${p.favorite?'★ 즐겨찾기':'☆ 즐겨찾기'}</button><button data-action="toggle-cover">${p.cover?'커버 제거':'커버 추가'}</button>${!pageEditable()?'<span>🔒 읽기 전용</span>':'<button data-action="add-file" title="파일당 최대 5 MB">📎 파일 추가</button><input id="attachment-input" type="file" aria-label="첨부할 파일 (최대 5 MB)" hidden>'}<button data-action="ai" style="margin-left:auto">✦ AI 도우미</button></div><div id="blocks" aria-label="페이지 블록">${state.blocks.map(blockHTML).join('')}</div>${pageEditable()?'<button class="editor-end" data-action="add-block"><span>+</span> 글을 쓰거나 ‘/’로 블록을 추가하세요</button>':''}<section class="comment-section"><h3>댓글 <span class="muted">${state.comments.filter(c=>!c.resolved).length}</span></h3><div id="comments">${commentsHTML()}</div><form class="comment-form" id="comment-form"><input name="text" aria-label="댓글 내용" placeholder="생각을 나눠보세요…" required maxlength="10000"><button class="outline-btn">보내기 ${icon('arrow')}</button></form></section></article>`;
+  if(!pageEditable()) {
+    for(const action of ['change-icon','favorite','toggle-cover'])$$(`[data-action="${action}"]`).forEach(el=>el.disabled=true);
+  }
+  if(resourceLevel(p)<2)$('#comment-form')?.remove();
+  pruneAdministrativeControls();
+
 }
 function commentsHTML() {
-  return state.comments.filter(c=>!c.resolved).map(c=>`<div class="comment-item"><button data-action="resolve-comment" data-id="${esc(c.id)}">해결 ✓</button><strong>${esc(c.author_name||c.author||'나')}</strong> <span class="muted small">${date(c.created_at)}</span><div>${esc(c.text)}</div></div>`).join('');
+  return state.comments.filter(c=>!c.resolved).map(c=>`<div class="comment-item">${resourceLevel(state.page)>=4||c.author===state.session?.member?.id?`<button data-action="resolve-comment" data-id="${esc(c.id)}">해결 ✓</button>`:''}<strong>${esc(c.author_name||c.author||'나')}</strong> <span class="muted small">${date(c.created_at)}</span><div>${esc(c.text)}</div></div>`).join('');
 }
 const blockTypes=[['paragraph','텍스트','일반 텍스트로 작성','T'],['heading1','제목 1','가장 큰 제목','H₁'],['heading2','제목 2','중간 크기 제목','H₂'],['heading3','제목 3','작은 제목','H₃'],['bullet','글머리 기호','간단한 목록','•'],['numbered','번호 매기기','순서가 있는 목록','1.'],['todo','할 일 목록','완료 여부를 체크','☑'],['quote','인용','인상 깊은 문장','❝'],['callout','콜아웃','중요한 내용을 강조','💡'],['code','코드','코드와 서식을 보존','⌘'],['divider','구분선','내용을 나누는 선','―'],['toggle','토글','접을 수 있는 메모','▸'],['bookmark','북마크','링크를 기록','↗']];
 function blockHTML(b,i) {
   const type=b.type||'paragraph';
   let marker='';
-  if(type==='todo')marker=`<span class="block-marker"><input type="checkbox" aria-label="할 일 완료" data-check="${esc(b.id)}" ${b.checked?'checked':''} ${state.page.locked?'disabled':''}></span>`;
+  if(type==='todo')marker=`<span class="block-marker"><input type="checkbox" aria-label="할 일 완료" data-check="${esc(b.id)}" ${b.checked?'checked':''} ${!pageEditable()?'disabled':''}></span>`;
   else if(type==='bullet')marker='<span class="block-marker">•</span>';
   else if(type==='numbered')marker=`<span class="block-marker">${i+1}.</span>`;
   else if(type==='toggle')marker=`<button class="block-marker" data-action="toggle-block" data-id="${esc(b.id)}">▸</button>`;
-  return `<div class="block ${b.checked?'checked':''}" data-id="${esc(b.id)}" data-type="${esc(type)}" draggable="${!state.page.locked}">${!state.page.locked?`<span class="block-handle"><button data-action="block-menu" data-id="${esc(b.id)}" aria-label="블록 메뉴">⠿</button></span>`:''}${type==='file'?`<a class="outline-btn attachment-link" href="/api/attachments/${esc(encodeURIComponent(b.attachment_id||''))}/download" download="${esc(b.text||'첨부 파일')}">📎 ${esc(b.text||'첨부 파일')}<span class="muted small">${Number.isFinite(b.size)?(b.size/1000).toLocaleString('ko-KR',{maximumFractionDigits:1})+' KB':''} ↓</span></a>`:type==='divider'?'<hr>':marker+`<div class="block-content" contenteditable="${!state.page.locked}" role="textbox" aria-multiline="true" data-placeholder="글을 쓰거나 ‘/’로 명령어를 입력하세요">${esc(b.text||'')}</div>`}</div>`;
+  return `<div class="block ${b.checked?'checked':''}" data-id="${esc(b.id)}" data-type="${esc(type)}" draggable="${pageEditable()}">${pageEditable()?`<span class="block-handle"><button data-action="block-menu" data-id="${esc(b.id)}" aria-label="블록 메뉴">⠿</button></span>`:''}${type==='file'?`<a class="outline-btn attachment-link" href="/api/attachments/${esc(encodeURIComponent(b.attachment_id||''))}/download" download="${esc(b.text||'첨부 파일')}">📎 ${esc(b.text||'첨부 파일')}<span class="muted small">${Number.isFinite(b.size)?(b.size/1000).toLocaleString('ko-KR',{maximumFractionDigits:1})+' KB':''} ↓</span></a>`:type==='divider'?'<hr>':marker+`<div class="block-content" contenteditable="${pageEditable()}" role="textbox" aria-multiline="true" data-placeholder="글을 쓰거나 ‘/’로 명령어를 입력하세요">${esc(b.text||'')}</div>`}</div>`;
 }
 function readBlocks() {
   if(state.route!=='page')return;
@@ -223,7 +266,7 @@ async function savePage() {
 }
 // File bytes stay on the local server; page blocks store only attachment references.
 async function attachFile(file) {
-  if(state.route!=='page'||state.page?.locked)throw new Error('잠긴 페이지에는 파일을 추가할 수 없습니다.');
+  if(state.route!=='page'||!pageEditable())throw new Error('파일을 추가할 편집 권한이 없습니다.');
   if(!file)return;
   if(file.size>5_000_000)throw new Error('파일당 최대 5 MB까지 첨부할 수 있습니다.');
   if(state.uploading)throw new Error('이전 파일 업로드가 끝난 후 다시 시도해 주세요.');
@@ -236,9 +279,9 @@ async function attachFile(file) {
       reader.onerror=()=>reject(new Error('파일을 읽지 못했습니다. 다시 선택해 주세요.'));
       reader.readAsDataURL(file);
     });
-    if(state.route!=='page'||state.page.id!==pageId||state.page.locked)throw new Error('페이지가 변경되어 파일 첨부를 취소했습니다.');
+    if(state.route!=='page'||state.page.id!==pageId||!pageEditable())throw new Error('페이지가 변경되어 파일 첨부를 취소했습니다.');
     const attachment=await api('/attachments',{name:file.name,data});
-    if(state.route!=='page'||state.page.id!==pageId||state.page.locked){
+    if(state.route!=='page'||state.page.id!==pageId||!pageEditable()){
       await api('/attachments/'+encodeURIComponent(attachment.id),{},'DELETE');
       throw new Error('페이지가 변경되어 파일 첨부를 취소했습니다.');
     }
@@ -267,6 +310,7 @@ function renderBlocks(focusId) {
   if(focusId)focusBlock(focusId);
 }
 function addBlock(type='paragraph',afterId,text='') {
+  if(!pageEditable())throw new Error('페이지 편집 권한이 없습니다.');
   readBlocks();
   const b= {
     id:uid(),type,text
@@ -337,6 +381,7 @@ function databaseView() {
 function renderDatabase() {
   renderTopbar(state.database.name||state.database.title,'▤');
   $('#main').innerHTML=`<section class="db-full"><div class="eyebrow">TEAM WORK, IN ONE PLACE</div><div class="database-heading"><h1>▤ ${esc(state.database.name||state.database.title||'프로젝트')}</h1><button class="outline-btn" data-action="db-export">↗ CSV 내보내기</button></div><p class="muted">작은 할 일부터 큰 목표까지, 우리의 다음 한 걸음을 함께 기록해요.</p><div class="panel">${databaseToolbar()}<div id="db-filters" ${state.filter?'':'hidden'} class="filters"><input id="db-filter-input" aria-label="항목 필터" placeholder="모든 속성에서 검색" value="${esc(state.filter)}"><button class="outline-btn" data-action="db-sort">이름 ${state.sort?'↓':'↕'} 정렬</button><button data-action="clear-filter" aria-label="필터 해제">×</button></div><div id="db-view">${databaseView()}</div></div></section>`;
+  applyDatabaseControls();
 }
 async function reloadDatabase() {
   const data=await api('/databases/'+state.database.id);
@@ -344,10 +389,13 @@ async function reloadDatabase() {
   state.rows=data.rows;
   if(state.route==='database')renderDatabase();
   else if($('#home-database'))$('#home-database').innerHTML=databaseToolbar(true)+tableHTML(state.rows.slice(0,5),true)+`<button class="new-row" data-action="add-row">+ 새 프로젝트</button>`;
+  applyDatabaseControls();
 }
 function openModal(title,content,cls='') {
   closeSlash();
   $('#overlay-root').innerHTML=`<div class="modal-backdrop"><section class="modal ${cls}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="modal-head"><h2>${esc(title)}</h2><button class="modal-close" data-action="close-modal" aria-label="닫기">×</button></header><div class="modal-body">${content}</div></section></div>`;
+  if(state.route==='page'&&resourceLevel(state.page)<4)$$('[data-action="delete-page"],[data-action="move-page"]',$('.modal')).forEach(el=>el.remove());
+  if(state.route==='page'&&resourceLevel(state.page)<3){for(const action of ['lock-page','delete-page','verify-page','move-page','change-block-type','move-block','delete-block','restore-version'])$$(`[data-action="${action}"]`,$('.modal')).forEach(el=>el.remove());}
   requestAnimationFrame(()=>$('input:not([type=checkbox]),textarea,select,button', $('.modal-body'))?.focus());
 }
 function closeModal() {
@@ -379,12 +427,52 @@ async function renderSearch(q) {
 }
 function openRow(id,initialStatus) {
   const row=state.rows.find(r=>r.id===id);
-  const vals=row?valuesOf(row): {
-  };
+  const vals=row?valuesOf(row):state.database.row_permissions?.mode==='assigned'?{[state.database.row_permissions.property_id]:state.session?.member?.id||''}:{};
   const props=state.database.properties;
-  openModal(row?'프로젝트 상세':'새 프로젝트',`<form id="row-form" data-id="${esc(id||'')}" class="form-grid"><div class="row-properties">${props.map(p=>{const value=vals[p.id]??(p.type==='status'?initialStatus:'')??'';let input;if(['status','select','person'].includes(p.type)){let options=p.type==='person'?(state.workspace.members||[]).map(m=>m.name||m.email):optionsOf(p);if(value&&!options.includes(value))options.unshift(value);input=`<select name="${esc(p.id)}"><option value="">미지정</option>${options.map(o=>`<option ${o===value?'selected':''}>${esc(o)}</option>`).join('')}</select>`;}else if(p.type==='checkbox')input=`<input name="${esc(p.id)}" type="checkbox" ${value?'checked':''} style="width:auto;justify-self:start">`;else input=`<input ${['formula','rollup','created_time','last_edited_time'].includes(p.type)?'readonly':''} name="${esc(p.id)}" value="${esc(Array.isArray(value)?value.join(', '):value)}" type="${p.type==='number'?'number':p.type==='date'?'date':p.type==='url'?'url':p.type==='email'?'email':'text'}" ${p.type==='title'?'required':''}>`;return `<label>${esc(p.name)}${input}</label>`;}).join('')}</div><div class="form-actions">${row?`<button type="button" class="danger-btn" data-action="delete-row" data-id="${esc(id)}" style="margin-right:auto">삭제</button>`:''}<button type="button" class="outline-btn" data-action="close-modal">취소</button><button class="solid-btn">저장하기</button></div></form>`);
+  const editable=row?resourceLevel(row)>=3:canCreateRow();
+  if(!row&&!editable)throw new Error('항목 생성 권한이 없습니다.');
+  openModal(row?'프로젝트 상세':'새 프로젝트',`<form id="row-form" data-id="${esc(id||'')}" class="form-grid"><div class="row-properties">${props.map(p=>{const value=vals[p.id]??(p.type==='status'?initialStatus:'')??'';let input;if(p.type==='person'){const options=(state.workspace.members||[]).map(m=>({value:m.id,label:m.name||m.email||m.id}));if(value&&!options.some(o=>o.value===value))options.unshift({value,label:String(value)});input=`<select name="${esc(p.id)}"><option value="">미지정</option>${options.map(o=>`<option value="${esc(o.value)}" ${o.value===value?'selected':''}>${esc(o.label)}</option>`).join('')}</select>`;}else if(['status','select'].includes(p.type)){let options=optionsOf(p);if(value&&!options.includes(value))options.unshift(value);input=`<select name="${esc(p.id)}"><option value="">미지정</option>${options.map(o=>`<option ${o===value?'selected':''}>${esc(o)}</option>`).join('')}</select>`;}else if(p.type==='checkbox')input=`<input name="${esc(p.id)}" type="checkbox" ${value?'checked':''} style="width:auto;justify-self:start">`;else input=`<input ${['formula','rollup','created_time','last_edited_time'].includes(p.type)?'readonly':''} name="${esc(p.id)}" value="${esc(Array.isArray(value)?value.join(', '):value)}" type="${p.type==='number'?'number':p.type==='date'?'date':p.type==='url'?'url':p.type==='email'?'email':'text'}" ${p.type==='title'?'required':''}>`;return `<label>${esc(p.name)}${input}</label>`;}).join('')}</div><div class="form-actions">${row?`<button type="button" class="danger-btn" data-action="delete-row" data-id="${esc(id)}" style="margin-right:auto">삭제</button>`:''}<button type="button" class="outline-btn" data-action="close-modal">취소</button><button class="solid-btn">저장하기</button></div></form>`);
+  if(!editable){
+    $$('#row-form input,#row-form select,#row-form textarea').forEach(el=>el.disabled=true);
+    $('#row-form .solid-btn')?.remove();$('#row-form .danger-btn')?.remove();
+  }
+
 }
+function applyDatabaseControls() {
+  if(resourceLevel(state.database)<4)$$('[data-action="new-property"]').forEach(el=>el.remove());
+  if(!canCreateRow())$$('[data-action="add-row"]').forEach(el=>el.remove());
+  pruneAdministrativeControls();
+}
+async function renderAccounts(content) {
+  if(!isOwner())throw new Error('가족 계정은 소유자만 관리할 수 있습니다.');
+  content.innerHTML='<div class="empty">가족 계정을 불러오는 중…</div>';
+  const result=await api('/accounts');
+  state.accounts=result.accounts||[];
+  if(state.settingsTab!=='accounts'||!content.isConnected)return;
+  const ready=state.accounts.some(a=>a.role==='owner'&&a.active!==false&&a.has_account);
+  content.innerHTML=`<h3>각자의 계정으로, 함께 쓰는 공간</h3><p>가족마다 이메일과 비밀번호로 로그인하고, 페이지를 공유할 사람을 정하세요. 비밀번호는 저장 후 다시 표시하지 않습니다.</p><div class="info-box">${result.required?'멤버별 로그인이 활성화되어 있습니다.':'현재는 '+(state.session?.mode==='family'?'가족 공유 암호':'로컬 워크스페이스')+' 모드입니다. 소유자의 비밀번호를 먼저 설정한 뒤 멤버별 로그인을 활성화하세요.'}</div><div class="settings-list">${state.accounts.map(account=>`<div class="settings-item"><div><strong>${esc(account.name||account.email)}</strong><small>${esc(account.email)} · ${esc(account.role)}${account.active===false?' · 비활성':''}<br>${account.has_account?'이메일 로그인 설정됨':'비밀번호 미설정'}</small></div><div><button data-action="account-password" data-id="${esc(account.id)}" ${account.active===false?'disabled':''}>${account.has_account?'비밀번호 변경':'로그인 설정'}</button>${account.has_account?`<button data-action="account-remove" data-id="${esc(account.id)}">로그인 해제</button>`:''}</div></div>`).join('')}</div><div class="form-actions"><button class="outline-btn" data-action="account-add-member">+ 가족 멤버 추가</button>${!result.required?`<button class="solid-btn" data-action="enable-accounts" ${!ready?'disabled':''}>멤버별 로그인 활성화</button>`:''}</div>${!ready?'<p>활성 소유자 계정에 비밀번호를 설정해야 로그인을 활성화할 수 있습니다.</p>':''}`;
+}
+function openAccountPassword(id) {
+  if(!isOwner())throw new Error('소유자 권한이 필요합니다.');
+  const account=state.accounts?.find(account=>account.id===id);
+  if(!account)throw new Error('가족 멤버를 찾을 수 없습니다.');
+  openModal(account.has_account?'비밀번호 변경':'가족 로그인 설정',`<p><strong>${esc(account.name)}</strong><br>${esc(account.email)}</p><form id="account-password-form" data-id="${esc(id)}" data-existing="${account.has_account?'true':'false'}" class="form-grid"><label>새 비밀번호<input name="password" type="password" minlength="10" maxlength="1024" required autocomplete="new-password" placeholder="10자 이상 입력하세요"></label><label>비밀번호 확인<input name="password_confirm" type="password" minlength="10" maxlength="1024" required autocomplete="new-password"></label><div class="info-box">변경하면 이 계정의 기존 로그인 세션이 종료됩니다. 비밀번호는 안전한 방법으로 해당 가족에게 전달하세요.</div><div class="form-actions"><button type="button" class="outline-btn" data-action="accounts">계정 목록</button><button class="solid-btn">${account.has_account?'비밀번호 변경':'로그인 설정'}</button></div></form>`);
+}
+const accessChoices=[['','기본 권한 따르기'],['none','접근 불가 · 소유자 제외'],['view','보기'],['comment','댓글 작성'],['edit','편집'],['full','전체 권한 · 공유 관리']];
+async function openPermissions(kind,id) {
+  if(state.route==='page'){await saveTitle();await savePage();}
+  const result=await api('/'+kind+'/'+encodeURIComponent(id)+'/permissions');
+  state.sharing={kind,id,result};
+  const acl=result.permissions||{default:'workspace',members:{},groups:{},inherit:true};
+  const manage=result.can_manage===true;
+  const rows=(items,key)=>items.map(item=>`<label class="settings-item"><span><strong>${esc(item.name||item.email||item.id)}</strong><small>${esc(item.email||'')}${item.id===result.owner_id?' · 소유자':''}</small></span><select data-acl-kind="${key}" data-acl-id="${esc(item.id)}" aria-label="${esc(item.name||item.email||item.id)} 공유 권한" ${!manage||item.id===result.owner_id?'disabled':''}>${accessChoices.map(([value,label])=>`<option value="${value}" ${(item.id===result.owner_id?'full':(acl[key]?.[item.id]??''))===value?'selected':''}>${label}</option>`).join('')}</select></label>`).join('');
+  const database=kind==='databases'?(state.database?.id===id?state.database:state.workspace.databases.find(d=>d.id===id)):null;
+  const policy=result.row_permissions||database?.row_permissions||{mode:'all',allow_create:true,edit_assigned:true};
+  openModal(kind==='pages'?'페이지 공유 및 권한':'데이터베이스 공유 및 권한',`<p>링크를 전달해도 아래에서 허용한 사람만 열 수 있습니다. 워크스페이스 소유자는 모든 문서에 접근할 수 있습니다. 그 외 멤버의 명시적 차단은 그룹과 상위 페이지의 허용보다 우선합니다.</p><div style="display:flex;gap:8px;margin-bottom:20px"><input id="share-url" style="flex:1;min-width:0" readonly value="${esc(location.origin+'/#'+(kind==='pages'?'page':'database')+'/'+id)}"><button class="outline-btn" data-action="copy-link">${icon('link')}링크 복사</button></div>${!manage?'<div class="info-box">현재 공유 설정을 볼 수 있습니다. 소유자 또는 전체 권한을 가진 사람만 변경할 수 있습니다.</div>':''}<form id="permissions-form" data-kind="${kind}" data-id="${esc(id)}" class="form-grid" style="margin-top:18px"><label>기본 공유 범위<select name="default" ${!manage?'disabled':''}><option value="private" ${acl.default==='private'?'selected':''}>지정·상속된 사람만 · 비공개</option><option value="workspace" ${acl.default==='workspace'?'selected':''}>워크스페이스 멤버 · 편집 (게스트 제외)</option></select></label><label style="display:flex;align-items:center"><input name="inherit" type="checkbox" style="width:auto" ${acl.inherit!==false?'checked':''} ${!manage?'disabled':''}>${kind==='pages'?'상위 페이지와 팀스페이스 권한 상속':'팀스페이스 권한 상속'}</label><div><strong class="small">가족 멤버</strong><div class="settings-list">${rows(result.members||[],'members')}</div></div>${result.groups?.length?`<div><strong class="small">그룹</strong><div class="settings-list">${rows(result.groups,'groups')}</div></div>`:''}${database?`<div style="border-top:1px solid var(--line);padding-top:15px"><strong class="small">항목별 접근</strong><label style="margin-top:12px">보여줄 항목<select name="row_mode" ${!manage?'disabled':''}><option value="all" ${policy.mode!=='assigned'?'selected':''}>접근 가능한 모든 항목</option><option value="assigned" ${policy.mode==='assigned'?'selected':''}>내가 담당자인 항목만</option></select></label><label style="margin-top:12px">담당자 속성<select name="property_id" ${!manage?'disabled':''}><option value="">선택하세요</option>${(database.properties||[]).filter(p=>p.type==='person').map(p=>`<option value="${esc(p.id)}" ${policy.property_id===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label><label style="display:flex;align-items:center;margin-top:12px"><input type="checkbox" name="edit_assigned" style="width:auto" ${policy.edit_assigned!==false?'checked':''} ${!manage?'disabled':''}>담당 항목 편집 허용</label><label style="display:flex;align-items:center;margin-top:12px"><input type="checkbox" name="allow_create" style="width:auto" ${policy.allow_create!==false?'checked':''} ${!manage?'disabled':''}>새 항목 생성 허용</label></div>`:''}${manage?'<div class="form-actions"><button class="solid-btn">공유 설정 저장</button></div>':''}</form>`);
+}
+
 async function openSettings(tab='members') {
+  if(!isAdmin()){openModal('내 계정',`<p><strong>${esc(state.session?.member?.name||'가족')}</strong><br>${esc(state.session?.member?.email||'')}<br>${esc(state.session?.member?.role||'')}</p><button class="outline-btn" data-action="logout">로그아웃</button>`);return;}
   state.settingsTab=tab;
   try {
     state.advanced=await api('/advanced');
@@ -398,22 +486,23 @@ async function openSettings(tab='members') {
   $('.modal-body').style.padding='0';
   await renderSettings();
 }
-const settingsTabs=[['members','멤버 및 그룹'],['security','보안 및 권한'],['automations','자동화'],['forms','폼'],['sites','사이트'],['AI','AI 및 연결'],['analytics','워크스페이스 분석'],['features','기능 제공 현황'],['export','가져오기 / 내보내기']];
+const settingsTabs=[['accounts','가족 계정'],['members','멤버 및 그룹'],['security','보안 및 권한'],['automations','자동화'],['forms','폼'],['sites','사이트'],['AI','AI 및 연결'],['analytics','워크스페이스 분석'],['features','기능 제공 현황'],['export','가져오기 / 내보내기']];
 async function renderSettings() {
   const tab=state.settingsTab;
-  $('#settings-tabs').innerHTML=settingsTabs.map(([key,name])=>`<button data-action="settings-tab" data-tab="${key}" class="${tab===key?'active':''}">${name}</button>`).join('');
+  $('#settings-tabs').innerHTML=settingsTabs.filter(([key])=>!['accounts','security','analytics','export','AI'].includes(key)||isOwner()).map(([key,name])=>`<button data-action="settings-tab" data-tab="${key}" class="${tab===key?'active':''}">${name}</button>`).join('');
   const content=$('#settings-content'),a=state.advanced|| {
   };
   const header=(title,desc,button='')=>`<div class="section-heading"><h3>${title}</h3>${button}</div><p>${desc}</p>`;
   const add=(kind,label)=>`<button class="outline-btn" data-action="add-advanced" data-kind="${kind}">+ ${label}</button>`;
   const items=(kind,detail)=>`<div class="settings-list">${normalizeList(a[kind]).map(item=>`<div class="settings-item"><div><strong>${esc(item.name||item.title||item.email||item.id)}</strong><small>${esc(detail(item))}</small></div><div>${kind==='automations'?`<button data-action="run-automation" data-id="${esc(item.id)}">실행</button>`:''}${kind==='forms'?`<button data-action="fill-form" data-id="${esc(item.id)}">응답</button>`:''}${kind==='sites'?`<button data-action="site-link" data-id="${esc(item.id)}">링크</button>`:''}<button data-action="edit-advanced" data-kind="${kind}" data-id="${esc(item.id)}">관리</button></div></div>`).join('')||'<div class="empty">아직 항목이 없어요. 첫 번째 항목을 만들어 보세요.</div>'}</div>`;
-  if(tab==='members') {
+  if(tab==='accounts'){await renderAccounts(content);}
+  else if(tab==='members') {
     content.innerHTML=header('함께 만드는 워크스페이스','팀원을 초대하고, 역할과 그룹을 관리하세요.',add('members','멤버 초대'))+items('members',m=>`${m.email||''} · ${m.role||'member'}`)+`<div class="section-heading" style="margin-top:28px"><h3>그룹</h3>${add('groups','그룹 추가')}</div>`+items('groups',g=>`${(g.members||[]).length}명의 멤버`);
   }
   else if(tab==='security') {
     const s=a.settings||state.workspace.settings|| {
     };
-    content.innerHTML=header('보안 및 권한','워크스페이스의 데이터 접근 정책을 설정하세요.')+`<form class="form-grid" id="security-form">${field('워크스페이스 이름','workspace_name','Fountain 스튜디오','text',s.name||'Fountain 스튜디오')}<label style="display:flex;align-items:center"><input class="toggle" style="width:auto" type="checkbox" name="disable_guests" ${s.disable_guests?'checked':''}> 게스트 등록 제한</label><label style="display:flex;align-items:center"><input class="toggle" style="width:auto" type="checkbox" name="allow_public_sharing" ${!s.disable_public_sharing?'checked':''}> 공개 링크 공유 허용</label><label style="display:flex;align-items:center"><input class="toggle" style="width:auto" type="checkbox" name="allow_export" ${!s.disable_export?'checked':''}> 데이터 내보내기 허용</label>${field('휴지통 보존 기간 (일)','trash_retention_days','30','number',s.trash_retention_days??30)}${field('사용자 지정 도메인','custom_domain','예: home.example.com','text',s.custom_domain||'')}<button class="solid-btn">설정 저장</button></form><div class="info-box" style="margin-top:20px">로컬 워크스페이스입니다. 공유 암호를 설정하면 가족이 같은 공간에 로그인할 수 있습니다. 멤버별 로그인·역할 검증은 별도 인증 연동이 필요하며, 사용자 지정 도메인의 DNS·TLS는 직접 설정해야 합니다.</div><button class="outline-btn" style="margin-top:15px" data-action="activity">감사 로그 보기 ↗</button><button class="outline-btn" style="margin:15px 0 0 8px" data-action="logout">로그아웃</button>`;
+    content.innerHTML=header('보안 및 권한','워크스페이스의 데이터 접근 정책을 설정하세요.')+`<form class="form-grid" id="security-form">${field('워크스페이스 이름','workspace_name','Fountain 스튜디오','text',s.name||'Fountain 스튜디오')}<label style="display:flex;align-items:center"><input class="toggle" style="width:auto" type="checkbox" name="disable_guests" ${s.disable_guests?'checked':''}> 게스트 등록 제한</label><label style="display:flex;align-items:center"><input class="toggle" style="width:auto" type="checkbox" name="allow_public_sharing" ${!s.disable_public_sharing?'checked':''}> 공개 링크 공유 허용</label><label style="display:flex;align-items:center"><input class="toggle" style="width:auto" type="checkbox" name="allow_export" ${!s.disable_export?'checked':''}> 데이터 내보내기 허용</label>${field('휴지통 보존 기간 (일)','trash_retention_days','30','number',s.trash_retention_days??30)}${field('사용자 지정 도메인','custom_domain','예: home.example.com','text',s.custom_domain||'')}<button class="solid-btn">설정 저장</button></form><div class="info-box" style="margin-top:20px">로컬 워크스페이스입니다. 공유 암호를 설정하면 가족이 같은 공간에 로그인할 수 있습니다. 가족 계정에서 멤버별 이메일 로그인과 공유 권한을 설정할 수 있으며, 사용자 지정 도메인의 DNS·TLS는 직접 설정해야 합니다.</div><button class="outline-btn" style="margin-top:15px" data-action="activity">감사 로그 보기 ↗</button><button class="outline-btn" style="margin:15px 0 0 8px" data-action="logout">로그아웃</button>`;
   }
   else if(tab==='automations')content.innerHTML=header('작업에 흐름을 더하세요','조건에 맞는 데이터베이스 항목을 자동으로 업데이트합니다.',add('automations','자동화 만들기'))+items('automations',i=>`${i.enabled===false?'일시 중지':'활성'} · ${i.trigger||i.event||'수동 실행'}`);
   else if(tab==='forms')content.innerHTML=header('질문을 모아, 다음 단계로','폼을 만들고 응답을 데이터베이스에 수집하세요.',add('forms','폼 만들기'))+items('forms',i=>`${i.database_id||'연결된 데이터베이스 없음'} · ${(i.fields||[]).length}개 질문`);
@@ -458,7 +547,7 @@ function advancedForm(kind,id) {
   const select=(label,name,options,value)=>`<label>${label}<select name="${name}">${options.map(([v,n])=>`<option value="${esc(v)}" ${v===value?'selected':''}>${esc(n)}</option>`).join('')}</select></label>`;
   const checkbox=(label,name,checked)=>`<label style="display:flex;align-items:center"><input type="checkbox" style="width:auto" name="${name}" ${checked?'checked':''}>${label}</label>`;
   const nameField=field('이름','name','이름을 입력하세요','text',item.name||'');
-  if(kind==='members')content=nameField+field('이메일','email','name@company.com','email',item.email||'')+select('역할','role',[['owner','소유자'],['member','멤버'],['admin','관리자'],['guest','게스트']],item.role||'member')+'<div class="info-box">워크스페이스의 로컬 멤버를 등록합니다. 초대 이메일 전송과 계정 로그인에는 인증 서비스 연결이 필요합니다.</div>';
+  if(kind==='members')content=nameField+field('이메일','email','name@company.com','email',item.email||'')+select('역할','role',[['owner','소유자'],['member','멤버'],['admin','관리자'],['guest','게스트']],item.role||'member')+'<div class="info-box">워크스페이스의 로컬 멤버를 등록합니다. 초대 이메일은 자동 발송하지 않습니다. 소유자가 가족 계정에서 각 멤버의 로그인 비밀번호를 설정할 수 있습니다.</div>';
   else if(kind==='groups')content=nameField+`<label>그룹 멤버<select name="members" multiple style="min-height:100px">${(state.advanced.members||[]).map(m=>`<option value="${esc(m.id)}" ${(item.members||[]).includes(m.id)?'selected':''}>${esc(m.name||m.email)}</option>`).join('')}</select></label>`;
   else if(kind==='teamspaces')content=nameField+select('접근 범위','visibility',[['open','열린 팀스페이스'],['closed','비공개 팀스페이스'],['private','초대한 멤버 전용']],item.visibility||'open');
   else if(kind==='sites')content=nameField+select('게시할 페이지','page_id',pages.map(p=>[p.id,p.title]),item.page_id||pages[0]?.id)+field('사이트 주소','slug','our-team','text',item.slug||'')+field('검색 결과 제목','seo_title','사이트 제목','text',item.seo_title||'')+field('설명','description','페이지를 소개해 주세요','text',item.description||'')+checkbox('공개 사이트로 게시','published',!!item.published)+'<div class="info-box">게시하면 링크를 가진 누구나 페이지 내용을 열람할 수 있습니다.</div>';
@@ -513,7 +602,7 @@ async function historyModal() {
   await savePage();
   const d=await api('/pages/'+state.page.id);
   state.versions=d.versions||[];
-  openModal('페이지 기록',`<p>이전 버전을 복원하면 현재 내용이 새 버전으로 보관됩니다.</p>${state.versions.map(v=>`<div class="history-item"><div>버전 ${esc(v.revision||v.version||'')}<small>${esc(v.title||state.page.title)} · ${date(v.created_at)}</small></div><button data-action="restore-version" data-id="${esc(v.id)}">이 버전 복원</button></div>`).join('')||'<div class="empty">아직 저장된 이전 버전이 없습니다.</div>'}`);
+  openModal('페이지 기록',`<p>이전 버전을 복원하면 현재 내용이 새 버전으로 보관됩니다.</p>${state.versions.map(v=>`<div class="history-item"><div>버전 ${esc(v.revision||v.version||'')}<small>${esc(v.title||state.page.title)} · ${date(v.created_at)}</small></div>${pageEditable()?`<button data-action="restore-version" data-id="${esc(v.id)}">이 버전 복원</button>`:''}</div>`).join('')||'<div class="empty">아직 저장된 이전 버전이 없습니다.</div>'}`);
 }
 async function showTrash() {
   await refreshWorkspace();
@@ -527,7 +616,23 @@ async function showActivity() {
 }
 async function doAction(target) {
   const a=target.dataset.action,id=target.dataset.id;
+  if(administrativeActions.has(a)&&!isAdmin())throw new Error('관리자 권한이 필요합니다.');
+  const edits=['favorite','toggle-cover','change-icon','add-file','add-block','block-menu','change-block-type','set-block-type','delete-block','move-block','restore-version','lock-page','delete-page','verify-page','move-page'];
+  if(['delete-page','move-page'].includes(a)&&resourceLevel(state.page)<4)throw new Error('페이지 전체 권한이 필요합니다.');
+  if(edits.includes(a)&&resourceLevel(state.page)<3)throw new Error('페이지 편집 권한이 없습니다.');
+  if(['add-row','new-property'].includes(a)&&!(a==='add-row'?canCreateRow():resourceLevel(state.database)>=4))throw new Error('데이터베이스 편집 권한이 없습니다.');
   switch(a) {
+    case'accounts':await openSettings('accounts');break;
+    case'account-password':openAccountPassword(id);break;
+    case'account-add-member':await openSettings('members');advancedForm('members');break;
+    case'account-remove':{
+      if(!isOwner())throw new Error('소유자 권한이 필요합니다.');
+      const account=state.accounts.find(account=>account.id===id);
+      openModal('가족 로그인 해제',`<p>${esc(account?.name||'이 멤버')}의 비밀번호와 로그인 세션을 해제합니다. 멤버와 작성한 문서는 보관됩니다.</p><div class="form-actions"><button class="outline-btn" data-action="accounts">돌아가기</button><button class="danger-btn" data-action="confirm-remove-account" data-id="${esc(id)}">로그인 해제</button></div>`);break;
+    }
+    case'confirm-remove-account':await api('/accounts/'+encodeURIComponent(id),{},'DELETE');state.session=await api('/session');if(state.session.required&&!state.session.authenticated){closeModal();renderLogin();}else await openSettings('accounts');toast('가족 로그인을 해제했습니다.');break;
+    case'enable-accounts':openModal('멤버별 로그인 활성화',`<p>이제 각자의 이메일과 비밀번호로 로그인합니다. 현재 열린 모든 로그인 세션이 종료됩니다. 설정한 소유자 이메일과 비밀번호를 확인한 뒤 활성화하세요.</p><div class="form-actions"><button class="outline-btn" data-action="accounts">돌아가기</button><button class="solid-btn" data-action="confirm-enable-accounts">활성화하고 로그인하기</button></div>`);break;
+    case'confirm-enable-accounts':await api('/accounts/enable',{});state.session=await api('/session');closeModal();renderLogin();toast('멤버별 로그인을 활성화했습니다. 다시 로그인해 주세요.');break;
     case'reload':location.reload();break;
     case'home':await navigate('home');
     break;
@@ -541,10 +646,10 @@ async function doAction(target) {
     break;
     case'close-modal':closeModal();
     break;
-    case'logout':await api('/session', {
-    },'DELETE');
+    case'logout':await api('/session', {},'DELETE');
+    state.session=await api('/session');
     closeModal();
-    renderLogin();
+    if(state.session.required)renderLogin();else await boot();
     break;
     case'add-page':openModal('새로운 페이지',`<p>작은 아이디어가 시작되는 빈 페이지를 만드세요.</p><form id="page-form" class="form-grid" data-parent="${esc(target.dataset.parent||'')}">${field('페이지 이름','title','무엇을 기록할까요?')}${field('아이콘','icon','🌿','text','📄')}<div class="form-actions"><button class="solid-btn">페이지 만들기</button></div></form>`);
     break;
@@ -562,7 +667,7 @@ async function doAction(target) {
     break;
     case'change-icon':openModal('페이지 아이콘',form(field('이모지','icon','🌿','text',state.page.icon),'icon-form','변경하기'));
     break;
-    case'add-file':if(state.route!=='page'||state.page?.locked)throw new Error('잠긴 페이지에는 파일을 추가할 수 없습니다.');$('#attachment-input')?.click();break;
+    case'add-file':if(state.route!=='page'||!pageEditable())throw new Error('파일을 추가할 편집 권한이 없습니다.');$('#attachment-input')?.click();break;
     case'add-block':addBlock();
     break;
     case'block-menu': {
@@ -689,10 +794,10 @@ async function doAction(target) {
       }
       break;
     }
-    case'share':openModal('페이지 공유',`<p>같은 로컬 서버에 접근할 수 있는 사람에게 이 주소를 공유하세요.</p><input style="width:100%" readonly value="${esc(location.origin+'/#page/'+state.page.id)}"><button class="solid-btn" data-action="copy-link" style="margin-top:15px">${icon('link')}링크 복사</button><div class="info-box" style="margin-top:20px">게시용 페이지는 사이트 설정에서 만들 수 있습니다. 가족 로그인 모드에서는 게시 링크에도 로그인이 필요합니다.</div><button class="outline-btn" style="margin-top:15px" data-action="open-sites">사이트 게시 설정</button>`);
-    break;
+    case'share':await openPermissions('pages',state.page.id);break;
+    case'db-share':await openPermissions('databases',state.database.id);break;
     case'copy-link': {
-      const el=$('.modal-body input');
+      const el=$('#share-url')||$('.modal-body input');
       try {
         await navigator.clipboard.writeText(el.value);
         toast('링크를 복사했습니다.');
@@ -758,7 +863,7 @@ async function doAction(target) {
     break;
     case'edit-row':openRow(id);
     break;
-    case'delete-row':await api('/databases/'+state.database.id+'/rows/'+id, {
+    case'delete-row':if(resourceLevel(state.rows.find(row=>row.id===id))<3)throw new Error('항목 편집 권한이 없습니다.');await api('/databases/'+state.database.id+'/rows/'+id, {
     },'DELETE');
     closeModal();
     await reloadDatabase();
@@ -826,6 +931,7 @@ document.addEventListener('input',event=> {
 });
 document.addEventListener('change',event=> {
   const el=event.target;
+  if(el.dataset.check&&!pageEditable())return;
   if(el.id==='attachment-input'){const file=el.files?.[0];el.value='';attachFile(file).catch(error=>toast(error.message));return;}
   if(el.dataset.check) {
     const b=state.blocks.find(b=>b.id===el.dataset.check); b.checked=el.checked; el.closest('.block').classList.toggle('checked',el.checked); scheduleSave();
@@ -844,7 +950,8 @@ document.addEventListener('keydown',event=> {
   if(event.target.id==='search-input'&&event.key==='Enter') {
     event.preventDefault(); $('.search-result')?.click(); return;
   }
-  const el=event.target.closest('.block-content'); if(!el)return; const block=el.closest('.block'),id=block.dataset.id,b=state.blocks.find(b=>b.id===id); if(event.key==='Enter'&&!event.shiftKey&&b.type!=='code') {
+  const el=event.target.closest('.block-content'); if(!el)return; if(!pageEditable())return;
+  const block=el.closest('.block'),id=block.dataset.id,b=state.blocks.find(b=>b.id===id); if(event.key==='Enter'&&!event.shiftKey&&b.type!=='code') {
     event.preventDefault(); if($('.slash-menu')) {
       $('.slash-menu button')?.click(); return;
     }
@@ -873,7 +980,7 @@ document.addEventListener('keydown',event=> {
 });
 let dragId=null;
 document.addEventListener('dragstart',e=> {
-  const b=e.target.closest('.block'); if(!b||e.target.closest('[contenteditable=true]')) {
+  const b=e.target.closest('.block'); if(!pageEditable()||!b||e.target.closest('[contenteditable=true]')) {
     e.preventDefault(); return;
   }
   dragId=b.dataset.id; b.classList.add('dragging'); e.dataTransfer.setData('text/plain',dragId);
@@ -890,9 +997,35 @@ document.addEventListener('dragend',()=> {
 document.addEventListener('submit',async event=> {
   const formElement=event.target; if(!formElement.id)return; event.preventDefault(); const data=Object.fromEntries(new FormData(formElement)),submit=$('button[type=submit],button.solid-btn',formElement); if(submit)submit.disabled=true; try {
     switch(formElement.id) {
-      case'login-form':await api('/session', {
-        token:data.token
-      }); await boot(); break; case'page-form': {
+      case'account-password-form':{
+        if(!isOwner())throw new Error('소유자 권한이 필요합니다.');
+        if(data.password!==data.password_confirm)throw new Error('비밀번호 확인이 일치하지 않습니다.');
+        const accountId=formElement.dataset.id;
+        await api('/accounts'+(formElement.dataset.existing==='true'?'/'+encodeURIComponent(accountId):''),formElement.dataset.existing==='true'?{password:data.password}:{member_id:accountId,password:data.password},formElement.dataset.existing==='true'?'PATCH':'POST');
+        state.session=await api('/session');
+        if(state.session.required&&!state.session.authenticated){closeModal();renderLogin();toast('비밀번호를 변경했습니다. 다시 로그인해 주세요.');}
+        else{await openSettings('accounts');toast('가족 로그인 비밀번호를 저장했습니다.');}
+        break;
+      }
+      case'permissions-form':{
+        const sharing=state.sharing;
+        if(!sharing?.result.can_manage)throw new Error('공유 설정을 변경할 권한이 없습니다.');
+        const permissions={default:data.default,inherit:formElement.elements.namedItem('inherit').checked,members:{},groups:{}};
+        for(const select of $$('[data-acl-kind]',formElement)){
+          if(select.disabled||select.value==='')continue;
+          permissions[select.dataset.aclKind][select.dataset.aclId]=select.value;
+        }
+        const payload={permissions};
+        if(sharing.kind==='databases'){
+          if(data.row_mode==='assigned'&&!data.property_id)throw new Error('담당자를 확인할 사람 속성을 선택해 주세요.');
+          payload.row_permissions={mode:data.row_mode||'all',property_id:data.property_id||'',edit_assigned:formElement.elements.namedItem('edit_assigned').checked,allow_create:formElement.elements.namedItem('allow_create').checked};
+        }
+        await api('/'+sharing.kind+'/'+encodeURIComponent(sharing.id)+'/permissions',payload,'PATCH');
+        await refreshWorkspace();
+        await navigate(sharing.kind==='pages'?'page':'database',sharing.id);
+        toast('공유 설정을 저장했습니다.');break;
+      }
+      case'login-form':await api('/session',state.session?.mode==='accounts'?{email:data.email,password:data.password}:{token:data.token}); await boot(); break; case'page-form': {
         const p=await api('/pages', {
           title:data.title||'제목 없음',icon:data.icon||'📄',parent_id:formElement.dataset.parent||null
         }); await refreshWorkspace(); await navigate('page',p.id||p.page.id); break;
@@ -984,14 +1117,17 @@ window.addEventListener('beforeunload',event=> {
 });
 function renderLogin() {
   state.loaded=false;
+  state.workspace=null;state.page=null;state.blocks=[];state.database=null;state.rows=[];state.dirty=false;state.titlePending=null;clearTimeout(state.saveTimer);clearTimeout(state.titleTimer);
   $('#sidebar').innerHTML='';
   $('#topbar').innerHTML='';
-  $('#main').innerHTML=`<div class="login-wrap"><div class="brand"><span class="brand-mark">f</span>fountain</div><h1>우리 가족의 작은 작업실</h1><p>가족과 나누는 문서, 아이디어, 일상.<br>공유 암호를 입력하고 함께 시작하세요.</p><form class="form-grid" id="login-form"><label>공유 암호<input name="token" type="password" required autocomplete="current-password" autofocus placeholder="가족 공유 암호"></label><button class="solid-btn">워크스페이스 열기</button><div id="login-error" role="alert"></div></form><small class="muted">Fountain · 구독 없이, 함께 쓰는 공간</small></div>`;
+  $('#main').innerHTML=`<div class="login-wrap"><div class="brand"><span class="brand-mark">f</span>fountain</div><h1>우리 가족의 작은 작업실</h1><p>가족과 나누는 문서, 아이디어, 일상.<br>${state.session?.mode==='accounts'?'내 이메일과 비밀번호로 로그인하세요.':'공유 암호를 입력하고 함께 시작하세요.'}</p><form class="form-grid" id="login-form">${state.session?.mode==='accounts'?'<label>이메일<input name="email" type="email" required autocomplete="username" autofocus placeholder="name@example.com"></label><label>비밀번호<input name="password" type="password" required autocomplete="current-password" placeholder="계정 비밀번호"></label>':'<label>공유 암호<input name="token" type="password" required autocomplete="current-password" autofocus placeholder="가족 공유 암호"></label>'}<button class="solid-btn">워크스페이스 열기</button><div id="login-error" role="alert"></div></form><small class="muted">Fountain · 구독 없이, 함께 쓰는 공간</small></div>`;
   document.body.classList.add('login-mode');
 }
 async function boot() {
   try {
     document.body.classList.remove('login-mode');
+    state.session=await api('/session');
+    if(!state.session.authenticated&&state.session.required){renderLogin();return;}
     await refreshWorkspace();
     state.loaded=true;
     const [route,id]=location.hash.slice(1).split('/');

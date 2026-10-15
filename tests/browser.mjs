@@ -128,13 +128,13 @@ try {
   await clickAction('edit-row', `[data-id="${createdRowId}"]`);
   await page.locator('#row-form [name="smoke_done"]').check();
   await page.locator('#row-form [name="smoke_labels"]').fill('가족, 개인');
-  await page.locator('#row-form [name="smoke_files"]').fill('file-one, file-two');
+  await page.locator('#row-form [name="smoke_files"]').fill(createdAttachmentId);
   await page.locator('#row-form button.solid-btn').click();
   await page.waitForSelector('.modal', { state: 'detached' });
   const typedRow = (await api('/databases/projects')).rows.find(r => r.id === createdRowId);
   assert.equal(typedRow.properties.smoke_done, true);
   assert.deepEqual(typedRow.properties.smoke_labels, ['가족', '개인']);
-  assert.deepEqual(typedRow.properties.smoke_files, ['file-one', 'file-two']);
+  assert.deepEqual(typedRow.properties.smoke_files, [createdAttachmentId]);
   await api('/databases/projects', { properties: originalProperties }, 'PATCH');
   originalProperties = null;
   await page.reload();

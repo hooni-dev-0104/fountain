@@ -41,3 +41,15 @@ python3 -m fountain.server --data .data/restored.db
 ```
 
 브라우저 통합 검증은 별도의 테스트 DB로 실행한 서버를 대상으로 `node tests/browser.mjs`를 실행합니다. Chrome과 Playwright가 이미 설치된 환경을 사용하며, 필요한 경우 `FOUNTAIN_PLAYWRIGHT`와 `FOUNTAIN_CHROME`으로 경로를 지정합니다. `tests/browser-advanced.mjs`는 `FOUNTAIN_URL`과 테스트용 `FOUNTAIN_ACCESS_TOKEN`이 설정된 가족 인증 서버를 대상으로 실행합니다. 테스트는 데이터를 추가·수정하므로 실제 가족 DB 대신 임시 DB를 사용하세요.
+
+가족 구성원마다 계정과 다른 권한이 필요하면 설정 → 가족 계정에서 소유자와 가족의 비밀번호를 만든 뒤 **개별 계정 로그인 활성화**를 선택합니다. 기존 공용 세션은 종료되며 각자 이메일로 다시 로그인합니다. 활성화 후에는 서버 재시작 시 공용 암호 환경 변수가 없어도 계정 로그인이 필요합니다. LAN 실행은 여전히 `--allowed-host`를 지정해야 합니다.
+
+페이지의 공유 버튼에서 기본 공유 범위와 멤버별 보기·댓글·편집·공유 관리 권한을 설정합니다. DB 공유에서는 담당자 속성에 해당 멤버 ID나 이메일이 있는 행만 허용할 수 있습니다. 작업공간 소유자는 비공개 자료도 관리할 수 있습니다. 비밀번호를 잊었을 때는 서버 PC에서 아래 명령을 실행하고 숨겨진 입력으로 새 암호를 설정합니다.
+
+```sh
+python3 -m fountain.auth reset local --data .data/fountain.db
+```
+
+`node tests/browser-accounts.mjs`는 임시 DB와 별도 서버를 자동으로 만들어 계정 활성화·개별 로그인·공유 권한·담당 행·세션 종료를 검증합니다. 실제 가족 계정을 변경하지 않습니다.
+
+JSON·Markdown·CSV 가져오기는 새 문서와 DB를 가져온 사람의 비공개 자료로 만듭니다. 다른 사람에게 보이려면 공유 범위를 지정하세요. 계정·권한까지 그대로 복원하려면 전체 SQLite 백업을 사용합니다.

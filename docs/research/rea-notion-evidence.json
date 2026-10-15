@@ -1,0 +1,190 @@
+{
+  "schema": "fountain.rea-research-metadata.v1",
+  "researched_at": "2026-10-16",
+  "scope": "Four unauthenticated public web assets, not the full Notion app",
+  "discovery_url": "https://www.notion.so/login",
+  "node_version": "24.14.1",
+  "npm_version": "11.11.0",
+  "rea_version": "4.1.0",
+  "targets": [
+    {
+      "path": "94168-34f2bc3c0226c22a.js",
+      "url": "https://www.notion.so/_assets/94168-34f2bc3c0226c22a.js",
+      "bytes": 20176,
+      "sha256": "0d5907a1bd661dffe1bdaa007c7a6aafdc484b108f373068a130a12fd45c1311"
+    },
+    {
+      "path": "95209-da5ed98f9c9e58df.js",
+      "url": "https://www.notion.so/_assets/95209-da5ed98f9c9e58df.js",
+      "bytes": 23521,
+      "sha256": "8fb743452ef2a57e2b454d541bfaf42d67012c59efd8618dbc67395be6c56894"
+    },
+    {
+      "path": "ClientFramework-5320b42d113ec403.js",
+      "url": "https://www.notion.so/_assets/ClientFramework-5320b42d113ec403.js",
+      "bytes": 217102,
+      "sha256": "3b91d83e39a7ecee776da179642954538af387ca65c797572380caa8faa1beb0"
+    },
+    {
+      "path": "contentPreview-9c63c27140a19dcc.js",
+      "url": "https://www.notion.so/_assets/contentPreview-9c63c27140a19dcc.js",
+      "bytes": 11609,
+      "sha256": "764434aab8ab856d377940bd23915f37bea7803368274cc54799cae8757a0e7a"
+    }
+  ],
+  "evidence": {
+    "evidence_id": "ev_2d55d0c6106189b65c355282f2fd6538fe2525f4233ec52613dcccb1b832360c",
+    "authority": "shipped-artifact",
+    "confidence": "derived",
+    "operation": "analyze_javascript_application",
+    "provider": {
+      "id": "rea-javascript-application",
+      "name": "REA JavaScript application analyzer",
+      "version": "1"
+    },
+    "subject": {
+      "name": "target",
+      "digest": {
+        "sha256": "bfeac2ce2d9e82da2ade7b02a71afff896aeb0eb5b5d205b124e1d733e9a3346"
+      },
+      "format": "directory"
+    },
+    "parameters": {
+      "format": "auto"
+    },
+    "root_artifact_sha256": "bfeac2ce2d9e82da2ade7b02a71afff896aeb0eb5b5d205b124e1d733e9a3346",
+    "inventory_manifest_id": "agm_bd13b24b588755fe4ccfdcd95e7186602bc0ed326f1feb644ba774398a313fc5",
+    "inventory_graph_sha256": "d8ee58e470c7004aedb7efc9bca4d14de36576b791efa43cfe1236f3e4fa36f5",
+    "graph_id": "jag_6bc28cc47fae58ddd4ea378245ac24eafc6fec3ebe04f92f98c1ca0bfb751e5d",
+    "statistics": {
+      "relevant_files": 4,
+      "nested_asar_containers": 0,
+      "text_bytes_read": 272408,
+      "invalid_utf8_files": 0,
+      "parsed_javascript_files": 4,
+      "visited_ast_nodes": 77327,
+      "findings": 1402,
+      "modules": 331,
+      "parse_failures": 0,
+      "truncated_scopes": 0
+    },
+    "node_kinds": {
+      "javascript-module": 503,
+      "javascript-chunk": 8,
+      "storage": 10,
+      "endpoint": 11,
+      "javascript-asset": 4,
+      "artifact": 1
+    },
+    "graph_coverage": {
+      "status": "complete",
+      "truncated": false,
+      "omitted_count": 0,
+      "limits": []
+    },
+    "summary": {
+      "browser_windows": 0,
+      "explicit_web_preferences": 0,
+      "preload_entrypoints": 0,
+      "context_bridge_apis": 0,
+      "exposed_api_members": 0,
+      "ipc": {
+        "operations": 0,
+        "literal_channels": 0,
+        "dynamic_channel_operations": 0,
+        "renderer_transmissions": 0,
+        "renderer_listeners": 0,
+        "main_handlers": 0,
+        "paired_renderer_transmissions": 0,
+        "ambiguous_renderer_transmissions": 0,
+        "unpaired_literal_renderer_transmissions": 0
+      },
+      "sender_validation_observations": 0,
+      "utility_processes": 0,
+      "resolved_utility_entrypoints": 0,
+      "native_addon_bindings": 0,
+      "resolved_native_addon_bindings": 0
+    },
+    "limitations": [
+      "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
+      "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
+      "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
+      "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
+      "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code."
+    ]
+  },
+  "selected_observations": [
+    {
+      "node_id": "jag_node_47781403cf30ec1d04891e4de6de1ba463de86da6bfcdd51032a6cbe7bdcd9f9",
+      "kind": "storage",
+      "properties": {
+        "storage_kind": "local-storage",
+        "name": "boot:exp:content_preview",
+        "mechanism": "call:globalThis.localStorage.getItem"
+      },
+      "authority": "ast-static-analysis",
+      "state": "observed",
+      "confidence": "exact",
+      "artifact_sha256": "764434aab8ab856d377940bd23915f37bea7803368274cc54799cae8757a0e7a",
+      "location": {
+        "kind": "source-range",
+        "source": "contentPreview-9c63c27140a19dcc.js",
+        "start": {
+          "line": 1,
+          "column": 11195
+        },
+        "end": {
+          "line": 1,
+          "column": 11254
+        }
+      }
+    },
+    {
+      "node_id": "jag_node_7817021e67c37e2829d29c60236b883cd628a648cc3639d1100e03f02c6535ae",
+      "kind": "storage",
+      "properties": {
+        "storage_kind": "local-storage",
+        "name": "LRU:KeyValueStore2:sidebar",
+        "mechanism": "call:globalThis.localStorage.getItem"
+      },
+      "authority": "ast-static-analysis",
+      "state": "observed",
+      "confidence": "exact",
+      "artifact_sha256": "764434aab8ab856d377940bd23915f37bea7803368274cc54799cae8757a0e7a",
+      "location": {
+        "kind": "source-range",
+        "source": "contentPreview-9c63c27140a19dcc.js",
+        "start": {
+          "line": 1,
+          "column": 7913
+        },
+        "end": {
+          "line": 1,
+          "column": 7974
+        }
+      }
+    }
+  ],
+  "raw_evidence": {
+    "retained_in_repository": false,
+    "bytes": 270811478,
+    "sha256": "71e684e734a1ee8d52fe6bc2e6e95fc2df7e7989ef795b3a10792a942df2a066"
+  },
+  "latest_attempt": {
+    "rea_version": "6.5.0",
+    "exit_code": 1,
+    "code": "execution_failure",
+    "diagnostics": {
+      "source_path": "94168-34f2bc3c0226c22a.js",
+      "phase": "startup",
+      "message": "macOS process ownership helper compilation failed via xcrun (compiler result: exit code 69): You have not agreed to the Xcode license agreements. Please run 'sudo xcodebuild -license' from within a Terminal window to review and agree to the Xcode and Apple SDKs license."
+    },
+    "partial_evidence_id": "ev_9d57e93840bec964ee4b22d14aedb0341d984f758da26076a82f736055cff4a2"
+  },
+  "limitations": [
+    "Complete graph coverage applies only to this four-file input, not to Notion overall.",
+    "No paid-plan authorization, server behavior, desktop IPC, or AI provider behavior was tested.",
+    "Committed metadata is a projection, not an authenticated complete Evidence record.",
+    "No Notion source or proprietary bundles are committed."
+  ]
+}

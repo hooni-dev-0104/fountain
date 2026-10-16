@@ -83,6 +83,7 @@ function pruneAdministrativeControls() {
 const serverOnlyActions=new Set(['new-database','teamspace','history','share','db-share','lock-page','delete-page','verify-page','move-page','duplicate-page','copy-blocks','new-property','task-settings','duplicate-row','restore-version','restore-page','trash','settings','ai','new-teamspace']);
 const activeMutationStatuses=new Set(['pending','deferred','applied']);
 function closeMutations() {
+  if(state.recoveryImport)closeModal();
   state.mutations?.close();state.mutations=null;state.mutationRecords=[];for(const channel of state.bodySyncChannels||[])channel.close();state.bodySyncChannels=new Set();
   clearTimeout(state.mutationRefreshTimer);
 }
@@ -218,14 +219,112 @@ function mutationError(record) {
 function renderMutationQueue() {
   const list=$('#mutation-queue-list');if(!list)return;
   const records=state.mutationRecords||[];
-  const names={pending:nativeCacheOnly()?'앱 캐시에 보관 · 동기화 대기':'기기에 저장 · 동기화 대기',deferred:'선행 작업 완료 대기',applied:'서버 저장됨 · 최신 내용 확인 중',conflict:'같은 내용이 변경되어 확인 필요',denied:'변경 권한 확인 필요',invalid:'내용 또는 구조 확인 필요'};
+  const names={paused:'가져옴 · 적용 전 확인',pending:nativeCacheOnly()?'앱 캐시에 보관 · 동기화 대기':'기기에 저장 · 동기화 대기',deferred:'선행 작업 완료 대기',applied:'서버 저장됨 · 최신 내용 확인 중',conflict:'같은 내용이 변경되어 확인 필요',denied:'변경 권한 확인 필요',invalid:'내용 또는 구조 확인 필요'};
   list.innerHTML=records.length?records.map(record=>`<article class="mutation-card" data-mutation-id="${esc(record.id)}" data-mutation-status="${esc(record.status)}"><div class="mutation-heading"><strong>${esc(mutationTitle(record))}</strong><span>${esc(names[record.status]||'확인 필요')}</span></div><p>${esc(mutationDetail(record))}</p>${record.result?.error||record.error?`<p class="mutation-error">${esc(mutationError(record))}</p>`:''}<div class="mutation-actions"><button class="outline-btn" data-action="export-mutation" data-id="${esc(record.id)}">복구 내용 내려받기</button>${!activeMutationStatuses.has(record.status)?`<button class="outline-btn" data-action="reapply-mutation" data-id="${esc(record.id)}" ${state.offline?'disabled':''}>현재 값 기준으로 다시 적용</button>`:''}${record.status!=='applied'?`<button class="outline-btn" data-action="drop-mutation" data-id="${esc(record.id)}">변경 폐기</button>`:''}</div></article>`).join(''):`<div class="empty">동기화할 변경이 없습니다.<br>${nativeCacheOnly()?'앱 캐시에 보관한 데이터는 연결 없이도 열 수 있습니다. 캐시를 지우면 미전송 변경을 잃을 수 있습니다.':'기기에 저장한 데이터는 연결 없이도 열 수 있습니다.'}</div>`;
   $('#sync-now')?.toggleAttribute('disabled',state.offline);
 }
+function clearRecoveryImport() {
+  const view=state.recoveryImport;state.recoveryImport=null;if(!view)return;
+  view.sequence++;view.rawText=null;
+  if(view.prepared?.token)view.scope.controller.discardPrepared?.(view.prepared.token);
+  view.prepared=null;
+}
+function recoveryImportCurrent(view,sequence=view?.sequence) {
+  const scope=view?.scope,currentId=state.route==='page'?state.page?.id:state.route==='database'?state.database?.id:null;
+  return !!scope&&state.recoveryImport===view&&view.sequence===sequence&&view.modal?.isConnected&&$('.mutation-modal')===view.modal&&state.mutations===scope.controller&&state.offlineProfile?.id===scope.profileId&&state.session?.cache_binding===scope.binding&&state.session?.member?.id===scope.memberId&&state.workspace?.workspace_id===scope.workspaceId&&state.route===scope.route&&currentId===scope.routeId;
+}
+function recoveryImportError(error) {
+  if(error.code==='TARGET_PAGE_REQUIRED')return '본문을 복구할 문서를 선택한 뒤 미리보기를 다시 확인해 주세요.';
+  if(error.code==='IMPORT_SOURCE_MISMATCH')return '다른 서버나 다른 사용자의 복구 파일은 이 계정에 가져올 수 없습니다.';
+  if(error.code==='IMPORT_PREVIEW_STALE'||error.status===409)return '미리보기 이후 서버의 내용이나 권한이 바뀌었습니다. 미리보기를 다시 확인한 뒤 가져와 주세요.';
+  if(error.code==='INVALID_RECOVERY'||error instanceof SyntaxError)return '지원하지 않거나 손상된 복구 JSON입니다. 원본 파일을 확인해 주세요.';
+  return /[가-힣]/.test(error.message||'')?error.message:'복구 내용을 확인하지 못했습니다. 연결 상태와 현재 권한, 원본 파일을 확인해 주세요.';
+}
+function recoveryPreviewText(value) {
+  let text=typeof value==='object'&&value!==null?JSON.stringify(value):String(value??'');
+  return esc(text.length>2500?text.slice(0,2500)+'… (긴 내용의 일부만 표시)':text);
+}
+function recoveryDatabase(item) { return state.workspace?.databases?.find(database=>database.id===item?.databaseId)||(state.database?.id===item?.databaseId?state.database:null); }
+function recoveryRowName(row,item) {
+  const property=item?.titlePropertyId||recoveryDatabase(item)?.properties?.find(property=>property.type==='title')?.id;
+  return String(row?.properties?.[property]||row?.properties?.name||row?.properties?.title||row?.title||'항목');
+}
+function recoveryItemTitle(item) {
+  if(item.title&&item.title!==item.targetId)return item.title;
+  return item.kind?.startsWith('row.')?recoveryRowName(item.after||item.before,item):({'page.create':'새 문서 사본','page.patch':'문서 정보 수정',body:'본문 복구'})[item.kind]||'복구 내용';
+}
+function recoveryPreviewValue(value,item={}) {
+  if(value===null||value===undefined)return '<span class="muted">해당 내용 없음</span>';
+  if(Array.isArray(value)&&value.every(block=>block&&typeof block==='object'&&typeof block.type==='string'&&typeof block.text==='string'))return value.slice(0,50).map(block=>`<div class="recovery-preview-block"><small>${versionAttributes(block)}</small><div class="${block.type==='code'?'recovery-code':''}">${block.type==='file'?'📎 ':''}${recoveryPreviewText(block.text)}${block.type==='file'&&Number.isFinite(block.size)?` <small>${esc(sizeLabel(block.size))}</small>`:''}</div></div>`).join('')+(value.length>50?`<small>총 ${value.length}개 블록 중 앞의 50개를 표시합니다.</small>`:'');
+  if(value&&typeof value==='object'&&!Array.isArray(value)){
+    const page=item.kind?.startsWith('page.'),labels={title:'제목',icon:'아이콘',cover:'표지',favorite:'즐겨찾기',parent_id:'상위 문서',parent_row_id:'상위 항목',depends_on:'선행 작업',name:'이름',status:'상태',priority:'우선순위',due:'날짜'};
+    const source=page?Object.fromEntries(['title','icon','cover','favorite','parent_id'].filter(key=>Object.hasOwn(value,key)).map(key=>[key,value[key]])):value.properties||value;
+    const fields=Object.entries(source).filter(([key])=>page||value.properties||!['id','owner_id','access_level','permissions','revision','archived','locked','teamspace_id','blocks'].includes(key)).map(([key,raw])=>{
+      let display=raw;
+      if(page&&key==='favorite')display=raw?'켜짐':'꺼짐';
+      if(page&&key==='cover')display=raw?'표지 있음':'표지 없음';
+      if(page&&key==='parent_id'){if(!raw)display='최상위 문서';else{display=state.workspace?.pages?.find(page=>page.id===raw)?.title||state.recoveryImport?.prepared?.items?.find(page=>page.targetId===raw)?.after?.title;if(!display)return '';}}
+      const label=page?labels[key]:item.propertyLabels?.[key]||recoveryDatabase(item)?.properties?.find(property=>property.id===key)?.name||labels[key]||'속성';
+      return `<div><dt>${esc(label)}</dt><dd>${recoveryPreviewText(display)}</dd></div>`;
+    }).join('');
+    return `<dl class="recovery-value-list">${fields}</dl>${page&&item.kind==='page.create'&&Array.isArray(value.blocks)?`<h4>복구 본문 · ${value.blocks.length}개 블록</h4>${recoveryPreviewValue(value.blocks,{kind:'body'})}`:''}`;
+  }
+  return recoveryPreviewText(value);
+}
+function renderRecoveryImport(view) {
+  if(!recoveryImportCurrent(view))return;
+  const panel=$('#recovery-import-preview',view.modal);if(!panel)return;
+  const prepared=view.prepared;
+  panel.innerHTML=view.error?`<div class="info-box" role="alert">${esc(view.error)}</div>`:view.busy?'<p role="status">원본과 현재 서버 내용을 확인하고 있습니다…</p>':view.result?`<div class="recovery-import-success" role="status"><strong>${view.result.duplicate?'이미 가져온 복구 파일입니다.':'복구 대기열에 보관했습니다.'}</strong><p>서버에 자동으로 반영하지 않았습니다. 변경은 ‘현재 값 기준으로 다시 적용’, 본문은 문서의 ‘보관된 편집 내용’에서 확인한 뒤 적용하세요.</p></div>`:'';
+  if(prepared){
+    const labels={records:'저장된 변경',localPages:'문서 사본',drafts:'본문 복구',blocks:'블록',createdPages:'새 문서 사본',createdRows:'새 항목 사본',updatedPages:'문서 정보 수정',updatedRows:'항목 수정',deletedRows:'삭제 대상'};
+    panel.innerHTML+=`<div class="recovery-import-heading"><strong>${esc(view.fileName||'복구 파일')} 미리보기</strong><span>${prepared.kind==='body'?'본문을 복구 내용으로 복사':'변경을 새 복구 항목으로 보관'}</span></div><div class="recovery-import-summary">${Object.entries(prepared.summary||{}).filter(([,count])=>count).map(([key,count])=>`<span>${esc(labels[key]||key)} ${esc(count)}</span>`).join('')}</div>${prepared.warnings?.length?`<ul class="recovery-import-warnings">${prepared.warnings.map(warning=>`<li>${esc(warning)}</li>`).join('')}</ul>`:''}<div class="recovery-import-items">${(prepared.items||[]).slice(0,view.itemLimit||30).map(item=>`<article class="recovery-import-item"><strong>${esc(recoveryItemTitle(item))}</strong><div class="recovery-import-pair${item.kind==='body'?' recovery-import-body':''}">${item.kind==='body'?'':`<section><h4>현재 내용</h4>${recoveryPreviewValue(item.before,item)}</section>`}<section><h4>${item.kind==='body'?'가져올 복구 내용':'가져올 내용'}</h4>${recoveryPreviewValue(item.after,item)}</section></div>${item.deleteRows?.length?`<div class="recovery-delete-range"><strong>현재 삭제 범위 ${item.deleteRows.length}개</strong><ul>${item.deleteRows.slice(0,100).map(row=>`<li>${esc(recoveryRowName(row,item))}</li>`).join('')}</ul></div>`:''}</article>`).join('')}</div>${prepared.items?.length>(view.itemLimit||30)?'<button class="outline-btn" data-action="recovery-preview-more">미리보기 더 보기</button>':''}<div class="recovery-import-confirm"><p>가져오기는 이 로그인에 적용 전 상태로 보관합니다. 현재 문서나 서버 내용을 바로 변경하지 않습니다.</p><button class="solid-btn" data-action="confirm-recovery-import" ${view.staging?'disabled':''}>${view.staging?'복구 내용을 보관하는 중…':'확인하고 복구 대기열에 가져오기'}</button></div>`;
+  }
+  const target=$('#recovery-target-page',view.modal);if(target)target.disabled=prepared?.kind==='typed'||!!view.staging;
+  const retry=$('[data-action="prepare-recovery-import"]',view.modal);if(retry)retry.disabled=!view.rawText||view.busy||view.staging;
+}
+function invalidateRecoveryPrepared(view) {
+  if(view.prepared?.token)view.scope.controller.discardPrepared?.(view.prepared.token);
+  view.prepared=null;view.result=null;view.error=null;view.itemLimit=30;
+}
+async function prepareRecoveryImport(view=state.recoveryImport) {
+  if(!recoveryImportCurrent(view)||!view.rawText)return;
+  invalidateRecoveryPrepared(view);const sequence=++view.sequence;view.staging=false;view.busy=true;renderRecoveryImport(view);
+  const current=()=>recoveryImportCurrent(view,sequence);
+  try{
+    const targetPageId=$('#recovery-target-page',view.modal)?.value||undefined;
+    let prepared;try{prepared=await view.scope.controller.prepareImport(view.rawText,{isCurrent:current});}catch(error){if(error.code!=='TARGET_PAGE_REQUIRED'||!targetPageId||!current())throw error;prepared=await view.scope.controller.prepareImport(view.rawText,{targetPageId,isCurrent:current});}
+    if(!current()){view.scope.controller.discardPrepared?.(prepared.token);return;}
+    view.prepared=prepared;
+  }catch(error){if(current())view.error=recoveryImportError(error);}
+  finally{if(current()){view.busy=false;renderRecoveryImport(view);}}
+}
+async function readRecoveryFile(file) {
+  const view=state.recoveryImport;if(!file||!recoveryImportCurrent(view))return;
+  invalidateRecoveryPrepared(view);const sequence=++view.sequence;view.rawText=null;view.fileName=file.name;view.busy=false;view.staging=false;
+  if(file.size>16*1024*1024){view.error='복구 JSON은 최대 16 MiB까지 선택할 수 있습니다.';renderRecoveryImport(view);return;}
+  view.busy=true;renderRecoveryImport(view);
+  try{const text=await file.text();if(!recoveryImportCurrent(view,sequence))return;view.rawText=text;view.busy=false;await prepareRecoveryImport(view);}catch(error){if(recoveryImportCurrent(view,sequence)){view.busy=false;view.error=recoveryImportError(error);renderRecoveryImport(view);}}
+}
+async function confirmRecoveryImport() {
+  const view=state.recoveryImport;if(!recoveryImportCurrent(view)||!view.prepared||view.staging)return;
+  const sequence=view.sequence,prepared={token:view.prepared.token,digest:view.prepared.digest},current=()=>recoveryImportCurrent(view,sequence);
+  view.staging=true;view.error=null;renderRecoveryImport(view);
+  try{
+    const result=await view.scope.controller.importPrepared(prepared,{isCurrent:current});if(!current())return;
+    view.scope.controller.discardPrepared?.(prepared.token);view.prepared=null;view.rawText=null;view.result=result;
+    const records=await view.scope.controller.records();if(!current())return;state.mutationRecords=records;renderMutationQueue();
+    if(state.route==='page'&&state.channel){const channel=state.channel,drafts=await FountainOffline.getDrafts(channel.key);if(!current()||state.channel!==channel)return;state.recoveryDrafts=drafts.filter(record=>!['pending','basis'].includes(record.draft?.reason));renderRecoveryDrafts();}
+  }catch(error){if(current()){if(error.code==='IMPORT_PREVIEW_STALE'||error.status===409){view.scope.controller.discardPrepared?.(view.prepared?.token);view.prepared=null;}view.error=recoveryImportError(error);}}
+  finally{if(current()){view.staging=false;renderRecoveryImport(view);}}
+}
 async function openMutationQueue() {
-  state.mutationRecords=await state.mutations.records();
-  openModal('기기 저장과 동기화',`<p>${nativeCacheOnly()?'연결이 끊기면 변경을 앱 캐시에 보관합니다. 캐시를 지우거나 앱을 삭제하면 미전송 변경을 잃을 수 있으니 먼저 동기화하거나 복구 내용을 내려받으세요.':'연결이 끊겨도 변경을 이 기기에 보관합니다.'} 서버에서도 같은 값이 바뀌면 자동으로 덮어쓰지 않고 여기서 확인합니다.</p><div class="mutation-toolbar"><button class="solid-btn" id="sync-now" data-action="sync-now">지금 동기화</button><button class="outline-btn" data-action="export-mutations">전체 복구 내용 내려받기</button></div><div id="mutation-queue-list" aria-live="polite"></div>`,'mutation-modal');
-  renderMutationQueue();
+  const scope={controller:state.mutations,profileId:state.offlineProfile?.id,binding:state.session?.cache_binding,memberId:state.session?.member?.id,workspaceId:state.workspace?.workspace_id,route:state.route,routeId:state.route==='page'?state.page?.id:state.route==='database'?state.database?.id:null};
+  if(!scope.controller||!scope.profileId)throw new Error('로그인한 뒤 기기 저장 내용을 확인해 주세요.');
+  const pages=(state.workspace?.pages||[]).filter(page=>resourceLevel(page)>=3&&!page.locked&&!page.archived);if(scope.route==='page'&&pageEditable()&&!pages.some(page=>page.id===scope.routeId))pages.unshift(state.page);
+  openModal('기기 저장과 동기화',`<p>${nativeCacheOnly()?'연결이 끊기면 변경을 앱 캐시에 보관합니다. 캐시를 지우거나 앱을 삭제하면 미전송 변경을 잃을 수 있으니 먼저 동기화하거나 복구 내용을 내려받으세요.':'연결이 끊겨도 변경을 이 기기에 보관합니다.'} 서버에서도 같은 값이 바뀌면 자동으로 덮어쓰지 않고 여기서 확인합니다.</p><div class="mutation-toolbar"><button class="solid-btn" id="sync-now" data-action="sync-now">지금 동기화</button><button class="outline-btn" data-action="export-mutations">전체 복구 내용 내려받기</button></div><section class="recovery-import-panel" aria-label="복구 JSON 가져오기"><h3>복구 JSON 가져오기</h3><p>내려받은 복구 파일을 먼저 검토하세요. 가져온 항목은 자동으로 서버에 반영하지 않습니다.</p><label class="recovery-file-label">복구 파일 · 최대 16 MiB<input id="recovery-import-file" type="file" accept=".json,application/json" aria-label="복구 JSON 파일"></label><div class="recovery-import-controls"><label>본문 복구 위치<select id="recovery-target-page" aria-label="본문 복구 위치"><option value="">문서를 선택하세요</option>${pages.map(page=>`<option value="${esc(page.id)}" ${scope.route==='page'&&scope.routeId===page.id?'selected':''}>${esc(page.title||'제목 없음')}</option>`).join('')}</select></label><button class="outline-btn" data-action="prepare-recovery-import" disabled>미리보기 다시 확인</button></div><div id="recovery-import-preview" aria-live="polite"></div></section><div id="mutation-queue-list" aria-live="polite"></div>`,'mutation-modal');
+  const view={scope,modal:$('.mutation-modal'),sequence:0,rawText:null,prepared:null};state.recoveryImport=view;
+  try{const records=await scope.controller.records();if(!recoveryImportCurrent(view))return;state.mutationRecords=records;renderMutationQueue();}catch(error){if(recoveryImportCurrent(view)){view.error=recoveryImportError(error);renderRecoveryImport(view);}}
 }
 async function syncMutations() {
   const controller=state.mutations;if(!controller)return;
@@ -987,7 +1086,7 @@ async function reloadDatabase() {
   applyDatabaseControls();
 }
 function openModal(title,content,cls='') {
-  state.versionView=null;closeSlash();
+  clearRecoveryImport();state.versionView=null;closeSlash();
   $('#overlay-root').innerHTML=`<div class="modal-backdrop"><section class="modal ${cls}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="modal-head"><h2>${esc(title)}</h2><button class="modal-close" data-action="close-modal" aria-label="닫기">×</button></header><div class="modal-body">${content}</div></section></div>`;
   if(state.route==='page'&&resourceLevel(state.page)<4)$$('[data-action="delete-page"],[data-action="move-page"]',$('.modal')).forEach(el=>el.remove());
   if(state.route==='page'&&resourceLevel(state.page)<3){for(const action of ['lock-page','delete-page','verify-page','move-page','change-block-type','move-block','delete-block','restore-version'])$$(`[data-action="${action}"]`,$('.modal')).forEach(el=>el.remove());}
@@ -996,7 +1095,7 @@ function openModal(title,content,cls='') {
   requestAnimationFrame(()=>{if(body?.isConnected)$('input:not([type=checkbox]),textarea,select,button',body)?.focus();});
 }
 function closeModal() {
-  state.versionView=null;$('#overlay-root').innerHTML='';
+  clearRecoveryImport();state.versionView=null;$('#overlay-root').innerHTML='';
   closeSlash();
 }
 function field(label,name,placeholder='',type='text',value='') {
@@ -1373,6 +1472,9 @@ async function doAction(target,grouped=false) {
   if(['add-row','new-property'].includes(a)&&!(a==='add-row'?canCreateRow():resourceLevel(state.database)>=4))throw new Error('데이터베이스 편집 권한이 없습니다.');
   switch(a) {
     case'sync-queue':await openMutationQueue();break;
+    case'prepare-recovery-import':await prepareRecoveryImport();break;
+    case'confirm-recovery-import':await confirmRecoveryImport();break;
+    case'recovery-preview-more':if(recoveryImportCurrent(state.recoveryImport)){state.recoveryImport.itemLimit=(state.recoveryImport.itemLimit||30)+30;renderRecoveryImport(state.recoveryImport);}break;
     case'sync-now':await syncMutations();renderMutationQueue();break;
     case'export-mutations':download('fountain-offline-recovery.json',JSON.stringify(await state.mutations.export(),null,2),'application/json');break;
     case'export-mutation':download('fountain-offline-recovery.json',JSON.stringify(await state.mutations.export(id),null,2),'application/json');break;
@@ -1441,13 +1543,22 @@ async function doAction(target,grouped=false) {
     case'indent-block':closeModal();nestBlock(id,1);break;
     case'outdent-block':closeModal();nestBlock(id,-1);break;
     case'pin-page':if(state.channel){await state.channel.persistence;await FountainOffline.saveSnapshot(state.channel.key,state.channel.base);toast('이 문서를 기기에 보관했습니다.');}break;
-    case'export-recovery':{const record=state.recoveryDrafts[Number(target.dataset.index)];download('fountain-recovery.json',JSON.stringify(record.draft,null,2),'application/json');break;}
+    case'export-recovery':{const record=state.recoveryDrafts[Number(target.dataset.index)];download('fountain-recovery.json',JSON.stringify(FountainRecovery.wrapDraft(state.offlineProfile,state.page.id,record.draft),null,2),'application/json');break;}
     case'apply-recovery':{
       const record=state.recoveryDrafts[Number(target.dataset.index)];if(!record||!pageEditable())break;
       if(!Array.isArray(record.draft.blocks)||!record.draft.blocks.length){toast('이 복구 내용은 작업 파일로 내려받아 보관해 주세요. 원본 초안은 유지합니다.');break;}
-      readBlocks();const blocks=record.draft.blocks||[],ids=new Map(blocks.map(block=>[block.id,uid()]));
-      for(const block of blocks)state.blocks.push({...structuredClone(block),id:ids.get(block.id),parent_id:ids.get(block.parent_id)||null});
-      reconcileEditor();await state.channel.persistence;await FountainOffline.saveDraft(state.channel.key,record.clientId,null);state.recoveryDrafts=await FountainOffline.getDrafts(state.channel.key);state.recoveryDrafts=state.recoveryDrafts.filter(record=>!['pending','basis'].includes(record.draft.reason));renderRecoveryDrafts();scheduleSave();toast('복구 내용을 새 블록으로 추가했습니다.');break;
+      const channel=state.channel,profileId=state.offlineProfile?.id,binding=state.session?.cache_binding,epoch=channel?.base?.epoch,current=()=>state.route==='page'&&state.channel===channel&&state.page?.id===channel?.pageId&&channel?.base?.epoch===epoch&&state.offlineProfile?.id===profileId&&state.session?.cache_binding===binding;
+      const blocks=record.draft.blocks||[],elements=new Map($$('#blocks .block').map(element=>[element.dataset.id,element]));
+      const currentBlocks=state.blocks.map(block=>{
+        const element=elements.get(block.id),content=element&&$('.block-content',element);
+        return content?{...block,text:editorPlainText(content)}:block;
+      });
+      if(currentBlocks.length+blocks.length>2000)throw new Error('현재 본문과 복구 내용을 합치면 블록 2000개 한도를 넘습니다. 복구 내용은 보관했으니 일부를 정리한 뒤 다시 추가해 주세요.');
+      const addedPoints=FountainRecovery.bodyCodePoints(blocks,{limit:FountainRecovery.MAX_RGA_POINTS});
+      if(addedPoints>FountainRecovery.MAX_RGA_POINTS||FountainRecovery.bodyCodePoints(currentBlocks,{limit:100000-addedPoints})+addedPoints>100000)throw new Error('한번에 복구할 본문이 커서 원본을 보관했습니다. 내용을 내려받아 나누어 복구하세요.');
+      const ids=new Map(blocks.map(block=>[block.id,uid()]));
+      let candidate;try{candidate=FountainCollaboration.normalizeBlocks([...structuredClone(currentBlocks),...blocks.map(block=>({...structuredClone(block),id:ids.get(block.id),parent_id:ids.get(block.parent_id)||null}))]);}catch{throw new Error('복구 블록 형식을 확인하지 못했습니다. 현재 본문과 원본 복구 내용은 유지합니다.');}
+      state.blocks=candidate;reconcileEditor();await channel.persistence;if(!current())break;await FountainOffline.saveDraft(channel.key,record.clientId,null);const drafts=await FountainOffline.getDrafts(channel.key);if(!current())break;state.recoveryDrafts=drafts.filter(record=>!['pending','basis'].includes(record.draft.reason));renderRecoveryDrafts();scheduleSave();toast('복구 내용을 새 블록으로 추가했습니다.');break;
     }
     case'upload-pause':state.uploadManager?.pause(id);break;
     case'upload-retry':await state.uploadManager?.resume(id);break;
@@ -1727,6 +1838,8 @@ document.addEventListener('input',event=> {
 });
 document.addEventListener('change',event=> {
   const el=event.target;
+  if(el.id==='recovery-import-file'){const file=el.files?.[0];el.value='';readRecoveryFile(file).catch(error=>toast(recoveryImportError(error)));return;}
+  if(el.id==='recovery-target-page'){prepareRecoveryImport().catch(error=>toast(recoveryImportError(error)));return;}
   if(el.id==='rich-color'||el.id==='rich-background'){applyRichMark(el.id==='rich-color'?'color':'background',el.value);return;}
   if(el.closest('#advanced-form')&&$('#advanced-form')?.dataset.kind==='automations'){if(el.name==='trigger')updateScheduleFields();if(el.name==='database_id')loadAutomationRows(el.value).catch(error=>toast(error.message));}
   if(el.id==='timeline-property'){state.timelineProperty=el.value;state.timelineBounds=null;state.timelineFocusDay=null;renderDatabase();return;}

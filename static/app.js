@@ -185,9 +185,10 @@ async function syncCreatedPageBodies(controller) {
     }
   }finally{if(state.bodySyncRunning===controller)state.bodySyncRunning=null;}
 }
+function nativeCacheOnly() { return !!FountainTransport.native&&!FountainTransport.outboxEnabled; }
 function renderSyncIndicators() {
   const records=state.mutationRecords||[],waiting=records.filter(record=>activeMutationStatuses.has(record.status)),paused=records.filter(record=>!activeMutationStatuses.has(record.status));
-  const label=paused.length?`충돌·확인 ${paused.length}개`:waiting.length?`동기화 대기 ${waiting.length}개`:state.offline?'오프라인 · 기기에 저장됨':'기기 저장 · 연결됨';
+  const label=paused.length?`충돌·확인 ${paused.length}개`:waiting.length?`동기화 대기 ${waiting.length}개`:state.offline?(nativeCacheOnly()?'오프라인 · 앱 캐시에 보관됨':'오프라인 · 기기에 저장됨'):(nativeCacheOnly()?'서버 연결 · 앱 캐시':'기기 저장 · 연결됨');
   for(const el of $$('[data-sync-label]'))el.textContent=label;
   for(const el of $$('[data-action="sync-queue"]')){el.classList.toggle('has-conflicts',!!paused.length);el.classList.toggle('has-pending',!!waiting.length);}
 }
@@ -217,13 +218,13 @@ function mutationError(record) {
 function renderMutationQueue() {
   const list=$('#mutation-queue-list');if(!list)return;
   const records=state.mutationRecords||[];
-  const names={pending:'기기에 저장 · 동기화 대기',deferred:'선행 작업 완료 대기',applied:'서버 저장됨 · 최신 내용 확인 중',conflict:'같은 내용이 변경되어 확인 필요',denied:'변경 권한 확인 필요',invalid:'내용 또는 구조 확인 필요'};
-  list.innerHTML=records.length?records.map(record=>`<article class="mutation-card" data-mutation-id="${esc(record.id)}" data-mutation-status="${esc(record.status)}"><div class="mutation-heading"><strong>${esc(mutationTitle(record))}</strong><span>${esc(names[record.status]||'확인 필요')}</span></div><p>${esc(mutationDetail(record))}</p>${record.result?.error||record.error?`<p class="mutation-error">${esc(mutationError(record))}</p>`:''}<div class="mutation-actions"><button class="outline-btn" data-action="export-mutation" data-id="${esc(record.id)}">복구 내용 내려받기</button>${!activeMutationStatuses.has(record.status)?`<button class="outline-btn" data-action="reapply-mutation" data-id="${esc(record.id)}" ${state.offline?'disabled':''}>현재 값 기준으로 다시 적용</button>`:''}${record.status!=='applied'?`<button class="outline-btn" data-action="drop-mutation" data-id="${esc(record.id)}">변경 폐기</button>`:''}</div></article>`).join(''):'<div class="empty">동기화할 변경이 없습니다.<br>기기에 저장한 데이터는 연결 없이도 열 수 있습니다.</div>';
+  const names={pending:nativeCacheOnly()?'앱 캐시에 보관 · 동기화 대기':'기기에 저장 · 동기화 대기',deferred:'선행 작업 완료 대기',applied:'서버 저장됨 · 최신 내용 확인 중',conflict:'같은 내용이 변경되어 확인 필요',denied:'변경 권한 확인 필요',invalid:'내용 또는 구조 확인 필요'};
+  list.innerHTML=records.length?records.map(record=>`<article class="mutation-card" data-mutation-id="${esc(record.id)}" data-mutation-status="${esc(record.status)}"><div class="mutation-heading"><strong>${esc(mutationTitle(record))}</strong><span>${esc(names[record.status]||'확인 필요')}</span></div><p>${esc(mutationDetail(record))}</p>${record.result?.error||record.error?`<p class="mutation-error">${esc(mutationError(record))}</p>`:''}<div class="mutation-actions"><button class="outline-btn" data-action="export-mutation" data-id="${esc(record.id)}">복구 내용 내려받기</button>${!activeMutationStatuses.has(record.status)?`<button class="outline-btn" data-action="reapply-mutation" data-id="${esc(record.id)}" ${state.offline?'disabled':''}>현재 값 기준으로 다시 적용</button>`:''}${record.status!=='applied'?`<button class="outline-btn" data-action="drop-mutation" data-id="${esc(record.id)}">변경 폐기</button>`:''}</div></article>`).join(''):`<div class="empty">동기화할 변경이 없습니다.<br>${nativeCacheOnly()?'앱 캐시에 보관한 데이터는 연결 없이도 열 수 있습니다. 캐시를 지우면 미전송 변경을 잃을 수 있습니다.':'기기에 저장한 데이터는 연결 없이도 열 수 있습니다.'}</div>`;
   $('#sync-now')?.toggleAttribute('disabled',state.offline);
 }
 async function openMutationQueue() {
   state.mutationRecords=await state.mutations.records();
-  openModal('기기 저장과 동기화',`<p>연결이 끊겨도 변경을 이 기기에 보관합니다. 서버에서도 같은 값이 바뀌면 자동으로 덮어쓰지 않고 여기서 확인합니다.</p><div class="mutation-toolbar"><button class="solid-btn" id="sync-now" data-action="sync-now">지금 동기화</button><button class="outline-btn" data-action="export-mutations">전체 복구 내용 내려받기</button></div><div id="mutation-queue-list" aria-live="polite"></div>`,'mutation-modal');
+  openModal('기기 저장과 동기화',`<p>${nativeCacheOnly()?'연결이 끊기면 변경을 앱 캐시에 보관합니다. 캐시를 지우거나 앱을 삭제하면 미전송 변경을 잃을 수 있으니 먼저 동기화하거나 복구 내용을 내려받으세요.':'연결이 끊겨도 변경을 이 기기에 보관합니다.'} 서버에서도 같은 값이 바뀌면 자동으로 덮어쓰지 않고 여기서 확인합니다.</p><div class="mutation-toolbar"><button class="solid-btn" id="sync-now" data-action="sync-now">지금 동기화</button><button class="outline-btn" data-action="export-mutations">전체 복구 내용 내려받기</button></div><div id="mutation-queue-list" aria-live="polite"></div>`,'mutation-modal');
   renderMutationQueue();
 }
 async function syncMutations() {
@@ -540,9 +541,9 @@ function closeDocument() {
 function documentStatus({status,pending,durable=true}) {
   if(!state.channel||state.route!=='page')return;
   state.offline=!navigator.onLine||status==='offline';state.dirty=durable===false;
-  const element=$('#save-status');if(element)element.textContent=status==='offline'?(durable?'오프라인 · 기기에 저장됨':'오프라인 · 기기 저장 실패'):status==='error'?'동기화 확인 필요':state.localPageOnly?'기기에 저장됨 · 새 페이지 동기화 대기':pending?'변경 사항 동기화 중…':'모든 변경 사항 저장됨';
+  const element=$('#save-status');if(element)element.textContent=status==='offline'?(durable?(nativeCacheOnly()?'오프라인 · 앱 캐시에 보관됨':'오프라인 · 기기에 저장됨'):'오프라인 · 기기 저장 실패'):status==='error'?'동기화 확인 필요':state.localPageOnly?(nativeCacheOnly()?'앱 캐시에 보관됨 · 새 페이지 동기화 대기':'기기에 저장됨 · 새 페이지 동기화 대기'):pending?'변경 사항 동기화 중…':'모든 변경 사항 저장됨';
   $('#offline-state')?.remove();
-  if(state.offline){const note=document.createElement('div');note.id='offline-state';note.className='offline-notice';note.textContent='오프라인에서 문서를 편집하고 있습니다. 연결되면 변경 사항을 합칩니다. 제목과 문서, 보관한 데이터베이스의 변경은 이 기기에 저장됩니다. 댓글·파일·공유 설정은 연결 후 사용할 수 있습니다.';$('.editor-wrap')?.prepend(note);}
+  if(state.offline){const note=document.createElement('div');note.id='offline-state';note.className='offline-notice';note.textContent=nativeCacheOnly()?'오프라인에서 문서를 편집하고 있습니다. 변경은 앱 캐시에 보관되며 연결되면 동기화합니다. 캐시를 지우거나 앱을 삭제하면 미전송 변경을 잃을 수 있습니다. 댓글·파일·공유 설정은 연결 후 사용할 수 있습니다.':'오프라인에서 문서를 편집하고 있습니다. 연결되면 변경 사항을 합칩니다. 제목과 문서, 보관한 데이터베이스의 변경은 이 기기에 저장됩니다. 댓글·파일·공유 설정은 연결 후 사용할 수 있습니다.';$('.editor-wrap')?.prepend(note);}
   const title=$('#page-title');if(title)title.contentEditable=String(pageEditable());
   const comment=$('#comment-form');if(comment)comment.hidden=state.offline||state.localPageOnly||resourceLevel(state.page)<2;
   renderSyncIndicators();ensurePresence();refreshHistoryControls();
@@ -1871,7 +1872,7 @@ document.addEventListener('submit',async event=> {
           if(formElement.dataset.id)await state.mutations.patchRow(state.rowEditingDatabase.id,formElement.dataset.id,body,{baseline:state.rowEditingBaseline,schema:state.rowEditingDatabase.properties});else await state.mutations.createRow(state.rowEditingDatabase.id,body,{schema:state.rowEditingDatabase.properties});
           if(!state.offline){await syncMutations();const invalid=(await state.mutations.records()).find(record=>!previousIds.has(record.id)&&record.status==='invalid');if(invalid)throw new Error(mutationError(invalid)+' 변경 내용은 동기화 목록에 보관했습니다.');}
         }else await api('/databases/'+state.database.id+'/rows'+(formElement.dataset.id?'/'+formElement.dataset.id:''),body,formElement.dataset.id?'PATCH':'POST');
-        closeModal();await reloadDatabase();toast(state.offline?'변경을 기기에 저장했습니다. 연결되면 동기화합니다.':state.mutationRecords?.some(record=>record.operation.database_id===state.database.id)?'변경을 기기에 보관했습니다. 동기화 목록에서 상태를 확인하세요.':'프로젝트를 저장했습니다.');break;
+        closeModal();await reloadDatabase();toast(state.offline?(nativeCacheOnly()?'변경을 앱 캐시에 보관했습니다. 연결되면 동기화합니다.':'변경을 기기에 저장했습니다. 연결되면 동기화합니다.'):state.mutationRecords?.some(record=>record.operation.database_id===state.database.id)?'변경을 기기에 보관했습니다. 동기화 목록에서 상태를 확인하세요.':'프로젝트를 저장했습니다.');break;
       }
       case'task-settings-form':{
         await api('/databases/'+state.database.id,{task_settings:{subitems:formElement.subitems.checked,dependencies:formElement.dependencies.checked,date_property:data.date_property,shift:data.shift,skip_weekends:formElement.skip_weekends.checked}},'PATCH');state.timelineProperty=data.date_property;closeModal();await reloadDatabase();toast('프로젝트 일정 설정을 저장했습니다.');break;

@@ -73,6 +73,9 @@ try{
   }
   const record=await page.evaluate(()=>api('/pages',{title:'네이티브 번들 문서',blocks:[{id:'native-text',type:'paragraph',text:'모바일'}]}));await page.evaluate(id=>navigate('page',id),record.id);await page.waitForSelector('.block[data-id="native-text"] .block-content[contenteditable="true"]');
   await page.locator('.block-content').click();await page.keyboard.press('End');await page.keyboard.insertText(' 앱🙂');await waitForAsync(page,()=>state.channel.pending.size===0&&state.channel.status==='synced');assert.equal((await backendRequest('/pages/'+record.id)).blocks[0].text,'모바일 앱🙂');
+  assert.equal(await page.evaluate(()=>FountainTransport.outboxEnabled),false,'durability foundation is dormant by default');
+  assert.equal(await page.evaluate(()=>!!globalThis.FountainNativeStorage),false);
+  await context.setOffline(true);await page.keyboard.insertText(' 캐시');await waitForAsync(page,()=>state.channel.durable!==false&&state.channel.pending.size>0);assert.match(await page.locator('#save-status').innerText(),/앱 캐시에 보관/);assert.match(await page.locator('#offline-state').innerText(),/캐시|유실/);await page.screenshot({path:'/tmp/fountain-native-cache-offline-mobile.png',fullPage:false,animations:'disabled'});await context.setOffline(false);await waitForAsync(page,()=>state.channel.pending.size===0&&state.channel.status==='synced');
   const snapshot=await backendRequest('/pages/'+record.id+'/collaboration'),chars=C.visibleChars(snapshot.state,'native-text'),clock=snapshot.state.max_clock+1;
   await backendRequest('/pages/'+record.id+'/operations',{epoch:snapshot.epoch,ops:[{id:'native_remote:'+clock,client:'native_remote',clock,type:'text.insert',block_id:'native-text',after_id:chars.at(-1).id,text:' 원격'}]},'POST');await page.waitForFunction(()=>document.querySelector('.block-content').innerText.includes('원격'));
   assert.ok(calls.some(call=>call.path==='/api/pages/'+record.id+'/presence'),'native event facade polls authorized presence');

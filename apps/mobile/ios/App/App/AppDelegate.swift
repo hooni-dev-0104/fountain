@@ -64,7 +64,7 @@ final class FountainBridgeGate: NSObject, WKScriptMessageHandler {
               let body = message.body as? [String: Any], body["type"] as? String == "message",
               body["pluginId"] as? String == "FountainNative",
               let method = body["methodName"] as? String,
-              ["getConfiguration", "configure", "request", "cancel", "download", "saveData", "outboxOpen", "stageDelta", "commitDelta", "readPage"].contains(method) else { return }
+              ["getConfiguration", "configure", "request", "cancel", "download", "saveData", "outboxOpen", "stageDelta", "commitDelta", "readPage", "recoveryInventory", "recoveryExport"].contains(method) else { return }
         delegate?.userContentController(userContentController, didReceive: message)
     }
 }
@@ -118,11 +118,25 @@ final class FountainBridgeViewController: CAPBridgeViewController {
     }
 
     override func webView(with frame: CGRect, configuration: WKWebViewConfiguration) -> WKWebView {
-        if let original = configuration.urlSchemeHandler(forURLScheme: "capacitor") {
-            configuration.setURLSchemeHandler(nil, forURLScheme: "capacitor")
-            configuration.setURLSchemeHandler(FountainAssetGate(original), forURLScheme: "capacitor")
+        guard let original = configuration.urlSchemeHandler(forURLScheme: "capacitor") else {
+            return super.webView(with: frame, configuration: configuration)
         }
-        return super.webView(with: frame, configuration: configuration)
+        // WebKit rejects even nil re-registration of a registered scheme.
+        // Carry Capacitor's configured state into a fresh configuration and
+        // register only the confined asset wrapper, exactly once.
+        let confined = WKWebViewConfiguration()
+        confined.userContentController = configuration.userContentController
+        confined.websiteDataStore = configuration.websiteDataStore
+        confined.preferences = configuration.preferences
+        confined.defaultWebpagePreferences = configuration.defaultWebpagePreferences
+        confined.allowsInlineMediaPlayback = configuration.allowsInlineMediaPlayback
+        confined.allowsAirPlayForMediaPlayback = configuration.allowsAirPlayForMediaPlayback
+        confined.mediaTypesRequiringUserActionForPlayback = configuration.mediaTypesRequiringUserActionForPlayback
+        confined.suppressesIncrementalRendering = configuration.suppressesIncrementalRendering
+        confined.limitsNavigationsToAppBoundDomains = configuration.limitsNavigationsToAppBoundDomains
+        confined.applicationNameForUserAgent = configuration.applicationNameForUserAgent
+        confined.setURLSchemeHandler(FountainAssetGate(original), forURLScheme: "capacitor")
+        return super.webView(with: frame, configuration: confined)
     }
 
     func shutdownNative() { native?.shutdownNative() }
@@ -205,6 +219,7 @@ private final class FountainJob {
     let body: Data
     let timeout: TimeInterval
     let mode: String
+    let startedAt = Date().timeIntervalSince1970 * 1000
     var sentCookie: String?
     var task: URLSessionDataTask?
     var file: URL?
@@ -242,7 +257,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     private static var exportsCleaned = false
     let identifier = "FountainNative"
     let jsName = "FountainNative"
-    let pluginMethods: [CAPPluginMethod] = ["getConfiguration", "configure", "request", "cancel", "download", "saveData", "outboxOpen", "stageDelta", "commitDelta", "readPage"].map {
+    let pluginMethods: [CAPPluginMethod] = ["getConfiguration", "configure", "request", "cancel", "download", "saveData", "outboxOpen", "stageDelta", "commitDelta", "readPage", "recoveryInventory", "recoveryExport"].map {
         CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
     }
     private let queue = DispatchQueue(label: "dev.fountain.native-state")
@@ -264,6 +279,12 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     private let outboxOwner = UUID().uuidString
     private var outbox: FountainOutbox?
     private var outboxFailed = false
+    private var recoveryMode = false
+    private var recovery: FountainRecovery?
+    private var recoveryFiles: [String: [URL]] = [:]
+    private var recoverySaveTokens: [String: String] = [:]
+    private var recoverySaveAuthority: [String: FountainRecovery.Authority] = [:]
+    private var recoveryReaders: [String: FountainRecovery] = [:]
     private let defaults = UserDefaults.standard
     private let safeHeaders = Set(["content-type", "content-length", "content-range", "accept-ranges", "etag", "content-disposition"])
 
@@ -328,6 +349,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
             for job in Array(self.jobs.values) { self.end(job, failure: .stale) }
             self.authQueue.removeAll()
             self.session?.invalidateAndCancel()
+            self.recovery?.close(); self.recovery = nil
             self.outbox?.close(); self.outbox = nil
         }
     }
@@ -350,6 +372,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                         if outboxError == .storage { self.poisonOutbox() }
                         call.reject(outboxError.message, outboxError.code); return
                     }
+                    if let recoveryError = error as? FountainRecoveryError { call.reject(recoveryError.message, recoveryError.code); return }
                     let failure = error as? FountainFailure ?? .invalid
                     call.reject(failure.message, failure.code)
                 }
@@ -367,7 +390,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
 
     private func configuration() -> [String: Any] {
         return ["origin": origin as Any? ?? NSNull(), "generation": generation,
-                "outboxVersion": 1, "outboxEnabled": OUTBOX_ENABLED]
+                "outboxVersion": 1, "outboxEnabled": OUTBOX_ENABLED, "recoveryVersion": 1, "recoveryEnabled": true]
     }
 
     // All callers hold ownership and execute on queue; the default transport
@@ -404,6 +427,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     private func outboxCall(_ call: CAPPluginCall, _ action: @escaping (FountainOutbox) throws -> [String: Any]) {
         // No SQLite access, migration or auth storage work in the disabled path.
         guard OUTBOX_ENABLED else { call.reject("Native outbox foundation is disabled", "OUTBOX_DISABLED"); return }
+        guard !recoveryMode else { call.reject("Recovery requires explicit reconciliation", "OUTBOX_ACCESS_REQUIRED"); return }
         fromMainFrame(call) {
             do {
                 guard try self.integer(call, "generation") == self.generation else { throw FountainOutboxError.stale }
@@ -478,7 +502,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     }
 
     private func observeOutboxSession(_ job: FountainJob, response: HTTPURLResponse, data: Data) throws {
-        guard OUTBOX_ENABLED else { return }
+        guard OUTBOX_ENABLED, !recoveryMode else { return }
         let store = try outboxStore()
         if response.statusCode == 401 { try store.revoke(); return }
         guard ["login", "check"].contains(job.mode), response.statusCode == 200 else { return }
@@ -492,7 +516,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     }
 
     private func observeOutboxResource(_ job: FountainJob, response: HTTPURLResponse, data: Data) throws {
-        guard OUTBOX_ENABLED, FountainOutbox.canonicalResource(path: job.path, method: job.method) != nil else { return }
+        guard OUTBOX_ENABLED, !recoveryMode, FountainOutbox.canonicalResource(path: job.path, method: job.method) != nil else { return }
         guard current(job), try cookies().active == job.sentCookie else { throw FountainOutboxError.stale }
         try outboxStore().observeResource(path: job.path, method: job.method, status: response.statusCode,
                                          data: data, sessionRef: outboxReference(job.sentCookie))
@@ -633,7 +657,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
             catch { /* A confirmed Keychain update/delete remains a durable path. */ }
         }
         do {
-            if OUTBOX_ENABLED, value.active == nil { try outboxStore().revoke() }
+            if OUTBOX_ENABLED, !recoveryMode, value.active == nil { try outboxStore().revoke() }
             let data = try JSONEncoder().encode(value)
             let query = cookieQuery(backend)
             let update = [kSecValueData as String: data]
@@ -646,7 +670,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
             }
             guard status == errSecSuccess else { throw FountainFailure.storage }
             if value.revoke == nil {
-                if OUTBOX_ENABLED, value.active == nil {
+                if OUTBOX_ENABLED, !recoveryMode, value.active == nil {
                     guard try outboxStore().revocationConfirmed() else { throw FountainFailure.storage }
                 }
                 try clearInvalidation(backend)
@@ -693,7 +717,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         catch { /* A confirmed Keychain change/delete can still invalidate it. */ }
         do {
             let value = try cookies()
-            if OUTBOX_ENABLED {
+            if OUTBOX_ENABLED, !recoveryMode {
                 do { try outboxStore().revoke() }
                 catch {
                     // Keep the native invalidation marker; database failure
@@ -726,7 +750,8 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                 let current = try self.cookies()
                 guard current.active == nil, current.revoke == nil else { throw FountainFailure.revoke }
             }
-            if OUTBOX_ENABLED { try self.outbox?.revoke() }
+            if OUTBOX_ENABLED, !self.recoveryMode { try self.outbox?.revoke() }
+            self.recovery?.close(); self.recovery = nil
             self.outbox?.close(); self.outbox = nil
             self.generation += 1; self.auth += 1
             for job in Array(self.jobs.values) { self.end(job, failure: .stale) }
@@ -740,7 +765,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     private func newJob(_ call: CAPPluginCall, mode: String) throws -> FountainJob {
         guard let id = call.getString("id"), !id.isEmpty, id.utf8.count <= 160, jobs[id] == nil, jobs.count < 16,
               origin != nil, try integer(call, "generation") == generation else { throw FountainFailure.stale }
-        let path = mode == "saveData" ? "/api/" : (call.getString("path") ?? "")
+        let path = mode == "saveData" || mode.hasPrefix("recovery") ? "/api/" : (call.getString("path") ?? "")
         let decoded = try validPath(path)
         let method = mode == "request" ? (call.getString("method") ?? "GET").uppercased() : "GET"
         guard ["GET", "POST", "PUT", "PATCH", "DELETE"].contains(method) else { throw FountainFailure.invalid }
@@ -768,7 +793,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         let job = FountainJob(id: id, call: call, generation: generation, auth: auth, path: path,
                               method: method, headers: headers, body: body, timeout: Double(timeout) / 1000, mode: kind)
         jobs[id] = job
-        if mode == "request" {
+        if mode == "request" || mode.hasPrefix("recovery") {
             let timer = DispatchSource.makeTimerSource(queue: queue)
             timer.schedule(deadline: .now() + .milliseconds(timeout))
             timer.setEventHandler { [weak self, weak job] in
@@ -784,6 +809,9 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     @objc func request(_ call: CAPPluginCall) {
         fromMainFrame(call) {
             let job = try self.newJob(call, mode: "request")
+            if self.recoveryMode, job.method != "GET", !["login", "logout"].contains(job.mode) {
+                self.failRecovery(job, FountainRecoveryError.access); return
+            }
             if ["login", "logout", "check"].contains(job.mode) {
                 self.authQueue.append(job); self.nextAuth()
             } else {
@@ -821,6 +849,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
             authJob = job
             do {
                 if job.mode != "check" {
+                    recovery?.close(); recovery = nil
                     auth += 1
                     for other in Array(jobs.values) where other !== job && !authQueue.contains(where: { $0 === other }) {
                         end(other, failure: .stale)
@@ -865,6 +894,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                 guard self.current(job) else { return }
                 guard error == nil, let response = response else { self.end(job, failure: error ?? .network); return }
                 do {
+                    if response.statusCode == 401 { self.recovery?.close(); self.recovery = nil }
                     if job.mode == "login", (200..<300).contains(response.statusCode) {
                         let fields = response.allHeaderFields.reduce(into: [String: String]()) { result, entry in
                             if let key = entry.key as? String { result[key] = String(describing: entry.value) }
@@ -886,6 +916,13 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                             }
                             self.authDrainSuspended -= 1
                         }
+                    }
+                    if self.recoveryMode, ["check", "login"].contains(job.mode), let reader = self.recovery,
+                       !reader.sameSession(data, origin: self.origin ?? "", reference: self.outboxReference((try self.cookies()).active) ?? "local-no-cookie") {
+                        reader.close(); self.recovery = nil
+                    }
+                    if self.recoveryMode, job.method == "GET", self.recovery?.observes(job.path) == true {
+                        self.recovery?.noteCanonical(path: job.path, status: response.statusCode, data: data)
                     }
                     try self.observeOutboxSession(job, response: response, data: data)
                     if response.statusCode != 401 { try self.observeOutboxResource(job, response: response, data: data) }
@@ -982,6 +1019,11 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         jobs.removeValue(forKey: job.id)
         job.timer?.cancel(); job.timer = nil
         job.task?.cancel()
+        if job.mode.hasPrefix("recovery"), failure != nil { recoveryReaders[job.id]?.cancelPrepared() }
+        recoveryReaders.removeValue(forKey: job.id)
+        let recoveryURLs = recoveryFiles.removeValue(forKey: job.id) ?? []
+        for file in recoveryURLs { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        recoverySaveTokens.removeValue(forKey: job.id); recoverySaveAuthority.removeValue(forKey: job.id)
         if let file = job.file { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
         if exportID == job.id {
             exportID = nil
@@ -1049,6 +1091,149 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         }
     }
 
+    // These explicit APIs use a separate in-memory authority and read-only SQL.
+    // Arming remains latched after close; there is no automatic outbox resume.
+    @objc func recoveryInventory(_ call: CAPPluginCall) {
+        fromMainFrame(call) {
+            self.recoveryMode = true
+            guard self.authJob == nil, self.exportID == nil else { throw FountainFailure.busy }
+            let job = try self.newJob(call, mode: "recoveryInventory")
+            for other in Array(self.jobs.values) where other !== job && other.mode.hasPrefix("recovery") { self.end(other, failure: .stale) }
+            if call.getString("cursor") == nil { self.recovery?.close(); self.recovery = nil }
+            self.recoverySession(job) { authority in
+                if call.getString("cursor") == nil { self.recovery?.close(); self.recovery = try FountainRecovery(authority: authority) }
+                guard let reader = self.recovery else { throw FountainRecoveryError.stale }
+                self.recoveryReaders[job.id] = reader
+                var result = try reader.inventory(authority, cursor: call.getString("cursor"), count: self.integer(call, "limit"))
+                result["generation"] = job.generation
+                self.resolveRecovery(job, result: result, reader: reader, authority: authority)
+            }
+        }
+    }
+    @objc func recoveryExport(_ call: CAPPluginCall) {
+        fromMainFrame(call) {
+            self.recoveryMode = true
+            guard try self.integer(call, "generation") == self.generation, let reader = self.recovery,
+                  call.getString("inventoryToken") == reader.token else { throw FountainRecoveryError.stale }
+            let phase = call.getString("phase") ?? ""
+            if phase == "cancel" {
+                let matched: Bool
+                if let token = call.getString("exportToken") { matched = reader.cancelToken(token) }
+                else { reader.close(); self.recovery = nil; matched = true }
+                if matched { for job in Array(self.jobs.values) where self.recoveryReaders[job.id] === reader { self.end(job, failure: .cancelled) } }
+                call.resolve(["generation": self.generation, "cancelled": true]); return
+            }
+            guard ["prepare", "save"].contains(phase), let handles = call.options["handles"] as? [String],
+                  !handles.isEmpty, handles.count <= 100, self.authJob == nil, self.exportID == nil else { throw FountainRecoveryError.stale }
+            let job = try self.newJob(call, mode: "recoveryExport")
+            for other in Array(self.jobs.values) where other !== job && other.mode.hasPrefix("recovery") { self.end(other, failure: .stale) }
+            self.recoveryReaders[job.id] = reader
+            self.recoverySession(job) { authority in
+                guard self.recovery === reader else { throw FountainRecoveryError.stale }
+                let paths: [String]
+                if phase == "save" {
+                    guard let token = call.getString("exportToken") else { throw FountainRecoveryError.stale }
+                    paths = try reader.preparedPaths(token, handles: handles, other: authority)
+                } else { paths = try reader.authorityPaths(handles, authority) }
+                self.recoveryResources(job, paths: paths) { responses in
+                    if phase == "save" {
+                        let token = call.getString("exportToken")!
+                        let files = try reader.saveFiles(token, handles: handles, other: authority, responses: responses)
+                        guard !files.isEmpty else { throw FountainRecoveryError.access }
+                        self.recoveryFiles[job.id] = files; self.recoverySaveTokens[job.id] = token; self.recoverySaveAuthority[job.id] = authority
+                        job.file = files.first; self.export(job)
+                    } else {
+                        let additional = try reader.additionalPaths(handles, authority, responses: responses)
+                        self.recoveryResources(job, paths: additional, initial: responses) { complete in
+                            var result = try reader.prepare(handles, other: authority, responses: complete, observedAt: job.startedAt, makeFile: self.temporary)
+                            result["generation"] = job.generation
+                            self.resolveRecovery(job, result: result, reader: reader, authority: authority)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    private func recoverySession(_ job: FountainJob, _ completion: @escaping (FountainRecovery.Authority) throws -> Void) {
+        do {
+            guard current(job), let backend = origin else { throw FountainRecoveryError.stale }
+            let cookies = try self.cookies()
+            guard cookies.revoke == nil, !(try hasInvalidation(backend)) else { throw FountainRecoveryError.auth }
+            job.sentCookie = cookies.active
+            job.task = try network(path: "/api/session", method: "GET", headers: [:], body: Data(), cookie: job.sentCookie, timeout: job.timeout, file: nil) { response, data, error in
+                guard self.current(job) else { return }
+                do {
+                    if response?.statusCode == 401 { try self.recoveryUnauthorized(job) }
+                    guard error == nil, let response = response, response.statusCode == 200 else { throw FountainRecoveryError.auth }
+                    guard try self.cookies().active == job.sentCookie else { throw FountainRecoveryError.stale }
+                    let authority = try FountainRecovery.Authority.session(data, origin: backend, reference: self.outboxReference(job.sentCookie) ?? "local-no-cookie")
+                    try completion(authority)
+                } catch { self.failRecovery(job, error) }
+            }
+        } catch { failRecovery(job, error) }
+    }
+    private func recoveryResources(_ job: FountainJob, paths: [String], initial: FountainRecovery.Responses = [:], completion: @escaping (FountainRecovery.Responses) throws -> Void) {
+        guard current(job) else { return }
+        do {
+            guard paths.count + initial.count <= 200, initial.values.reduce(0, { $0 + $1.1.count }) <= 64 * 1024 * 1024 else { throw FountainRecoveryError.access }
+            guard let path = paths.first else { try completion(initial); return }
+            _ = try validPath(path)
+            job.task = try network(path: path, method: "GET", headers: [:], body: Data(), cookie: job.sentCookie, timeout: job.timeout, file: nil) { response, data, error in
+                guard self.current(job) else { return }
+                do {
+                    guard error == nil, let response = response else { throw FountainRecoveryError.storage }
+                    guard try self.cookies().active == job.sentCookie else { throw FountainRecoveryError.stale }
+                    guard response.statusCode != 401 else { throw FountainRecoveryError.auth }
+                    var collected = initial; collected[path] = (response.statusCode, data)
+                    self.recoveryResources(job, paths: Array(paths.dropFirst()), initial: collected, completion: completion)
+                } catch { self.failRecovery(job, error) }
+            }
+        } catch { failRecovery(job, error) }
+    }
+    private func failRecovery(_ job: FountainJob, _ error: Error) {
+        recoveryReaders[job.id]?.cancelPrepared()
+        let failure = error as? FountainRecoveryError ?? .storage
+        if case .auth = failure { recovery?.close(); recovery = nil }
+        job.callClosed = true; job.call.reject(failure.message, failure.code)
+        end(job, failure: .cancelled)
+    }
+    private func recoveryUnauthorized(_ job: FountainJob) throws {
+        if let sent = job.sentCookie, try cookies().active == sent {
+            try saveCookies(FountainCookies(active: nil, revoke: sent))
+            auth += 1; job.auth = auth; authDrainSuspended += 1
+            for other in Array(jobs.values) where other !== job && !authQueue.contains(where: { $0 === other }) { end(other, failure: .stale) }
+            authDrainSuspended -= 1
+        }
+        recovery?.close(); recovery = nil
+        throw FountainRecoveryError.auth
+    }
+    private func resolveRecovery(_ job: FountainJob, result: [String: Any], reader: FountainRecovery, authority: FountainRecovery.Authority) {
+        guard current(job) else { return }
+        job.callClosed = true
+        let startingAuth = auth, startingGeneration = generation, startingBoundary = reader.boundary
+        let cleanStale = { [weak self] in
+            self?.queue.async {
+                Self.ownership.lock(); defer { Self.ownership.unlock() }
+                guard reader.boundary == startingBoundary else { return }
+                if let token = result["exportToken"] as? String { reader.cancelToken(token) }
+                else { reader.cancelPrepared() }
+            }
+        }
+        DispatchQueue.main.async { [weak self] in
+            Self.ownership.lock(); defer { Self.ownership.unlock() }
+            guard let self = self, Self.currentOwner === self, !self.terminated, self.recovery === reader,
+                  self.auth == startingAuth, self.generation == startingGeneration, authority.deadline > Date().timeIntervalSince1970 * 1000,
+                  reader.boundary == startingBoundary, reader.validMetadata(result["exportToken"] as? String, other: authority),
+                  let controller = self.bridge?.viewController as? FountainBridgeViewController,
+                  controller.bundled(controller.webView?.url), let webView = controller.webView,
+                  let callback = job.call.callbackId, let method = job.call.methodName else { cleanStale(); job.call.reject(FountainRecoveryError.stale.message, FountainRecoveryError.stale.code); return }
+            let envelope: [String: Any] = ["callbackId": callback, "pluginId": "FountainNative", "methodName": method, "save": false, "success": true, "data": result]
+            guard let bytes = try? JSONSerialization.data(withJSONObject: envelope), let payload = String(data: bytes, encoding: .utf8) else { cleanStale(); job.call.reject(FountainRecoveryError.storage.message, FountainRecoveryError.storage.code); return }
+            webView.evaluateJavaScript("window.Capacitor.fromNative(" + payload + ")", completionHandler: nil)
+        }
+        end(job)
+    }
+
     private func export(_ job: FountainJob) {
         guard current(job), exportID == nil, let file = job.file else { end(job, failure: .busy); return }
         exportID = job.id
@@ -1060,7 +1245,12 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
             self.queue.async {
                 guard self.current(job), self.exportID == job.id else { return }
                 DispatchQueue.main.async {
-                    let picker = UIDocumentPickerViewController(forExporting: [file], asCopy: true)
+                    Self.ownership.lock(); defer { Self.ownership.unlock() }
+                    guard self.current(job), self.exportID == job.id else { return }
+                    if let token = self.recoverySaveTokens[job.id], let authority = self.recoverySaveAuthority[job.id], self.recovery?.validSave(token, other: authority) != true {
+                        self.queue.async { self.failRecovery(job, FountainRecoveryError.stale) }; return
+                    }
+                    let picker = UIDocumentPickerViewController(forExporting: self.recoveryFiles[job.id] ?? [file], asCopy: true)
                     picker.delegate = self; self.picker = picker; self.pickerJobID = job.id
                     controller.present(picker, animated: true)
                 }
@@ -1068,13 +1258,19 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         }
     }
 
-    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { finishExport(controller, saved: false) }
-    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { finishExport(controller, saved: !urls.isEmpty) }
-    private func finishExport(_ controller: UIDocumentPickerViewController, saved: Bool) {
+    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { finishExport(controller, savedCount: 0) }
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { finishExport(controller, savedCount: urls.count) }
+    private func finishExport(_ controller: UIDocumentPickerViewController, savedCount: Int) {
         guard picker === controller, let id = pickerJobID else { return }
         queue.async {
             guard self.exportID == id, let job = self.jobs[id] else { return }
-            self.end(job, result: ["saved": saved, "generation": job.generation])
+            if let token = self.recoverySaveTokens[id], let authority = self.recoverySaveAuthority[id], let reader = self.recoveryReaders[id] {
+                guard self.current(job), (try? self.cookies().active) == job.sentCookie, reader.validSave(token, other: authority) else { self.failRecovery(job, FountainRecoveryError.stale); return }
+                do { try reader.checkSource(authority) } catch { self.failRecovery(job, error); return }
+                let expected = self.recoveryFiles[id]?.count ?? 0, saved = min(savedCount, expected)
+                reader.cancelPrepared()
+                self.resolveRecovery(job, result: ["saved": saved == expected && expected > 0, "filesSaved": saved, "generation": job.generation], reader: reader, authority: authority)
+            } else { self.end(job, result: ["saved": savedCount > 0, "generation": job.generation]) }
         }
     }
 }

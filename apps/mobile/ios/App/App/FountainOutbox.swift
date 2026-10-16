@@ -818,9 +818,8 @@ final class FountainOutbox {
                 }
                 references(body, databaseID: databaseID, authority: authority)
                 if let base = operation["base"] as? [String: Any] {
-                    var previous = base["fields"] as? [String: Any] ?? [:]
-                    previous["properties"] = base["properties"]
-                    references(previous, databaseID: databaseID, authority: authority)
+                    if let fields = base["fields"] as? [String: Any] { references(fields, databaseID: databaseID, authority: authority) }
+                    if let properties = base["properties"] { references(["properties": properties], databaseID: databaseID, authority: authority) }
                 }
                 for (rowID, basis) in operation["base_rows"] as? [String: Any] ?? [:] {
                     row(rowID, databaseID: databaseID, authority: authority, write: true)

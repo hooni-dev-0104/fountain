@@ -290,6 +290,7 @@
     constructor({pageId,profile,fetcher,deferRemote=false,onChange=()=>{},onStatus=()=>{},onDenied=()=>{},onDraft=()=>{},onPresence=()=>{},onHistory=()=>{},onError=()=>{}}){
       this.pageId=pageId;this.profile=profile;this.clientId=randomClient();this.fetcher=fetcher;this.onChange=onChange;this.onStatus=onStatus;this.onDenied=onDenied;this.onDraft=onDraft;this.onPresence=onPresence;this.onError=onError;this.offline=globalThis.FountainOffline;this.presenceRevision=-1;
       this.key=this.offline?.key(profile,pageId);this.pending=new Map();this.base=null;this.state=null;this.clock=0;this.closed=false;this.persistence=Promise.resolve();this.delay=500;this.recovering=false;this.retiredEpochs=new Set();this.remoteDeferred=deferRemote===true;
+      this.networkPauseOwners=new Set();
       this.onHistory=onHistory;this.undoStack=[];this.redoStack=[];this.historyHints=new Map();this.historyHintSizes=new Map();this.historyHintBytes=0;this.historyGeneration=0;this.historyBusy=false;this.historyPending=false;
       this.onlineHandler=()=>this.reconnect();this.offlineHandler=()=>{this.source?.close();this.setStatus('offline');};
       globalThis.addEventListener('online',this.onlineHandler);globalThis.addEventListener('offline',this.offlineHandler);
@@ -561,13 +562,27 @@
       return this.submitPrepared(operations);
     }
     submitPrepared(operations){return this.queue(operations);}
+    get networkPaused(){return this.networkPauseOwners.size>0;}
+    pauseNetwork(owner){
+      check(typeof owner==='string'&&owner.length>0&&owner.length<=512,'Invalid network pause owner');
+      if(this.closed)return false;this.networkPauseOwners.add(owner);
+      clearTimeout(this.flushTimer);clearTimeout(this.retryTimer);this.source?.close();this.source=null;
+      // Keep the current HTTP result and persistence promise: a coordinator may
+      // have been entered by this channel's own POST or native storage write.
+      return true;
+    }
+    resumeNetwork(owner){
+      if(this.closed||!this.networkPauseOwners.delete(owner))return false;
+      return !this.networkPaused;
+    }
     async flush(){
+      if(this.networkPaused)return;
       if(this.remoteDeferred){await this.persistence;this.setStatus(navigator.onLine?'waiting':'offline');return;}
       if(this.closed||this.flushing)return this.flushing;clearTimeout(this.flushTimer);
       this.flushing=(async()=>{
         await this.persistence.catch(()=>this.persistPending());await this.importPending();if(this.closed||!this.pending.size)return;
         if(!navigator.onLine){this.setStatus('offline');return;}
-        while(this.pending.size&&!this.closed){
+        while(this.pending.size&&!this.closed&&!this.networkPaused){
           const entries=[...this.pending.values()].filter(entry=>!entry._epoch||entry._epoch===this.base.epoch).slice(0,300);if(!entries.length)break;
           const scope=this.receiveScope();
           let snapshot;try{snapshot=await this.fetch('/pages/'+encodeURIComponent(this.pageId)+'/operations',{epoch:this.base.epoch,ops:entries.map(stripEpoch)});}catch(error){
@@ -595,14 +610,14 @@
       this.presenceRevision=value.revision;this.onPresence(clone(value));
     }
     connectEvents(){
-      if(this.closed||this.remoteDeferred||typeof EventSource==='undefined'||!navigator.onLine)return;this.source?.close();
+      if(this.closed||this.remoteDeferred||this.networkPaused||typeof EventSource==='undefined'||!navigator.onLine)return;this.source?.close();
       this.source=FountainTransport.events('/api/pages/'+encodeURIComponent(this.pageId)+'/events');
       this.source.addEventListener('snapshot',event=>{try{const data=JSON.parse(event.data);this.receive(data).then(()=>this.flush()).catch(error=>this.onError(error));}catch(error){this.onError(error);}});
       this.source.addEventListener('presence',event=>{try{this.receivePresence(JSON.parse(event.data));}catch(error){this.onError(error);}});
       this.source.addEventListener('denied',event=>{let data;try{data=JSON.parse(event.data);}catch{data={status:403,error:'문서 접근 권한이 변경되었습니다.'};}this.deny(data.status,data.error);});
       this.source.onerror=()=>{this.source?.close();if(!this.closed){this.setStatus('offline');this.retry();}};
     }
-    retry(){clearTimeout(this.retryTimer);if(this.closed||this.remoteDeferred)return;this.retryTimer=setTimeout(()=>this.reconnect(),this.delay);this.delay=Math.min(10000,this.delay*2);}
+    retry(){clearTimeout(this.retryTimer);if(this.closed||this.remoteDeferred||this.networkPaused)return;this.retryTimer=setTimeout(()=>this.reconnect(),this.delay);this.delay=Math.min(10000,this.delay*2);}
     async resumeRemote(){
       if(this.closed)return false;if(!this.remoteDeferred)return true;if(this.resuming)return this.resuming;
       this.resuming=(async()=>{
@@ -614,11 +629,11 @@
       })().finally(()=>{this.resuming=null;});return this.resuming;
     }
     async reconnect(){
-      if(this.closed)return;if(this.remoteDeferred){this.setStatus(navigator.onLine?'waiting':'offline');return;}if(!navigator.onLine){this.setStatus('offline');return;}
+      if(this.closed||this.networkPaused)return;if(this.remoteDeferred){this.setStatus(navigator.onLine?'waiting':'offline');return;}if(!navigator.onLine){this.setStatus('offline');return;}
       try{await this.persistence.catch(()=>this.persistPending());const snapshot=await this.fetch('/pages/'+encodeURIComponent(this.pageId)+'/collaboration');await this.importPending(false);await this.receive(snapshot,'reconnect');this.connectEvents();await this.flush();}catch(error){if([401,403,404].includes(error.status))await this.deny(error.status,error.message);else{this.setStatus('offline');this.retry();}}
     }
     async deny(status,message){if(this.closed)return;this.close();if(status===401){try{await this.onDenied({status,message,suspended:true});}finally{if(this.offline)await this.offline.suspendProfile(this.profile);}}else{this.onDenied({status,message});if(this.offline&&this.key)await this.offline.purgeResource(this.key).catch(()=>{});}}
-    close(){this.closed=true;this.clearHistory();this.source?.close();this.broadcast?.close();clearTimeout(this.flushTimer);clearTimeout(this.retryTimer);clearTimeout(this.expiryTimer);globalThis.removeEventListener('online',this.onlineHandler);globalThis.removeEventListener('offline',this.offlineHandler);globalThis.removeEventListener('fountain-offline-profile-cleared',this.profileCleared);globalThis.removeEventListener('fountain-offline-resource-purged',this.resourcePurged);globalThis.removeEventListener('fountain-offline-profile-changed',this.profileChanged);}
+    close(){this.closed=true;this.networkPauseOwners.clear();this.clearHistory();this.source?.close();this.broadcast?.close();clearTimeout(this.flushTimer);clearTimeout(this.retryTimer);clearTimeout(this.expiryTimer);globalThis.removeEventListener('online',this.onlineHandler);globalThis.removeEventListener('offline',this.offlineHandler);globalThis.removeEventListener('fountain-offline-profile-cleared',this.profileCleared);globalThis.removeEventListener('fountain-offline-resource-purged',this.resourcePurged);globalThis.removeEventListener('fountain-offline-profile-changed',this.profileChanged);}
   }
   const exported={seedState,applyOperations,project,publicState,capturePublicHints,hydratePublicState,visibleChars,normalizeBlocks,validateMarks,canonical,sha256,compareText,DocumentChannel,PALETTE,BOOL_MARKS};
   globalThis.FountainCollaboration=exported;if(typeof module!=='undefined'&&module.exports)module.exports=exported;

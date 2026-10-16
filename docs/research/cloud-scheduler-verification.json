@@ -1,0 +1,343 @@
+{
+  "observedAt": "2026-10-16T16:29:20Z",
+  "sourceCommit": "a38f288f9b7a886bdfba935c96f5aa140ef74b55",
+  "sourceSHA256": {
+    "supabase/functions/_shared/scheduler-worker.ts": "0b737d2fa1f3a94c6d4b8f35c57cbe97eeca647847434b34f4f48bb69af9fa7d",
+    "supabase/functions/_shared/scheduler-transport.ts": "835b9296a77cdfff8020a1b0e87886ecfcc048b74fb4a3fa9cedf3ed2e2fb5ad",
+    "supabase/functions/fountain-worker/index.ts": "265149cf2c059eb8c246c095d9196cf1949f8b1cca7a5a4945e62a6378e531d8",
+    "supabase/migrations/20261016153505_fountain_cloud_scheduler_extensions.sql": "540dd6ac093dc32f4c8d27d01bf8ec517a4e152c7ce8596b07888496f3e180fe",
+    "supabase/migrations/20261016155423_fountain_cloud_scheduler_broker.sql": "476c769863fe65c599e927552b4e4cf05f60e38ade45224dbcfe2569b2ea4e68",
+    "supabase/migrations/20261016162909_fountain_cloud_scheduler_source_index.sql": "cc63cb07fb1c0cee5bfc2c931eebea62b0eeb2982096bfb316907befa10a5e6b",
+    "supabase/tests/live-scheduler.ts": "fd7cf3a7fd0283414a77261c69f501ab455c211c57bcf90837c60cd1f0bcfde8",
+    "supabase/tests/live-scheduler-controls.sql": "61b4cccb06321eedec869765875e51f4112681a84bb8b10cbfac3e0deee2ddce",
+    "supabase/tests/live-scheduler-commit-proofs.sql": "f2f8000695f60e41dba649629004b86cbbe359a214f5bd448afd92e58ec58a26",
+    "supabase/tests/live-scheduler-gc.sql": "116482cd73fe27b894b885315f4a7dbecfc2ee0ba85a1e95b01d713da227eeb1"
+  },
+  "scope": "Actual Supabase Cron -> durable PostgreSQL job -> pg_net -> hosted ticket-authenticated worker -> current-author ServiceStore -> owner HTTP observation. Disposable namespace only.",
+  "productionCutover": false,
+  "migrationsApplied": 18,
+  "mainFunction": {
+    "version": 6,
+    "bundleSHA256": "51308cac0ee31ce91b16cd5cf52ff3abec78327c3a5ea66c153ab7ec0561e332",
+    "ready": false,
+    "setupEnabled": false,
+    "webOrigins": []
+  },
+  "workerFunction": {
+    "version": 3,
+    "bundleSHA256": "ca02675f5854a1dedc0f8b5254f50e9c3dbd0f6bb51ee8c47e3b08f059902b90",
+    "verifyJWT": false,
+    "authentication": "Exact single-use generation-bound 32-byte ticket; only its hash persists in private durable tables. No service key in Cron or pg_net payload."
+  },
+  "sourceTests": {
+    "nodeRunner": 239,
+    "failed": 0,
+    "skipped": 0,
+    "transportLoopbackHTTPWithModeledRPC": 20,
+    "schedulerBrokerStaticContracts": 25,
+    "scheduledSlotModeledProvider": 28,
+    "calendarOracleCases": 5632,
+    "actualTypeScriptCompiler": false
+  },
+  "actualPostgreSQLPythonRegression": {
+    "passed": 481,
+    "seconds": 229.969,
+    "scope": "Existing Python behavior against actual PostgreSQL with scheduler triggers installed; independent unregistered namespaces."
+  },
+  "actualCatalogAndDenials": {
+    "forcedPrivateTables": 6,
+    "privateHelpers": 24,
+    "serviceRoleOnlyWrappers": 2,
+    "unknownTicketDenials": 2,
+    "postSourceIndexRerun": true
+  },
+  "actualOwnerAPI": {
+    "stage": "verify",
+    "fixture": {
+      "databaseId": "qa-scheduler-database",
+      "rowId": "qa-scheduler-source-row",
+      "expectedRowTitle": "QA scheduler created row",
+      "expectedPageTitle": "QA scheduler created page",
+      "workspaceId": "fountain-qa-cloud-scheduler-7ddbadaec5119488",
+      "scheduledAt": "2026-10-16T15:40:26+00:00",
+      "automationId": "2dbbf512909e4ed3a04c4ac5d292c58e",
+      "runId": "266a970896484718a31d7d9b47c5e802e2a2ac0400e0dd62990b0d7d25d98b9d"
+    },
+    "checks": [
+      "real_owner_password_login_opaque_vault_and_current_workspace",
+      "actual_owner_api_original_counter_2_one_created_row_one_page_one_succeeded_slot_and_advanced_next_time",
+      "second_api_observation_has_identical_ids_counts_and_no_duplicate_effects"
+    ],
+    "createdRowId": "dbdfde0b462049e98b14aeea602f3a24",
+    "createdPageId": "931debad40d1441e8ca6ed98cbd0a0ed",
+    "nextRunAt": "2026-10-16T16:00:26+00:00",
+    "counts": {
+      "sourceRows": 1,
+      "createdRows": 1,
+      "createdPages": 1,
+      "runs": 1,
+      "observations": 2
+    }
+  },
+  "actualControls": {
+    "count": 5,
+    "distinctAutomationIdsAsserted": true,
+    "outcomes": [
+      "invalid",
+      "author_unavailable",
+      "complete",
+      "defer",
+      "deduplicated"
+    ],
+    "noDataLeases": true,
+    "unexpectedPageActions": 0,
+    "failureTimestampParity": true
+  },
+  "actualFaults": {
+    "pages": {
+      "QA self disabled exactly once": 1,
+      "QA recovered delivery exactly once": 1
+    },
+    "faultJobs": [
+      {
+        "body": "{\"state\":\"done\"}",
+        "runId": "c4a8b20c1ff4a7f3b846417dac3e6eb87571174f35bf80583c38446f43da26e2",
+        "state": "done",
+        "nextAt": null,
+        "outcome": "data_succeeded",
+        "automation": "qa-fault-self-disable",
+        "generation": 1,
+        "httpStatus": 200,
+        "scheduledAt": "2026-10-16T15:40:26.123456+00:00",
+        "ackRetryProof": "1"
+      },
+      {
+        "body": "{\"error\":\"Scheduled request could not complete.\",\"code\":\"SCHEDULER_CONFLICT\"}",
+        "runId": "7bee022e2ced96928147c278fa50220dc903f408ff319ed6b2432e8d6b7ec116",
+        "state": "done",
+        "nextAt": "2026-10-16T16:11:00.123456+00:00",
+        "outcome": "data_succeeded",
+        "automation": "qa-fault-delivery",
+        "generation": 2,
+        "httpStatus": 409,
+        "scheduledAt": "2026-10-15T00:01:00.123456+00:00",
+        "ackRetryProof": null
+      }
+    ],
+    "selfDisable": {
+      "enabled": false,
+      "grantEnabled": true,
+      "grantVersion": 1,
+      "receiptCount": 1,
+      "rawScaleAfter": "1",
+      "leaseStillOpen": true,
+      "definitionVersion": 1,
+      "currentHashDiffersFromAcceptedJob": true
+    },
+    "deliveryRequests": [
+      {
+        "body": "{\"error\":\"Scheduled request could not complete.\",\"code\":\"SCHEDULER_CONFLICT\"}",
+        "status": 409,
+        "requestId": 9
+      },
+      {
+        "body": "{\"state\":\"done\"}",
+        "status": 200,
+        "requestId": 10
+      }
+    ]
+  },
+  "actualCommitAndIdentityProof": {
+    "atomicRollback": true,
+    "newSnapshotDenied": true,
+    "doneNewCommitDenied": true,
+    "acceptedReceiptDenied": true,
+    "doneNewSnapshotDenied": true,
+    "exactACKGraceVerified": true,
+    "manufacturedAuthSession": false,
+    "sourcePreservedOnDenial": true,
+    "operatorMappingEventOnly": true,
+    "sameUUIDPausedEpochFence": true,
+    "liveGrantAndLeaseStillValid": true
+  },
+  "actualAuthDeleteRace": {
+    "proof": {
+      "memberUpdateCommitted": true,
+      "authShareReadCompleted": true,
+      "authDeleteObservedDuringWriter": true
+    },
+    "scope": "Real GoTrue protected Admin DELETE while a separate PostgreSQL writer holds the workspace lock, stages a logical member write and later reads auth.users. Independent PG connection observes advisory barrier; deferred member trigger commits without deadlock. Not an application HTTP member-update test."
+  },
+  "actualBoundedBackfill": {
+    "noNetworkRequests": true,
+    "secondDispatchTotal": 43,
+    "newDisabledAutomations": 33,
+    "firstDispatchProjections": 32
+  },
+  "actualBusyGrantGC": {
+    "grantStillEnabled": true,
+    "operatorAgeInjection": true,
+    "twoActualSlotsSameGrant": true,
+    "userRunHistoryPreserved": 2,
+    "allBusinessEntitiesSHAUnchanged": true,
+    "freshAttemptLeaseReceiptPreserved": true,
+    "expiredAttemptReceiptLeaseJobRemoved": true
+  },
+  "actualCron": {
+    "jobId": 2,
+    "runs": [
+      {
+        "end": "2026-10-16T16:24:00.031159+00:00",
+        "start": "2026-10-16T16:24:00.020044+00:00",
+        "status": "succeeded"
+      },
+      {
+        "end": "2026-10-16T16:18:00.204767+00:00",
+        "start": "2026-10-16T16:18:00.189322+00:00",
+        "status": "succeeded"
+      },
+      {
+        "end": "2026-10-16T15:57:00.153495+00:00",
+        "start": "2026-10-16T15:57:00.107202+00:00",
+        "status": "succeeded"
+      },
+      {
+        "end": "2026-10-16T15:58:00.089833+00:00",
+        "start": "2026-10-16T15:58:00.044612+00:00",
+        "status": "succeeded"
+      },
+      {
+        "end": "2026-10-16T16:19:00.054298+00:00",
+        "start": "2026-10-16T16:19:00.041713+00:00",
+        "status": "succeeded"
+      },
+      {
+        "end": "2026-10-16T15:59:00.055854+00:00",
+        "start": "2026-10-16T15:59:00.039294+00:00",
+        "status": "succeeded"
+      },
+      {
+        "end": "2026-10-16T16:25:00.067723+00:00",
+        "start": "2026-10-16T16:25:00.05669+00:00",
+        "status": "succeeded"
+      },
+      {
+        "end": "2026-10-16T16:00:00.058183+00:00",
+        "start": "2026-10-16T16:00:00.035119+00:00",
+        "status": "succeeded"
+      },
+      {
+        "end": "2026-10-16T16:20:00.02862+00:00",
+        "start": "2026-10-16T16:20:00.014687+00:00",
+        "status": "succeeded"
+      },
+      {
+        "end": "2026-10-16T16:04:00.085065+00:00",
+        "start": "2026-10-16T16:04:00.07244+00:00",
+        "status": "succeeded"
+      },
+      {
+        "end": "2026-10-16T16:26:00.027688+00:00",
+        "start": "2026-10-16T16:26:00.014869+00:00",
+        "status": "succeeded"
+      },
+      {
+        "end": "2026-10-16T16:21:00.118431+00:00",
+        "start": "2026-10-16T16:21:00.076412+00:00",
+        "status": "succeeded"
+      },
+      {
+        "end": "2026-10-16T16:05:00.207952+00:00",
+        "start": "2026-10-16T16:05:00.175459+00:00",
+        "status": "succeeded"
+      },
+      {
+        "end": "2026-10-16T16:06:00.030461+00:00",
+        "start": "2026-10-16T16:06:00.017137+00:00",
+        "status": "succeeded"
+      },
+      {
+        "end": "2026-10-16T16:22:00.02702+00:00",
+        "start": "2026-10-16T16:22:00.015143+00:00",
+        "status": "succeeded"
+      },
+      {
+        "end": "2026-10-16T16:07:00.093344+00:00",
+        "start": "2026-10-16T16:07:00.06296+00:00",
+        "status": "succeeded"
+      },
+      {
+        "end": "2026-10-16T16:27:00.03054+00:00",
+        "start": "2026-10-16T16:27:00.019204+00:00",
+        "status": "succeeded"
+      },
+      {
+        "end": "2026-10-16T16:23:00.065264+00:00",
+        "start": "2026-10-16T16:23:00.054461+00:00",
+        "status": "succeeded"
+      }
+    ],
+    "initialBackfillAt": "2026-10-16T15:57:00Z",
+    "firstActionsAt": "2026-10-16T15:58:00Z",
+    "registeredProductionWorkspace": false,
+    "removedAfterQA": true
+  },
+  "cleanup": {
+    "cronJobs": 0,
+    "allGrants": 0,
+    "allLeases": 0,
+    "authUsers": 0,
+    "allMappings": 0,
+    "fixtureMeta": 0,
+    "authSessions": 0,
+    "fixtureVault": 0,
+    "originalMeta": 6,
+    "allRegistries": 0,
+    "queuedRequests": 0,
+    "storageObjects": 0,
+    "allSchedulerDue": 0,
+    "fixtureEntities": 0,
+    "allSchedulerJobs": 0,
+    "originalEntities": 153,
+    "allServiceReceipts": 0,
+    "allSchedulerAttempts": 0,
+    "allSchedulerOwnerDirty": 0,
+    "allSchedulerPrepareReceipts": 0,
+    "sixOriginalCollectionFingerprintsUnchanged": true,
+    "protectedQAAuthUsersDeleted": 2,
+    "retiredVerifierVersion": 34,
+    "retiredVerifierBundleSHA256": "ae1663c607e8289b7a2593c4e31178060fab5f08dd9c59d8018a9f288cba03dd",
+    "oldNonceHTTPStatus": 404,
+    "privateCredentialFilesRemoved": 3,
+    "standardWorkerRestored": true
+  },
+  "advisors": {
+    "securityErrors": 0,
+    "securityWarnings": [
+      {
+        "name": "extension_in_public",
+        "extension": "pg_net",
+        "catalogSchema": "public",
+        "catalogRelocatable": false,
+        "extensionOwnedPublicFunctions": 0,
+        "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0014_extension_in_public",
+        "status": "Open: non-relocatable installed extension; no catalog mutation, drop/recreate or warning suppression performed."
+      }
+    ],
+    "denyAllRLSInfoTables": 19,
+    "performanceErrors": 0,
+    "performanceWarnings": 0,
+    "unindexedForeignKeys": 0,
+    "unusedIndexInfoCount": 3
+  },
+  "limits": [
+    "Lost ACK is operator fault injection after an accepted SQL response, not proof of a real network outage. The exact same body is retried inside the same actual Edge invocation.",
+    "Lost delivery is operator deletion of its own transient pg_net request before transaction commit; work and wake deadlines are explicitly advanced. No actual database crash was induced.",
+    "Busy GC ages only the old fixture authority by two days; two days did not elapse. Two actual hosted slots share one enabled grant; all business entity hashes and both user runs are preserved.",
+    "Identity unlink/relink uses exact scoped SQL operator fixtures with the same UUID while paused; no end-user account API unlink claim is made.",
+    "Nanosecond truncation, comma fractions and a +23:59 offset are parsed by the real TypeScript planner. Raw PostgreSQL date casts only choose conservative wake hints.",
+    "pg_net request/response tables are transient; durable LOGGED jobs, generations, current source hashes and real authority checks provide recovery and fencing.",
+    "No real owner onboarding, static HTTPS deployment, SCIM bearer HTTP/token UI, scheduled upload/backup physical GC or complete five-platform editing propagation is claimed.",
+    "localhost:8787 remains the preserved Python preview. No consumer Gemini subscription inference, paid API billing or paid hosting activation occurred."
+  ]
+}

@@ -6,7 +6,7 @@
 
 2026-10-17 확인 시점의 Supabase 프로젝트는 `ehnovtfadpkwtubmwltl`이다. `fountain-api` version 6에 문서·DB·공동 편집·동기화·첨부·presence/SSE·AI·계정·백업·연동 권한 관리 handler가 연결됐다. 서비스 객체는 actor를 공유하지 않고 각 요청의 쿠키로 인증한다. 운영 원본은 entities 153개·meta 6개, 실사용 Auth 사용자·identity mapping은 0개다. `fountain-files`는 비공개 bucket이며 QA 정리 후 객체는 0개다. `/health`의 `ready:false`는 전체 전환이 아직 끝나지 않았다는 뜻이다.
 
-Auth/Vault·Store부터 계정 생성·관리·백업·분할 백업·연동 권한 관리까지 migration 15개를 적용했다. 적용된 SQL은 `supabase/migrations`의 실제 버전 파일로만 보관하고 중복 초안은 제거했다. 공개 RPC는 service_role 전용이며, private 테이블은 강제 RLS와 직접 접근 거절을 유지한다. 익명·일반 로그인 역할의 실행 권한 거절, 연결되지 않은 세션의 백업/정리 거절 등 실제 PostgreSQL 검사 10개가 통과했다. 이 구조는 서버의 신뢰된 권한 검사이며 최종 사용자별 RLS를 사용한다는 뜻이 아니다.
+Auth/Vault·Store부터 계정 생성·관리·백업·분할 백업·연동 권한 관리·예약 실행까지 migration 18개를 적용했다. 적용된 SQL은 `supabase/migrations`의 실제 버전 파일로만 보관하고 중복 초안은 제거했다. 공개 RPC는 service_role 전용이며, private 테이블은 강제 RLS와 직접 접근 거절을 유지한다. 익명·일반 로그인 역할의 실행 권한 거절, 연결되지 않은 세션의 백업/정리 거절 등 실제 PostgreSQL 검사 10개가 통과했다. 이 구조는 서버의 신뢰된 권한 검사이며 최종 사용자별 RLS를 사용한다는 뜻이 아니다.
 
 기초 실제 클라우드 QA에서는 비밀번호 로그인·신뢰된 기존 역할 연결·동시 CAS·정확한 receipt 재시도·refresh lease·폐기된 세션 거절을 확인했다. 후속 문서·버전·typed row/수식·ACL·공동 편집/Undo·sync 10개 그룹, presence 6개, SSE 2개가 통과했다. 실제 비공개 Storage의 9MiB+123바이트 업로드·전체 SHA-256·청크 경계 Range·HEAD·416·다른 멤버 거절·물리 삭제, Realtime WebSocket 구독과 변경 알림도 확인했다. Realtime은 본문 없이 재조회를 깨운다.
 
@@ -30,9 +30,17 @@ Node source runner 147개가 실패·skip 없이 통과했고 내부 Python/SQLi
 
 실제 Supabase QA에서 동시 발급·수락된 응답 폐기 후 재시도·활성화 전/철회 후 service 접근 거절·issuer 강등·네 가지 관리 응답 직전 실제 로그아웃을 확인했다. 127개 과거 UUIDv7을 포함한 135개 목록을 limit 50의 3개 페이지로 누락·중복 없이 읽었다. 발급·활성화·철회의 감사 기록 실패는 상태 변경까지 롤백했고, 발급한 8개 권한의 생성/철회 감사는 각각 한 번이었다. 검증 계정·권한·행을 정리하고 검증 함수 version 29를 404로 교체했다. main version 6의 거절 경계 10개, 전체 Node 검사 194개가 통과했다. [실행 증거와 제한](research/cloud-grant-verification.json).
 
-예약 실행의 순수 planner와 고정 슬롯 runner도 추가했다. 기존 달력·권한·작업 로직을 재사용하며 신규 28개 검사와 독립 검토를 통과했다. PostgreSQL의 definition/due hash는 불투명한 값으로 유지하고, SQL broker가 매 새 snapshot/commit에서 검증해야 한다. 현재 runner 검사는 provider 모델을 사용하며 실제 Cron 실행 증거가 아니다.
+예약 실행은 기존 달력·권한·작업 로직을 재사용하는 planner와 고정 슬롯 runner를 실제 SQL broker·Cron·`pg_net`·`fountain-worker` version 3에 연결했다. LOGGED 큐에 고정 시각·슬롯·세대를 보관하며, 일회용 호출 티켓 원문은 전송에만 사용한다. 새 snapshot/commit마다 현재 작성자·원본 hash·세대·기한을 검사한다. Cron 명령에는 workspace만 있고 서비스 키나 사람의 세션을 넣지 않는다. 원본 운영 workspace는 아직 등록하지 않았다.
 
-`deployment.setupEnabled`는 false이고 web origin도 비어 있다. 실사용 계정·초기 연결 코드·공개 HTTPS 호스트를 아직 활성화하지 않았다. 정적 웹 배포물은 16개 allowlist 파일이며 모바일에는 19개 public asset을 복사해 두 플랫폼의 SHA 38개를 비교했다. localhost:8787은 기존 동작 보존용 불변 Python 미리보기이며 새 클라우드 운영 전환이 아니다. durable 일정 큐·Cron 호출·worker 전송·SCIM bearer 진입점·토큰 관리 UI·자동 GC는 아직 연결하지 않았다. 현재 owner 요청으로 실행되는 정리를 가짜 owner 세션으로 예약 실행하지 않는다.
+격리한 실제 Supabase QA에서 Cron이 문서·DB 행을 각각 한 개 만들고 원래 행의 counter를 2로 바꾼 것을 owner API로 두 번 확인했다. 잘못된 일정·없는 작성자·종료·미래·기존 실행의 다섯 제어 경로도 각각 확인했다. 전송 유실 후 같은 작업의 다음 세대 재시도와 중복 HTTP 호출은 페이지를 한 번만 생성했다. 자기 비활성화 및 JSON 숫자 `1.0`→`1` 변경 뒤에도 이미 수락한 동일 commit만 ACK를 받으며 새 변경은 막힌다. 재시도에 사용한 시각은 TypeScript가 정규화하고 PostgreSQL 원문 cast는 보수적인 wake 힌트에만 사용한다.
+
+provisional 완료 뒤 Store 오류는 작업·문서·receipt까지 원자적으로 롤백했다. 같은 UUID를 연결 해제/재연결하는 운영자 SQL fixture는 Cron을 일시 정지한 동안에도 이전 권한의 ACK를 거절했다. 별도 PostgreSQL 연결로 경합 구간을 확인하면서 실제 GoTrue 계정을 삭제한 경우에도 지연된 member trigger는 교착 없이 commit했다. 기존 일정 43개는 첫 호출에서 32개, 다음 호출에서 나머지를 처리했다. 같은 활성 grant의 두 실제 실행 중 오래된 authority만 정리하고 현재 authority·전체 업무 데이터 SHA·사용자 실행 이력 두 개는 보존했다. ACK·전송 유실과 2일 만료는 운영자 fault injection이며 실제 장애나 2일 경과를 주장하지 않는다.
+
+전체 Node 239개와 실제 PostgreSQL의 기존 Python 481개 검사가 실패 없이 통과했다. 전송 20개 검사는 실제 loopback HTTP와 RPC 모델을 사용하며 SQL·Cron 실검증과 구분한다. 실제 타입 컴파일러 검증은 여전히 없다. 테스트 계정 2개·행·권한·작업·Cron을 정리했고 검증 함수 version 34는 기존 nonce에도 404를 반환한다. 원본 6개 데이터 지문은 유지됐다. [예약 실행 증거와 제한](research/cloud-scheduler-verification.json).
+
+현재 Advisors에는 `pg_net`의 [public schema WARN](https://supabase.com/docs/guides/database/database-linter?lint=0014_extension_in_public) 한 개가 남아 있다. 실제 catalog에서 이 확장은 이동 불가능하고 public 소속 함수는 0개였다. catalog 강제 수정이나 확장 삭제·재설치로 경고를 숨기지 않았다. 외래 키 조회 인덱스는 별도 migration으로 보완했으며 정책 없는 private RLS 19개와 아직 사용되지 않은 인덱스 3개는 INFO다.
+
+`deployment.setupEnabled`는 false이고 web origin도 비어 있다. 실사용 계정·초기 연결 코드·공개 HTTPS 호스트를 아직 활성화하지 않았다. 정적 웹 배포물은 16개 allowlist 파일이며 모바일에는 19개 public asset을 복사해 두 플랫폼의 SHA 38개를 비교했다. localhost:8787은 기존 동작 보존용 불변 Python 미리보기이며 새 클라우드 운영 전환이 아니다. SCIM bearer 진입점·토큰 관리 UI·업로드 및 백업 파일의 예약 물리 GC·전체 다섯 플랫폼 편집 전파 검증은 남아 있다. 현재 owner 요청으로 실행되는 정리를 가짜 owner 세션으로 예약 실행하지 않는다. 무료 정적 웹 배포를 위해 Vercel 팀 요금제 확인이 남아 있지만 다른 백엔드 구현을 막지는 않는다.
 
 [라우트 인벤토리](../supabase/tests/route-inventory.json)는 현재 Python 라우트의 **method/path 201개 행**을 기록한다. HEAD와 기존 suffix alias도 별도 행이다. 각 행에는 인증 경계, 익명 접근 여부, handler/domain/module, 실제 Python AST 분기의 근거와 cloud 상태가 있다. `public`은 익명 인증 경계를 뜻하며 단순히 게시된 콘텐츠라는 뜻이 아니다.
 

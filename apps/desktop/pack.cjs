@@ -9,7 +9,9 @@ const path=require('node:path');
   const output=path.resolve(__dirname,'..','..','.data','desktop-build');
   const results=await packager({dir:__dirname,name:'Fountain',platform,arch,electronVersion:'44.8.0',appVersion:'0.1.0',
     out:output,overwrite:true,asar:true,prune:true,appBundleId:'dev.fountain.desktop',appCategoryType:'public.app-category.productivity',
-    ignore:[/^\/build\.mjs$/,/^\/\.gitignore$/,/^\/pack\.cjs$/,/^\/README\.md$/,/^\/package-lock\.json$/],
+    // Public resources need normal filesystem descriptor/inode integrity checks.
+    extraResource:path.join(__dirname,'bundle'),
+    ignore:[/^\/bundle(?:\/|$)/,/^\/build\.mjs$/,/^\/\.gitignore$/,/^\/pack\.cjs$/,/^\/README\.md$/,/^\/package-lock\.json$/],
     ...(platform==='darwin'?{osxSign:false}:{}),
   });
   console.log(results.join('\n'));

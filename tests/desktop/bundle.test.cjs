@@ -129,3 +129,15 @@ test('crash stages are retained for review and block packaging after the previou
   assert.equal(fs.existsSync(previous),false);assert.equal(fs.readFileSync(path.join(stage,'app.js'),'utf8'),'interrupted public bytes');
   assert.deepEqual(fs.readdirSync(f.destination),['old-marker']);
 });
+
+test('packager keeps code in ASAR and copies only the public bundle into real resources',()=>{
+  const desktop=path.resolve(__dirname,'../../apps/desktop'),source=fs.readFileSync(path.join(desktop,'pack.cjs'),'utf8');
+  const expression=source.match(/await packager\((\{[\s\S]*?\})\);/);assert.ok(expression,'Actual packager options must remain inspectable');
+  for(const platform of ['darwin','win32']){
+    const options=require('node:vm').runInNewContext('('+expression[1]+')',{__dirname:desktop,path,platform,arch:platform==='darwin'?'arm64':'x64',output:path.join(desktop,'test-output')});
+    assert.equal(options.asar,true);assert.equal(options.dir,desktop);
+    assert.equal(options.extraResource,path.join(desktop,'bundle'));
+    for(const filename of ['/bundle','/bundle/app.js','/bundle/manifest.json'])assert.ok(options.ignore.some(rule=>rule.test(filename)),filename);
+    for(const filename of ['/src/main.cjs','/src/security.cjs','/ui/setup.html','/bundled.js'])assert.equal(options.ignore.some(rule=>rule.test(filename)),false,filename);
+  }
+});

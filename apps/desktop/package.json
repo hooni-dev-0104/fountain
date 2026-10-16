@@ -5,6 +5,8 @@
   "description": "Fountain 공통 서버 데스크톱 클라이언트",
   "main": "src/main.cjs",
   "scripts": {
+    "build": "node build.mjs",
+    "prestart": "node build.mjs",
     "start": "electron .",
     "test": "node --test ../../tests/desktop/*.test.cjs",
     "package:mac": "node pack.cjs darwin arm64",

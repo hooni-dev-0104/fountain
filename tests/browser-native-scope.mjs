@@ -11,9 +11,9 @@ const scripts=new Map(await Promise.all(['offline.js','uploads.js'].map(async na
 const server=createServer((request,response)=>{response.setHeader('Cache-Control','no-store');if(scripts.has(request.url)){response.setHeader('Content-Type','application/javascript; charset=utf-8');response.end(scripts.get(request.url));}else{response.setHeader('Content-Type','text/html; charset=utf-8');response.end('<!doctype html><meta charset="utf-8"><title>Native cache verification</title>');}});
 await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
 const origin='http://127.0.0.1:'+server.address().port;
-let browser;
+let browser;const errors=[];
 async function load(page,backend,native=true){
-  page.on('pageerror',error=>process.stderr.write(error.message+'\n'));
+  page.on('pageerror',error=>errors.push(error.message));
   await page.goto(origin);
   await page.evaluate(({backend,native})=>{globalThis.FountainTransport=Object.freeze({origin:backend,native});globalThis.registrations=0;navigator.serviceWorker.register=()=>{globalThis.registrations++;return Promise.reject(new Error('fixture only'));};},{backend,native});
   await page.addScriptTag({url:origin+'/offline.js'});await page.addScriptTag({url:origin+'/uploads.js'});
@@ -36,5 +36,6 @@ try{
   assert.equal(await a.evaluate(()=>FountainOffline.getProfile()),null,'old backend tab is fenced after active backend changes');
   assert.equal(await a.evaluate(async key=>{try{await FountainOffline.saveDraft(key,'late-a',{blocks:[{id:'late',text:'late write'}]});return false;}catch(e){return e.name==='SecurityError';}},firstKey),true);
   const browserPage=await context.newPage();await load(browserPage,origin,false);const normal=await profile(browserPage);assert.ok(normal.id.startsWith(origin+'|'));assert.equal(await browserPage.evaluate(()=>registrations),1,'browser SW registration stays enabled');
+  assert.deepEqual(errors,[]);
   console.log('PASS native backend cache/upload isolation, stale writes, native SW skip and browser SW preservation');
 }finally{await browser?.close();await new Promise(resolve=>server.close(resolve));}

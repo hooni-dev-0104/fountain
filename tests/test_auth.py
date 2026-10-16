@@ -1,12 +1,17 @@
 import hashlib
+import http.client
 import json
 import os
+import secrets
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from fountain.auth import Auth, COOKIE_ATTRIBUTES, SESSION_COOKIE
-from fountain.core import APIError, Store
+from fountain.core import APIError, Store, Workspace
+from fountain.server import create_server
 
 SECRET = "shared-family-secret-at-least-32-characters"
 
@@ -99,6 +104,164 @@ class AuthTests(unittest.TestCase):
         with patch.dict(os.environ, {"FOUNTAIN_ACCESS_TOKEN": "too-short"}):
             with self.assertRaises(APIError) as error: Auth(self.store)
             self.assertEqual(error.exception.status, 503)
+
+
+class LocalSessionRenewalTests(unittest.TestCase):
+    def setUp(self):
+        self.environment = patch.dict(os.environ, {'FOUNTAIN_ACCESS_TOKEN': ''})
+        self.environment.start()
+        self.store = Store(':memory:')
+        Workspace(self.store)
+        self.auth = Auth(self.store)
+        self.info = self.auth.session_info('')
+
+    def tearDown(self):
+        self.store.close()
+        self.environment.stop()
+
+    def test_only_explicit_renewal_changes_the_local_binding(self):
+        original = self.info['cache_binding']
+        for _ in range(2):
+            self.assertEqual(self.auth.session_info('')['cache_binding'], original)
+            with self.assertRaises(APIError) as error:
+                self.auth.login({})
+            self.assertEqual(error.exception.status, 409)
+        result = self.auth.renew_local({'cache_binding': original}, '')
+        self.assertNotEqual(result['cache_binding'], original)
+        self.assertEqual(result, {**self.info, 'cache_binding': result['cache_binding']})
+        self.assertEqual(self.store.list('session'), [])
+        self.assertEqual(self.auth.session_info(''), result)
+        self.assertEqual(self.auth.renew_local({'cache_binding': original}, ''), result)
+
+    def test_concurrent_and_stale_retries_share_one_replacement(self):
+        body = {'cache_binding': self.info['cache_binding']}
+        with patch('fountain.auth.secrets.token_hex', wraps=secrets.token_hex) as nonce:
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                results = list(pool.map(lambda _: self.auth.renew_local(body, ''), range(16)))
+            self.assertEqual(nonce.call_count, 1)
+        self.assertEqual(len({result['cache_binding'] for result in results}), 1)
+        self.assertNotEqual(results[0]['cache_binding'], body['cache_binding'])
+        self.assertEqual(self.auth.renew_local({'cache_binding': '0' * 32}, ''), results[0])
+
+    def test_malformed_requests_preserve_the_binding(self):
+        binding = self.info['cache_binding']
+        for body in (None, [], {}, {'cache_binding': None}, {'cache_binding': True},
+                     {'cache_binding': ''}, {'cache_binding': 'x' * 257},
+                     {'cache_binding': binding.upper()}, {'cache_binding': '가' * 32},
+                     {'cache_binding': binding, 'member_id': 'local'}):
+            with self.subTest(body=body), self.assertRaises(APIError) as error:
+                self.auth.renew_local(body, '')
+            self.assertEqual(error.exception.status, 400)
+            self.assertEqual(self.auth.session_info('')['cache_binding'], binding)
+
+    def test_account_cookie_and_required_account_mode_cannot_renew_local(self):
+        self.auth.create_account('local', 'test-password-123')
+        raw = self.auth.login({'email': 'local@fountain.local', 'password': 'test-password-123'})
+        cookie = SESSION_COOKIE + '=' + raw
+        self.assertFalse(self.auth.enabled)
+        self.assertEqual(self.auth.session_info(cookie)['mode'], 'accounts')
+        with self.assertRaises(APIError) as error:
+            self.auth.renew_local({'cache_binding': self.info['cache_binding']}, cookie)
+        self.assertEqual(error.exception.status, 403)
+        self.assertEqual(self.auth.session_info('')['cache_binding'], self.info['cache_binding'])
+        self.auth.enable_accounts()
+        with self.assertRaises(APIError) as error:
+            self.auth.renew_local({'cache_binding': self.info['cache_binding']}, '')
+        self.assertEqual(error.exception.status, 403)
+
+    def test_family_mode_cannot_renew_with_or_without_a_cookie(self):
+        with patch.dict(os.environ, {'FOUNTAIN_ACCESS_TOKEN': SECRET}):
+            shared = Auth(self.store)
+            cookie = SESSION_COOKIE + '=' + shared.login({'token': SECRET})
+            for supplied in ('', cookie):
+                with self.assertRaises(APIError) as error:
+                    shared.renew_local({'cache_binding': self.info['cache_binding']}, supplied)
+                self.assertEqual(error.exception.status, 403)
+        self.assertEqual(self.auth.session_info('')['cache_binding'], self.info['cache_binding'])
+
+
+class LocalSessionRenewalHTTPTests(unittest.TestCase):
+    def setUp(self):
+        self.environment = patch.dict(os.environ, {'FOUNTAIN_ACCESS_TOKEN': ''})
+        self.environment.start()
+        self.server = create_server(port=0, db_path=':memory:')
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+        self.server.application.store.close()
+        self.environment.stop()
+
+    def request(self, method, path, body=None, headers=None):
+        connection = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=4)
+        defaults = {'Content-Type': 'application/json', 'X-Fountain-Request': '1'}
+        defaults.update(headers or {})
+        connection.request(method, path, json.dumps(body) if body is not None else None, defaults)
+        response = connection.getresponse()
+        payload = json.loads(response.read())
+        result = response.status, payload, response.getheader('Set-Cookie')
+        connection.close()
+        return result
+
+    def test_explicit_renewal_has_no_cookie_and_preserves_other_session_routes(self):
+        before = self.request('GET', '/api/session')[1]
+        self.assertEqual(self.request('POST', '/api/session', {})[0], 409)
+        result = self.request('POST', '/api/session/renew-local', {'cache_binding': before['cache_binding']})
+        self.assertEqual(result[0], 200)
+        self.assertIsNone(result[2])
+        self.assertNotEqual(result[1]['cache_binding'], before['cache_binding'])
+        for method in ('GET', 'HEAD', 'DELETE', 'PATCH', 'PUT', 'OPTIONS'):
+            if method == 'HEAD':
+                connection = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=4)
+                connection.request(method, '/api/session/renew-local')
+                response = connection.getresponse()
+                self.assertEqual(response.status, 405)
+                response.read()
+                connection.close()
+            else:
+                self.assertEqual(self.request(method, '/api/session/renew-local', {})[0], 405)
+        self.assertEqual(self.request('GET', '/api/session')[1], result[1])
+
+    def test_origin_host_header_and_json_validation_apply_before_renewal(self):
+        before = self.request('GET', '/api/session')[1]
+        body = {'cache_binding': before['cache_binding']}
+        for headers in ({'Origin': 'https://evil.example'}, {'Origin': 'null'},
+                        {'Host': 'evil.example'}, {'X-Fountain-Request': ''}):
+            self.assertEqual(self.request('POST', '/api/session/renew-local', body, headers)[0], 403)
+        for malformed in ({}, {'cache_binding': None}, {'cache_binding': body['cache_binding'], 'extra': 1}, []):
+            self.assertEqual(self.request('POST', '/api/session/renew-local', malformed)[0], 400)
+        self.assertEqual(self.request('GET', '/api/session')[1], before)
+
+    def test_existing_local_sse_is_fenced_by_the_new_binding(self):
+        app = self.server.application
+        app.workspace.create_page({'id': 'local-renewal-stream', 'title': 'Local stream'})
+        before = self.request('GET', '/api/session')[1]
+        connection = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=4)
+        self.addCleanup(connection.close)
+        connection.request('GET', '/api/pages/local-renewal-stream/events')
+        response = connection.getresponse()
+        self.addCleanup(response.close)
+        self.assertEqual(response.status, 200)
+
+        def event():
+            name = None
+            for _ in range(30):
+                line = response.fp.readline().decode().strip()
+                if line.startswith('event: '): name = line[7:]
+                if line.startswith('data: ') and name != 'presence':
+                    return name, json.loads(line[6:])
+            self.fail('No document SSE event received')
+
+        self.assertEqual(event()[1]['session_binding'], before['cache_binding'])
+        renewed = self.request('POST', '/api/session/renew-local', {'cache_binding': before['cache_binding']})
+        self.assertEqual(renewed[0], 200)
+        name, payload = event()
+        self.assertEqual((name, payload['status']), ('denied', 401))
+        snapshot = self.request('GET', '/api/pages/local-renewal-stream/collaboration')[1]
+        self.assertEqual(snapshot['session_binding'], renewed[1]['cache_binding'])
 
 
 if __name__ == "__main__": unittest.main()

@@ -253,6 +253,26 @@ class Auth:
             with self.store.transaction():
                 return self._session_info(cookie)
 
+    def renew_local(self, body, cookie):
+        """Explicitly replace an expired local cache grant without rotating retries."""
+        require(isinstance(body, dict) and set(body) == {'cache_binding'}
+                and isinstance(body['cache_binding'], str)
+                and re.fullmatch(r'[a-f0-9]{32}', body['cache_binding']) is not None,
+                'A valid local cache binding is required')
+        with self.store.transaction():
+            require(not self.enabled, 'Local session renewal is unavailable', 403)
+            info = self._session_info(cookie)
+            require(info['mode'] == 'local' and info['authenticated'] is True
+                    and info['required'] is False and isinstance(info['member'], dict)
+                    and info['member'].get('id') == 'local',
+                    'Local session renewal is unavailable', 403)
+            # Compare under the writer so concurrent clients sharing an expired
+            # binding receive one replacement, rather than invalidating each other.
+            if info['cache_binding'] == body['cache_binding']:
+                self.store.set_meta('local_cache_binding', secrets.token_hex(16))
+                return self._session_info(cookie)
+            return info
+
     def _session_info(self, cookie):
         session = self._session(cookie)
         member = self.principal(cookie)

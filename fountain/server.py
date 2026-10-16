@@ -683,6 +683,10 @@ def handler_for(application):
                         require(isinstance(body, dict), "JSON body must be an object")
                 method = "GET" if self.command == "HEAD" else self.command
                 cookie = self.headers.get('Cookie', '')
+                if path == '/api/session/renew-local':
+                    require(method == 'POST', 'Unsupported local session renewal method', 405)
+                    self.send_payload(200, application.auth.renew_local(body, cookie))
+                    return
                 if path == '/api/session':
                     auth = application.auth
                     if method == 'GET':

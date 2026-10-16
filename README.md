@@ -55,6 +55,8 @@ AI는 기본 비활성 상태이며 무료 로컬 모델 또는 호환 API를 �
 
 현재 8787 미리보기는 Python과 서울 Supabase PostgreSQL을 사용하는 호환 실행 상태로 보존했습니다. SQLite 원본과 전환 전후 백업도 남아 있습니다. 별도로 Supabase Edge Functions·Auth·PostgreSQL·Storage를 사용하는 백엔드와 앱의 직접 연결을 구현하고 QA 공간에서 검증하고 있습니다. 원본 작업공간의 운영 계정 연결·공개 웹 호스팅·전환은 아직 완료하지 않았습니다. 기존 서버 디스크 기반 5GB 파일 검증을 Supabase Storage의 실제 5GB 전송 증거로 보지 않습니다. 연결 옵션·무료 용량·검증 범위는 [Supabase 안내](docs/SUPABASE.md), 이번 앱 실행 결과는 [데스크톱 클라우드 검증](docs/research/desktop-cloud-verification.md)에 있습니다.
 
+공유용 웹 주소를 따로 설정하면 웹·데스크톱·모바일에서 같은 문서 링크를 복사할 수 있습니다. 가족용 폼·사이트는 외부 브라우저에서도 로그인한 뒤 원래 페이지로 돌아갑니다. 현재는 로컬 브라우저 통합과 Android WebView의 외부 열기 요청까지 검증했으며, 실제 공개 호스팅은 연결하지 않았습니다. [공유 링크 검증 범위](docs/research/public-frontend-links.md)
+
 전체 백업은 설정 → 가져오기 / 내보내기 → 전체 백업 다운로드에서 받을 수 있습니다. 댓글·문서 이력·첨부·설정이 포함되고 로그인 세션·임시 클립보드는 제외됩니다. JSON은 문서와 데이터베이스의 이동용 내보내기입니다.
 
 ```sh

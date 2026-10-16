@@ -1,0 +1,118 @@
+{
+  "generatedAt": "2026-10-16T19:35:28.961232+00:00",
+  "status": "local_component_verified_not_deployed",
+  "codeHead": "5ece2e9f5f4d844ca6a85e214997a46ccb3d98b1",
+  "wholeGoalComplete": false,
+  "productionCutover": false,
+  "cloudMutationsThisMilestone": false,
+  "defaultPublicWebOrigin": null,
+  "anonymousPublishingEnabled": false,
+  "tests": {
+    "nodeBoundaryAndComposition": {
+      "passed": 38
+    },
+    "browserPublicLinks": {
+      "passed": true,
+      "actualChrome": true,
+      "actualDisposableLegacyAuth": true,
+      "presentationTransportInjected": true,
+      "metadataInjected": true,
+      "actualVercel": false
+    },
+    "browserTransportRegression": {
+      "passed": true
+    },
+    "nativeTransportSuite": {
+      "passed": true
+    },
+    "nativeChromeMockBridgeRealHTTP": {
+      "passed": true
+    },
+    "androidPolicyJVMChecks": 195,
+    "androidOutboxJVMChecks": 103,
+    "androidSDKAppAndTestBuild": {
+      "passed": true,
+      "offline": true
+    },
+    "androidComponent": {
+      "passed": 1,
+      "skipped": 0,
+      "seconds": 8.106,
+      "emulator": "FountainRecoveryQA",
+      "api": 36,
+      "actualMainWebView": true,
+      "nativeAdapter": true,
+      "anonymousSessionJSONFixture": true,
+      "actionViewIntercepted": true,
+      "externalBrowserDisplayed": false,
+      "actualTLS": false,
+      "actualCloudAuth": false,
+      "subframeRequestDTOInjected": true,
+      "selector": "dev.fountain.workspace.PublicWebNavigationDeviceTest#bundledPublicLinksUseOnlyObservedNativeSessionMetadata",
+      "optInArgument": "publicLinkQA=1"
+    },
+    "assetCopies": {
+      "publicAssets": 19,
+      "hashChecks": 57,
+      "destinations": [
+        "Android native assets",
+        "iOS native assets",
+        "Android debug APK"
+      ],
+      "compiledIOSAppChecked": false
+    },
+    "actualTypeScriptOrDenoTypecheck": false,
+    "syntaxAndDiffChecks": true
+  },
+  "artifacts": {
+    "androidDebugAPK": "41f3b7146b11f5b41718afe32f4ebb46392102ede95cef8a2522863977c8315c",
+    "androidTestAPK": "f9a0f5009d27db28d157211648c89641d6d19ad7b52e0074b9e31938d885e688"
+  },
+  "sourceSHA256": {
+    "supabase/functions/_shared/backend.ts": "9cb2c86f26bdcab840f9d215191dc4c956ac2ff7d3b91d5a39e7e9f79844736d",
+    "supabase/functions/_shared/application.ts": "6d31d0e1354f53102a7cc0131abd6ad3b2cc14a5a9b6a396f236936dd0f55db0",
+    "supabase/functions/fountain-api/index.ts": "a0cdab7c410766064118e2e754dc30e4647c280d65fa02830d856613e3f33894",
+    "supabase/functions/fountain-api/deployment.ts": "c7d2093059a5ba4050b2ed9a53f9510284a20da05ce636f120f2480a115d835c",
+    "static/app.js": "9a1db92b4f5567f4097717703b8d0572e78a1bff31bc76483c0facf5a0b32f80",
+    "static/offline.js": "93fabba1fa4fe2776e551c8d1a4ec306bd77ef6d6df9ccc9f0546c60f49ddd1a",
+    "static/transport.js": "26ca11327a012ceab71260dce8ee4eecbfa558528588a42fac39d831d14be12f",
+    "apps/mobile/web/native-transport.js": "77ea1c70f3accd2d14753f55b3ac7c0194506d243cdb7887497523dce05f4c2c",
+    "apps/web/api/public-relay.mjs": "24c159872548ea5f2fbf7657b732aee19da7841737eef813f31e8dd841f82247",
+    "apps/mobile/android/app/src/main/java/dev/fountain/workspace/FountainNativePlugin.java": "972b62515c284dc71dcdfaecf7e3ad41927020f33dd697ec4a0fc9600f44a45c",
+    "apps/mobile/android/app/src/main/java/dev/fountain/workspace/NativePolicy.java": "7cc5948eb6ecfaa8011ad06ffcb8e444f3734e1873867391adff6bc5cda646b6",
+    "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/PublicWebNavigationDeviceTest.java": "e4dfac4209ae533693b045c9ccac993767a9945e06597a5df2927dcc8d188aa0",
+    "tests/browser-public-links.mjs": "2494214af60b43390099726033055b6846a6c982b2146d348c6a2fbf33316d44"
+  },
+  "review": {
+    "sharedWebAndMetadata": "APPROVE",
+    "androidNativeBoundary": "APPROVE",
+    "wholeGoalApproval": false,
+    "evidence": "APPROVE"
+  },
+  "cleanup": {
+    "testProcessForceStopped": true,
+    "ownedAndroidEmulatorStopped": true,
+    "preexistingIOSSimulatorPreserved": true,
+    "cloudUsersOrObjectsCreated": 0,
+    "originalSixCollectionFingerprintsUnchanged": true,
+    "originalPreviewRestarted": false
+  },
+  "remaining": [
+    "free frontend host eligibility and exact origin",
+    "actual owner email and UI onboarding",
+    "deployed cookies, HTML, Range and SSE",
+    "actual iOS external browser",
+    "Windows execution",
+    "five-platform concurrent propagation",
+    "remaining full paid-feature parity and real provider integrations"
+  ],
+  "productionObserved": {
+    "apiVersion": 9,
+    "workerVersion": 3,
+    "maintenanceVersion": 3,
+    "retiredVerifierVersion": 49,
+    "healthStatus": 200,
+    "ready": false,
+    "preservedPreviewHTTPStatus": 200
+  }
+}

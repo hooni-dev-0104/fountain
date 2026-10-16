@@ -41,12 +41,19 @@ form submissions and SSE do not pass through the Node function. The local tests
 check these routing boundaries; they do not simulate Vercel's deployed router.
 
 Before activating a hostname, add its exact HTTPS origin to
-`supabase/functions/fountain-api/deployment.ts`, redeploy the function, and verify
+`webOrigins` in `supabase/functions/fountain-api/deployment.ts`. Set
+`publicWebOrigin` to that same verified canonical origin to use it in copied
+desktop/mobile document links. Its default is `null`; an API-only Supabase origin
+does not provide a shareable frontend. Redeploy the function, then verify
 cookie login/logout, private responses, Range and SSE through that hostname.
 The bundle is prepared; Vercel deployment, real hostname cookies, streaming,
 HTML restoration, current Edge readiness and plan/usage eligibility still need
 verification by the deployment owner. The connected team's read-only metadata
 did not include its billing plan; Hobby/free status has not been established.
+
+The local login-return integration and Android native URL boundary are recorded
+in [public frontend link verification](../../docs/research/public-frontend-links.md).
+Those checks do not establish a deployed hostname or activate anonymous access.
 
 The standalone `.mjs` handler and rewrite syntax follow the official
 [Node runtime](https://vercel.com/docs/functions/runtimes/node-js) and

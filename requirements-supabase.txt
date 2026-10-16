@@ -1,0 +1,2 @@
+# Optional cloud runtime; exact versions and wheel hashes are locked separately.
+-r requirements-supabase.lock

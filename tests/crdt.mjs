@@ -116,3 +116,31 @@ if(priorSource===undefined)delete globalThis.EventSource;else globalThis.EventSo
 if(priorTransport===undefined)delete globalThis.FountainTransport;else globalThis.FountainTransport=priorTransport;
 if(originalNavigator)Object.defineProperty(globalThis,'navigator',originalNavigator);
 console.log('PASS: local page remote gate across open, queue, flush, online, retry, restart and applied creation ACK');
+
+// Presence is ephemeral and belongs to this exact actor, login and epoch.
+Object.defineProperty(globalThis,'navigator',{value:{onLine:false},configurable:true});
+store=memoryStore();globalThis.FountainOffline=store;
+const presenceProfile={...profile,workspaceId:'family-workspace',memberId:'owner'};
+const received=[];
+local=new crdt.DocumentChannel({pageId:'p',profile:presenceProfile,onPresence:value=>received.push(plain(value))});
+await local.open(snapshot('old',1,'현재 본문'),{cached:true});
+const presence={epoch:'old',revision:10,workspace_id:'family-workspace',current_member_id:'owner',session_binding:'binding',participants:[{id:'peer',name:'가족',selection:null}]};
+local.receivePresence(presence);
+assert.equal(received.length,1);
+for(const invalid of [{session_binding:'other-login'},{current_member_id:'other-member'},{workspace_id:'other-workspace'},{epoch:'other-epoch'},{revision:9},{revision:NaN},{participants:null}])local.receivePresence({...presence,...invalid});
+assert.equal(received.length,1,'stale and unrelated presence must not reach the UI');
+assert.equal((await store.getSnapshot('key')).participants,undefined,'live participants must not enter offline document snapshots');
+await local.receive(snapshot('restored',2,'복원 본문'));
+assert.equal(received.at(-1).reset,true);
+assert.deepEqual(received.at(-1).participants,[]);
+local.receivePresence({...presence,epoch:'restored',revision:11});
+assert.equal(received.at(-1).revision,11);
+local.close();local.receivePresence({...presence,epoch:'restored',revision:12});
+assert.equal(received.at(-1).revision,11,'closed channels must ignore late presence');
+local=new crdt.DocumentChannel({pageId:'p',profile:presenceProfile,deferRemote:true,onPresence:value=>received.push(plain(value))});
+await local.open(localSnapshot,{cached:true});
+const count=received.length;local.receivePresence({...presence,epoch:localSnapshot.epoch,revision:99});
+assert.equal(received.length,count,'a local-only page must not accept live presence');
+local.close();delete globalThis.FountainOffline;
+if(originalNavigator)Object.defineProperty(globalThis,'navigator',originalNavigator);
+console.log('PASS: ephemeral presence is fenced by actor, login, workspace, epoch, revision and local-only lifecycle');

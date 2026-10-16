@@ -133,8 +133,8 @@
   function randomClient(){const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);return 'tab_'+[...bytes].map(value=>value.toString(16).padStart(2,'0')).join('');}
   const stripEpoch=entry=>{const value=clone(entry);delete value._epoch;return value;};
   class DocumentChannel {
-    constructor({pageId,profile,fetcher,deferRemote=false,onChange=()=>{},onStatus=()=>{},onDenied=()=>{},onDraft=()=>{},onError=()=>{}}){
-      this.pageId=pageId;this.profile=profile;this.clientId=randomClient();this.fetcher=fetcher;this.onChange=onChange;this.onStatus=onStatus;this.onDenied=onDenied;this.onDraft=onDraft;this.onError=onError;this.offline=globalThis.FountainOffline;
+    constructor({pageId,profile,fetcher,deferRemote=false,onChange=()=>{},onStatus=()=>{},onDenied=()=>{},onDraft=()=>{},onPresence=()=>{},onError=()=>{}}){
+      this.pageId=pageId;this.profile=profile;this.clientId=randomClient();this.fetcher=fetcher;this.onChange=onChange;this.onStatus=onStatus;this.onDenied=onDenied;this.onDraft=onDraft;this.onPresence=onPresence;this.onError=onError;this.offline=globalThis.FountainOffline;this.presenceRevision=-1;
       this.key=this.offline?.key(profile,pageId);this.pending=new Map();this.base=null;this.state=null;this.clock=0;this.closed=false;this.persistence=Promise.resolve();this.delay=500;this.recovering=false;this.retiredEpochs=new Set();this.remoteDeferred=deferRemote===true;
       this.onlineHandler=()=>this.reconnect();this.offlineHandler=()=>{this.source?.close();this.setStatus('offline');};
       globalThis.addEventListener('online',this.onlineHandler);globalThis.addEventListener('offline',this.offlineHandler);
@@ -213,7 +213,11 @@
       // Preserve the old optimistic view before switching epochs, so recovery includes local text.
       if(this.base&&snapshot.epoch!==this.base.epoch&&this.pending.size)await this.recover([...this.pending.values()],'epoch_changed');
       if(this.closed)return;
-      if(this.base&&snapshot.epoch!==this.base.epoch)this.retiredEpochs.add(this.base.epoch);
+      if(this.base&&snapshot.epoch!==this.base.epoch){
+        this.retiredEpochs.add(this.base.epoch);this.presenceRevision=-1;
+        this.onPresence({epoch:snapshot.epoch,workspace_id:this.profile.workspaceId,current_member_id:this.profile.memberId,
+          session_binding:this.profile.session.cache_binding,participants:[],reset:true});
+      }
       this.base=clone(snapshot);await this.rebuild(source);
       if(this.closed)return;
       if(this.offline&&this.key)await this.offline.saveSnapshot(this.key,this.base);
@@ -311,10 +315,18 @@
         if(!this.closed)this.setStatus(this.pending.size?'pending':'synced');
       })().catch(error=>{if(!this.closed){this.onError(error);this.setStatus('error');}}).finally(()=>{this.flushing=null;});return this.flushing;
     }
+    receivePresence(value){
+      if(this.closed||this.remoteDeferred||!this.base||value?.epoch!==this.base.epoch
+          ||value.workspace_id!==this.profile.workspaceId||value.current_member_id!==this.profile.memberId
+          ||value.session_binding!==this.profile.session.cache_binding||!Array.isArray(value.participants)
+          ||!Number.isSafeInteger(value.revision)||value.revision<this.presenceRevision)return;
+      this.presenceRevision=value.revision;this.onPresence(clone(value));
+    }
     connectEvents(){
       if(this.closed||this.remoteDeferred||typeof EventSource==='undefined'||!navigator.onLine)return;this.source?.close();
       this.source=FountainTransport.events('/api/pages/'+encodeURIComponent(this.pageId)+'/events');
       this.source.addEventListener('snapshot',event=>{try{const data=JSON.parse(event.data);this.receive(data).then(()=>this.flush()).catch(error=>this.onError(error));}catch(error){this.onError(error);}});
+      this.source.addEventListener('presence',event=>{try{this.receivePresence(JSON.parse(event.data));}catch(error){this.onError(error);}});
       this.source.addEventListener('denied',event=>{let data;try{data=JSON.parse(event.data);}catch{data={status:403,error:'문서 접근 권한이 변경되었습니다.'};}this.deny(data.status,data.error);});
       this.source.onerror=()=>{this.source?.close();if(!this.closed){this.setStatus('offline');this.retry();}};
     }

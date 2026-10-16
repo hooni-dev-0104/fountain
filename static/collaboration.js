@@ -84,8 +84,15 @@
   }
   function validateOperation(op){
     check(op&&typeof op==='object'&&!Array.isArray(op),'Invalid operation');string(op.client,'client',80);check(/^[A-Za-z0-9_-]+$/.test(op.client),'Invalid client');check(Number.isSafeInteger(op.clock)&&op.clock>0,'Invalid clock');check(op.id===op.client+':'+op.clock,'Invalid operation id');
+    if(op.type==='history.cancel'){
+      check(Object.keys(op).every(key=>['id','client','clock','type','targets'].includes(key)),'Unsupported operation fields');
+      check(Array.isArray(op.targets)&&op.targets.length>0&&op.targets.length<=1000&&new Set(op.targets).size===op.targets.length,'Invalid cancellation targets');
+      for(const target of op.targets){identity(target);const prefix=op.client+':',clock=target.startsWith(prefix)?target.slice(prefix.length):'';check(/^[1-9][0-9]*$/.test(clock)&&Number.isSafeInteger(Number(clock))&&Number(clock)<op.clock,'Invalid cancellation target');}
+      return [op.clock,op.client,op.id];
+    }
+    if(own(op,'group_id')){string(op.group_id,'group id',80);check(/^[A-Za-z0-9_-]+$/.test(op.group_id),'Invalid group id');}
     const fields={'block.insert':['parent_id','after_id','block_type'],'block.move':['parent_id','after_id'],'block.set':['field','value'],'block.delete':[],'text.insert':['after_id','text','marks'],'text.delete':['char_ids'],'text.format':['char_ids','marks']};
-    check(own(fields,op.type),'Unknown operation');check(Object.keys(op).every(key=>['id','client','clock','type','block_id',...fields[op.type]].includes(key)),'Unsupported operation fields');identity(op.block_id);check(Array.from(op.block_id).length<=160,'Block id too long');
+    check(own(fields,op.type),'Unknown operation');check(Object.keys(op).every(key=>['id','client','clock','type','block_id','group_id',...fields[op.type]].includes(key)),'Unsupported operation fields');identity(op.block_id);check(Array.from(op.block_id).length<=160,'Block id too long');
     if(['block.insert','block.move'].includes(op.type)){identity(op.parent_id??null,true);identity(op.after_id??null,true);}
     if(op.type==='block.insert')fieldValue('type',op.block_type||'paragraph');
     if(op.type==='block.set')fieldValue(op.field,op.value);
@@ -94,18 +101,155 @@
     if(op.type==='text.format')validateMarks(op.marks||{});
     return [op.clock,op.client,op.id];
   }
-  function applyOperations(state,operations){
-    check(state?.version===1,'Unsupported state');check(Array.isArray(operations)&&operations.length<=1000,'Too many operations');const validated=operations.map(op=>({op,stamp:validateOperation(op),digest:sha256(canonical(op))})),result=clone(state);result.max_clock=result.max_clock||0;
-    for(const {op,stamp,digest} of validated){
-      result.max_clock=Math.max(result.max_clock,op.clock);if(own(result.seen,op.id)){check(result.seen[op.id]===true||result.seen[op.id]===digest,'Operation id reused with different content',409);continue;}result.seen[op.id]=digest;
-      const node=own(result.blocks,op.block_id)?result.blocks[op.block_id]:(result.blocks[op.block_id]=block(op.block_id));
-      if(op.type==='block.delete')node.deleted=true;
-      else if(['block.insert','block.move'].includes(op.type)){if(op.type==='block.insert'){if(compareStamp(stamp,node.insert)>0)node.insert=[...stamp];set(node.fields,'type',fieldValue('type',op.block_type||'paragraph'),stamp);}if(compareStamp(stamp,node.move)>0){node.parent_id=op.parent_id??null;node.after_id=op.after_id??null;node.move=[...stamp];}}
-      else if(op.type==='block.set')set(node.fields,op.field,fieldValue(op.field,op.value),stamp);
-      else if(op.type==='text.insert'){let anchor=op.after_id??null;Array.from(op.text).forEach((text,index)=>{const id=op.id+':'+index,value=own(node.chars,id)?node.chars[id]:(node.chars[id]=char(id));Object.assign(value,{after_id:anchor,stamp:[...stamp],text});for(const key of Object.keys(op.marks||{}))set(value.marks,key,op.marks[key],stamp);anchor=id;});}
-      else for(const id of op.char_ids){const value=own(node.chars,id)?node.chars[id]:(node.chars[id]=char(id));if(op.type==='text.delete')value.deleted=true;else for(const key of Object.keys(op.marks||{}))set(value.marks,key,op.marks[key],stamp);}
+  function operationStamp(op){return [op.clock,op.client,op.id];}
+  function slot(blockId,kind,source,extra={}){return {block_id:blockId,kind,...extra,source:[...source]};}
+  function hintKey(value){return canonical([value.block_id,value.kind,value.field??null,value.char_id??null,value.mark??null,value.source]);}
+  function capturePublicHints(state){
+    const hints=new Map(),unknown=new Set((state.unresolved_slots||[]).map(hintKey));
+    for(const [id,node] of Object.entries(state.blocks||{})){
+      if(node.deleted||node.insert===null)continue;
+      if(node.move&&own(node,'parent_id')&&own(node,'after_id')&&!unknown.has(hintKey(slot(id,'position',node.move))))hints.set(hintKey(slot(id,'position',node.move)),{parent_id:node.parent_id,after_id:node.after_id});
+      for(const [field,value] of Object.entries(node.fields))if(own(value,'value'))hints.set(hintKey(slot(id,'field',value.stamp,{field})),clone(value.value));
+      for(const [charId,value] of Object.entries(node.chars))if(!value.deleted&&value.stamp){
+        if(own(value,'text'))hints.set(hintKey(slot(id,'text',value.stamp,{char_id:charId})),value.text);
+        for(const [mark,entry] of Object.entries(value.marks))if(own(entry,'value'))hints.set(hintKey(slot(id,'mark',entry.stamp,{char_id:charId,mark})),clone(entry.value));
+      }
+    }
+    return hints;
+  }
+  function operationMetadata(op){
+    const result={id:op.id,client:op.client,clock:op.clock,type:op.type};
+    for(const key of ['block_id','group_id','field','char_ids','targets'])if(own(op,key))result[key]=clone(op[key]);
+    if(op.type==='text.insert'){result.after_id=op.after_id??null;result.character_count=own(op,'text')?Array.from(op.text).length:op.character_count;}
+    if(['text.insert','text.format'].includes(op.type))result.mark_keys=own(op,'marks')?Object.keys(op.marks).sort(compareText):[...(op.mark_keys||[])].sort(compareText);
+    return result;
+  }
+  function redactBaseline(blocks){
+    const result=clone(blocks);
+    for(const node of Object.values(result)){
+      delete node.parent_id;delete node.after_id;
+      for(const value of Object.values(node.fields))delete value.value;
+      for(const value of Object.values(node.chars)){delete value.text;for(const entry of Object.values(value.marks))delete entry.value;}
     }
     return result;
+  }
+  function operationHints(operations,hints){
+    for(const op of operations){
+      const source=operationStamp(op),id=op.block_id,put=(kind,value,extra={})=>hints.set(hintKey(slot(id,kind,source,extra)),clone(value));
+      if(['block.insert','block.move'].includes(op.type))put('position',{parent_id:op.parent_id??null,after_id:op.after_id??null});
+      if(op.type==='block.insert')put('field',fieldValue('type',op.block_type||'paragraph'),{field:'type'});
+      if(op.type==='block.set')put('field',fieldValue(op.field,op.value),{field:op.field});
+      if(op.type==='text.insert')Array.from(op.text).forEach((text,index)=>{const char_id=op.id+':'+index;put('text',text,{char_id});for(const [mark,value] of Object.entries(op.marks||{}))put('mark',value,{char_id,mark});});
+      if(op.type==='text.format')for(const char_id of op.char_ids)for(const [mark,value] of Object.entries(op.marks||{}))put('mark',value,{char_id,mark});
+    }
+  }
+  function materializeHistory(state,hints=new Map()){
+    const history=state.history,isPublic=history.public===true,records=dict(),active=new Set(),disabled=new Set();
+    const operations=Object.values(history.ops).sort((a,b)=>compareStamp(operationStamp(a),operationStamp(b)));
+    for(const op of [...operations].reverse()){if(disabled.has(op.id))continue;active.add(op.id);if(op.type==='history.cancel')op.targets.forEach(id=>disabled.add(id));}
+    const ensure=id=>{if(!own(records,id))records[id]={node:block(id),baseline:null,insertions:[],fields:dict(),positions:[],chars:dict(),contributions:[],deleted:false};return records[id];};
+    const ensureChar=(record,id)=>{if(!own(record.chars,id))record.chars[id]={node:char(id),baseline:false,origin:null,marks:dict(),deleted:false};return record.chars[id];};
+    const candidate=(descriptor,opId,value,known)=>{
+      const result={descriptor,stamp:descriptor.source,opId};
+      if(known)result.value=clone(value);else if(isPublic&&hints.has(hintKey(descriptor)))result.value=clone(hints.get(hintKey(descriptor)));
+      return result;
+    };
+    const add=(registers,key,value)=>{if(!own(registers,key))registers[key]=[];registers[key].push(value);};
+    for(const [id,base] of Object.entries(history.baseline.blocks)){
+      const record=ensure(id);record.baseline=base;record.node.insert=clone(base.insert);record.deleted=base.deleted;
+      if(base.move)record.positions.push(candidate(slot(id,'position',base.move),null,{parent_id:base.parent_id,after_id:base.after_id},own(base,'parent_id')&&own(base,'after_id')));
+      for(const [field,value] of Object.entries(base.fields))add(record.fields,field,candidate(slot(id,'field',value.stamp,{field}),null,value.value,own(value,'value')));
+      for(const [charId,value] of Object.entries(base.chars)){
+        const entry=ensureChar(record,charId);entry.node=clone(value);entry.baseline=value.stamp!==null;entry.deleted=value.deleted;
+        if(value.stamp)entry.origin=candidate(slot(id,'text',value.stamp,{char_id:charId}),null,value.text,own(value,'text'));
+        for(const [mark,register] of Object.entries(value.marks))add(entry.marks,mark,candidate(slot(id,'mark',register.stamp,{char_id:charId,mark}),null,register.value,own(register,'value')));
+      }
+    }
+    for(const op of operations){
+      if(op.type==='history.cancel')continue;
+      const id=op.block_id,record=ensure(id),stamp=operationStamp(op),live=active.has(op.id);
+      if(live&&['block.set','block.move'].includes(op.type))record.contributions.push(op);
+      if(op.type==='block.delete'){if(live)record.deleted=true;continue;}
+      if(['block.insert','block.move'].includes(op.type)){
+        if(op.type==='block.insert'){
+          record.insertions.push(op);
+          if(compareStamp(stamp,record.node.insert)>0)record.node.insert=[...stamp];
+          add(record.fields,'type',candidate(slot(id,'field',stamp,{field:'type'}),op.id,isPublic?undefined:fieldValue('type',op.block_type||'paragraph'),!isPublic));
+        }
+        record.positions.push(candidate(slot(id,'position',stamp),op.id,{parent_id:op.parent_id??null,after_id:op.after_id??null},!isPublic));
+      }else if(op.type==='block.set')add(record.fields,op.field,candidate(slot(id,'field',stamp,{field:op.field}),op.id,isPublic?undefined:fieldValue(op.field,op.value),!isPublic));
+      else if(op.type==='text.insert'){
+        let anchor=op.after_id??null;const texts=isPublic?null:Array.from(op.text),count=isPublic?op.character_count:texts.length;
+        for(let index=0;index<count;index++){
+          const charId=op.id+':'+index,entry=ensureChar(record,charId);Object.assign(entry.node,{after_id:anchor,stamp:[...stamp]});
+          entry.origin=candidate(slot(id,'text',stamp,{char_id:charId}),op.id,texts?.[index],!isPublic);
+          for(const mark of isPublic?op.mark_keys:Object.keys(op.marks||{}))add(entry.marks,mark,candidate(slot(id,'mark',stamp,{char_id:charId,mark}),op.id,op.marks?.[mark],!isPublic));
+          anchor=charId;
+        }
+      }else for(const charId of op.char_ids){
+        const entry=ensureChar(record,charId);
+        if(op.type==='text.delete'){if(live)entry.deleted=true;}
+        else for(const mark of isPublic?op.mark_keys:Object.keys(op.marks||{}))add(entry.marks,mark,candidate(slot(id,'mark',stamp,{char_id:charId,mark}),op.id,op.marks?.[mark],!isPublic));
+      }
+    }
+    const greatest=values=>values.reduce((winner,value)=>!winner||compareStamp(value.stamp,winner.stamp)>0?value:winner,null);
+    const isActive=value=>value.opId===null||active.has(value.opId),parents=dict(),eligible=new Set(),visible=new Set();
+    for(const [id,record] of Object.entries(records)){
+      const baselineBorn=record.baseline?.insert!==null&&record.baseline?.insert!==undefined,birth=baselineBorn?null:record.insertions[0];
+      record.cohort=op=>!!birth&&(birth.group_id?op.client===birth.client&&op.group_id===birth.group_id&&op.block_id===id&&['block.insert','block.set','block.move','text.insert'].includes(op.type):op.id===birth.id);
+      record.originActive=baselineBorn||record.insertions.some(op=>active.has(op.id));
+      record.position=greatest(record.positions.filter(isActive))||greatest(record.positions.filter(value=>value.opId&&record.cohort(history.ops[value.opId])));
+      record.node.move=record.position?[...record.position.stamp]:null;
+      record.node.parent_id=record.position&&own(record.position,'value')?record.position.value.parent_id:null;
+      record.node.after_id=record.position&&own(record.position,'value')?record.position.value.after_id:null;
+      for(const entry of Object.values(record.chars)){entry.node.deleted=entry.deleted||!(entry.baseline||entry.origin&&active.has(entry.origin.opId));}
+      if(record.node.insert!==null&&!record.deleted){eligible.add(id);if(record.originActive||Object.values(record.chars).some(entry=>entry.node.stamp!==null&&!entry.node.deleted)||record.contributions.some(op=>!record.cohort(op)))visible.add(id);}
+    }
+    for(const id of eligible){const parent=records[id].node.parent_id;parents[id]=eligible.has(parent)&&parent!==id?parent:null;}breakCycles(parents);
+    const stack=[...visible];while(stack.length){const parent=parents[stack.pop()];if(parent!==null&&parent!==undefined&&!visible.has(parent)){visible.add(parent);stack.push(parent);}}
+    const unresolved=[],resolve=value=>{if(value&&!own(value,'value'))unresolved.push(clone(value.descriptor));};
+    state.blocks=dict();
+    for(const [id,record] of Object.entries(records)){
+      const node=record.node;node.deleted=record.deleted||node.insert!==null&&!visible.has(id);node.fields=dict();node.chars=dict();
+      if(!node.deleted&&node.insert!==null)resolve(record.position);
+      for(const [field,values] of Object.entries(record.fields)){
+        const value=greatest(values.filter(isActive))||(!record.originActive&&visible.has(id)?greatest(values.filter(value=>value.opId&&record.cohort(history.ops[value.opId]))):null);
+        if(value){node.fields[field]={stamp:[...value.stamp]};if(own(value,'value'))node.fields[field].value=clone(value.value);if(!node.deleted&&node.insert!==null)resolve(value);}
+      }
+      for(const [charId,entry] of Object.entries(record.chars)){
+        const value=entry.node;delete value.text;value.marks=dict();
+        if(entry.origin&&own(entry.origin,'value'))value.text=entry.origin.value;
+        const displayed=!node.deleted&&node.insert!==null&&!value.deleted&&value.stamp!==null;
+        if(displayed)resolve(entry.origin);
+        for(const [mark,values] of Object.entries(entry.marks)){
+          const winner=greatest(values.filter(isActive));if(!winner)continue;
+          value.marks[mark]={stamp:[...winner.stamp]};if(own(winner,'value'))value.marks[mark].value=clone(winner.value);if(displayed)resolve(winner);
+        }
+        node.chars[charId]=value;
+      }
+      state.blocks[id]=node;
+    }
+    if(isPublic)state.unresolved_slots=unresolved.sort((a,b)=>compareText(canonical(a),canonical(b)));else delete state.unresolved_slots;
+    return state;
+  }
+  function hydratePublicState(state,hints=new Map()){
+    check(state?.history?.public===true,'Expected public collaboration state');
+    const known=new Map(capturePublicHints(state));for(const [key,value] of hints)known.set(key,clone(value));
+    const result=materializeHistory(clone(state),known);return {state:result,unresolved_slots:result.unresolved_slots};
+  }
+  function applyOperations(state,operations,hints=new Map()){
+    check(state?.version===1,'Unsupported state');check(Array.isArray(operations)&&operations.length<=1000,'Too many operations');
+    const validated=operations.map(op=>({op,stamp:validateOperation(op),digest:sha256(canonical(op))})),result=clone(state),fresh=[];result.max_clock=result.max_clock||0;
+    for(const {op,digest} of validated){
+      result.max_clock=Math.max(result.max_clock,op.clock);
+      if(own(result.seen,op.id)){check(result.seen[op.id]===true||result.seen[op.id]===digest,'Operation id reused with different content',409);continue;}
+      result.seen[op.id]=digest;fresh.push(op);
+    }
+    if(!fresh.length)return result;
+    if(!result.history)result.history={version:1,baseline:{blocks:clone(state.blocks)},ops:dict()};
+    const isPublic=result.history.public===true,known=new Map(capturePublicHints(state));for(const [key,value] of hints)known.set(key,clone(value));operationHints(fresh,known);
+    for(const op of fresh)result.history.ops[op.id]=isPublic?operationMetadata(op):clone(op);
+    return materializeHistory(result,known);
   }
   function breakCycles(anchors){
     const finished=new Set();for(const id of Object.keys(anchors).sort(compareText)){if(finished.has(id))continue;const path=[],positions=new Map();let current=id;while(current!==null&&!finished.has(current)){if(positions.has(current)){anchors[path.slice(positions.get(current)).sort(compareText)[0]]=null;break;}positions.set(current,path.length);path.push(current);current=own(anchors,current)?anchors[current]:null;}path.forEach(value=>finished.add(value));}return anchors;
@@ -129,7 +273,17 @@
     for(const [parent,nodes] of siblings){const anchors=dict();for(const id of Object.keys(nodes))anchors[id]=nodes[id].after_id;orders.set(parent,ordered(nodes,anchors,'move'));}
     const stack=[...(orders.get(null)||[])].reverse(),result=[];while(stack.length){const id=stack.pop(),node=created[id];if(!node.deleted){const fields=dict();for(const key of Object.keys(node.fields))if(own(node.fields[key],'value'))fields[key]=clone(node.fields[key].value);const rich=[];for(const value of visibleChars(state,id)){if(rich.length&&canonical(rich.at(-1).marks)===canonical(value.marks))rich.at(-1).text+=value.text;else rich.push({text:value.text,marks:clone(value.marks)});}result.push({id,type:'paragraph',...fields,parent_id:parents[id],text:rich.map(token=>token.text).join(''),rich_text:rich});}stack.push(...[...(orders.get(id)||[])].reverse());}return result;
   }
-  function publicState(state){const result=clone(state);for(const id of Object.keys(result.seen))result.seen[id]=true;for(const node of Object.values(result.blocks)){if(node.deleted)for(const value of Object.values(node.fields))delete value.value;for(const value of Object.values(node.chars))if(node.deleted||value.deleted){delete value.text;value.marks=dict();}}return result;}
+  function publicState(state){
+    const result=clone(state),history=state.history||{version:1,baseline:{blocks:state.blocks},ops:dict()};
+    result.history={version:1,public:true,baseline:{blocks:redactBaseline(history.baseline.blocks)},ops:dict()};
+    for(const [id,op] of Object.entries(history.ops))result.history.ops[id]=operationMetadata(op);
+    for(const id of Object.keys(result.seen))result.seen[id]=true;
+    for(const node of Object.values(result.blocks)){
+      if(node.deleted)for(const value of Object.values(node.fields))delete value.value;
+      for(const value of Object.values(node.chars))if(node.deleted||value.deleted){delete value.text;value.marks=dict();}
+    }
+    delete result.unresolved_slots;return result;
+  }
   function randomClient(){const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);return 'tab_'+[...bytes].map(value=>value.toString(16).padStart(2,'0')).join('');}
   const stripEpoch=entry=>{const value=clone(entry);delete value._epoch;return value;};
   class DocumentChannel {
@@ -348,6 +502,6 @@
     async deny(status,message){if(this.closed)return;this.close();this.onDenied({status,message});if(this.offline){if(status===401)await this.offline.clearProfile(this.profile).catch(()=>{});else if(this.key)await this.offline.purgeResource(this.key).catch(()=>{});}}
     close(){this.closed=true;this.source?.close();this.broadcast?.close();clearTimeout(this.flushTimer);clearTimeout(this.retryTimer);clearTimeout(this.expiryTimer);globalThis.removeEventListener('online',this.onlineHandler);globalThis.removeEventListener('offline',this.offlineHandler);globalThis.removeEventListener('fountain-offline-profile-cleared',this.profileCleared);globalThis.removeEventListener('fountain-offline-resource-purged',this.resourcePurged);globalThis.removeEventListener('fountain-offline-profile-changed',this.profileChanged);}
   }
-  const exported={seedState,applyOperations,project,publicState,visibleChars,normalizeBlocks,validateMarks,canonical,sha256,compareText,DocumentChannel,PALETTE,BOOL_MARKS};
+  const exported={seedState,applyOperations,project,publicState,capturePublicHints,hydratePublicState,visibleChars,normalizeBlocks,validateMarks,canonical,sha256,compareText,DocumentChannel,PALETTE,BOOL_MARKS};
   globalThis.FountainCollaboration=exported;if(typeof module!=='undefined'&&module.exports)module.exports=exported;
 })();

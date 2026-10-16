@@ -1114,7 +1114,7 @@ async function renderSettings() {
   else if(tab==='forms')content.innerHTML=header('질문을 모아, 다음 단계로','폼을 만들고 응답을 데이터베이스에 수집하세요.',add('forms','폼 만들기'))+items('forms',i=>`${i.database_id||'연결된 데이터베이스 없음'} · ${(i.fields||[]).length}개 질문`);
   else if(tab==='sites')content.innerHTML=header('아이디어를 세상에 공유하세요','페이지를 게시용 보기로 공유합니다. 가족 로그인 모드에서는 로그인한 가족만 볼 수 있습니다.',add('sites','사이트 만들기'))+items('sites',i=>`${i.published?'게시됨':'초안'} · ${i.slug||i.page_id||''}`);
   else if(tab==='AI') {
-    content.innerHTML=header('생각의 다음 한 걸음','페이지 요약, 초안 작성, 번역, 질문을 AI 도우미에서 시작하세요.')+'<button class="solid-btn" data-action="ai">✦ AI 도우미 열기</button><div class="info-box" style="margin-top:20px">무료 로컬 모델(Ollama 등) 또는 호환 API를 연결해 사용할 수 있습니다. 모델이 연결되지 않으면 AI 작업을 실행하지 않습니다. 별도 구독 없이 가족과 함께 사용할 수 있습니다.</div><div class="section-heading" style="margin-top:28px"><h3>연결 및 통합</h3>'+add('integrations','연결 추가')+'</div>'+items('integrations',i=>`${i.provider||i.type||'사용자 정의'} · ${i.status||'연결 설정 필요'}`);
+    content.innerHTML=header('생각의 다음 한 걸음','페이지 요약, 초안 작성, 번역, 질문을 AI 도우미에서 시작하세요.')+'<button class="solid-btn" data-action="ai">✦ AI 도우미 열기</button><div class="info-box" style="margin-top:20px">무료 로컬 모델 또는 설정한 AI 서비스를 사용합니다. 외부 서비스 요금·한도는 연결 계정 정책을 따릅니다.</div><div class="section-heading" style="margin-top:28px"><h3>연결 및 통합</h3>'+add('integrations','연결 추가')+'</div>'+items('integrations',i=>`${i.provider||i.type||'사용자 정의'} · ${i.status||'연결 설정 필요'}`);
   }
   else if(tab==='analytics') {
     content.innerHTML='<div class="empty">분석을 불러오는 중…</div>';
@@ -1859,13 +1859,18 @@ document.addEventListener('submit',async event=> {
         }); toast(result.message||'자동화를 실행했습니다.'); await openSettings('automations'); break;
       }
       case'ai-form': {
-        $('#ai-output').innerHTML='<div class="empty">응답을 준비하고 있어요…</div>'; if(state.route==='page')await savePage(); try {
-          const r=await api('/ai', {
-            ...data,page_id:state.route==='page'?state.page.id:undefined
-          }); $('#ai-output').innerHTML=`<div class="ai-result">${esc(r.text||r.output||r.result||JSON.stringify(r))}</div><p class="small muted">${esc(r.provider||r.mode||'')}</p>`;
-        }
-        catch(e) {
-          $('#ai-output').innerHTML=`<div class="info-box" style="margin-top:15px">${esc(e.message)}</div>`;
+        const output=$('#ai-output'),scope={route:state.route,pageId:state.route==='page'?state.page?.id:undefined,channel:state.channel,epoch:state.channel?.base?.epoch,binding:state.session?.cache_binding,memberId:state.session?.member?.id,profileId:state.offlineProfile?.id,workspaceId:state.workspace?.workspace_id};
+        const current=()=>formElement.isConnected&&output?.isConnected&&$('#ai-form')===formElement&&$('#ai-output')===output&&state.route===scope.route&&(scope.route!=='page'||!!scope.pageId&&!!scope.channel&&scope.channel.pageId===scope.pageId&&state.page?.id===scope.pageId)&&state.channel===scope.channel&&(!scope.channel||!scope.channel.closed&&scope.channel.base?.epoch===scope.epoch)&&state.session?.cache_binding===scope.binding&&state.session?.member?.id===scope.memberId&&state.offlineProfile?.id===scope.profileId&&state.workspace?.workspace_id===scope.workspaceId;
+        if(!current())break;
+        output.innerHTML='<div class="empty">응답을 준비하고 있어요…</div>';
+        try {
+          if(scope.route==='page')await savePage();
+          if(!current())break;
+          const r=await api('/ai',{...data,page_id:scope.pageId});
+          if(!current())break;
+          output.innerHTML=`<div class="ai-result">${esc(r.text||r.output||r.result||JSON.stringify(r))}</div><p class="small muted">${esc(r.provider||r.mode||'')}</p>`;
+        } catch(error) {
+          if(current())output.innerHTML=`<div class="info-box" style="margin-top:15px">${esc(error.message)}</div>`;
         }
         break;
       }

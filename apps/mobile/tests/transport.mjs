@@ -39,6 +39,21 @@ for(const size of [4*1024*1024,16*1024*1024]){
   const decoded=Buffer.from(await(await T.request('/api/binary-boundary')).arrayBuffer());assert.ok(decoded.equals(expected),'allowed '+size+' byte response decodes exactly');
 }
 f.setHandler(async()=>({...response({}),bodyBase64:Buffer.alloc(16*1024*1024+1).toString('base64')}));await assert.rejects(T.request('/api/probe'));
+// Native storage is opt-in; a verified session result waits for its auth barrier.
+const storageFixture=fixture(),S=storageFixture.transport;
+storageFixture.bridge.getConfiguration=async()=>({origin:'https://family.example',generation:1,outboxVersion:1,outboxEnabled:false});
+await S.initialize();assert.equal(S.outboxVersion,1);assert.equal(S.outboxEnabled,false);
+let barrierCalls=0,releaseBarrier;
+storageFixture.context.FountainNativeStorage={refreshAuth:()=>{barrierCalls++;return new Promise(resolve=>releaseBarrier=resolve);}};
+let sessionReturned=false;const sessionResult=S.request('/api/session').then(value=>{sessionReturned=true;return value;});
+await until(()=>!!releaseBarrier);assert.equal(sessionReturned,false,'session must not reach application before lease/head reconciliation');
+releaseBarrier();await sessionResult;assert.equal(barrierCalls,1);
+await S.request('/api/probe');assert.equal(barrierCalls,1,'ordinary data requests do not trigger an auth transition');
+storageFixture.context.FountainNativeStorage={refreshAuth:async()=>{throw Object.assign(new Error('storage fault'),{status:503});}};
+await assert.rejects(S.request('/api/session'),error=>error.status===503);
+let releaseStale;storageFixture.context.FountainNativeStorage={refreshAuth:()=>new Promise(resolve=>releaseStale=resolve)};
+const staleBarrier=S.request('/api/session').then(()=>false,error=>error.name);await until(()=>!!releaseStale);
+await S.configure({origin:'https://another.example'});releaseStale();assert.equal(await staleBarrier,'AbortError','old auth barrier completion cannot escape configuration fence');
 const count=f.calls.length;await assert.rejects(T.request('/api/probe',{method:'POST',body:new Blob([new Uint8Array(10_000_001)])}),error=>error.name==='RangeError');assert.equal(f.calls.length,count);
 let release;f.setHandler(value=>value.path==='/api/slow'?new Promise(resolve=>release=resolve):Promise.resolve(response({ok:true})));
 const old=T.request('/api/slow').then(()=>false,error=>error.name);await until(()=>!!release);await T.request('/api/session',{method:'POST',body:'{}'});assert.equal(await old,'AbortError');release(response({stale:true}));assert.ok(f.cancellations.length);

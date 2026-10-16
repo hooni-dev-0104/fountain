@@ -1,0 +1,253 @@
+{
+  "observedAt": "2026-10-16T15:28:13.834582+00:00",
+  "sourceCommit": "adfb9d091030fdd51040484921c7cc8c850dc52d",
+  "sourceSHA256": {
+    "supabase/functions/_shared/grant-admin.ts": "81404437efd77e7ad1d36898cc9fbb1f3aa482d8fb493791916c54787ea599bb",
+    "supabase/functions/_shared/application.ts": "039865889d2e00d696f48c106237c81c47d0fb5ff33d18d77d6d5346657298b0",
+    "supabase/functions/_shared/scheduler-worker.ts": "0b737d2fa1f3a94c6d4b8f35c57cbe97eeca647847434b34f4f48bb69af9fa7d",
+    "supabase/migrations/20261016151633_fountain_cloud_scim_grant_admin.sql": "c4936deb85db43b7b0b6138226090ba259a70b67a3c10eee5c14356161095bce",
+    "supabase/tests/live-grants.ts": "d736cf0de7bab0540da02369bcb18785614c86c345c1d4affae49338ee36172d",
+    "supabase/tests/live-grant-rollback.sql": "b3a2a44821013370b81780bc9072f39fce7f5fe93cbe96e541fd13590a80e372",
+    "supabase/tests/cloud-grant-admin-denials.sql": "cbd9e78be9c2b5e12f2ebeb778acfa0e42b01cb4f8210115b18b8649269b8433"
+  },
+  "scope": "Actual Supabase owner-cookie grant administration; issued SCIM service authority; pure scheduled-slot runner. No SCIM bearer HTTP or Cron worker activation.",
+  "productionCutover": false,
+  "migration": "20261016151633_fountain_cloud_scim_grant_admin",
+  "mainFunction": {
+    "version": 6,
+    "bundleSHA256": "51308cac0ee31ce91b16cd5cf52ff3abec78327c3a5ea66c153ab7ec0561e332",
+    "sourceCommit": "71cdfca",
+    "boundaryChecks": 10,
+    "ready": false,
+    "setupEnabled": false,
+    "webOrigins": []
+  },
+  "sourceTests": {
+    "nodeRunner": 194,
+    "failed": 0,
+    "skipped": 0,
+    "grantAdminModelHTTP": 14,
+    "scheduledSlotModel": 28,
+    "calendarOracleCases": 5632,
+    "actualTypeScriptCompiler": false
+  },
+  "actualPhases": {
+    "bootstrap": {
+      "stage": "bootstrap",
+      "checks": [
+        "real_application_explicit_bootstrap_creates_signed_local_owner_and_opaque_session",
+        "same_signed_setup_after_discarded_ack_reuses_auth_uuid_no_second_admin_create",
+        "explicit_setup_envelope_rejects_client_metadata_no_implicit_owner_signup"
+      ],
+      "users": [
+        {
+          "id": "6543ccf6-10c0-45b0-a9d7-b93d3065fe7c",
+          "email": "b813417c04d4eb54-owner@fountain.invalid",
+          "memberId": "local"
+        }
+      ]
+    },
+    "accounts": {
+      "stage": "accounts",
+      "checks": [
+        "real_application_exact_account_creation_receipt_resumed_without_admin_create",
+        "real_child_workspace_private_projection_denial_and_current_view_acl",
+        "malformed_account_fields_and_nonowner_management_rejected"
+      ],
+      "users": [
+        {
+          "id": "6543ccf6-10c0-45b0-a9d7-b93d3065fe7c",
+          "email": "b813417c04d4eb54-owner@fountain.invalid",
+          "memberId": "local"
+        },
+        {
+          "id": "99b04f16-daa3-4735-b884-56b331d4aa0c",
+          "email": "b813417c04d4eb54-child@fountain.invalid",
+          "memberId": "child"
+        }
+      ]
+    },
+    "lifecycle": {
+      "stage": "lifecycle",
+      "phase": "lifecycle",
+      "checks": [
+        "first_real_creation_inactive_32_byte_token_exact_retry_metadata_only",
+        "issued_inactive_grant_real_service_snapshot_denied",
+        "real_activation_rpc_ack_operator_drop_exact_retry_and_active_service_principal",
+        "real_revoke_rpc_ack_operator_drop_exact_terminal_retry_and_old_service_context_denied",
+        "real_create_rpc_ack_operator_drop_retry_cannot_recover_or_replace_raw_token",
+        "real_concurrent_exact_create_one_201_raw_one_200_unavailable_and_winner_service_proof",
+        "all_phase_issued_grants_really_revoked_before_logout"
+      ],
+      "grantIds": [
+        "f50fc557-4ea9-417d-86a3-53f406b88b27",
+        "ae45cd8c-d81c-4576-9215-b362544a58e9",
+        "8c792111-6136-4d9a-87dc-a9dfb4088fcc"
+      ],
+      "counts": {
+        "logins": 1,
+        "grantRPCs": 21,
+        "acceptedGrantRPCs": 20,
+        "operatorDroppedACKs": 3,
+        "responseFences": 0,
+        "deniedBeforeGrantRPC": 0,
+        "serviceSnapshots": 4,
+        "metadataPages": 4,
+        "paginationPages": 0,
+        "paginationRows": 0,
+        "expectedHistoricalRows": 0
+      },
+      "allIssuedRevoked": true
+    },
+    "authority": {
+      "stage": "authority",
+      "phase": "authority",
+      "checks": [
+        "real_child_member_list_create_forbidden_before_grant_rpc",
+        "other_real_owner_cannot_adopt_or_activate_issuer_grant_but_can_revoke",
+        "actual_issuer_demotion_denies_cookie_management_and_issued_service_context_no_bearer_http_claim",
+        "actual_owner_and_child_roles_restored",
+        "all_phase_issued_grants_really_revoked_before_logout"
+      ],
+      "grantIds": [
+        "64e755ea-f1c5-47ce-b050-88397b4a4790",
+        "9797671c-8aed-417f-8c38-c8404e633c25"
+      ],
+      "counts": {
+        "logins": 2,
+        "grantRPCs": 10,
+        "acceptedGrantRPCs": 8,
+        "operatorDroppedACKs": 0,
+        "responseFences": 0,
+        "deniedBeforeGrantRPC": 6,
+        "serviceSnapshots": 1,
+        "metadataPages": 2,
+        "paginationPages": 0,
+        "paginationRows": 0,
+        "expectedHistoricalRows": 0
+      },
+      "allIssuedRevoked": true
+    },
+    "response-fence": {
+      "stage": "response-fence",
+      "phase": "response-fence",
+      "checks": [
+        "real_create_rpc_completed_original_cookie_logout_blocks_response_publication",
+        "real_list_rpc_completed_original_cookie_logout_blocks_response_publication",
+        "real_activate_rpc_completed_original_cookie_logout_blocks_response_publication",
+        "real_revoke_rpc_completed_original_cookie_logout_blocks_response_publication",
+        "all_phase_issued_grants_really_revoked_before_logout"
+      ],
+      "grantIds": [
+        "0f2dfe6e-28f4-4f20-93a0-eb5f14cd576c",
+        "3eddafbd-79ee-4720-9511-c38135f2fb2c"
+      ],
+      "counts": {
+        "logins": 5,
+        "grantRPCs": 13,
+        "acceptedGrantRPCs": 13,
+        "operatorDroppedACKs": 0,
+        "responseFences": 4,
+        "deniedBeforeGrantRPC": 0,
+        "serviceSnapshots": 0,
+        "metadataPages": 6,
+        "paginationPages": 0,
+        "paginationRows": 0,
+        "expectedHistoricalRows": 0
+      },
+      "allIssuedRevoked": true
+    },
+    "pagination": {
+      "stage": "pagination",
+      "phase": "pagination",
+      "checks": [
+        "actual_limit_50_keyset_pages_include_all_127_uuid7_submillisecond_historical_rows_without_duplicates_or_private_hashes",
+        "actual_workspace_forged_cursor_rejected_before_grant_rpc",
+        "all_phase_issued_grants_really_revoked_before_logout"
+      ],
+      "grantIds": [],
+      "counts": {
+        "logins": 1,
+        "grantRPCs": 6,
+        "acceptedGrantRPCs": 6,
+        "operatorDroppedACKs": 0,
+        "responseFences": 0,
+        "deniedBeforeGrantRPC": 1,
+        "serviceSnapshots": 0,
+        "metadataPages": 5,
+        "paginationPages": 3,
+        "paginationRows": 135,
+        "expectedHistoricalRows": 127
+      },
+      "allIssuedRevoked": true
+    }
+  },
+  "actualSQLBoundaryChecks": 6,
+  "atomicRollback": {
+    "realApplicationLogin": true,
+    "transitions": 3,
+    "method": "Inside nested SQL subtransactions exhaust the scoped entity revision; verify grant state, audit count and original revision all roll back. No Auth session or mapping is manufactured."
+  },
+  "auditBeforeCleanup": {
+    "token_audits": 20,
+    "auth_sessions": 1,
+    "created_grants": 8,
+    "create_audits_once": true,
+    "all_issued_terminal": true,
+    "revocation_audits_once": true,
+    "revision_signal_matches": true,
+    "activation_audits_at_most_once": true
+  },
+  "cleanup": {
+    "protectedAuthMarkersVerifiedBeforeDeletion": 2,
+    "authUsersDeletedByAdmin": 2,
+    "operatorCorrection": "Initial scoped SQL cleanup had a syntax error and performed no SQL changes; marker-verified Auth deletion completed first, then corrected namespace cleanup removed remaining fixture rows. Final state was rechecked.",
+    "finalState": {
+      "qa_meta": 0,
+      "qa_vault": 0,
+      "qa_grants": 0,
+      "auth_users": 0,
+      "qa_entities": 0,
+      "auth_sessions": 0,
+      "original_meta": 6,
+      "storage_objects": 0,
+      "original_entities": 153,
+      "original_mappings": 0
+    },
+    "verifierVersion": 29,
+    "verifierBundleSHA256": "ceeeb55cdd309998b147a9048c23ba3eb98459a186a43125f11d6f1dcea1931c",
+    "formerCapabilityReturns404": true,
+    "privateNoncePasswordFileRemoved": true,
+    "sixOriginalCollectionFingerprintsUnchanged": true,
+    "portableOriginalBackupPreserved": true
+  },
+  "advisorsAfterCleanup": {
+    "security": [
+      {
+        "name": "rls_enabled_no_policy",
+        "level": "INFO",
+        "count": 13,
+        "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy"
+      }
+    ],
+    "performance": [
+      {
+        "name": "unused_index",
+        "level": "INFO",
+        "count": 2,
+        "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0005_unused_index"
+      }
+    ]
+  },
+  "limits": [
+    "SQL acceptance followed by operator-discarded responses is fault injection, not evidence of actual network failure.",
+    "No public HTTPS frontend, real owner setup, token-management UI or SCIM bearer endpoint was enabled.",
+    "The scheduled-slot runner uses real domain/calendar code with a provider model; actual broker SQL, ticket transport, pg_cron/pg_net delivery, and background GC remain incomplete.",
+    "No TypeScript compiler or physical-device testing was run for this change.",
+    "During QA with Auth users the advisor reported leaked-password protection disabled. Supabase documents this feature as Pro-and-above; no paid upgrade was performed. The warning was absent after QA cleanup."
+  ],
+  "references": [
+    "https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection",
+    "https://supabase.com/docs/guides/api/securing-your-api"
+  ]
+}

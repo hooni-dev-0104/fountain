@@ -4,9 +4,9 @@
 
 ## 현재 범위와 완료 기준
 
-2026-10-16 확인 시점의 Supabase 프로젝트는 `ehnovtfadpkwtubmwltl`이다. `fountain-api` version 5에 문서·DB·공동 편집·동기화·첨부·presence/SSE·AI·계정·백업 handler가 연결됐다. 서비스 객체는 actor를 공유하지 않고 각 요청의 쿠키로 인증한다. 운영 원본은 entities 153개·meta 6개, 실사용 Auth 사용자·identity mapping은 0개다. `fountain-files`는 비공개 bucket이며 QA 정리 후 객체는 0개다. `/health`의 `ready:false`는 전체 전환이 아직 끝나지 않았다는 뜻이다.
+2026-10-17 확인 시점의 Supabase 프로젝트는 `ehnovtfadpkwtubmwltl`이다. `fountain-api` version 6에 문서·DB·공동 편집·동기화·첨부·presence/SSE·AI·계정·백업·연동 권한 관리 handler가 연결됐다. 서비스 객체는 actor를 공유하지 않고 각 요청의 쿠키로 인증한다. 운영 원본은 entities 153개·meta 6개, 실사용 Auth 사용자·identity mapping은 0개다. `fountain-files`는 비공개 bucket이며 QA 정리 후 객체는 0개다. `/health`의 `ready:false`는 전체 전환이 아직 끝나지 않았다는 뜻이다.
 
-Auth/Vault·Store부터 계정 생성·관리·백업·분할 백업까지 migration 14개를 적용했다. 적용된 SQL은 `supabase/migrations`의 실제 버전 파일로만 보관하고 중복 초안은 제거했다. 공개 RPC는 service_role 전용이며, private 테이블은 강제 RLS와 직접 접근 거절을 유지한다. 익명·일반 로그인 역할의 실행 권한 거절, 연결되지 않은 세션의 백업/정리 거절 등 실제 PostgreSQL 검사 10개가 통과했다. 이 구조는 서버의 신뢰된 권한 검사이며 최종 사용자별 RLS를 사용한다는 뜻이 아니다.
+Auth/Vault·Store부터 계정 생성·관리·백업·분할 백업·연동 권한 관리까지 migration 15개를 적용했다. 적용된 SQL은 `supabase/migrations`의 실제 버전 파일로만 보관하고 중복 초안은 제거했다. 공개 RPC는 service_role 전용이며, private 테이블은 강제 RLS와 직접 접근 거절을 유지한다. 익명·일반 로그인 역할의 실행 권한 거절, 연결되지 않은 세션의 백업/정리 거절 등 실제 PostgreSQL 검사 10개가 통과했다. 이 구조는 서버의 신뢰된 권한 검사이며 최종 사용자별 RLS를 사용한다는 뜻이 아니다.
 
 기초 실제 클라우드 QA에서는 비밀번호 로그인·신뢰된 기존 역할 연결·동시 CAS·정확한 receipt 재시도·refresh lease·폐기된 세션 거절을 확인했다. 후속 문서·버전·typed row/수식·ACL·공동 편집/Undo·sync 10개 그룹, presence 6개, SSE 2개가 통과했다. 실제 비공개 Storage의 9MiB+123바이트 업로드·전체 SHA-256·청크 경계 Range·HEAD·416·다른 멤버 거절·물리 삭제, Realtime WebSocket 구독과 변경 알림도 확인했다. Realtime은 본문 없이 재조회를 깨운다.
 
@@ -26,7 +26,13 @@ Node source runner 147개가 실패·skip 없이 통과했고 내부 Python/SQLi
 
 마지막 실제 owner 변경은 먼저 stage한 페이지 수정까지 409로 롤백했고, 새 SQL snapshot에서 revision·제목·owner 활성 상태가 유지됐다. maintenance는 principal 없이 문서 Store를 열 수 없고, 유효한 maintenance 권한도 SQL의 데이터 snapshot·commit에서 거절됐다. 로그인한 사람의 Auth session이 0개여도 명시적으로 위임된 서비스 권한은 유효했으며 별도 철회와 만료를 적용했다. 독립 Node 전체 151개 회귀와 기존 Store 26개를 통과했고, 이후 단일 작업만 선택하는 `Scheduler.tick_one`은 26개·달력/DST 5,632개·Advanced 109개를 추가 검증했다. Cron·SCIM HTTP가 연결됐다는 뜻은 아니다. 검증용 권한·lease·receipt·계정 2개를 모두 지우고 검증 함수 version 24를 404로 교체했다. 배포한 main version 5의 경계 8개도 확인했다. [실제 서비스 권한 검증](research/cloud-service-verification.json).
 
-`deployment.setupEnabled`는 false이고 web origin도 비어 있다. 실사용 계정·초기 연결 코드·공개 HTTPS 호스트를 아직 활성화하지 않았다. 정적 웹 배포물은 16개 allowlist 파일이며 모바일에는 19개 public asset을 복사해 두 플랫폼의 SHA 38개를 비교했다. localhost:8787은 기존 동작 보존용 불변 Python 미리보기이며 새 클라우드 운영 전환이 아니다. 서비스 권한 기초와 단일 작업 실행 코드는 있지만, durable 일정 큐·Cron 호출·worker·SCIM bearer 진입점과 grant 발급·자동 GC는 아직 연결하지 않았다. 현재 owner 요청으로 실행되는 정리를 가짜 owner 세션으로 예약 실행하지 않는다.
+현재 owner의 세션으로 `GET/POST /api/scim/tokens`, `POST /api/scim/tokens/{id}/activate`, `DELETE /api/scim/tokens/{id}`를 호출할 수 있다. 발급 시 32바이트 토큰을 한 번만 반환하고 DB에는 SHA-256만 저장한다. 최초 발급은 비활성이며 같은 발급자의 토큰 증명으로 활성화한다. 발급 응답 유실 후 같은 transaction ID를 보내면 원문 대신 `token_unavailable`을 반환한다. 다른 현재 owner도 철회할 수 있고 철회한 토큰은 다시 활성화할 수 없다. 상태 변경·감사 기록·revision을 한 트랜잭션에 묶고 응답 직전에 원래 세션과 owner 권한을 다시 확인한다.
+
+실제 Supabase QA에서 동시 발급·수락된 응답 폐기 후 재시도·활성화 전/철회 후 service 접근 거절·issuer 강등·네 가지 관리 응답 직전 실제 로그아웃을 확인했다. 127개 과거 UUIDv7을 포함한 135개 목록을 limit 50의 3개 페이지로 누락·중복 없이 읽었다. 발급·활성화·철회의 감사 기록 실패는 상태 변경까지 롤백했고, 발급한 8개 권한의 생성/철회 감사는 각각 한 번이었다. 검증 계정·권한·행을 정리하고 검증 함수 version 29를 404로 교체했다. main version 6의 거절 경계 10개, 전체 Node 검사 194개가 통과했다. [실행 증거와 제한](research/cloud-grant-verification.json).
+
+예약 실행의 순수 planner와 고정 슬롯 runner도 추가했다. 기존 달력·권한·작업 로직을 재사용하며 신규 28개 검사와 독립 검토를 통과했다. PostgreSQL의 definition/due hash는 불투명한 값으로 유지하고, SQL broker가 매 새 snapshot/commit에서 검증해야 한다. 현재 runner 검사는 provider 모델을 사용하며 실제 Cron 실행 증거가 아니다.
+
+`deployment.setupEnabled`는 false이고 web origin도 비어 있다. 실사용 계정·초기 연결 코드·공개 HTTPS 호스트를 아직 활성화하지 않았다. 정적 웹 배포물은 16개 allowlist 파일이며 모바일에는 19개 public asset을 복사해 두 플랫폼의 SHA 38개를 비교했다. localhost:8787은 기존 동작 보존용 불변 Python 미리보기이며 새 클라우드 운영 전환이 아니다. durable 일정 큐·Cron 호출·worker 전송·SCIM bearer 진입점·토큰 관리 UI·자동 GC는 아직 연결하지 않았다. 현재 owner 요청으로 실행되는 정리를 가짜 owner 세션으로 예약 실행하지 않는다.
 
 [라우트 인벤토리](../supabase/tests/route-inventory.json)는 현재 Python 라우트의 **method/path 201개 행**을 기록한다. HEAD와 기존 suffix alias도 별도 행이다. 각 행에는 인증 경계, 익명 접근 여부, handler/domain/module, 실제 Python AST 분기의 근거와 cloud 상태가 있다. `public`은 익명 인증 경계를 뜻하며 단순히 게시된 콘텐츠라는 뜻이 아니다.
 

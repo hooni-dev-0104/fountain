@@ -12,12 +12,25 @@ export type NormalizedSelection = {kinds: string[]; ids: Record<string, string[]
 export type SnapshotRecord = {kind: string; id: string; data: Entity; createdAt: string; updatedAt: string};
 export type SnapshotPage = {workspaceId: string; memberId: string; revision: number; accessRevision: number; principal: Entity; entities: SnapshotRecord[]; meta: Array<{key: string; value: any; present: boolean}>; nextCursor: unknown | null};
 export type Change = {op: 'put'; kind: string; id: string; data: Entity; previousCreatedAt: string | null} | {op: 'delete'; kind: string; id: string} | {op: 'meta'; key: string; value: any};
-export type SnapshotRequest = {context: StoreContext; selection: NormalizedSelection; cursor?: unknown; expectedRevision?: number};
-export type CommitRequest = {context: StoreContext; expectedRevision: number; transactionId: string; digest: string; canonical: string; changes: Change[]};
-export interface StoreProvider {
-  snapshot(request: SnapshotRequest): Promise<SnapshotPage>;
-  commit(request: CommitRequest): Promise<{revision: number}>;
-}
+type DataContext = Readonly<{workspaceId:string;memberId:string}>;
+type KernelSnapshot<C> = {context:C;selection:NormalizedSelection;cursor?:unknown;expectedRevision?:number};
+type KernelCommit<C> = {context:C;expectedRevision:number;transactionId:string;digest:string;canonical:string;changes:Change[]};
+interface KernelProvider<C> {snapshot(request:KernelSnapshot<C>):Promise<SnapshotPage>;commit(request:KernelCommit<C>):Promise<{revision:number}>;}
+export type SnapshotRequest = KernelSnapshot<StoreContext>;
+export type CommitRequest = KernelCommit<StoreContext>;
+export interface StoreProvider extends KernelProvider<StoreContext> {}
+// Service authority is a separate wire contract. None of these are accepted by
+// validateContext(), and control-only maintenance has no domain principal.
+type GrantContext = Readonly<{workspaceId:string;grantId:string;grantVersion:number}>;
+type LeaseContext = Readonly<{leaseId:string;generation:number;ticketHash:string}>;
+export type AutomationContext = GrantContext & LeaseContext & Readonly<{kind:'automation';memberId:string;resourceId:string;runId:string}>;
+export type ScimContext = GrantContext & Readonly<{kind:'scim';memberId:string;tokenHash:string}>;
+export type MaintenanceContext = GrantContext & LeaseContext & Readonly<{kind:'maintenance';purpose:'backup-gc'|'upload-gc'}>;
+export type ServiceDataContext = AutomationContext | ScimContext;
+export type ServiceContext = ServiceDataContext | MaintenanceContext;
+export type ServiceSnapshotRequest = KernelSnapshot<ServiceDataContext>;
+export type ServiceCommitRequest = KernelCommit<ServiceDataContext>;
+export interface ServiceProvider extends KernelProvider<ServiceDataContext> {}
 export class StoreError extends APIError {
   code: string;
   constructor(status: number, code: string, message: string) { super(status, message); this.name = 'StoreError'; this.code = code; }
@@ -94,6 +107,27 @@ export function validateContext(context: StoreContext): StoreContext {
   check(Object.values(context).every(value=>typeof value==='string') && valid_id(context.workspaceId) && valid_id(context.memberId) && UUID.test(context.userId) && UUID.test(context.authSessionId) && /^[a-f0-9]{64}$/.test(context.sessionHash) && /^[a-f0-9]{32}$/.test(context.cacheBinding));
   return Object.freeze(clone(context));
 }
+export function validateServiceContext(context:ServiceContext):ServiceContext {
+  check(is_object(context));
+  const common=['kind','workspaceId','grantId','grantVersion'];
+  const lease=['leaseId','generation','ticketHash'];
+  if(context.kind==='scim')exact(context,[...common,'memberId','tokenHash']);
+  else if(context.kind==='automation')exact(context,[...common,...lease,'memberId','resourceId','runId']);
+  else if(context.kind==='maintenance')exact(context,[...common,...lease,'purpose']);
+  else check(false);
+  check(valid_id(context.workspaceId)&&typeof context.grantId==='string'&&UUID.test(context.grantId)&&integer(context.grantVersion)&&context.grantVersion>0);
+  if(context.kind==='scim')check(valid_id(context.memberId)&&typeof context.tokenHash==='string'&&/^[a-f0-9]{64}$/.test(context.tokenHash));
+  else {
+    check(typeof context.leaseId==='string'&&UUID.test(context.leaseId)&&integer(context.generation)&&context.generation>0&&typeof context.ticketHash==='string'&&/^[a-f0-9]{64}$/.test(context.ticketHash));
+    if(context.kind==='automation')check(valid_id(context.memberId)&&valid_id(context.resourceId)&&typeof context.runId==='string'&&/^[a-f0-9]{64}$/.test(context.runId));
+    else check(['backup-gc','upload-gc'].includes(context.purpose));
+  }
+  json(context);return Object.freeze(clone(context));
+}
+function dataServiceContext(context:ServiceDataContext):ServiceDataContext {
+  const checked=validateServiceContext(context);
+  check(checked.kind!=='maintenance','SERVICE_SCOPE_FORBIDDEN',403);return checked;
+}
 export function normalizeSelection(selection: Selection): NormalizedSelection {
   check(is_object(selection) && Object.keys(selection).every(key => ['kinds','ids','metaKeys','pageSize'].includes(key)));
   const kinds = get(selection, 'kinds', []), keys = get(selection, 'metaKeys', []), ids = get(selection, 'ids', {}), pageSize = get(selection, 'pageSize', 200);
@@ -119,12 +153,13 @@ function timestamp(clock: () => number): string {
   return new Date(now).toISOString().replace(/(\.\d{3})Z$/, (_, fraction) => fraction + '000+00:00');
 }
 
-export class CloudStore implements StoreReader {
-  readonly context: StoreContext;
+// Private reusable staging machinery; public factories validate distinct authorities.
+class StagingKernel<C extends DataContext> implements StoreReader {
+  readonly context: C;
   readonly selection: NormalizedSelection;
   readonly principal: Entity;
   readonly requestTime: string;
-  private provider: StoreProvider;
+  private provider: KernelProvider<C>;
   private entities = new Map<string,Map<string,SnapshotRecord>>();
   private metadata = new Map<string,any>();
   private generatedIds = new Map<string,Set<string>>();
@@ -133,19 +168,19 @@ export class CloudStore implements StoreReader {
   private changes: Change[] = [];
   private transactionDepth = 0;
   private phase: 'ready'|'pending'|'uncertain'|'committed'|'aborted' = 'ready';
-  private commitRequest: CommitRequest | null = null;
+  private commitRequest: KernelCommit<C> | null = null;
   private inflight: Promise<{revision:number}> | null = null;
   private idFactory: () => string;
-  private constructor(provider: StoreProvider, context: StoreContext, selection: NormalizedSelection, page: SnapshotPage, options: {clock?:()=>number;idFactory?:()=>string}) {
+  protected constructor(provider: KernelProvider<C>, context: C, selection: NormalizedSelection, page: SnapshotPage, options: {clock?:()=>number;idFactory?:()=>string}) {
     this.provider = provider; this.context = context; this.selection = freeze(clone(selection));
     this.principal = freeze(clone(page.principal)); this.baseRevision = page.revision; this.currentRevision = page.revision;
     this.metadata.set('access_revision',page.accessRevision); this.metadata.set('workspace_id',context.workspaceId);
     this.requestTime = timestamp(options.clock ?? Date.now);
     this.idFactory = options.idFactory ?? (() => crypto.randomUUID().replaceAll('-',''));
   }
-  static async open(provider: StoreProvider, context: StoreContext, selection: Selection, options: {clock?:()=>number;idFactory?:()=>string} = {}): Promise<CloudStore> {
-    context = validateContext(context); const selected = normalizeSelection(selection);
-    let store: CloudStore | null = null, cursor: unknown = undefined, pages = 0, bytes = 0;
+  protected static async load<C extends DataContext,T extends StagingKernel<C>>(provider:KernelProvider<C>,context:C,selection:Selection,build:(selection:NormalizedSelection,page:SnapshotPage)=>T):Promise<T> {
+    const selected = normalizeSelection(selection);
+    let store: T | null = null, cursor: unknown = undefined, pages = 0, bytes = 0;
     const cursors = new Set<string>(), records = new Set<string>(), metavalues = new Map<string,string>();
     do {
       let page: SnapshotPage;
@@ -157,7 +192,7 @@ export class CloudStore implements StoreReader {
         check(Array.isArray(page.entities) && page.entities.length <= selected.pageSize && Array.isArray(page.meta), 'STORAGE_RESPONSE_INVALID',503);
         bytes += enc.encode(json(page)).length;
         check(++pages <= 10000 && bytes <= MAX_LOADED, 'STORAGE_LIMIT',413);
-        if (!store) store = new CloudStore(provider,context,selected,page,options);
+        if (!store) store = build(selected,page);
         check(store.baseRevision === page.revision, 'REVISION_CONFLICT',409);
         check(canonicalJSON(page.principal) === canonicalJSON(store.principal) && page.accessRevision === store.metadata.get('access_revision'), 'STORAGE_RESPONSE_INVALID',503);
         for (const record of page.entities) {
@@ -253,7 +288,7 @@ export class CloudStore implements StoreReader {
   audit(action:string, details:Entity, user:string=this.context.memberId):Entity {
     return this.put('audit',{action,details,user});
   }
-  transaction<T>(action: (store: CloudStore) => T): T {
+  transaction<T>(action: (store: this) => T): T {
     this.writable(); const entities=clone(this.entities), metadata=clone(this.metadata), generatedIds=clone(this.generatedIds), count=this.changes.length, revision=this.currentRevision;
     this.transactionDepth++;
     try {
@@ -294,8 +329,23 @@ export class CloudStore implements StoreReader {
   }
 }
 
+type StoreOptions = {clock?:()=>number;idFactory?:()=>string};
+export class CloudStore extends StagingKernel<StoreContext> {
+  private constructor(provider:StoreProvider,context:StoreContext,selection:NormalizedSelection,page:SnapshotPage,options:StoreOptions){super(provider,context,selection,page,options);}
+  static async open(provider:StoreProvider,context:StoreContext,selection:Selection,options:StoreOptions={}):Promise<CloudStore>{
+    context=validateContext(context);return this.load(provider,context,selection,(selected,page)=>new CloudStore(provider,context,selected,page,options));
+  }
+}
+export class ServiceStore extends StagingKernel<ServiceDataContext> {
+  private constructor(provider:ServiceProvider,context:ServiceDataContext,selection:NormalizedSelection,page:SnapshotPage,options:StoreOptions){super(provider,context,selection,page,options);}
+  static async open(provider:ServiceProvider,context:ServiceDataContext,selection:Selection,options:StoreOptions={}):Promise<ServiceStore>{
+    context=dataServiceContext(context);return this.load(provider,context,selection,(selected,page)=>new ServiceStore(provider,context,selected,page,options));
+  }
+}
+
 /** Dependency-free PostgREST RPC transport. The secret stays in this closure. */
-export function createStoreProvider(config: {supabaseUrl:string;serviceKey:string;fetch?:typeof globalThis.fetch;timeoutMs?:number}): StoreProvider {
+type ProviderConfig = {supabaseUrl:string;serviceKey:string;fetch?:typeof globalThis.fetch;timeoutMs?:number};
+function rpcTransport(config:ProviderConfig,prefix:'store'|'service') {
   let origin: string;
   try {
     const url=new URL(config.supabaseUrl);
@@ -312,7 +362,7 @@ export function createStoreProvider(config: {supabaseUrl:string;serviceKey:strin
   const request=config.fetch ?? globalThis.fetch;
   async function rpc(name:string, body:Entity): Promise<any> {
     try {
-      const response=await request(origin+'/rest/v1/rpc/fountain_cloud_store_'+name,{method:'POST',redirect:'error',signal:AbortSignal.timeout(timeout),headers:{...headers},body:json(body,MAX_RPC_BYTES)});
+      const response=await request(origin+'/rest/v1/rpc/fountain_cloud_'+prefix+'_'+name,{method:'POST',redirect:'error',signal:AbortSignal.timeout(timeout),headers:{...headers},body:json(body,MAX_RPC_BYTES)});
       if (!response.ok || response.redirected) {
         let conflict='';
         if(response.status===409&&response.body){
@@ -339,8 +389,19 @@ export function createStoreProvider(config: {supabaseUrl:string;serviceKey:strin
       finally { reader.releaseLock(); }
     } catch (error) { if (error instanceof StoreError) throw error;return fail(); }
   }
+  return rpc;
+}
+export function createStoreProvider(config:ProviderConfig):StoreProvider {
+  const rpc=rpcTransport(config,'store');
   return Object.freeze({
     snapshot: (request:SnapshotRequest) => rpc('snapshot',{p_context:request.context,p_selection:request.selection,p_cursor:request.cursor ?? null,p_expected_revision:request.expectedRevision ?? null}),
     commit: (request:CommitRequest) => rpc('commit',{p_context:request.context,p_expected_revision:request.expectedRevision,p_transaction_id:request.transactionId,p_digest:request.digest,p_canonical:request.canonical,p_changes:request.changes}),
+  });
+}
+export function createServiceProvider(config:ProviderConfig):ServiceProvider {
+  const rpc=rpcTransport(config,'service');
+  return Object.freeze({
+    snapshot:async(request:ServiceSnapshotRequest)=>rpc('snapshot',{p_context:dataServiceContext(request.context),p_selection:request.selection,p_cursor:request.cursor??null,p_expected_revision:request.expectedRevision??null}),
+    commit:async(request:ServiceCommitRequest)=>rpc('commit',{p_context:dataServiceContext(request.context),p_expected_revision:request.expectedRevision,p_transaction_id:request.transactionId,p_digest:request.digest,p_canonical:request.canonical,p_changes:request.changes}),
   });
 }

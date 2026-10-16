@@ -18,7 +18,7 @@ const icons = {
 };
 const icon = name => `<svg viewBox="0 0 18 18" aria-hidden="true">${icons[name] || icons.grid}</svg>`;
 const state = {
-  session:null,workspace:null, route:'home',page:null,blocks:[],versions:[],comments:[],database:null,rows:[],view:'table',filter:'',sort:false,saving:null,saveTimer:null,advanced:null,settingsTab:'members',loaded:false,activeBlock:null,trash:false,dirty:false,editSequence:0
+  collapsedRows:new Set(),timelineProperty:null,timelineZoom:'day',timelineBounds:null,timelineFocusDay:null,session:null,workspace:null, route:'home',page:null,blocks:[],versions:[],comments:[],database:null,rows:[],view:'table',filter:'',sort:false,saving:null,saveTimer:null,advanced:null,settingsTab:'members',loaded:false,activeBlock:null,trash:false,dirty:false,editSequence:0
 };
 function isOwner() { return state.session?.member?.role==='owner'; }
 function isAdmin() { return ['owner','admin'].includes(state.session?.member?.role); }
@@ -338,17 +338,89 @@ function openSlash(id,query='') {
 function closeSlash() {
   $('.slash-menu')?.remove();
 }
+const DAY_MS=86_400_000;
+function dateRange(value) {
+  const start=typeof value==='string'?value:value?.start;
+  const end=typeof value==='object'&&value?value.end||start:start;
+  const parse=text=>{
+    const iso=typeof text==='string'?text.slice(0,10):'';
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(iso))return null;
+    const value=Date.parse(iso+'T00:00:00Z');
+    return Number.isFinite(value)&&new Date(value).toISOString().slice(0,10)===iso?Math.floor(value/DAY_MS):null;
+  };
+  const first=parse(start),last=parse(end);
+  return first===null||last===null||last<first?null:{start:first,end:last,startISO:String(start).slice(0,10),endISO:String(end).slice(0,10)};
+}
+function dateRangeLabel(value) {
+  const range=dateRange(value);
+  return range?range.startISO===range.endISO?range.startISO:range.startISO+' → '+range.endISO:'날짜 미정';
+}
+function isoDay(day) { return new Date(day*DAY_MS).toISOString().slice(0,10); }
+function rowHierarchy(rows) {
+  const index=new Map(rows.map(row=>[row.id,row])),children=new Map(),result=[],seen=new Set();
+  if(state.database?.task_settings?.subitems!==true)return rows.map(row=>({row,depth:0,children:[]}));
+  for(const row of rows){const parent=index.has(row.parent_row_id)?row.parent_row_id:null;if(!children.has(parent))children.set(parent,[]);children.get(parent).push(row);}
+  function visit(row,depth){
+    if(seen.has(row.id))return;seen.add(row.id);
+    const nested=children.get(row.id)||[];result.push({row,depth,children:nested});
+    if(!state.collapsedRows.has(row.id))for(const child of nested)visit(child,depth+1);
+    else {const hide=item=>{if(seen.has(item.id))return;seen.add(item.id);for(const child of children.get(item.id)||[])hide(child);};nested.forEach(hide);}
+  }
+  for(const row of children.get(null)||[])visit(row,0);
+  for(const row of rows)if(!seen.has(row.id))visit(row,0);
+  return result;
+}
+function taskTitle(item) {
+  const {row,depth,children}=item;
+  const dependencies=(row.depends_on||[]).filter(id=>state.rows.some(candidate=>candidate.id===id));
+  const names=dependencies.map(id=>nameOf(state.rows.find(row=>row.id===id))).join(', ');
+  return `<span class="task-title" style="padding-left:${Math.min(depth,12)*17}px">${children.length?`<button class="task-collapse" data-action="toggle-subitems" data-id="${esc(row.id)}" aria-label="${esc(nameOf(row))} 하위 항목 ${state.collapsedRows.has(row.id)?'펼치기':'접기'}" aria-expanded="${!state.collapsedRows.has(row.id)}">${state.collapsedRows.has(row.id)?'▸':'▾'}</button>`:'<span class="task-spacer"></span>'}<span class="task-page-icon">${depth?'↳':'▤'}</span><span class="task-name">${esc(nameOf(row))}</span>${dependencies.length?`<span class="task-dependencies" title="선행 항목: ${esc(names)}" aria-label="선행 항목 ${dependencies.length}개">↗ ${dependencies.length}</span>`:''}${children.length?`<span class="task-child-count">${children.length}</span>`:''}</span>`;
+}
+function taskListHTML(rows) {
+  const statusProperty=state.database.properties.find(property=>property.type==='status');
+  const dateProperty=state.database.properties.find(property=>property.id===state.database.task_settings?.date_property)||state.database.properties.find(property=>property.type==='date');
+  return `<div class="task-list"><div class="task-list-heading"><span>프로젝트</span><span>상태</span><span>일정</span></div>${rowHierarchy(rows).map(item=>`<div class="task-list-row" data-action="edit-row" data-id="${esc(item.row.id)}" role="button" tabindex="0">${taskTitle(item)}<span>${status(valuesOf(item.row)[statusProperty?.id])}</span><span class="task-date">${esc(dateRangeLabel(valuesOf(item.row)[dateProperty?.id]))}</span></div>`).join('')||'<div class="empty">표시할 항목이 없습니다.</div>'}</div>${canCreateRow()?'<button class="new-row" data-action="add-row">+ 새 항목</button>':''}`;
+}
+function timelineHTML(rows) {
+  const properties=state.database.properties.filter(property=>property.type==='date');
+  if(!properties.some(property=>property.id===state.timelineProperty))state.timelineProperty=state.database.task_settings?.date_property||properties[0]?.id;
+  const field=properties.find(property=>property.id===state.timelineProperty)||properties[0];
+  const ordered=rowHierarchy(rows),scheduled=ordered.map(item=>({...item,range:dateRange(valuesOf(item.row)[field?.id])}));
+  const ranges=scheduled.map(item=>item.range).filter(Boolean),today=Math.floor(Date.now()/DAY_MS);
+  let first=Math.min(today,...ranges.map(range=>range.start))-3,last=Math.max(today+20,...ranges.map(range=>range.end))+3;
+  if(state.timelineBounds){first=state.timelineBounds.start;last=state.timelineBounds.end;}
+  // Weeks start on Monday. Large spans use a bounded canvas rather than creating a DOM cell per day.
+  first-=((new Date(first*DAY_MS).getUTCDay()+6)%7);
+  const days=Math.max(7,last-first+1),unit=state.timelineZoom==='week'?15:34,dayWidth=Math.min(unit,20000/days),width=days*dayWidth;
+  let step=Math.max(state.timelineZoom==='week'?7:Math.ceil(25/dayWidth),Math.ceil(days/600));
+  if(state.timelineZoom==='week')step=Math.ceil(step/7)*7;
+  const ticks=[];for(let offset=0;offset<days;offset+=step){const when=new Date((first+offset)*DAY_MS);ticks.push(`<span class="timeline-tick" style="left:${offset*dayWidth}px;width:${step*dayWidth}px"><small>${offset===0||when.getUTCDate()<=step?when.getUTCMonth()+1+'월':''}</small>${when.getUTCDate()}${state.timelineZoom==='week'&&step===7?'일 주간':'일'}</span>`);}
+  const current=today>=first&&today<first+days?`<span class="timeline-today" style="left:${(today-first+.5)*dayWidth}px" title="오늘"></span>`:'';
+  const dated=scheduled.filter(item=>item.range),undated=scheduled.filter(item=>!item.range);
+  return `<div class="timeline-controls"><label>날짜 속성<select id="timeline-property" aria-label="타임라인 날짜 속성">${properties.map(property=>`<option value="${esc(property.id)}" ${property.id===field?.id?'selected':''}>${esc(property.name)}</option>`).join('')}</select></label><label>보기<select id="timeline-zoom" aria-label="타임라인 간격"><option value="day" ${state.timelineZoom!=='week'?'selected':''}>일</option><option value="week" ${state.timelineZoom==='week'?'selected':''}>주</option></select></label><button class="outline-btn" data-action="timeline-today">오늘</button><button class="outline-btn" data-action="timeline-fit">전체 일정</button><span class="timeline-range-label">${isoDay(first)} — ${isoDay(first+days-1)}</span></div>${!field?'<div class="info-box">날짜 속성을 추가하면 실제 일정을 타임라인에서 볼 수 있습니다.</div>':''}<div class="timeline-scroll-hint">↔ 좌우로 스크롤해 전체 일정을 살펴보세요</div><div class="timeline-scroll" role="region" aria-label="프로젝트 일정 타임라인" tabindex="0"><div class="timeline-grid" data-first="${first}" data-day-width="${dayWidth}" style="--timeline-width:${width}px;--day-width:${dayWidth}px"><div class="timeline-header"><div class="timeline-sticky">프로젝트 · ${dated.length}</div><div class="timeline-axis">${ticks.join('')}${current}</div></div>${dated.map(item=>{const range=item.range,visible=range.end>=first&&range.start<first+days,left=(Math.max(range.start,first)-first)*dayWidth,barWidth=(Math.min(range.end,first+days-1)-Math.max(range.start,first)+1)*dayWidth;return `<div class="timeline-row"><div class="timeline-sticky" data-action="edit-row" data-id="${esc(item.row.id)}" role="button" tabindex="0">${taskTitle(item)}</div><div class="timeline-canvas">${current}${visible?`<button class="timeline-bar ${item.depth?'is-subitem':''}" data-day="${range.start}" data-action="edit-row" data-id="${esc(item.row.id)}" style="left:${left}px;width:${Math.max(5,barWidth)}px" title="${esc(nameOf(item.row))}: ${range.startISO} → ${range.endISO}" aria-label="${esc(nameOf(item.row))} ${range.startISO}부터 ${range.endISO}까지"><span>${esc(nameOf(item.row))}</span></button>`:'<span class="timeline-outside">선택한 범위 밖</span>'}</div></div>`;}).join('')||'<div class="empty">아직 날짜가 지정된 항목이 없습니다.</div>'}</div></div>${undated.length?`<section class="timeline-unscheduled"><h3>날짜 미정 <span>${undated.length}</span></h3>${undated.map(item=>`<div class="task-list-row" data-action="edit-row" data-id="${esc(item.row.id)}" role="button" tabindex="0">${taskTitle(item)}<span class="muted small">날짜를 지정하세요</span></div>`).join('')}</section>`:''}`;
+}
+function focusTimeline() {
+  const scroll=$('.timeline-scroll'),grid=$('.timeline-grid');if(!scroll||!grid)return;
+  const target=state.timelineFocusDay??Number($('.timeline-bar')?.dataset.day||Math.floor(Date.now()/DAY_MS));
+  const sticky=$('.timeline-sticky',scroll)?.offsetWidth||220;
+  scroll.scrollLeft=Math.max(0,(target-Number(grid.dataset.first)+.5)*Number(grid.dataset.dayWidth)-Math.max(20,(scroll.clientWidth-sticky)/2));
+}
+function openTaskSettings() {
+  if(resourceLevel(state.database)<4)throw new Error('데이터베이스 전체 권한이 필요합니다.');
+  const settings=state.database.task_settings||{};
+  openModal('프로젝트 일정 설정',`<p>하위 항목과 선행 작업을 연결하고, 선행 작업의 일정이 바뀌었을 때 후속 작업을 조정하세요.</p><form id="task-settings-form" class="form-grid"><label class="checkbox-label"><input name="subitems" type="checkbox" ${settings.subitems?'checked':''}>하위 항목 사용</label><label class="checkbox-label"><input name="dependencies" type="checkbox" ${settings.dependencies?'checked':''}>선행·후속 작업 연결 사용</label><label>일정에 사용할 날짜 속성<select name="date_property">${state.database.properties.filter(property=>property.type==='date').map(property=>`<option value="${esc(property.id)}" ${settings.date_property===property.id?'selected':''}>${esc(property.name)}</option>`).join('')}</select></label><label>선행 작업 일정 변경 시<select name="shift"><option value="none" ${!settings.shift||settings.shift==='none'?'selected':''}>자동 조정 안 함</option><option value="overlap" ${settings.shift==='overlap'?'selected':''}>일정이 겹칠 때 후속 작업 이동</option><option value="maintain" ${settings.shift==='maintain'?'selected':''}>작업 사이 간격을 유지하며 이동</option></select></label><label class="checkbox-label"><input name="skip_weekends" type="checkbox" ${settings.skip_weekends?'checked':''}>일정 조정 시 주말 건너뛰기</label><div class="form-actions"><button type="button" class="outline-btn" data-action="close-modal">취소</button><button class="solid-btn">설정 저장</button></div></form>`);
+}
+
 function databaseToolbar(compact=false) {
-  return `<div class="db-toolbar"><div class="view-tabs">${[['table','테이블','table'],['board','보드','board'],...(!compact?[['calendar','캘린더','calendar'],['gallery','갤러리','grid'],['chart','차트','chart']]:[])].map(([v,n,i])=>`<button data-action="db-view" data-view="${v}" class="${state.view===v?'active':''}">${icon(i)}${n}</button>`).join('')}</div><div class="db-actions"><button data-action="filter" aria-label="필터">${icon('filter')}</button>${!compact?'<button data-action="db-export" aria-label="CSV 내보내기">↗</button><button data-action="new-property" aria-label="속성 추가">＋ 속성</button>':''}<button class="solid-btn" data-action="add-row">새로 만들기 ${icon('down')}</button></div></div>`;
+  return `<div class="db-toolbar"><div class="view-tabs">${[['table','테이블','table'],['board','보드','board'],...(!compact?[['timeline','타임라인','calendar'],['list','리스트','menu'],['calendar','캘린더','calendar'],['gallery','갤러리','grid'],['chart','차트','chart']]:[])].map(([v,n,i])=>`<button data-action="db-view" data-view="${v}" class="${state.view===v?'active':''}">${icon(i)}${n}</button>`).join('')}</div><div class="db-actions"><button data-action="filter" aria-label="필터">${icon('filter')}</button>${!compact?'<button data-action="db-export" aria-label="CSV 내보내기">↗</button><button data-action="new-property" aria-label="속성 추가">＋ 속성</button><button data-action="task-settings" aria-label="프로젝트 일정 설정">⚙ 일정</button>':''}<button class="solid-btn" data-action="add-row">새로 만들기 ${icon('down')}</button></div></div>`;
 }
 function tableHTML(rows,compact=false) {
-  const db=state.database;
-  const props=(db?.properties||[]).slice(0,compact?4:20);
-  return `<div style="overflow-x:auto"><table class="data-table"><thead><tr>${props.map(p=>`<th>${p.type==='title'?'Aa':p.type==='status'?'◉':p.type==='date'?'▦':p.type==='person'?'☻':'≡'} &nbsp;${esc(p.name)}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr tabindex="0" role="button" data-action="edit-row" data-id="${esc(row.id)}" aria-label="${esc(nameOf(row))}">${props.map((p,i)=>{const v=valuesOf(row)[p.id];return `<td>${['status','select'].includes(p.type)?status(v):p.type==='checkbox'?v?'☑':'☐':i===0?'📄 &nbsp;'+esc(v||'제목 없음'):esc(Array.isArray(v)?v.join(', '):v||'—')}</td>`;}).join('')}</tr>`).join('')}</tbody></table>${!rows.length?'<div class="empty">아직 항목이 없어요. 첫 번째 항목을 추가해 보세요.</div>':''}</div>`;
+  const props=(state.database?.properties||[]).slice(0,compact?4:20);
+  return `<div style="overflow-x:auto"><table class="data-table"><thead><tr>${props.map(property=>`<th>${property.type==='title'?'Aa':property.type==='status'?'◉':property.type==='date'?'▦':property.type==='person'?'☻':'≡'} &nbsp;${esc(property.name)}</th>`).join('')}</tr></thead><tbody>${rowHierarchy(rows).map(item=>`<tr tabindex="0" role="button" data-action="edit-row" data-id="${esc(item.row.id)}" aria-label="${esc(nameOf(item.row))}">${props.map((property,index)=>{const value=valuesOf(item.row)[property.id];return `<td>${index===0?taskTitle(item):['status','select'].includes(property.type)?status(value):property.type==='checkbox'?value?'☑':'☐':property.type==='date'?esc(dateRangeLabel(value)):property.type==='person'?esc(state.workspace.members.find(member=>member.id===value)?.name||value||'—'):esc(Array.isArray(value)?value.join(', '):value||'—')}</td>`;}).join('')}</tr>`).join('')}</tbody></table>${!rows.length?'<div class="empty">아직 항목이 없어요. 첫 번째 항목을 추가해 보세요.</div>':''}</div>`;
 }
 function filteredRows() {
   let rows=[...state.rows];
-  if(state.filter)rows=rows.filter(r=>Object.values(valuesOf(r)).some(v=>String(v).toLowerCase().includes(state.filter.toLowerCase())));
+  if(state.filter)rows=rows.filter(r=>Object.values(valuesOf(r)).some(v=>(dateRange(v)?dateRangeLabel(v):String(v)).toLowerCase().includes(state.filter.toLowerCase())));
   if(state.sort)rows.sort((a,b)=>String(nameOf(a)).localeCompare(String(nameOf(b)),'ko'));
   return rows;
 }
@@ -356,13 +428,15 @@ function databaseView() {
   const rows=filteredRows(),props=state.database.properties;
   const title=props.find(p=>p.type==='title')||props[0];
   const group=props.find(p=>p.type==='status')||props.find(p=>p.type==='select');
+  if(state.view==='timeline')return timelineHTML(rows);
+  if(state.view==='list')return taskListHTML(rows);
   if(state.view==='table')return tableHTML(rows)+`<button class="new-row" data-action="add-row">+ 새 항목</button>`;
   if(state.view==='board') {
     const options=[...new Set([...optionsOf(group|| {
     }),...rows.map(r=>valuesOf(r)[group?.id]||'미지정')])];
-    return `<div class="board">${options.map(value=>`<div class="board-column"><h3>${status(value)}<span>${rows.filter(r=>(valuesOf(r)[group?.id]||'미지정')===value).length}</span></h3>${rows.filter(r=>(valuesOf(r)[group?.id]||'미지정')===value).map(r=>`<button class="board-card" data-action="edit-row" data-id="${esc(r.id)}">${esc(valuesOf(r)[title.id]||'제목 없음')}<small>${esc(Object.values(valuesOf(r)).slice(1).filter(Boolean).join(' · '))}</small></button>`).join('')}<button class="new-row" data-action="add-row" data-status="${esc(value)}">+ 새 항목</button></div>`).join('')}</div>`;
+    return `<div class="board">${options.map(value=>`<div class="board-column"><h3>${status(value)}<span>${rows.filter(r=>(valuesOf(r)[group?.id]||'미지정')===value).length}</span></h3>${rows.filter(r=>(valuesOf(r)[group?.id]||'미지정')===value).map(r=>`<button class="board-card" data-action="edit-row" data-id="${esc(r.id)}">${esc(valuesOf(r)[title.id]||'제목 없음')}<small>${esc(Object.values(valuesOf(r)).slice(1).filter(Boolean).map(value=>dateRange(value)?dateRangeLabel(value):Array.isArray(value)?value.join(', '):String(value)).join(' · '))}</small></button>`).join('')}<button class="new-row" data-action="add-row" data-status="${esc(value)}">+ 새 항목</button></div>`).join('')}</div>`;
   }
-  if(state.view==='gallery')return `<div class="gallery">${rows.map(r=>`<button class="board-card" data-action="edit-row" data-id="${esc(r.id)}">${esc(nameOf(r))}<small>${esc(Object.values(valuesOf(r)).slice(1).filter(Boolean).join(' · '))}</small></button>`).join('')}</div>`;
+  if(state.view==='gallery')return `<div class="gallery">${rows.map(r=>`<button class="board-card" data-action="edit-row" data-id="${esc(r.id)}">${esc(nameOf(r))}<small>${esc(Object.values(valuesOf(r)).slice(1).filter(Boolean).map(value=>dateRange(value)?dateRangeLabel(value):Array.isArray(value)?value.join(', '):String(value)).join(' · '))}</small></button>`).join('')}</div>`;
   if(state.view==='chart') {
     const counts= {
     };
@@ -376,12 +450,13 @@ function databaseView() {
   const now=new Date();
   const first=new Date(now.getFullYear(),now.getMonth(),1).getDay();
   const count=new Date(now.getFullYear(),now.getMonth()+1,0).getDate();
-  return `<div style="padding:14px;font-size:13px">${now.getFullYear()}년 ${now.getMonth()+1}월</div><div class="calendar">${['일','월','화','수','목','금','토'].map(d=>`<div class="weekday">${d}</div>`).join('')}${Array.from({length:first},()=>'<div></div>').join('')}${Array.from({length:count},(_,i)=>{const key=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(i+1).padStart(2,'0')}`;return `<div>${i+1}${rows.filter(r=>String(valuesOf(r)[dateProp?.id]||'').startsWith(key)).map(r=>`<button data-action="edit-row" data-id="${esc(r.id)}">${esc(nameOf(r))}</button>`).join('')}</div>`;}).join('')}</div>${!dateProp?'<div class="info-box">날짜 속성을 추가하면 캘린더에 항목을 표시할 수 있습니다.</div>':''}`;
+  return `<div style="padding:14px;font-size:13px">${now.getFullYear()}년 ${now.getMonth()+1}월</div><div class="calendar">${['일','월','화','수','목','금','토'].map(d=>`<div class="weekday">${d}</div>`).join('')}${Array.from({length:first},()=>'<div></div>').join('')}${Array.from({length:count},(_,i)=>{const key=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(i+1).padStart(2,'0')}`;return `<div>${i+1}${rows.filter(r=>{const range=dateRange(valuesOf(r)[dateProp?.id]);return range&&key>=range.startISO&&key<=range.endISO;}).map(r=>`<button data-action="edit-row" data-id="${esc(r.id)}">${esc(nameOf(r))}</button>`).join('')}</div>`;}).join('')}</div>${!dateProp?'<div class="info-box">날짜 속성을 추가하면 캘린더에 항목을 표시할 수 있습니다.</div>':''}`;
 }
 function renderDatabase() {
   renderTopbar(state.database.name||state.database.title,'▤');
   $('#main').innerHTML=`<section class="db-full"><div class="eyebrow">TEAM WORK, IN ONE PLACE</div><div class="database-heading"><h1>▤ ${esc(state.database.name||state.database.title||'프로젝트')}</h1><button class="outline-btn" data-action="db-export">↗ CSV 내보내기</button></div><p class="muted">작은 할 일부터 큰 목표까지, 우리의 다음 한 걸음을 함께 기록해요.</p><div class="panel">${databaseToolbar()}<div id="db-filters" ${state.filter?'':'hidden'} class="filters"><input id="db-filter-input" aria-label="항목 필터" placeholder="모든 속성에서 검색" value="${esc(state.filter)}"><button class="outline-btn" data-action="db-sort">이름 ${state.sort?'↓':'↕'} 정렬</button><button data-action="clear-filter" aria-label="필터 해제">×</button></div><div id="db-view">${databaseView()}</div></div></section>`;
   applyDatabaseControls();
+  if(state.view==='timeline')focusTimeline();
 }
 async function reloadDatabase() {
   const data=await api('/databases/'+state.database.id);
@@ -431,15 +506,28 @@ function openRow(id,initialStatus) {
   const props=state.database.properties;
   const editable=row?resourceLevel(row)>=3:canCreateRow();
   if(!row&&!editable)throw new Error('항목 생성 권한이 없습니다.');
-  openModal(row?'프로젝트 상세':'새 프로젝트',`<form id="row-form" data-id="${esc(id||'')}" class="form-grid"><div class="row-properties">${props.map(p=>{const value=vals[p.id]??(p.type==='status'?initialStatus:'')??'';let input;if(p.type==='person'){const options=(state.workspace.members||[]).map(m=>({value:m.id,label:m.name||m.email||m.id}));if(value&&!options.some(o=>o.value===value))options.unshift({value,label:String(value)});input=`<select name="${esc(p.id)}"><option value="">미지정</option>${options.map(o=>`<option value="${esc(o.value)}" ${o.value===value?'selected':''}>${esc(o.label)}</option>`).join('')}</select>`;}else if(['status','select'].includes(p.type)){let options=optionsOf(p);if(value&&!options.includes(value))options.unshift(value);input=`<select name="${esc(p.id)}"><option value="">미지정</option>${options.map(o=>`<option ${o===value?'selected':''}>${esc(o)}</option>`).join('')}</select>`;}else if(p.type==='checkbox')input=`<input name="${esc(p.id)}" type="checkbox" ${value?'checked':''} style="width:auto;justify-self:start">`;else input=`<input ${['formula','rollup','created_time','last_edited_time'].includes(p.type)?'readonly':''} name="${esc(p.id)}" value="${esc(Array.isArray(value)?value.join(', '):value)}" type="${p.type==='number'?'number':p.type==='date'?'date':p.type==='url'?'url':p.type==='email'?'email':'text'}" ${p.type==='title'?'required':''}>`;return `<label>${esc(p.name)}${input}</label>`;}).join('')}</div><div class="form-actions">${row?`<button type="button" class="danger-btn" data-action="delete-row" data-id="${esc(id)}" style="margin-right:auto">삭제</button>`:''}<button type="button" class="outline-btn" data-action="close-modal">취소</button><button class="solid-btn">저장하기</button></div></form>`);
+  openModal(row?'프로젝트 상세':'새 프로젝트',`<form id="row-form" data-id="${esc(id||'')}" class="form-grid"><div class="row-properties">${props.map(p=>{const value=vals[p.id]??(p.type==='status'?initialStatus:'')??'';let input;if(p.type==='person'){const options=(state.workspace.members||[]).map(m=>({value:m.id,label:m.name||m.email||m.id}));if(value&&!options.some(o=>o.value===value))options.unshift({value,label:String(value)});input=`<select name="${esc(p.id)}"><option value="">미지정</option>${options.map(o=>`<option value="${esc(o.value)}" ${o.value===value?'selected':''}>${esc(o.label)}</option>`).join('')}</select>`;}else if(['status','select'].includes(p.type)){let options=optionsOf(p);if(value&&!options.includes(value))options.unshift(value);input=`<select name="${esc(p.id)}"><option value="">미지정</option>${options.map(o=>`<option ${o===value?'selected':''}>${esc(o)}</option>`).join('')}</select>`;}else if(p.type==='date'){const range=dateRange(value);input=`<span class="date-range-inputs"><input name="${esc(p.id)}" type="date" aria-label="${esc(p.name)} 시작일" value="${esc(range?.startISO||'')}"><span>→</span><input name="${esc(p.id)}__end" type="date" aria-label="${esc(p.name)} 종료일" value="${esc(typeof value==='object'&&value&&value.end?range?.endISO||'':'')}"></span>`;}else if(p.type==='checkbox')input=`<input name="${esc(p.id)}" type="checkbox" ${value?'checked':''} style="width:auto;justify-self:start">`;else input=`<input ${['formula','rollup','created_time','last_edited_time'].includes(p.type)?'readonly':''} name="${esc(p.id)}" value="${esc(Array.isArray(value)?value.join(', '):value)}" type="${p.type==='number'?'number':p.type==='date'?'date':p.type==='url'?'url':p.type==='email'?'email':'text'}" ${p.type==='title'?'required':''}>`;return `<label>${esc(p.name)}${input}</label>`;}).join('')}</div>${state.database.task_settings?.subitems===true?`<label>상위 항목<select name="parent_row_id"><option value="">최상위 항목</option>${state.rows.filter(candidate=>candidate.id!==id).map(candidate=>`<option value="${esc(candidate.id)}" ${row?.parent_row_id===candidate.id?'selected':''}>${esc(nameOf(candidate))}</option>`).join('')}</select></label>`:''}${state.database.task_settings?.dependencies===true?`<label>선행 항목<select name="depends_on" multiple aria-label="선행 항목" style="min-height:90px">${state.rows.filter(candidate=>candidate.id!==id).map(candidate=>`<option value="${esc(candidate.id)}" ${(row?.depends_on||[]).includes(candidate.id)?'selected':''}>${esc(nameOf(candidate))}</option>`).join('')}</select><small class="muted">선택한 작업이 먼저 끝난 뒤 이 작업이 시작됩니다. 여러 항목은 Ctrl 또는 ⌘ 키로 선택하세요.</small></label>`:''}<div class="form-actions">${row&&canCreateRow()?`<button type="button" class="outline-btn" data-action="duplicate-row" data-id="${esc(id)}">하위 항목과 복제</button>`:''}${row?`<button type="button" class="danger-btn" data-action="delete-row" data-id="${esc(id)}" style="margin-right:auto">삭제</button>`:''}<button type="button" class="outline-btn" data-action="close-modal">취소</button><button class="solid-btn">저장하기</button></div></form>`);
   if(!editable){
     $$('#row-form input,#row-form select,#row-form textarea').forEach(el=>el.disabled=true);
     $('#row-form .solid-btn')?.remove();$('#row-form .danger-btn')?.remove();
   }
 
 }
+function taskGraphChanges(formElement,data) {
+  const existing=state.rows.find(row=>row.id===formElement.dataset.id),changes={};
+  if(formElement.elements.namedItem('parent_row_id')&&(!existing||(data.parent_row_id||null)!==(existing.parent_row_id||null)))changes.parent_row_id=data.parent_row_id||null;
+  if(formElement.elements.namedItem('depends_on')){
+    const selected=new FormData(formElement).getAll('depends_on');
+    if(!existing||JSON.stringify([...selected].sort())!==JSON.stringify([...(existing.depends_on||[])].sort()))changes.depends_on=selected;
+  }
+  return changes;
+}
+async function deleteTaskRow(id) {
+  await api('/databases/'+state.database.id+'/rows/'+encodeURIComponent(id),{},'DELETE');
+  state.collapsedRows.delete(id);closeModal();await reloadDatabase();toast('항목을 삭제했습니다.');
+}
 function applyDatabaseControls() {
-  if(resourceLevel(state.database)<4)$$('[data-action="new-property"]').forEach(el=>el.remove());
+  if(resourceLevel(state.database)<4)$$('[data-action="new-property"],[data-action="task-settings"]').forEach(el=>el.remove());
   if(!canCreateRow())$$('[data-action="add-row"]').forEach(el=>el.remove());
   pruneAdministrativeControls();
 }
@@ -494,7 +582,7 @@ async function renderSettings() {
   };
   const header=(title,desc,button='')=>`<div class="section-heading"><h3>${title}</h3>${button}</div><p>${desc}</p>`;
   const add=(kind,label)=>`<button class="outline-btn" data-action="add-advanced" data-kind="${kind}">+ ${label}</button>`;
-  const items=(kind,detail)=>`<div class="settings-list">${normalizeList(a[kind]).map(item=>`<div class="settings-item"><div><strong>${esc(item.name||item.title||item.email||item.id)}</strong><small>${esc(detail(item))}</small></div><div>${kind==='automations'?`<button data-action="run-automation" data-id="${esc(item.id)}">실행</button>`:''}${kind==='forms'?`<button data-action="fill-form" data-id="${esc(item.id)}">응답</button>`:''}${kind==='sites'?`<button data-action="site-link" data-id="${esc(item.id)}">링크</button>`:''}<button data-action="edit-advanced" data-kind="${kind}" data-id="${esc(item.id)}">관리</button></div></div>`).join('')||'<div class="empty">아직 항목이 없어요. 첫 번째 항목을 만들어 보세요.</div>'}</div>`;
+  const items=(kind,detail)=>`<div class="settings-list">${normalizeList(a[kind]).map(item=>`<div class="settings-item"><div><strong>${esc(item.name||item.title||item.email||item.id)}</strong><small>${esc(detail(item))}</small></div><div>${kind==='automations'?`<button data-action="toggle-automation" data-id="${esc(item.id)}">${item.enabled===false?'사용':'일시 중지'}</button><button data-action="automation-runs" data-id="${esc(item.id)}">기록</button><button data-action="run-automation" data-id="${esc(item.id)}" ${item.enabled===false?'disabled title="직접 실행하려면 먼저 자동화를 사용 상태로 바꾸세요"':''}>한 번 실행</button>`:''}${kind==='forms'?`<button data-action="fill-form" data-id="${esc(item.id)}">응답</button>`:''}${kind==='sites'?`<button data-action="site-link" data-id="${esc(item.id)}">링크</button>`:''}<button data-action="edit-advanced" data-kind="${kind}" data-id="${esc(item.id)}">관리</button></div></div>`).join('')||'<div class="empty">아직 항목이 없어요. 첫 번째 항목을 만들어 보세요.</div>'}</div>`;
   if(tab==='accounts'){await renderAccounts(content);}
   else if(tab==='members') {
     content.innerHTML=header('함께 만드는 워크스페이스','팀원을 초대하고, 역할과 그룹을 관리하세요.',add('members','멤버 초대'))+items('members',m=>`${m.email||''} · ${m.role||'member'}`)+`<div class="section-heading" style="margin-top:28px"><h3>그룹</h3>${add('groups','그룹 추가')}</div>`+items('groups',g=>`${(g.members||[]).length}명의 멤버`);
@@ -504,7 +592,7 @@ async function renderSettings() {
     };
     content.innerHTML=header('보안 및 권한','워크스페이스의 데이터 접근 정책을 설정하세요.')+`<form class="form-grid" id="security-form">${field('워크스페이스 이름','workspace_name','Fountain 스튜디오','text',s.name||'Fountain 스튜디오')}<label style="display:flex;align-items:center"><input class="toggle" style="width:auto" type="checkbox" name="disable_guests" ${s.disable_guests?'checked':''}> 게스트 등록 제한</label><label style="display:flex;align-items:center"><input class="toggle" style="width:auto" type="checkbox" name="allow_public_sharing" ${!s.disable_public_sharing?'checked':''}> 공개 링크 공유 허용</label><label style="display:flex;align-items:center"><input class="toggle" style="width:auto" type="checkbox" name="allow_export" ${!s.disable_export?'checked':''}> 데이터 내보내기 허용</label>${field('휴지통 보존 기간 (일)','trash_retention_days','30','number',s.trash_retention_days??30)}${field('사용자 지정 도메인','custom_domain','예: home.example.com','text',s.custom_domain||'')}<button class="solid-btn">설정 저장</button></form><div class="info-box" style="margin-top:20px">로컬 워크스페이스입니다. 공유 암호를 설정하면 가족이 같은 공간에 로그인할 수 있습니다. 가족 계정에서 멤버별 이메일 로그인과 공유 권한을 설정할 수 있으며, 사용자 지정 도메인의 DNS·TLS는 직접 설정해야 합니다.</div><button class="outline-btn" style="margin-top:15px" data-action="activity">감사 로그 보기 ↗</button><button class="outline-btn" style="margin:15px 0 0 8px" data-action="logout">로그아웃</button>`;
   }
-  else if(tab==='automations')content.innerHTML=header('작업에 흐름을 더하세요','조건에 맞는 데이터베이스 항목을 자동으로 업데이트합니다.',add('automations','자동화 만들기'))+items('automations',i=>`${i.enabled===false?'일시 중지':'활성'} · ${i.trigger||i.event||'수동 실행'}`);
+  else if(tab==='automations')content.innerHTML=header('작업에 흐름을 더하세요','항목 변경이나 예약 시각에 작업을 실행합니다. 예약은 이 서버가 실행되는 동안에만 동작합니다.',add('automations','자동화 만들기'))+items('automations',scheduleDescription);
   else if(tab==='forms')content.innerHTML=header('질문을 모아, 다음 단계로','폼을 만들고 응답을 데이터베이스에 수집하세요.',add('forms','폼 만들기'))+items('forms',i=>`${i.database_id||'연결된 데이터베이스 없음'} · ${(i.fields||[]).length}개 질문`);
   else if(tab==='sites')content.innerHTML=header('아이디어를 세상에 공유하세요','페이지를 게시용 보기로 공유합니다. 가족 로그인 모드에서는 로그인한 가족만 볼 수 있습니다.',add('sites','사이트 만들기'))+items('sites',i=>`${i.published?'게시됨':'초안'} · ${i.slug||i.page_id||''}`);
   else if(tab==='AI') {
@@ -538,6 +626,69 @@ async function renderSettings() {
     content.innerHTML=header('데이터는 언제나 내 손에','문서를 내보내거나 댓글·이력·설정을 포함한 전체 백업을 다운로드하세요.')+'<button class="solid-btn" data-action="backup">전체 백업 다운로드</button><div class="form-actions" style="justify-content:flex-start"><button class="outline-btn" data-action="export" data-format="json">문서·DB JSON</button><button class="outline-btn" data-action="export" data-format="markdown">Markdown</button><button class="outline-btn" data-action="export" data-format="csv">CSV</button></div><form class="form-grid" id="import-form" style="margin-top:25px"><label>가져올 형식<select name="format"><option value="markdown">Markdown</option><option value="csv">CSV</option><option value="json">JSON 백업</option></select></label>'+field('제목','title','가져온 문서')+'<label>내용<textarea name="content" required placeholder="파일 내용을 여기에 붙여넣으세요"></textarea></label><button class="solid-btn">가져오기</button></form>';
   }
 }
+function zonedParts(value,timezone) {
+  try {
+    const parts=new Intl.DateTimeFormat('en-CA',{timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date(value));
+    return Object.fromEntries(parts.filter(part=>part.type!=='literal').map(part=>[part.type,part.value]));
+  } catch { throw new Error('올바른 시간대를 입력하세요. 예: Asia/Seoul'); }
+}
+function zonedInput(value,timezone) {
+  const parts=zonedParts(value,timezone);
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}`;
+}
+function scheduleInstant(value,timezone) {
+  if(!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/.test(value))throw new Error('예약 시작 시각을 입력하세요.');
+  const desired=Date.parse(value+(value.length===16?':00':'')+'Z');
+  if(!Number.isFinite(desired))throw new Error('올바른 예약 시작 시각을 입력하세요.');
+  let instant=desired;
+  for(let i=0;i<4;i++){
+    const parts=zonedParts(instant,timezone),shown=Date.parse(`${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}Z`);
+    const next=instant+desired-shown;if(next===instant)break;instant=next;
+  }
+  if(zonedInput(instant,timezone)!==value+(value.length===16?':00':''))throw new Error('이 시간대에 존재하지 않는 시각입니다. 다른 시각을 선택하세요.');
+  return new Date(instant).toISOString();
+}
+function scheduleDescription(automation) {
+  if(automation.trigger!=='scheduled')return `${automation.enabled===false?'일시 중지':'사용'} · ${{manual:'직접 실행','row.created':'항목 생성 시','row.updated':'항목 수정 시'}[automation.trigger]||automation.trigger||'직접 실행'}`;
+  const period={minutes:'분',hours:'시간',days:'일',weeks:'주',months:'개월',years:'년'}[automation.schedule?.frequency]||'';
+  return `${automation.schedule_status==='completed'?'예약 완료':automation.enabled===false?'일시 중지':'예약 사용'} · ${automation.schedule?.interval||1}${period}마다 · ${automation.schedule?.timezone||'시간대 미설정'}`;
+}
+function automationScheduleFields(item) {
+  const schedule=item.schedule||{},timezone=schedule.timezone||'Asia/Seoul';
+  const start=schedule.start_at||new Date(Date.now()+60_000).toISOString();
+  return `<div id="automation-schedule-fields" class="schedule-fields" style="display:${item.trigger==='scheduled'?'grid':'none'}"><div class="schedule-period"><label>반복 간격<input name="schedule_interval" type="number" min="1" max="365" step="1" value="${esc(schedule.interval||1)}"></label><label>반복 단위<select name="schedule_frequency">${[['minutes','분'],['hours','시간'],['days','일'],['weeks','주'],['months','개월'],['years','년']].map(([value,label])=>`<option value="${value}" ${schedule.frequency===value?'selected':''}>${label}</option>`).join('')}</select></label></div><label>시간대<input name="schedule_timezone" value="${esc(timezone)}" placeholder="Asia/Seoul"></label><label>첫 실행 시각<input name="schedule_start_at" type="datetime-local" step="1" value="${esc(zonedInput(start,timezone))}"></label><label>마지막 실행 허용 시각 (선택)<input name="schedule_end_at" type="datetime-local" step="1" value="${esc(schedule.end_at?zonedInput(schedule.end_at,timezone):'')}"></label><div class="info-box">이 서버가 실행 중일 때 예약된 작업을 실행합니다. 서버가 꺼져 있는 동안에는 실행되지 않으며 클라우드 실행을 제공하지 않습니다.</div></div>`;
+}
+function updateScheduleFields() {
+  const section=$('#automation-schedule-fields'),trigger=$('#advanced-form [name="trigger"]');
+  if(!section||!trigger)return;
+  const scheduled=trigger.value==='scheduled';section.style.display=scheduled?'grid':'none';
+  $$('input,select',section).forEach(input=>input.disabled=!scheduled);
+}
+async function loadAutomationRows(databaseId,selectedId='') {
+  const select=$('#automation-row');if(!select)return;
+  const sequence=(state.automationRowRequest||0)+1;state.automationRowRequest=sequence;select.disabled=true;
+  try {
+    const data=await api('/databases/'+encodeURIComponent(databaseId));
+    if(!select.isConnected||sequence!==state.automationRowRequest)return;
+    select.innerHTML='<option value="">대상 항목 없음</option>'+data.rows.map(row=>`<option value="${esc(row.id)}" ${row.id===selectedId?'selected':''}>${esc(nameOf(row,data.database))}</option>`).join('');
+  } finally {if(select.isConnected&&sequence===state.automationRowRequest)select.disabled=false;}
+}
+async function openAutomationRuns(id) {
+  const automation=state.advanced?.automations?.find(item=>item.id===id),timezone=automation?.schedule?.timezone||'Asia/Seoul';
+  openModal('예약 실행 기록',`<div id="automation-runs" data-id="${esc(id)}"><div class="empty">실행 기록을 불러오는 중…</div></div>`);
+  const data=await api('/automations/'+encodeURIComponent(id)+'/runs');
+  const content=$('#automation-runs');if(!content||content.dataset.id!==id)return;
+  const when=value=>value?new Date(value).toLocaleString('ko-KR',{timeZone:timezone}):'—';
+  const statusName={succeeded:'성공',success:'성공',completed:'완료',failed:'실패',running:'실행 중',skipped:'건너뜀'};
+  content.innerHTML=`<p>${esc(automation?.name||'자동화')} · ${esc(timezone)}</p>${(data.runs||[]).map(run=>`<article class="automation-run"><div><strong>${esc(statusName[run.status]||run.status)}</strong><span class="muted">${esc(when(run.scheduled_at))}</span></div><small>시작 ${esc(when(run.started_at))}<br>종료 ${esc(when(run.finished_at))}</small>${run.error?`<small class="run-error">${esc(run.error)}</small>`:''}</article>`).join('')||'<div class="empty">아직 예약 실행 기록이 없습니다. 예약이 사용 상태이고 서버가 실행 중인지 확인하세요.</div>'}<div class="form-actions"><button class="outline-btn" data-action="automation-runs" data-id="${esc(id)}">새로고침</button><button class="outline-btn" data-action="automation-settings">자동화 목록</button></div>`;
+}
+async function openManualAutomation(id) {
+  const automation=state.advanced?.automations?.find(item=>item.id===id);
+  if(!automation)throw new Error('자동화를 찾을 수 없습니다.');
+  const data=await api('/databases/'+encodeURIComponent(automation.database_id));
+  openModal('자동화 직접 실행',`<p>한 번 실행합니다. 예약 주기는 변경하지 않습니다. 속성 변경 작업은 대상 항목을 선택하세요.</p><form id="run-automation-form" data-id="${esc(id)}" class="form-grid"><label>대상 항목<select name="row_id"><option value="">대상 항목 없음</option>${data.rows.map(row=>`<option value="${esc(row.id)}" ${row.id===automation.row_id?'selected':''}>${esc(nameOf(row,data.database))}</option>`).join('')}</select></label><button class="solid-btn">한 번 실행하기</button></form>`);
+}
+
 function advancedForm(kind,id) {
   const item=(state.advanced?.[kind]||[]).find(i=>i.id===id)|| {
   };
@@ -552,9 +703,11 @@ function advancedForm(kind,id) {
   else if(kind==='teamspaces')content=nameField+select('접근 범위','visibility',[['open','열린 팀스페이스'],['closed','비공개 팀스페이스'],['private','초대한 멤버 전용']],item.visibility||'open');
   else if(kind==='sites')content=nameField+select('게시할 페이지','page_id',pages.map(p=>[p.id,p.title]),item.page_id||pages[0]?.id)+field('사이트 주소','slug','our-team','text',item.slug||'')+field('검색 결과 제목','seo_title','사이트 제목','text',item.seo_title||'')+field('설명','description','페이지를 소개해 주세요','text',item.description||'')+checkbox('공개 사이트로 게시','published',!!item.published)+'<div class="info-box">게시하면 링크를 가진 누구나 페이지 내용을 열람할 수 있습니다.</div>';
   else if(kind==='forms')content=nameField+select('응답을 저장할 데이터베이스','database_id',dbs.map(d=>[d.id,d.name||d.title]),item.database_id||dbs[0]?.id)+`<label>질문 (JSON)<textarea name="fields" spellcheck="false" required>${esc(JSON.stringify(item.fields||[{id:'name',label:'프로젝트 이름',type:'text',required:true,property_id:'name'},{id:'status',label:'진행 상태',type:'select',property_id:'status',options:['시작 전','진행 중','완료']}],null,2))}</textarea></label>`+checkbox('폼 공개 및 응답 허용','published',!!item.published)+'<div class="info-box">각 질문의 property_id는 연결된 데이터베이스의 속성 ID와 같아야 합니다. 질문에 condition: {field, equals}를 추가하면 조건부로 표시됩니다.</div>';
-  else if(kind==='automations')content=nameField+select('데이터베이스','database_id',dbs.map(d=>[d.id,d.name||d.title]),item.database_id||dbs[0]?.id)+select('실행 조건','trigger',[['manual','직접 실행'],['row.created','항목을 만들었을 때'],['row.updated','항목을 수정했을 때']],item.trigger||'manual')+`<label>실행할 작업 (JSON)<textarea name="actions" required spellcheck="false">${esc(JSON.stringify(item.actions||[{type:'set_property',property_id:'status',value:'완료'}],null,2))}</textarea></label>`+checkbox('자동화 활성화','enabled',item.enabled!==false);
+  else if(kind==='automations')content=nameField+select('데이터베이스','database_id',dbs.map(d=>[d.id,d.name||d.title]),item.database_id||dbs[0]?.id)+select('실행 조건','trigger',[['manual','직접 실행'],['row.created','항목을 만들었을 때'],['row.updated','항목을 수정했을 때'],['scheduled','일정에 따라 반복']],item.trigger||'manual')+automationScheduleFields(item)+`<label>속성을 변경할 대상 항목<select name="row_id" id="automation-row"><option value="">대상 항목 없음</option></select><small class="muted">속성 변경 작업에 사용합니다. 새 항목이나 페이지 생성 작업은 비워둘 수 있습니다.</small></label><label>실행할 작업 (JSON)<textarea name="actions" required spellcheck="false">${esc(JSON.stringify(item.actions||[{type:'set_property',property_id:'status',value:'완료'}],null,2))}</textarea></label>`+checkbox('자동화 사용','enabled',item.enabled!==false);
   else if(kind==='integrations')content=nameField+select('제공자','provider',[['webhook','Webhook'],['slack','Slack'],['github','GitHub'],['google_drive','Google Drive'],['custom','사용자 정의']],item.provider||'webhook')+field('연결 URL','url','https://…','url',item.url||'')+'<div class="info-box">연결 메타데이터를 등록합니다. 실제 동기화와 OAuth 인증은 공급자 연결이 필요합니다.</div>';
   openModal(`${id?'관리':'새로 만들기'} · ${{members:'멤버',groups:'그룹',teamspaces:'팀스페이스',forms:'폼',sites:'사이트',automations:'자동화',integrations:'연결'}[kind]||kind}`,`<form id="advanced-form" data-kind="${kind}" data-id="${esc(id||'')}" class="form-grid">${content}<div class="form-actions"><button type="button" class="outline-btn" data-action="settings">설정으로 돌아가기</button><button class="solid-btn">저장하기</button></div></form>`);
+  if(kind==='automations')updateScheduleFields();
+  if(kind==='automations')loadAutomationRows(item.database_id||dbs[0]?.id,item.row_id||'').catch(error=>toast(error.message));
 }
 async function showAI() {
   openModal('✦ Fountain AI',`<p>아이디어의 시작부터 문서의 마무리까지, AI와 함께해 보세요.</p><form class="form-grid" id="ai-form"><label>작업<select name="action"><option value="summarize">페이지 요약</option><option value="write">초안 작성</option><option value="translate">번역</option><option value="answer">워크스페이스 질문</option></select></label><label>요청<textarea name="prompt" placeholder="어떤 도움이 필요한가요? 예: 이 문서를 세 문장으로 요약해 주세요."></textarea></label><button class="solid-btn">✦ 실행하기</button></form><div id="ai-output" aria-live="polite"></div><div class="info-box" style="margin-top:20px">공급자 연결 상태에 따라 실행 가능한 작업이 달라집니다. 민감한 정보는 전송 전에 확인하세요.</div>`);
@@ -842,8 +995,10 @@ async function doAction(target) {
     break;
     case'edit-advanced':advancedForm(target.dataset.kind,id);
     break;
-    case'run-automation':openModal('자동화 실행',`<p>작업을 적용할 데이터베이스 항목의 ID를 선택하세요.</p><form id="run-automation-form" data-id="${esc(id)}" class="form-grid"><label>대상 항목<select name="row_id">${state.rows.map(r=>`<option value="${esc(r.id)}">${esc(nameOf(r))}</option>`).join('')}</select></label><button class="solid-btn">실행하기</button></form>`);
-    break;
+    case'run-automation':await openManualAutomation(id);break;
+    case'automation-runs':await openAutomationRuns(id);break;
+    case'automation-settings':await openSettings('automations');break;
+    case'toggle-automation':{const automation=state.advanced.automations.find(item=>item.id===id);await api('/automations/'+encodeURIComponent(id),{enabled:automation.enabled===false},'PATCH');await openSettings('automations');toast(automation.enabled===false?'자동화를 사용하도록 설정했습니다.':'자동화를 일시 중지했습니다.');break;}
     case'fill-form':window.open('/forms/'+encodeURIComponent(id),'_blank','noopener');
     break;
     case'site-link': {
@@ -861,14 +1016,25 @@ async function doAction(target) {
     }
     openRow(null,target.dataset.status);
     break;
+    case'duplicate-row':{
+      if(!canCreateRow())throw new Error('항목 생성 권한이 없습니다.');
+      const result=await api('/databases/'+state.database.id+'/rows/'+encodeURIComponent(id)+'/duplicate',{});
+      closeModal();await reloadDatabase();
+      if(state.rows.some(row=>row.id===result.root_id))openRow(result.root_id);
+      toast('하위 항목과 함께 복제했습니다.');break;
+    }
     case'edit-row':openRow(id);
     break;
-    case'delete-row':if(resourceLevel(state.rows.find(row=>row.id===id))<3)throw new Error('항목 편집 권한이 없습니다.');await api('/databases/'+state.database.id+'/rows/'+id, {
-    },'DELETE');
-    closeModal();
-    await reloadDatabase();
-    toast('항목을 삭제했습니다.');
-    break;
+    case'delete-row':{
+      if(resourceLevel(state.rows.find(row=>row.id===id))<3)throw new Error('항목 편집 권한이 없습니다.');
+      if(state.rows.some(row=>row.parent_row_id===id)){openModal('하위 항목과 함께 삭제',`<p>이 항목을 삭제하면 연결된 하위 항목도 함께 삭제됩니다.</p><div class="form-actions"><button class="outline-btn" data-action="edit-row" data-id="${esc(id)}">돌아가기</button><button class="danger-btn" data-action="confirm-delete-row" data-id="${esc(id)}">하위 항목과 함께 삭제</button></div>`);break;}
+      await deleteTaskRow(id);break;
+    }
+    case'confirm-delete-row':await deleteTaskRow(id);break;
+    case'task-settings':openTaskSettings();break;
+    case'toggle-subitems':if(state.collapsedRows.has(id))state.collapsedRows.delete(id);else state.collapsedRows.add(id);if(state.route==='database')renderDatabase();else if($('#home-database'))$('#home-database').innerHTML=databaseToolbar(true)+tableHTML(state.rows.slice(0,5),true);break;
+    case'timeline-today':{const today=Math.floor(Date.now()/DAY_MS);state.timelineBounds={start:today-7,end:today+21};state.timelineFocusDay=today;renderDatabase();break;}
+    case'timeline-fit':state.timelineBounds=null;state.timelineFocusDay=null;renderDatabase();break;
     case'db-view':state.view=target.dataset.view;
     if(state.route!=='database') {
       await navigate('database',state.database.id);
@@ -888,7 +1054,7 @@ async function doAction(target) {
     case'db-export': {
       if(state.workspace.settings?.disable_export){toast('워크스페이스에서 내보내기를 제한했습니다.');break;}
       const props=state.database.properties;
-      const cell=v=>'"'+String(Array.isArray(v)?v.join(', '):v??'').replace(/"/g,'""')+'"';
+      const cell=v=>'"'+String(Array.isArray(v)?v.join(', '):v&&typeof v==='object'?JSON.stringify(v):v??'').replace(/"/g,'""')+'"';
       const csv='\uFEFF'+[props.map(p=>cell(p.name)).join(','),...filteredRows().map(r=>props.map(p=>cell(valuesOf(r)[p.id])).join(','))].join('\r\n');
       download((state.database.name||'database')+'.csv',csv,'text/csv;charset=utf-8');
       toast('CSV를 내보냈습니다.');
@@ -931,6 +1097,9 @@ document.addEventListener('input',event=> {
 });
 document.addEventListener('change',event=> {
   const el=event.target;
+  if(el.closest('#advanced-form')&&$('#advanced-form')?.dataset.kind==='automations'){if(el.name==='trigger')updateScheduleFields();if(el.name==='database_id')loadAutomationRows(el.value).catch(error=>toast(error.message));}
+  if(el.id==='timeline-property'){state.timelineProperty=el.value;state.timelineBounds=null;state.timelineFocusDay=null;renderDatabase();return;}
+  if(el.id==='timeline-zoom'){state.timelineZoom=el.value;renderDatabase();return;}
   if(el.dataset.check&&!pageEditable())return;
   if(el.id==='attachment-input'){const file=el.files?.[0];el.value='';attachFile(file).catch(error=>toast(error.message));return;}
   if(el.dataset.check) {
@@ -938,6 +1107,7 @@ document.addEventListener('change',event=> {
   }
 });
 document.addEventListener('keydown',event=> {
+  if(['Enter',' '].includes(event.key)&&event.target.matches('[data-action="edit-row"][role="button"]')){event.preventDefault();doAction(event.target).catch(error=>toast(error.message));return;}
   if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='k') {
     event.preventDefault(); openSearch(); return;
   }
@@ -1042,11 +1212,16 @@ document.addEventListener('submit',async event=> {
       case'row-form': {
         const properties= {
         }; for(const p of state.database.properties) {
-          if(['formula','rollup','created_time','last_edited_time'].includes(p.type))continue; properties[p.id]=p.type==='checkbox'?formElement.elements.namedItem(p.id).checked:p.type==='number'?(data[p.id]!==''?Number(data[p.id]):null):['relation','multi_select','files'].includes(p.type)?String(data[p.id]||'').split(',').map(s=>s.trim()).filter(Boolean):data[p.id]||'';
+          if(['formula','rollup','created_time','last_edited_time'].includes(p.type))continue;
+          if(p.type==='date'){const start=data[p.id]||'',end=data[p.id+'__end']||'',original=valuesOf(state.rows.find(row=>row.id===formElement.dataset.id)||{})[p.id],range=dateRange(original);if(end&&(!start||end<start))throw new Error('종료일은 시작일 이후여야 합니다.');properties[p.id]=range&&start===range.startISO&&end===(typeof original==='object'&&original?.end?range.endISO:'')?original:end?{start,end}:start;continue;}
+          properties[p.id]=p.type==='checkbox'?formElement.elements.namedItem(p.id).checked:p.type==='number'?(data[p.id]!==''?Number(data[p.id]):null):['relation','multi_select','files'].includes(p.type)?String(data[p.id]||'').split(',').map(s=>s.trim()).filter(Boolean):data[p.id]||'';
         }
         await api('/databases/'+state.database.id+'/rows'+(formElement.dataset.id?'/'+formElement.dataset.id:''), {
-          properties
+          properties,...taskGraphChanges(formElement,data)
         },formElement.dataset.id?'PATCH':'POST'); closeModal(); await reloadDatabase(); toast('프로젝트를 저장했습니다.'); break;
+      }
+      case'task-settings-form':{
+        await api('/databases/'+state.database.id,{task_settings:{subitems:formElement.subitems.checked,dependencies:formElement.dependencies.checked,date_property:data.date_property,shift:data.shift,skip_weekends:formElement.skip_weekends.checked}},'PATCH');state.timelineProperty=data.date_property;closeModal();await reloadDatabase();toast('프로젝트 일정 설정을 저장했습니다.');break;
       }
       case'database-form': {
         const d=await api('/databases', {
@@ -1073,7 +1248,18 @@ document.addEventListener('submit',async event=> {
       case'advanced-form': {
         const kind=formElement.dataset.kind,id=formElement.dataset.id; const payload= {
           ...data
-        }; for(const key of ['fields','actions'])if(key in payload)payload[key]=JSON.parse(payload[key]); for(const key of ['enabled','published'])if($(`[name="${key}"]`,formElement))payload[key]=$(`[name="${key}"]`,formElement).checked; if(kind==='groups')payload.members=new FormData(formElement).getAll('members'); await api('/'+kind+(id?'/'+id:''),payload,id?'PATCH':'POST'); await refreshWorkspace(); await openSettings( {
+        }; for(const key of ['fields','actions'])if(key in payload)payload[key]=JSON.parse(payload[key]);
+        if(kind==='automations'){
+          if(payload.trigger==='scheduled'){
+            const interval=Number(payload.schedule_interval);if(!Number.isInteger(interval)||interval<1||interval>365)throw new Error('반복 간격은 1~365 사이의 정수여야 합니다.');
+            payload.schedule={frequency:payload.schedule_frequency,interval,timezone:payload.schedule_timezone,start_at:scheduleInstant(payload.schedule_start_at,payload.schedule_timezone)};
+            if(payload.schedule_end_at){payload.schedule.end_at=scheduleInstant(payload.schedule_end_at,payload.schedule_timezone);if(payload.schedule.end_at<payload.schedule.start_at)throw new Error('마지막 실행 시각은 첫 실행 이후여야 합니다.');}
+            if(payload.actions.some(action=>action.type==='set_property')&&!payload.row_id)throw new Error('속성을 변경할 대상 항목을 선택하세요.');
+          }
+          for(const key of ['schedule_frequency','schedule_interval','schedule_timezone','schedule_start_at','schedule_end_at'])delete payload[key];
+          if(!payload.row_id)payload.row_id=null;
+        }
+         for(const key of ['enabled','published'])if($(`[name="${key}"]`,formElement))payload[key]=$(`[name="${key}"]`,formElement).checked; if(kind==='groups')payload.members=new FormData(formElement).getAll('members'); await api('/'+kind+(id?'/'+id:''),payload,id?'PATCH':'POST'); await refreshWorkspace(); await openSettings( {
           members:'members',groups:'members',teamspaces:'members',automations:'automations',forms:'forms',sites:'sites',integrations:'AI'
         }
         [kind]); toast('저장했습니다.'); break;
@@ -1142,6 +1328,7 @@ async function boot() {
     $('#main').innerHTML=`<div class="empty"><h2>워크스페이스에 연결하지 못했어요.</h2><p>${esc(e.message)}</p><button class="outline-btn" data-action="reload">다시 시도</button></div>`;
   }
 }
+window.addEventListener('resize',()=>{if(state.route==='database'&&state.view==='timeline')requestAnimationFrame(focusTimeline);});
 window.addEventListener('hashchange', () => {
   if (!state.loaded) return;
   const [route, encodedId] = location.hash.slice(1).split('/');

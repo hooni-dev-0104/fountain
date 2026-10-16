@@ -271,6 +271,7 @@ export class CloudStore implements StoreReader {
     if (this.inflight) return this.inflight;
     if (this.phase === 'committed') return {revision:this.currentRevision};
     if (this.phase === 'aborted' || this.transactionDepth) return fail('STORE_CLOSED',409,'Workspace transaction cannot be committed');
+    const wasUncertain=this.phase==='uncertain';
     this.phase='pending';
     const run = async () => {
       try {
@@ -283,7 +284,7 @@ export class CloudStore implements StoreReader {
         exact(result,['revision']);check(integer(result.revision) && result.revision === this.currentRevision,'STORAGE_RESPONSE_INVALID',503);
         this.phase='committed';return {revision:result.revision};
       } catch (error) {
-        if (error instanceof StoreError && ['REVISION_CONFLICT','COMMIT_ID_REUSED'].includes(error.code)) { this.phase='aborted';throw error; }
+        if (error instanceof StoreError && error.status>=400&&error.status<500&&![408,429].includes(error.status)&&(!wasUncertain||['REVISION_CONFLICT','COMMIT_ID_REUSED'].includes(error.code))) { this.phase='aborted';throw error; }
         this.phase='uncertain';
         if (error instanceof StoreError) throw error;
         return fail('COMMIT_UNCERTAIN',503,'Workspace commit acknowledgement is unavailable; retry this transaction');
@@ -313,9 +314,18 @@ export function createStoreProvider(config: {supabaseUrl:string;serviceKey:strin
     try {
       const response=await request(origin+'/rest/v1/rpc/fountain_cloud_store_'+name,{method:'POST',redirect:'error',signal:AbortSignal.timeout(timeout),headers:{...headers},body:json(body,MAX_RPC_BYTES)});
       if (!response.ok || response.redirected) {
-        await response.body?.cancel();
+        let conflict='';
+        if(response.status===409&&response.body){
+          const reader=response.body.getReader();let length=0,body='';const decoder=new TextDecoder();
+          try{for(;;){const part=await reader.read();if(part.done)break;length+=part.value.length;if(length>4096)break;body+=decoder.decode(part.value,{stream:true});}
+            if(length<=4096){const error=JSON.parse(body+decoder.decode());if(error?.code==='PT409'&&['REVISION_CONFLICT','COMMIT_ID_REUSED','LAST_OWNER_ACCOUNT'].includes(error.message))conflict=error.message;}
+          }catch{/* Untrusted diagnostics are never propagated. */}finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
+        }else await response.body?.cancel();
         if (response.status===401 || response.status===403) return fail('AUTH_REQUIRED',401,'Authentication required');
-        if (response.status===409) return fail('REVISION_CONFLICT',409,'Workspace changed; reload and authorize again');
+        if(response.status===409){
+          if(conflict==='LAST_OWNER_ACCOUNT')return fail(conflict,409,'Cannot remove or deactivate the last active owner account');
+          return fail(conflict||'STORAGE_CONFLICT',409,'Workspace changed; reload and authorize again');
+        }
         if (response.status===413) return fail('STORAGE_LIMIT',413,'Workspace selection exceeds the storage limit');
         return fail();
       }

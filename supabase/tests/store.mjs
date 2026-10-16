@@ -205,7 +205,10 @@ await test('RPC transport scopes requests and sanitizes errors/redirects without
  const sent=JSON.parse(calls[0].init.body);assert.deepEqual(sent.p_context,context);assert.equal(calls[0].init.headers.apikey,secret);assert.equal(calls[0].init.headers.Authorization,undefined);assert.equal(calls[0].init.redirect,'error');
  response=()=>new Response('SECRET provider SQL password',{status:500});await assert.rejects(provider.snapshot({context,selection:normalizeSelection({})}),error=>error instanceof StoreError&&!error.message.includes('SECRET'));
  response=()=>new Response('{}',{status:403});await rejected(provider.snapshot({context,selection:normalizeSelection({})}),'AUTH_REQUIRED');
- response=()=>new Response('{}',{status:409});await rejected(provider.snapshot({context,selection:normalizeSelection({})}),'REVISION_CONFLICT');
+ response=()=>new Response('{"code":"PT409","message":"REVISION_CONFLICT"}',{status:409});await rejected(provider.snapshot({context,selection:normalizeSelection({})}),'REVISION_CONFLICT');
+ response=()=>new Response('{"code":"PT409","message":"COMMIT_ID_REUSED"}',{status:409});await rejected(provider.snapshot({context,selection:normalizeSelection({})}),'COMMIT_ID_REUSED');
+ response=()=>new Response('{"code":"PT409","message":"LAST_OWNER_ACCOUNT"}',{status:409});await rejected(provider.snapshot({context,selection:normalizeSelection({})}),'LAST_OWNER_ACCOUNT');
+ response=()=>new Response('{"code":"PT409","message":"SECRET provider SQL"}',{status:409});await rejected(provider.snapshot({context,selection:normalizeSelection({})}),'STORAGE_CONFLICT');
  response=()=>new Response('{bad');await rejected(provider.snapshot({context,selection:normalizeSelection({})}),'STORAGE_UNAVAILABLE');
  response=()=>new Response(new ReadableStream({start(controller){controller.enqueue(new Uint8Array(16*1024*1024+1));controller.close();}}));await rejected(provider.snapshot({context,selection:normalizeSelection({})}),'STORAGE_LIMIT');
 });
@@ -223,6 +226,12 @@ await test('reserved identifiers support related writes without expanding select
  assert.equal(store.get('page',page),null);
  store.put('page',{id:page,title:'가족 문서'});store.put('comment',{id:comment,page_id:page,text:'연결'});
  await store.commit();assert.equal(provider.records.get(key('comment',comment)).data.page_id,page);
+});
+await test('a known SQL denial aborts without retrying an accepted-write receipt',async()=>{
+ const base=new MemoryProvider();let writes=0;
+ const provider={snapshot:r=>base.snapshot(r),commit:async()=>{writes++;throw new StoreError(409,'LAST_OWNER_ACCOUNT','Cannot remove last owner');}};
+ const store=await CloudStore.open(provider,context,selection,options);store.put('page',{...store.get('page','third'),title:'denied'});
+ await rejected(store.commit(),'LAST_OWNER_ACCOUNT');assert.equal(store.state,'aborted');await rejected(store.commit(),'STORE_CLOSED');assert.equal(writes,1);
 });
 await test('identifier reservations roll back and collisions remain bounded and checked',async()=>{
  const provider=new MemoryProvider();let generated='reserved';

@@ -88,25 +88,47 @@ class Application:
             self.advanced = Advanced(self.store, self.workspace)
         return self.advanced.run_as_author(automation_id, body)
 
+    def _request_context(self, principal, session_cookie):
+        """Resolve the original login while the caller holds the SQLite writer."""
+        if session_cookie is not _INTERNAL_PRINCIPAL:
+            info = self.auth.session_info(session_cookie)
+            require(info.get('authenticated') and isinstance(info.get('member'), dict), 'Authentication required', 401)
+            principal = info['member']
+            binding = info['cache_binding']
+        else:
+            if principal is _INTERNAL_PRINCIPAL:
+                principal = {'id': 'local', 'role': 'owner', 'active': True, '_service': True}
+            require(isinstance(principal, dict), 'Authentication required', 401)
+            binding = 'service:' + str(principal.get('id', ''))
+        if self.auth.accounts_required and not principal.get('_service'):
+            principal = self.auth._member(principal.get('id'))
+            require(principal is not None, 'Authentication required', 401)
+        return {'access': Access(self.store, principal), 'workspace_id': self.store.meta('workspace_id'),
+                'session_binding': binding}
+
     def dispatch(self, method, path, body, query, principal=_INTERNAL_PRINCIPAL, session_cookie=_INTERNAL_PRINCIPAL):
         body = copy.deepcopy(body)
+        if method == 'POST' and path == '/api/sync':
+            # Each operation owns its commit and its fresh login/ACL check. Do
+            # not surround the complete batch with this dispatch's transaction.
+            from .sync import SyncService
+            def context_factory():
+                return self._request_context(principal, session_cookie)
+            def dispatch_callback(verb, target, payload, context):
+                return self.dispatch(verb, target, payload, {}, principal=context['access'].principal,
+                                     session_cookie=session_cookie)
+            return 200, SyncService(self.store).apply(body, context_factory, dispatch_callback)
+        canonical_snapshot = method == 'GET' and (path == '/api/workspace'
+            or re.fullmatch(r'/api/databases/[^/]+', path) is not None)
         with self.store.lock:
             inference = method == 'POST' and path == '/api/ai'
             # Claim the SQLite writer before authentication and ACL reads. A
             # process-local lock alone cannot fence logout in another server.
             claiming = (method in {'POST', 'PATCH', 'PUT', 'DELETE'} and not inference
-                        or method == 'GET' and path.endswith('/collaboration'))
+                        or canonical_snapshot or method == 'GET' and path.endswith('/collaboration'))
             with self.store.transaction() if claiming else nullcontext():
-                if session_cookie is not _INTERNAL_PRINCIPAL:
-                    principal = self.auth.principal(session_cookie)
-                if principal is _INTERNAL_PRINCIPAL:
-                    principal = {'id': 'local', 'role': 'owner', 'active': True, '_service': True}
-                else:
-                    require(isinstance(principal, dict), 'Authentication required', 401)
-                if self.auth.accounts_required and not principal.get('_service'):
-                    principal = self.auth._member(principal.get('id'))
-                    require(principal is not None, 'Authentication required', 401)
-                access = Access(self.store, principal)
+                context = self._request_context(principal, session_cookie)
+                access = context['access']
                 authority = Authorization(access)
                 if self.advanced is None:
                     from .advanced import Advanced
@@ -123,11 +145,12 @@ class Application:
                                 path.endswith('/permissions') or path.startswith(('/api/members', '/api/groups', '/api/teamspaces', '/api/accounts', '/scim/v2/'))
                                 or method == 'PATCH' and path.startswith('/api/pages/')):
                             self.store.set_meta('access_revision', self.store.meta('access_revision', 0) + 1)
-                        if isinstance(payload, dict) and (path == '/api/workspace' or path.endswith(('/collaboration', '/operations'))):
-                            payload['current_member_id'] = access.member_id
-                            if session_cookie is not _INTERNAL_PRINCIPAL:
-                                payload['session_binding'] = self.auth.session_info(session_cookie)['cache_binding']
-                        return status, authority.project(path, payload)
+                        payload = authority.project(path, payload)
+                        if isinstance(payload, dict) and (canonical_snapshot or path.endswith(('/collaboration', '/operations'))):
+                            payload.update(workspace_id=context['workspace_id'], current_member_id=access.member_id,
+                                session_binding=context['session_binding'], access_revision=self.store.meta('access_revision', 0),
+                                data_revision=self.store.meta('_entity_revision', 0))
+                        return status, payload
                     finally:
                         AUDIT_ACTOR.reset(token)
                         CURRENT_ACCESS.reset(access_token)

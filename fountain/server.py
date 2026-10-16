@@ -627,7 +627,7 @@ def handler_for(application):
                 if path == '/api/session':
                     auth = application.auth
                     if method == 'GET':
-                        self.send_payload(200, {**auth.session_info(cookie), 'required': auth.enabled})
+                        self.send_payload(200, auth.session_info(cookie))
                         return
                     if method == 'POST':
                         token = auth.login(body, self.client_address[0])
@@ -640,12 +640,15 @@ def handler_for(application):
                         self.send_payload(200, {'authenticated': not auth.enabled, 'required': auth.enabled})
                         return
                     raise APIError(405, 'Unsupported session method')
-                if path.startswith(('/api/', '/sites/', '/forms/')) and path != '/api/health':
-                    require(application.auth.authenticate(cookie), '가족 로그인 후 사용할 수 있습니다', 401)
                 if path.startswith(("/api/", "/sites/", "/forms/", "/scim/v2/")):
-                    principal = {'id': 'scim', 'role': 'owner', 'active': True, '_service': True} if is_scim else application.auth.principal(cookie)
-                    if principal is None and path == '/api/health': principal = {'id': 'health', 'role': 'guest', 'active': True, '_service': True}
-                    require(principal is not None, 'Authentication required', 401)
+                    # Dispatch and SSE resolve this original cookie under their
+                    # workspace writer. Repeating fragmented authentication here
+                    # adds lock contention without protecting the later read.
+                    principal = _INTERNAL_PRINCIPAL
+                    if is_scim:
+                        principal = {'id': 'scim', 'role': 'owner', 'active': True, '_service': True}
+                    elif path == '/api/health':
+                        principal = {'id': 'health', 'role': 'guest', 'active': True, '_service': True}
                     parts = path.strip('/').split('/')
                     if self.command == 'GET' and len(parts) == 4 and parts[:2] == ['api', 'pages'] and parts[3] == 'events':
                         self.stream_page(parts[2], cookie)

@@ -245,6 +245,15 @@ class Auth:
                 "email": "local@fountain.local", "role": "owner", "active": True}
 
     def session_info(self, cookie):
+        # Resolve one login snapshot together. Acquiring the workspace writer
+        # for every individual read lets SSE polls interleave between them.
+        with self.store.lock:
+            if self.store.transaction_depth:
+                return self._session_info(cookie)
+            with self.store.transaction():
+                return self._session_info(cookie)
+
+    def _session_info(self, cookie):
         session = self._session(cookie)
         member = self.principal(cookie)
         account = self.accounts_required or bool(session and session.get("member_id"))

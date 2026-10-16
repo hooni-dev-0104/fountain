@@ -96,8 +96,8 @@ test('real application anonymous session remains anonymous, with Cloudflare-only
  const publicText=JSON.stringify(value);for(const secret of ['private-value','sb_secret_',nonce,scope.nonceHash])assert(!publicText.includes(secret));
 });
 
-test('only explicit disposable client and inline namespace families may construct the gate',async()=>{
- for(const kind of ['native','inline']){const workspaceId='fountain-qa-cloud-'+kind+'-0123456789abcdef';const f=await entry({workspaceId});assert.equal(await status(await f.request()),201);assert.equal(f.configs[0].workspaceId,workspaceId);assert.equal(f.calls.length,0);}
+test('only explicit disposable client, inline and search namespace families may construct the gate',async()=>{
+ for(const kind of ['native','inline','search']){const workspaceId='fountain-qa-cloud-'+kind+'-0123456789abcdef';const f=await entry({workspaceId});assert.equal(await status(await f.request()),201);assert.equal(f.configs[0].workspaceId,workspaceId);assert.equal(f.calls.length,0);}
  for(const invalid of ['original','fountain-qa-cloud-any-0123456789abcdef','fountain-qa-cloud-native-0123456789abcde','fountain-qa-cloud-native-0123456789abcdef-extra'])await assert.rejects(entry({workspaceId:invalid}),/QA_SCOPE_REJECTED/);
 });
 test('inline source RPC keeps the same exact disposable human-context workspace boundary',async()=>{

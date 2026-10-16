@@ -348,6 +348,7 @@ class Advanced:
                 if expired:
                     self.store.delete(kind, item['id'])
                     if kind == 'page':
+                        self.store.delete('collaboration', item['id'])
                         for child_kind in ('version', 'comment'):
                             for child in self.store.list(child_kind):
                                 if child.get('page_id') == item['id']:
@@ -399,20 +400,21 @@ class Advanced:
     def clipboard(self, body):
         blocks = body.get('blocks', [])
         require(isinstance(blocks, list) and len(blocks) <= 1000, '블록 목록이 필요합니다')
-        pieces, plain = [], []
+        from .crdt import normalize_blocks
+        from .richtext import blocks_html
+        blocks = normalize_blocks(blocks)
+        plain = []
         for block in blocks:
             require(isinstance(block, dict) and isinstance(block.get('text', ''), str), '블록 형식이 잘못되었습니다')
             value = block.get('text', '')
             require(len(value) <= 100000, '블록이 너무 큽니다')
             plain.append(value)
-            tag = {'heading1': 'h1', 'heading2': 'h2', 'heading3': 'h3', 'quote': 'blockquote', 'code': 'pre'}.get(block.get('type'), 'p')
-            pieces.append(f'<{tag}>{html.escape(value)}</{tag}>')
         identity = str(uuid4())
         self.store.put('clipboard', {'id': identity, 'owner_id': AUDIT_ACTOR.get(), 'blocks': blocks})
         for entry in self.store.list('clipboard')[:-20]:
             self.store.delete('clipboard', entry['id'])
         # A local copy token preserves structure without placing executable markup on the clipboard.
-        return {'id': identity, 'text': '\n'.join(plain), 'html': ''.join(pieces) + f'<!-- fountain-copy: {identity} -->'}
+        return {'id': identity, 'text': '\n'.join(plain), 'html': blocks_html(blocks) + f'<!-- fountain-copy: {identity} -->'}
 
     def scim(self, method, path, body, query):
         from .scim import scim_resource

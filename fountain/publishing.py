@@ -15,11 +15,8 @@ def render_public(service, path):
         page = service.item('page', site['page_id'])
         require(not page.get('archived'), '삭제된 페이지입니다', 404)
         title = site.get('seo_title') or page['title']
-        pieces = []
-        for block in page.get('blocks', []):
-            tag = {'heading1': 'h1', 'heading2': 'h2', 'heading3': 'h3', 'quote': 'blockquote', 'code': 'pre'}.get(block['type'], 'p')
-            pieces.append(f'<{tag}>{html.escape(block.get("text", ""))}</{tag}>')
-        content = '<h1>' + html.escape(page['title']) + '</h1>' + ''.join(pieces)
+        from .richtext import blocks_html
+        content = '<h1>' + html.escape(page['title']) + '</h1>' + blocks_html(page.get('blocks', []))
         description = site.get('description', '')
         service.store.audit('site.viewed', {'page_id': page['id'], 'site_id': site['id']})
     else:
@@ -49,4 +46,3 @@ def render_public(service, path):
         content += '<button type="submit">제출</button><p role="status" id="form-status"></p></form><script src="/public.js" defer></script>'
     document = '<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>' + html.escape(title) + '</title><meta name="description" content="' + html.escape(description, quote=True) + '"><style>[hidden]{display:none!important}body{font:16px/1.8 system-ui;color:#37352f;max-width:760px;margin:10vh auto;padding:24px}label{display:block;margin:20px 0}input,select{display:block;padding:10px;font:inherit;width:100%;box-sizing:border-box;border:1px solid #ddd;border-radius:6px}input[type=checkbox]{width:auto}button{padding:10px 30px;background:#2383e2;border:0;color:white;border-radius:6px;font:inherit}pre{white-space:pre-wrap;background:#f5f5f4;padding:20px}blockquote{border-left:3px solid;padding-left:20px}</style><main>' + content + '</main></html>'
     return 200, {'_html': document}
-

@@ -10,6 +10,7 @@ import io
 import json
 import math
 import operator
+import re
 import sqlite3
 import threading
 import uuid
@@ -221,7 +222,9 @@ class Workspace:
         self.seed()
 
     def seed(self):
-        with self.lock:
+        with self.store.transaction():
+            if not self.store.meta('workspace_id'):
+                self.store.set_meta('workspace_id', uid())
             if self.store.meta("seeded"):
                 return
             self.store.set_meta("settings", {"name": "Fountain 워크스페이스", "icon": "⛲", "plan": "local", "locale": "ko"})
@@ -248,7 +251,7 @@ class Workspace:
             self.store.set_meta("seeded", True)
 
     def snapshot(self):
-        return {"pages": self.store.list("page"), "databases": self.store.list("database"),
+        return {"workspace_id": self.store.meta('workspace_id'), "pages": self.store.list("page"), "databases": self.store.list("database"),
                 "teamspaces": self.store.list("teamspace"), "members": self.store.list("member"),
                 "settings": self.store.meta("settings", {})}
 
@@ -309,21 +312,8 @@ class Workspace:
             require(type(revision) is int and revision == page["revision"], "Document changed. Reload before saving.", 409)
 
     def validate_blocks(self, blocks):
-        require(isinstance(blocks, list) and len(blocks) <= 2000, "blocks must be a list of at most 2000 items")
-        result, ids = [], set()
-        for block in blocks:
-            require(isinstance(block, dict), "Block must be an object")
-            item = copy.deepcopy(block)
-            require(item.get("type", "paragraph") in BLOCK_TYPES, "Unsupported block type")
-            item.setdefault("type", "paragraph")
-            item["text"] = text(item.get("text", ""), "block text", 100000)
-            item["id"] = text(item.get("id") or uid(), "block id", 160, False)
-            require(item["id"] not in ids, "Duplicate block id")
-            ids.add(item["id"])
-            if "checked" in item:
-                require(isinstance(item["checked"], bool), "checked must be boolean")
-            result.append(item)
-        return result
+        from .crdt import normalize_blocks
+        return normalize_blocks(blocks)
 
     def save_blocks(self, page_id, blocks, revision=None):
         with self.store.transaction():
@@ -334,6 +324,7 @@ class Workspace:
             self.store.put("version", {"page_id": page_id, "revision": page["revision"], "title": page["title"], "blocks": page.get("blocks", [])})
             page.update(blocks=blocks, revision=page["revision"] + 1)
             page = self.store.put("page", page)
+            self.store.delete('collaboration', page_id)
             self.store.audit("page.saved", {"page_id": page_id, "revision": page["revision"]})
             return {"page": page, "blocks": blocks, "revision": page["revision"]}
 
@@ -584,14 +575,22 @@ class Workspace:
                 writer.writerow([row["properties"].get(p["id"], "") for p in properties])
             return {"filename": "database.csv", "content": output.getvalue(), "mime": "text/csv"}
         if format == "markdown":
+            from .richtext import block_depths, inline_markdown
             output = []
             for page in self.store.list("page"):
                 if page.get("archived"): continue
                 output.append("# " + page["title"])
+                depths = block_depths(page.get('blocks', []))
                 for block in page.get("blocks", []):
-                    kind, content = block["type"], block.get("text", "")
+                    kind, content = block["type"], inline_markdown(block)
                     prefix = {"heading1": "# ", "heading2": "## ", "heading3": "### ", "bullet": "- ", "numbered": "1. ", "quote": "> ", "todo": "- [x] " if block.get("checked") else "- [ ] "}.get(kind, "")
-                    output.append("```\n" + content + "\n```" if kind == "code" else prefix + content)
+                    if kind == 'code':
+                        raw = block.get('text', '')
+                        fence = '`' * max(3, max((len(part) for part in re.findall(r'`+', raw)), default=0) + 1)
+                        content = fence + '\n' + raw + '\n' + fence
+                    else:
+                        content = prefix + content
+                    output.append('  ' * depths[block['id']] + content)
                 output.append("")
             return {"filename": "workspace.md", "content": "\n\n".join(output), "mime": "text/markdown"}
         require(format == "json", "Unsupported export format")

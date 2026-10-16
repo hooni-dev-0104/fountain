@@ -1,6 +1,7 @@
 # Fountain Mobile
 
 Capacitor 8.5.3의 iOS·Android 프로젝트와 공통 웹 편집기를 연결합니다.
+앱의 최소 설치 버전은 iOS·iPadOS 15.5입니다. 편집 화면에서 사용하는 [dialog·structuredClone](https://webkit.org/blog/12445/new-webkit-features-in-safari-15-4/)과 [inert](https://developer.apple.com/documentation/safari-release-notes/safari-15_5-release-notes)의 지원 범위에 맞췄습니다. 실제 실행 검증한 OS 버전은 아래 SDK 검증 기록과 구분합니다.
 **iOS 시뮬레이터 앱과 Android 디버그 APK를 실제 SDK로 빌드했습니다. 운영 API의 익명 직접 연결과 별도 QA 공간의 실제 UI 로그인·문서 편집·Android→iOS→Android 변경 확인을 통과했습니다. 운영 계정 전환·물리 기기·전체 기능·배포 서명 검증은 남아 있습니다.**
 
 앱은 묶어 둔 화면을 열고, 설정한 공통 HTTPS 백엔드에 Fountain 계정으로 로그인합니다. Supabase 기본 프로젝트 주소도 지원하며 앱의 네이티브 전송부가 고정 API 경로를 붙입니다. 주소 칸에는 프로젝트 origin만 입력하고 함수 경로는 넣지 않습니다. Supabase 키나 서버 DB를 앱에 넣지 않습니다. 현재 PC의 `localhost:8787`은 다른 휴대폰에서 접속할 주소가 아닙니다. 운영 owner 연결과 공개 웹 호스트 활성화는 아직 남아 있습니다.

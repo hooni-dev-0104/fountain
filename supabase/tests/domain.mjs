@@ -45,3 +45,28 @@ test('permission changes require full access and invalidate access revision atom
  const result=await f.call('alice','PATCH','/api/pages/public/permissions',{permissions:{default:'private',inherit:false,members:{},groups:{}}});assert.equal(result.status,200);assert.equal(f.meta.get('access_revision'),1);
  assert.equal((await f.call('bob','GET','/api/pages/public')).status,404);
 });
+test('advanced search filters before counting and never records the query in audit',async()=>{
+ const f=fixture(),a=await f.call('alice','GET','/api/search/advanced?limit=1'),b=await f.call('bob','GET','/api/search/advanced?limit=1');
+ assert.equal(a.status,200);assert.equal(a.body.total,2);assert.equal(b.status,200);assert.equal(b.body.total,1);
+ assert.deepEqual(b.body.results.map(p=>p.id),['public']);
+ const second=await f.call('alice','GET','/api/search/advanced?limit=1&offset=1&result_set='+a.body.result_set);
+ assert.equal(second.status,200);assert.notEqual(second.body.results[0].id,a.body.results[0].id);
+ assert.equal(second.body.result_set,a.body.result_set,'audit writes do not invalidate pagination');
+ const noMatch=await f.call('bob','GET','/api/search/advanced?q=private-query-must-not-be-audited');assert.equal(noMatch.status,200);assert.equal(noMatch.body.total,0);
+ const audits=[...f.records.values()].filter(v=>v.kind==='audit');
+ assert(audits.length>=4);assert(!JSON.stringify(audits).includes('private-query-must-not-be-audited'));
+ assert(audits.every(v=>Object.keys(v.data.details).every(k=>['mode','results','total'].includes(k))));
+ assert.equal((await f.call('alice','PATCH','/api/pages/public',{title:'changed',revision:0})).status,200);
+ assert.equal((await f.call('alice','GET','/api/search/advanced?limit=1&offset=1&result_set='+a.body.result_set)).status,409);
+ assert.equal((await f.call('bob','GET','/api/search/advanced?in=private')).status,404);
+ assert.equal((await f.call('bob','GET','/api/search/advanced?in=missing')).status,404);
+ assert.equal((await f.call('bob','GET','/api/search?q=changed')).body.results.length,1);
+});
+test('malformed advanced GET and HEAD query makes zero domain provider calls',async()=>{
+ let calls=0;const provider={snapshot:async()=>{calls++;throw Error('must not read');},commit:async()=>{calls++;throw Error('must not write');}};
+ const app=createDomain({provider,authorize:async()=>{throw Error('no second auth needed');}});
+ for(const method of ['GET','HEAD'])for(const query of ['?q=x&q=y','?types=unknown','?offset=1','?limit=01','?unknown=1']){
+  await assert.rejects(()=>app(new Request(origin+'/api/search/advanced'+query,{method}),'/api/search/advanced',{}),error=>error.status===400);
+ }
+ assert.equal(calls,0);
+});

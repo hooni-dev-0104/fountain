@@ -130,7 +130,7 @@ class Authorization:
                     if not operation.get('path') and isinstance(operation.get('value'), dict) and 'active' in operation['value']: changes['active'] = operation['value']['active']
                 self.member_change(method, parts[3], changes)
             return
-        if path in {'/api/health', '/api/workspace', '/api/search', '/api/capabilities', '/api/advanced'} and method == 'GET':
+        if path in {'/api/health', '/api/workspace', '/api/search', '/api/search/advanced', '/api/capabilities', '/api/advanced'} and method == 'GET':
             return
         if path.startswith('/api/accounts'):
             a.require_admin(owner_only=True)

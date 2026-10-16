@@ -114,7 +114,7 @@ export class Authorization {
       }
       return;
     }
-    if (['/api/health', '/api/workspace', '/api/search', '/api/capabilities', '/api/advanced'].includes(path) && method === 'GET') return;
+    if (['/api/health', '/api/workspace', '/api/search', '/api/search/advanced', '/api/capabilities', '/api/advanced'].includes(path) && method === 'GET') return;
     if (path.startsWith('/api/accounts')) { a.require_admin(true); return; }
     if (['/api/settings', '/api/retention/run', '/api/audit', '/api/analytics', '/api/backup', '/api/export', '/api/import'].includes(path)) { a.require_admin(true); return; }
     if (path === '/api/ai') {

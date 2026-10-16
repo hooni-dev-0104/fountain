@@ -10,6 +10,7 @@ import {createTransactions} from './transaction.ts';
 import type {CloudStore,StoreProvider} from './store.ts';
 import {validate_settings} from './tasks.ts';
 import {createSync} from './sync.ts';
+import {advancedSearch,validateAdvancedSearchQuery} from './search.ts';
 
 export type DomainResult={status:number;payload:any};
 export type DomainRequest={method:string;path:string;parts:string[];body:Entity;query:URLSearchParams;store:CloudStore;access:Access;authority:Authorization;workspace:Workspace};
@@ -66,6 +67,7 @@ function coreRoute(r:DomainRequest):DomainResult|null{
     }
   }
   if(parts.length===3&&parts[0]==='api'&&parts[1]==='comments'&&method==='PATCH')return response(w.resolve_comment(parts[2],body));
+  if(path==='/api/search/advanced'&&method==='GET'){const result=advancedSearch(s,a,query);s.audit('workspace.searched',{mode:'advanced',results:result.results.length,total:result.total});return response(result);}
   if(path==='/api/search'&&method==='GET'){const result=w.search(query.get('q')||'');s.audit('workspace.searched',{results:result.results.length});return response(result);}
   if(path==='/api/databases'&&method==='POST'){
     if(has(body,'row_permissions'))body.row_permissions=rowPolicy(body.row_permissions,{properties:w.validate_properties(get(body,'properties',[]))});
@@ -121,6 +123,8 @@ export function createDomain(config:Config){
     const method=request.method==='HEAD'?'GET':request.method,path=decodeURIComponent(encodedPath),query=new URL(request.url).searchParams;
     if(config.files){const response=await config.files(request,encodedPath,context);if(response)return response;}
     if(config.events){const response=await config.events(request,encodedPath,context);if(response)return response;}
+    // Reject malformed retrieval filters before opening a database snapshot.
+    if(method==='GET'&&path==='/api/search/advanced')validateAdvancedSearchQuery(query);
     const original=['POST','PUT','PATCH','DELETE'].includes(method)?await readJSON(request):{};
     if(method==='POST'&&path==='/api/sync')return jsonResponse(await createSync({...config,dispatch:(s,verb,target,body)=>dispatchStaged(s,verb,target,body,new URLSearchParams(),config.extensions)})(original,context));
     if(method==='POST'&&path==='/api/ai'&&config.ai)return jsonResponse(await config.ai(original,context));

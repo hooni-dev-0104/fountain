@@ -48,7 +48,7 @@ FEATURES = [
     ('permissions', '세분화된 페이지·행 권한', 'Business', 'implemented', '서버에서 페이지·담당 행 권한 적용; 관계·롤업 결과도 제한'),
     ('ai', 'AI 생성·요약·번역·질의', 'Business', 'provider_required', '무료 로컬 모델 또는 호환 API 연동; 모의 응답 없음'),
     ('meeting', 'AI 회의록', 'Business', 'partial', '입력한 대화록 요약; 음성 전사는 미연동'),
-    ('search', '기업 검색', 'Business', 'partial', '로컬 페이지 검색; 연결 앱 색인 미연동'),
+    ('search', '기업 검색', 'Business', 'partial', '권한에 따른 페이지·DB·행 통합 검색과 필터; 연결 앱·AI 검색 미연동'),
     ('verification', '페이지 검증', 'Business', 'implemented', '담당자·검증 만료일 저장'),
     ('saml', 'SAML SSO', 'Business', 'configuration', 'IdP 메타데이터 설정; 서명 검증 로그인 흐름 미구현'),
     ('scim', 'SCIM 사용자·그룹 프로비저닝', 'Enterprise', 'implemented', 'SCIM 2.0 Users/Groups; FOUNTAIN_SCIM_TOKEN 필수'),
@@ -95,6 +95,7 @@ class Advanced:
                                   and os.environ.get('FOUNTAIN_AI_MODEL')
                                   and (os.environ.get('FOUNTAIN_AI_KEY') or self.local_ai())),
             'scim_configured': bool(os.environ.get('FOUNTAIN_SCIM_TOKEN')),
+            'search_advanced': True,
             'source': 'https://www.notion.com/pricing'}
 
     def item(self, kind, identity):

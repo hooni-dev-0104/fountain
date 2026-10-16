@@ -25,6 +25,7 @@ from urllib.parse import parse_qs, unquote, urlparse, quote
 from .core import APIError, Store, Workspace, require, AUDIT_ACTOR, CURRENT_ACCESS
 from .access import Access
 from .authorization import Authorization
+from .search import advanced_search
 
 LOG = logging.getLogger("fountain")
 STATIC = Path(__file__).resolve().parent.parent / "static"
@@ -309,6 +310,11 @@ class Application:
             comment["resolved"] = body["resolved"]
             s.audit("comment.resolved", {"page_id": comment["page_id"], "id": comment["id"]})
             return 200, s.put("comment", comment)
+        if path == "/api/search/advanced" and method == "GET":
+            result = advanced_search(s, access, query)
+            s.audit('workspace.searched', {'mode': 'advanced', 'results': len(result['results']),
+                                           'total': result['total']})
+            return 200, result
         if path == "/api/search" and method == "GET":
             result = w.search(query.get("q", [""])[0])
             s.audit('workspace.searched', {'results': len(result['results'])})

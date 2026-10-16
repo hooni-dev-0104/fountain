@@ -328,10 +328,16 @@ try {
     locked:false
   },'PATCH');
   await member.waitForSelector('.block-content[contenteditable="true"]');
+  // Each account receives its own SSE update. The member becoming editable
+  // does not prove that the owner's editor has received the unlock yet.
+  await owner.waitForSelector('.block-content[contenteditable="true"]');
+  await saved(owner);
   // An offline edit crossing a classic history epoch is retained for explicit recovery.
   await ownerContext.setOffline(true);
   await append(owner,'shared-text',' 오프라인 복구작업');
   await owner.evaluate(()=>state.channel.persistence);
+  await contains(owner,'shared-text','오프라인 복구작업');
+  assert.ok(await owner.evaluate(()=>state.channel.pending.size>0),'offline text must enter the durable operation queue before replacing the epoch');
   const oldEpoch=await owner.evaluate(()=>state.channel.base.epoch);
   await api(memberContext,'/pages/'+id+'/blocks', {
     blocks:[ {

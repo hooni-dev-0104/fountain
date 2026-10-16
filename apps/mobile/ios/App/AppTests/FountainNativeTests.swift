@@ -283,6 +283,84 @@ final class FountainNativeTests: XCTestCase {
             XCTAssertEqual(result["ok"] as? Bool, false); XCTAssertFalse((result["text"] as? String ?? "").contains(marker))
         }
     }
+    func testNativeSupabaseURLRoutingPreservesOriginAndLogicalPathPolicy() throws {
+        let project = "https://ehnovtfadpkwtubmwltl.supabase.co", prefix = "/functions/v1/fountain-api"
+        XCTAssertEqual(try FountainNative.validOrigin(project + ":443/"), project)
+        XCTAssertEqual(try FountainNative.validPath("/api/pages/%ED%95%9C%EA%B8%80?raw=%2F&next=a%20b"), "/api/pages/한글")
+        for origin in [project, project + ":443", project + "/", "https://abcdefghijklmnopqrst.supabase.co"] {
+            for path in ["/api/session", "/api/pages/한글🙂?q=%ED%95%9C%EA%B8%80&raw=%2F", "/api/attachments/a/download", "/api/backup?job_id=00000000-0000-0000-0000-000000000001"] {
+                let url = try FountainNative.requestURL(origin: origin, path: path)
+                let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+                XCTAssertEqual(url.host, URL(string: origin)?.host)
+                XCTAssertNil(url.port)
+                XCTAssertEqual(url.path, prefix + path.split(separator: "?", maxSplits: 1).first!)
+                XCTAssertEqual(components.percentEncodedQuery, path.contains("?") ? String(path.split(separator: "?", maxSplits: 1).last!) : nil)
+            }
+        }
+        for origin in ["https://example.com", "https://127.0.0.1:61602", project + ":8443",
+                       "https://ehnovtfadpkwtubmwltl.supabase.co.example.com", "https://evil-supabase.co",
+                       "https://abcdefghijklmnopqrs.supabase.co", "https://abcdefghijklmnopqrstu.supabase.co",
+                       "https://abcdefghijklmnopqrs-.supabase.co"] {
+            let url = try FountainNative.requestURL(origin: origin, path: "/api/session?x=1")
+            XCTAssertEqual(url.path, "/api/session"); XCTAssertEqual(url.query, "x=1")
+            XCTAssertEqual(url.port, URL(string: origin)?.port)
+        }
+        for origin in ["http://example.com", "https://user:password@ehnovtfadpkwtubmwltl.supabase.co",
+                       "https://ehnovtfadpkwtubmwltl.supabase.co/functions/v1/fountain-api", project + "?key=1", project + "#fragment"] {
+            XCTAssertThrowsError(try FountainNative.requestURL(origin: origin, path: "/api/session"))
+        }
+        for path in ["https://evil.invalid/api/session", "//evil.invalid/api/session", "/functions/v1/fountain-api/api/session",
+                     "/api/../session", "/api/%252e%252e/session", "/api/%73ession", "/api/session#fragment", "/api/session\n"] {
+            XCTAssertThrowsError(try FountainNative.requestURL(origin: project, path: path), path)
+        }
+    }
+
+#if DEBUG
+    func testActualAnonymousCloudDirectNativeRoute() async throws {
+        let manager = FileManager.default
+        let documents = try manager.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let inputURL = documents.appendingPathComponent("fountain-cloud-direct-input.json")
+        try XCTSkipUnless(manager.fileExists(atPath: inputURL.path), "Opt-in private direct-route input required")
+        let resultURL = documents.appendingPathComponent("fountain-cloud-direct-result.json")
+        if manager.fileExists(atPath: resultURL.path) { try manager.removeItem(at: resultURL) }
+        let attributes = try manager.attributesOfItem(atPath: inputURL.path)
+        defer { try? manager.removeItem(at: inputURL) }
+        guard attributes[.type] as? FileAttributeType == .typeRegular,
+              (attributes[.posixPermissions] as? NSNumber)?.intValue == 0o600,
+              (attributes[.size] as? NSNumber)?.intValue ?? Int.max <= 512 else { throw NSError(domain: "CloudDirectQAInput", code: 1) }
+        let bytes = try Data(contentsOf: inputURL); try manager.removeItem(at: inputURL)
+        guard let input = try JSONSerialization.jsonObject(with: bytes) as? [String: String], input.count == 1,
+              input["origin"] == "https://ehnovtfadpkwtubmwltl.supabase.co" else { throw NSError(domain: "CloudDirectQAInput", code: 2) }
+        // A separate plugin instance calls the actual production network()/URL builder.
+        // No load/configure/renderer, currentOwner, Keychain or persistent state is touched.
+        let probe = FountainNative()
+        let response: [String: Any] = try await withCheckedThrowingContinuation { continuation in
+            do {
+                try probe.probeAnonymousCloudRoute(origin: input["origin"]!) { value, error in
+                    if let error = error { continuation.resume(throwing: error) }
+                    else if let value = value { continuation.resume(returning: value) }
+                    else { continuation.resume(throwing: NSError(domain: "CloudDirectQAResponse", code: 1)) }
+                }
+            } catch { continuation.resume(throwing: error) }
+        }
+        guard let encoded = response["bodyBase64"] as? String, let body = Data(base64Encoded: encoded),
+              let session = try JSONSerialization.jsonObject(with: body) as? [String: Any] else { throw NSError(domain: "CloudDirectQAResponse", code: 2) }
+        let headers = response["headers"] as? [String: String] ?? [:]
+        let checks: [String: Bool] = ["http200": response["status"] as? Int == 200,
+            "anonymous": session["authenticated"] as? Bool == false, "required": session["required"] as? Bool == true,
+            "enabled": session["enabled"] as? Bool == true,
+            "accountsMode": session["mode"] as? String == "accounts", "workspaceNull": session["workspace_id"] is NSNull,
+            "identityNull": session["identity"] is NSNull, "bindingNull": session["cache_binding"] is NSNull,
+            "memberNull": session["member"] is NSNull, "noExposedSetCookie": !headers.keys.contains { $0.lowercased() == "set-cookie" }]
+        for (name, passed) in checks { XCTAssertTrue(passed, name) }
+        guard checks.values.allSatisfy({ $0 }) else { throw NSError(domain: "CloudDirectQAResponse", code: 3) }
+        var evidence: [String: Any] = checks
+        evidence["actualPluginNativeHTTPS"] = true; evidence["requests"] = 1; evidence["mutations"] = 0
+        try JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys]).write(to: resultURL, options: [.atomic, .completeFileProtection])
+        try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: resultURL.path)
+    }
+#endif
+
     func testBackupExactQueryAndInt64RangeBounds() throws {
         let id = "00000000-0000-0000-0000-000000000001", path = "/api/backup?job_id=" + id
         XCTAssertEqual(try FountainBackupPlan.id(path), id); XCTAssertNil(try FountainBackupPlan.id("/api/backup"))

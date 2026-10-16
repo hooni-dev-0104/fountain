@@ -329,6 +329,10 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         if previous !== self { previous?.shutdownNative() }
         origin = defaults.string(forKey: "FountainNative.origin")
         generation = defaults.integer(forKey: "FountainNative.generation")
+        initializeSession()
+    }
+
+    private func initializeSession() {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
@@ -558,7 +562,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                                          data: data, sessionRef: outboxReference(job.sentCookie))
     }
 
-    private func validOrigin(_ raw: String) throws -> String {
+    static func validOrigin(_ raw: String) throws -> String {
         guard !raw.contains("\\"), !raw.unicodeScalars.contains(where: { $0.value <= 32 || $0.value == 127 }),
               var parts = URLComponents(string: raw), parts.scheme?.lowercased() == "https",
               let host = parts.host, !host.isEmpty, parts.user == nil, parts.password == nil,
@@ -570,7 +574,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         return url.absoluteString
     }
 
-    private func validPath(_ raw: String) throws -> String {
+    static func validPath(_ raw: String) throws -> String {
         guard raw.utf8.count <= 8192, !raw.contains("#") else { throw FountainFailure.invalid }
         let path = String(raw.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)[0])
         var decoded = path
@@ -589,6 +593,18 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         guard stable, !raw.contains("\\"), !raw.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }),
               decoded != "/api/session" || path == "/api/session" else { throw FountainFailure.invalid }
         return decoded
+    }
+
+    // The renderer supplies only an origin and an already restricted logical API path.
+    // Default Supabase routing is native-owned and is shared by JSON and file traffic.
+    static func requestURL(origin: String, path: String) throws -> URL {
+        let backend = try validOrigin(origin)
+        _ = try Self.validPath(path)
+        guard let base = URL(string: backend), let host = base.host else { throw FountainFailure.invalid }
+        let prefix = base.port == nil && host.range(of: "^[a-z0-9]{20}\\.supabase\\.co$", options: .regularExpression) != nil ? "/functions/v1/fountain-api" : ""
+        guard let url = URL(string: backend + prefix + path), url.scheme == "https", url.host == base.host,
+              url.port == base.port, url.user == nil, url.password == nil else { throw FountainFailure.invalid }
+        return url
     }
 
     private func cookieQuery(_ backend: String) -> [String: Any] {
@@ -783,7 +799,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     @objc func configure(_ call: CAPPluginCall) {
         fromMainFrame(call) {
             guard let value = call.getString("origin") else { throw FountainFailure.invalid }
-            let updated = try self.validOrigin(value)
+            let updated = try Self.validOrigin(value)
             if self.origin == updated { call.resolve(self.configuration()); return }
             guard self.authJob == nil, self.authQueue.isEmpty else { throw FountainFailure.busy }
             if self.origin != nil {
@@ -806,7 +822,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         guard let id = call.getString("id"), !id.isEmpty, id.utf8.count <= 160, jobs[id] == nil, jobs.count < 16,
               origin != nil, try integer(call, "generation") == generation else { throw FountainFailure.stale }
         let path = mode == "saveData" || mode.hasPrefix("recovery") ? "/api/" : (call.getString("path") ?? "")
-        let decoded = try validPath(path)
+        let decoded = try Self.validPath(path)
         let method = mode == "request" ? (call.getString("method") ?? "GET").uppercased() : "GET"
         guard ["GET", "POST", "PUT", "PATCH", "DELETE"].contains(method) else { throw FountainFailure.invalid }
         var headers: [String: String] = [:]
@@ -986,10 +1002,28 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         } catch { end(job, failure: error as? FountainFailure ?? .network) }
     }
 
+#if DEBUG
+    // Not a Capacitor method. A fresh QA-only instance avoids load()/currentOwner,
+    // configuration, Keychain, cookies, generations and all outbox/session state.
+    func probeAnonymousCloudRoute(origin: String, done: @escaping ([String: Any]?, Error?) -> Void) throws {
+        guard ProcessInfo.processInfo.environment["FOUNTAIN_QA"] == "1",
+              (ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] ?? "").hasPrefix("Fountain QA"),
+              origin == "https://ehnovtfadpkwtubmwltl.supabase.co", self.origin == nil, session == nil else { throw FountainFailure.invalid }
+        self.origin = try Self.validOrigin(origin)
+        initializeSession()
+        _ = try network(path: "/api/session", method: "GET", headers: [:], body: Data(), cookie: nil,
+                        timeout: 45, file: nil, maximum: 65536) { [self] response, data, error in
+            session.invalidateAndCancel()
+            guard error == nil, let response = response else { done(nil, error ?? FountainFailure.network); return }
+            done(["status": response.statusCode, "headers": renderedHeaders(response), "bodyBase64": data.base64EncodedString()], nil)
+        }
+    }
+#endif
+
     private func network(path: String, method: String, headers: [String: String], body: Data, cookie: String?,
                          timeout: TimeInterval, file: URL?, maximum: Int64 = 16 * 1024 * 1024, done: @escaping (HTTPURLResponse?, Data, FountainFailure?) -> Void) throws -> URLSessionDataTask {
-        guard let backend = origin, let url = URL(string: backend + path), let base = URL(string: backend),
-              url.scheme == "https", url.host == base.host, url.port == base.port else { throw FountainFailure.invalid }
+        guard let backend = origin else { throw FountainFailure.invalid }
+        let url = try Self.requestURL(origin: backend, path: path)
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
         request.httpMethod = method; request.httpBody = body.isEmpty ? nil : body
         for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
@@ -1051,11 +1085,16 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         transfer.done(transfer.response, transfer.data, transfer.error ?? networkFailure)
     }
 
-    private func resolve(_ job: FountainJob, response: HTTPURLResponse, data: Data) {
+    private func renderedHeaders(_ response: HTTPURLResponse) -> [String: String] {
         var headers: [String: String] = [:]
         for (name, value) in response.allHeaderFields {
             if let name = name as? String, safeHeaders.contains(name.lowercased()) { headers[name] = String(describing: value) }
         }
+        return headers
+    }
+
+    private func resolve(_ job: FountainJob, response: HTTPURLResponse, data: Data) {
+        let headers = renderedHeaders(response)
         end(job, result: ["status": response.statusCode, "headers": headers,
                           "bodyBase64": data.base64EncodedString(), "generation": job.generation])
     }
@@ -1112,7 +1151,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
             guard self.authJob == nil else { throw FountainFailure.busy }
             let name = try self.filename(call)
             let path = call.getString("path") ?? ""
-            let decoded = try self.validPath(path)
+            let decoded = try Self.validPath(path)
             let pieces = decoded.split(separator: "/")
             let backupID = try FountainBackupPlan.id(path)
             guard backupID != nil || (!path.contains("?") && (decoded == "/api/backup" ||
@@ -1287,7 +1326,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         do {
             guard paths.count + initial.count <= 200, initial.values.reduce(0, { $0 + $1.1.count }) <= 64 * 1024 * 1024 else { throw FountainRecoveryError.access }
             guard let path = paths.first else { try completion(initial); return }
-            _ = try validPath(path)
+            _ = try Self.validPath(path)
             job.task = try network(path: path, method: "GET", headers: [:], body: Data(), cookie: job.sentCookie, timeout: job.timeout, file: nil) { response, data, error in
                 guard self.current(job) else { return }
                 do {

@@ -11,6 +11,7 @@ import {createBackend} from './backend.ts';
 import {createDomain} from './domain.ts';
 import {createAdvancedExtension} from './advanced.ts';
 import {createFiles} from './files.ts';
+import {createUploadGarbageFence} from './gc-fence.ts';
 import {createActivity} from './activity.ts';
 import {createRealtime} from './realtime.ts';
 import {createAI} from './ai.ts';
@@ -53,7 +54,7 @@ export function createApplication(config:Config):(request:Request)=>Promise<Resp
       if(jobResponse)return jobResponse;
       const backup=createBackup({provider:backupProvider,storage,authorize}),backupResponse=await backup.handle(current,path,context);
       if(backupResponse)return backupResponse;
-      const base={...connection,provider,authorize},files=createFiles({...base,storage});
+      const base={...connection,provider,authorize},files=createFiles({...base,storage,fenceGarbage:createUploadGarbageFence({...connection,authorize})});
       const events=createActivity({...base,...(config.serviceKey.startsWith('sb_secret_')?{realtime:()=>createRealtime({url:config.supabaseUrl,workspaceId:config.workspaceId,serverKey:config.serviceKey})}:{})});
       return createDomain({...base,extensions:[createAdvancedExtension({cloud:true,env})],ai:createAI({...base,env}),files:files.handle,events})(current,path,context);
     },

@@ -1,14 +1,12 @@
 """A pure, codepoint RGA and LWW block tree for Fountain collaboration.
 
 This is an independent protocol, not recovered Notion implementation code.
-Characters and blocks retain permanent deletion tombstones. Missing anchors are
-projected at the root until they arrive; cycles break at the smallest identifier.
+Legacy deletion tombstones are permanent. Tracked edits can be canceled through
+an immutable operation ledger; cycles break at the smallest identifier.
 """
 from __future__ import annotations
 
 import copy
-import hashlib
-import json
 import re
 from urllib.parse import urlsplit
 
@@ -170,13 +168,27 @@ def _validate_operation(operation):
     require(type(clock) is int and 0 < clock <= MAX_CLOCK, "Invalid operation clock")
     require(operation.get("id") == f"{client}:{clock}", "Operation id must match client and clock")
     kind = operation.get("type")
-    require(isinstance(kind, str) and kind in {"block.insert", "block.set", "block.move", "block.delete", "text.insert", "text.delete", "text.format"}, "Unknown operation type")
+    require(isinstance(kind, str) and kind in {"block.insert", "block.set", "block.move", "block.delete", "text.insert", "text.delete", "text.format", "history.cancel"}, "Unknown operation type")
+    if kind == "history.cancel":
+        require(set(operation) == {"id", "client", "clock", "type", "targets"}, "Unsupported cancellation fields")
+        targets = operation.get("targets")
+        require(isinstance(targets, list) and 0 < len(targets) <= 1000, "Provide 1 to 1000 cancellation targets")
+        for target in targets:
+            require(isinstance(target, str), "Invalid cancellation target")
+            prefix, separator, number = target.rpartition(":")
+            require(separator and prefix == client and 1 <= len(number) <= 16 and number.isascii() and number.isdecimal()
+                    and 0 < int(number) < clock and target == f"{client}:{int(number)}", "Invalid cancellation target")
+        require(len(set(targets)) == len(targets), "Cancellation targets must be unique")
+        return [clock, client, operation["id"]]
+    if "group_id" in operation:
+        group = _string(operation["group_id"], "creation group", 80)
+        require(re.fullmatch(r"[A-Za-z0-9_-]+", group) is not None, "Invalid creation group")
     fields = {
         "block.insert": {"parent_id", "after_id", "block_type"}, "block.move": {"parent_id", "after_id"},
         "block.set": {"field", "value"}, "block.delete": set(), "text.insert": {"after_id", "text", "marks"},
         "text.delete": {"char_ids"}, "text.format": {"char_ids", "marks"},
     }
-    require(set(operation) <= {"id", "client", "clock", "type", "block_id"} | fields[kind], "Unsupported operation fields")
+    require(set(operation) <= {"id", "client", "clock", "type", "block_id", "group_id"} | fields[kind], "Unsupported operation fields")
     _identity(operation.get("block_id"), "block id")
     require(len(operation["block_id"]) <= 160, "Block id is too long")
     if kind in {"block.insert", "block.move"}:
@@ -196,48 +208,19 @@ def _validate_operation(operation):
     return [clock, client, operation["id"]]
 
 
-def apply_operations(state, operations):
-    require(isinstance(state, dict) and state.get("version") == 1, "Unsupported collaboration state")
-    require(isinstance(operations, list) and len(operations) <= 1000, "Send at most 1000 operations at a time")
-    validated = [(operation, _validate_operation(operation)) for operation in operations]
-    digests = [hashlib.sha256(json.dumps(operation, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
-               for operation, _ in validated]
-    result = copy.deepcopy(state)
-    for (operation, stamp), digest in zip(validated, digests):
-        result["max_clock"] = max(result.get("max_clock", 0), operation["clock"])
-        if operation["id"] in result["seen"]:
-            known = result["seen"][operation["id"]]
-            # Public snapshots carry acknowledgement sentinels, never hashes of
-            # private operations. Only authoritative server state keeps digests.
-            require(known is True or known == digest, "Operation id was reused with different content", 409)
-            continue
-        result["seen"][operation["id"]] = digest
-        block_id, kind = operation["block_id"], operation["type"]
-        block = result["blocks"].setdefault(block_id, _block(block_id))
-        if kind == "block.delete": block["deleted"] = True
-        elif kind in {"block.insert", "block.move"}:
-            if kind == "block.insert":
-                if _newer(stamp, block["insert"]): block["insert"] = list(stamp)
-                _set(block["fields"], "type", _field("type", operation.get("block_type", "paragraph")), stamp)
-            if _newer(stamp, block["move"]):
-                block.update(parent_id=operation.get("parent_id"), after_id=operation.get("after_id"), move=list(stamp))
-        elif kind == "block.set": _set(block["fields"], operation["field"], _field(operation["field"], operation.get("value")), stamp)
-        elif kind == "text.insert":
-            anchor = operation.get("after_id")
-            for index, character in enumerate(operation["text"]):
-                identity = f"{operation['id']}:{index}"
-                char = block["chars"].setdefault(identity, _char(identity))
-                char.update(after_id=anchor, stamp=list(stamp))
-                char["text"] = character
-                for mark, value in operation.get("marks", {}).items(): _set(char["marks"], mark, value, stamp)
-                anchor = identity
-        else:
-            for identity in operation["char_ids"]:
-                char = block["chars"].setdefault(identity, _char(identity))
-                if kind == "text.delete": char["deleted"] = True
-                else:
-                    for mark, value in operation.get("marks", {}).items(): _set(char["marks"], mark, value, stamp)
-    return result
+def apply_operations(state, operations, hints=None):
+    from .history_crdt import apply_history
+    return apply_history(state, operations, hints)
+
+
+def capture_public_hints(state):
+    from .history_crdt import capture_public_hints as capture
+    return capture(state)
+
+
+def hydrate_public_state(state, hints=None):
+    from .history_crdt import hydrate_public_state as hydrate
+    return hydrate(state, hints)
 
 
 def _break_cycles(anchors):
@@ -323,6 +306,7 @@ def project(state):
 
 
 def public_state(state):
+    from .history_crdt import public_history
     result = copy.deepcopy(state)
     # A hash of a short deleted insert can reveal its text by dictionary attack.
     result["seen"] = {identity: True for identity in result.get("seen", {})}
@@ -333,4 +317,6 @@ def public_state(state):
             if block["deleted"] or char["deleted"]:
                 char.pop("text", None)
                 char["marks"] = {}
+    result["history"] = public_history(state)
+    result.pop("unresolved_slots", None)
     return result

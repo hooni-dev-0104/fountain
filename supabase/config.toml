@@ -17,6 +17,12 @@ enabled = true
 verify_jwt = false
 entrypoint = "./functions/fountain-worker/index.ts"
 
+[functions.fountain-maintenance]
+enabled = true
+# Private short-lived tickets authorize fixed-scope control-only cleanup.
+verify_jwt = false
+entrypoint = "./functions/fountain-maintenance/index.ts"
+
 [api]
 enabled = true
 # Port to use for the API URL.

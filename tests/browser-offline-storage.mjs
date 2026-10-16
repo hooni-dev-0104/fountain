@@ -130,6 +130,11 @@ try {
   assert.equal(queued.some(record => record.id === 'tab-b:1'), false);
   assert.equal(queued.some(record => record.id === 'tab-b:2'), true);
   assert.equal(queued.find(record => record.id === 'tab-a:1').operation.body.properties.name, '첫 탭');
+  stage = 'accepted predecessors retain immutable dependency bodies until successors settle';
+  const predecessor=operation('dependency:1','먼저 저장'),successor={...operation('dependency:2','나중에 저장'),depends_on:['dependency:1'],base_rows:{'row-a':{after_operation:'dependency:1'}}};
+  await page.evaluate(async({profile,key,predecessor,successor})=>{await FountainOffline.putMutations(profile,key,[predecessor,successor]);await FountainOffline.updateMutation(profile,predecessor.id,{status:'applied',result:{id:predecessor.id,status:'applied',resource_id:'row-a',data_revision:9}});await FountainOffline.acknowledgeMutations(profile,[predecessor.id]);},{profile:fixture.profile,key:databaseKey,predecessor,successor});
+  const dependencyRecords=await page.evaluate(profile=>FountainOffline.listMutations(profile),fixture.profile);assert.equal(dependencyRecords.find(record=>record.id===predecessor.id).status,'applied');assert.deepEqual(dependencyRecords.find(record=>record.id===successor.id).operation,successor,'same operation ID never receives a rewritten lost-ACK request body');
+  await page.evaluate(async({profile,predecessor,successor})=>{await FountainOffline.updateMutation(profile,successor.id,{status:'applied',result:{id:successor.id,status:'applied',resource_id:'row-a',data_revision:9}});await FountainOffline.acknowledgeMutations(profile,[successor.id,predecessor.id]);await FountainOffline.acknowledgeMutations(profile,[predecessor.id]);},{profile:fixture.profile,predecessor,successor});assert.equal((await page.evaluate(profile=>FountainOffline.listMutations(profile),fixture.profile)).some(record=>record.id.startsWith('dependency:')),false);
   stage = 'denied operations preserve readable canonical data and explicit cancellation';
   await page.evaluate(profile => FountainOffline.updateMutation(profile, 'tab-b:2', { status: 'denied', result: { http_status: 403, error: '이 행의 편집 권한이 없습니다.' } }), fixture.profile);
   assert.ok(await page.evaluate(key => FountainOffline.getDatabase(key), databaseKey), 'one denied row edit must not purge a still-readable database');

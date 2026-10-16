@@ -309,7 +309,21 @@ try {
     assert.equal(await familyPage.evaluate(id => FountainOffline.getSnapshot(FountainOffline.key(profile, id)), id), null);
   }
   assert.equal((await call(familyPage, 'records')).length, 0);
-  console.log('PASS mutation controller: HTTP replay, two tabs, touched/opening bases, conflict recovery, subtree receipts, lost responses, durable applied ACK, local epochs/RGA, Unicode IDs and account/ACL isolation');
+  stage = 'guest child creation and recovery require an actual editable parent';
+  const guest=await api(actor,'/members',{name:'게스트',email:'controller-guest@example.local',role:'guest'});await api(actor,'/accounts',{member_id:guest.id,password});const guestContext=await context();await api(guestContext,'/session',{email:guest.email,password});
+  const guestParent=await api(actor,'/pages',{title:'게스트 편집 상위',permissions:{default:'private',members:{[guest.id]:'edit'},groups:{},inherit:false}});await api(actor,'/pages/'+guestParent.id+'/permissions',{permissions:{default:'private',members:{[guest.id]:'edit'},groups:{},inherit:false}},'PATCH');
+  const guestPage=await pageFor(guestContext);await guestContext.setOffline(true);const guestChild=await call(guestPage,'createPage',{title:'게스트의 하위 초안',parent_id:guestParent.id});assert.equal(guestChild.operation.body.parent_id,guestParent.id);
+  assert.equal(await guestPage.evaluate(()=>controller.createPage({title:'권한 없는 최상위'}).then(()=>null,error=>error.status)),403);const guestExport=await call(guestPage,'export',guestChild.operation.id);await guestContext.setOffline(false);
+  if(!await guestPage.evaluate(()=>!!globalThis.FountainRecovery))await guestPage.addScriptTag({url:origin+'/recovery.js'});
+  const guestPreview=await call(guestPage,'prepareImport',JSON.stringify(guestExport));assert.ok(guestPreview.token,'recovery planner permits a fresh guest child under the currently editable parent');await guestPage.evaluate(token=>controller.discardPrepared(token),guestPreview.token);
+  await call(guestPage,'sync');assert.equal((await api(guestContext,'/pages/'+guestChild.page.id)).page.title,'게스트의 하위 초안');await guestPage.evaluate(()=>controller.close());await guestContext.close();
+  stage = 'actual guest UI child modal/form path and readonly-parent denial';
+  const readonlyParent=await api(actor,'/pages',{title:'게스트 읽기 전용 상위',permissions:{default:'private',members:{[guest.id]:'view'},groups:{},inherit:false}});await api(actor,'/pages/'+readonlyParent.id+'/permissions',{permissions:{default:'private',members:{[guest.id]:'view'},groups:{},inherit:false}},'PATCH');
+  const guestUIContext=await browser.newContext({serviceWorkers:'block'});await api(guestUIContext,'/session',{email:guest.email,password});const guestUI=await guestUIContext.newPage();await guestUI.goto(origin);await guestUI.waitForSelector('#sidebar .brand');await guestUI.waitForFunction(()=>!!state.mutations&&state.loaded);
+  assert.equal(await guestUI.locator('[data-action="add-page"]:not([data-parent])').count(),0);assert.equal(await guestUI.locator('[data-action="add-page"][data-parent="'+readonlyParent.id+'"]').count(),0);
+  await guestUI.locator('[data-action="add-page"][data-parent="'+guestParent.id+'"]').click();await guestUI.locator('#page-form [name=title]').fill('실제 게스트 UI 하위');await guestUI.locator('#page-form .solid-btn').click();await guestUI.waitForFunction(()=>state.page?.title==='실제 게스트 UI 하위'&&!!document.querySelector('#page-title'));const uiChild=await guestUI.evaluate(()=>state.page.id);assert.equal((await api(guestUIContext,'/pages/'+uiChild)).page.parent_id,guestParent.id);
+  await guestUI.evaluate(id=>doAction({dataset:{action:'add-page',parent:id}}),readonlyParent.id);await guestUI.locator('#page-form [name=title]').fill('읽기 전용 상위 차단');await guestUI.locator('#page-form .solid-btn').click();await guestUI.waitForFunction(()=>document.querySelector('#toast').textContent.includes('권한'));assert.equal((await api(guestUIContext,'/workspace')).pages.some(page=>page.title==='읽기 전용 상위 차단'),false);await guestUIContext.close();
+  console.log('PASS mutation controller: HTTP replay, two tabs, touched/opening bases, conflict recovery, subtree receipts, lost responses, durable applied ACK, local epochs/RGA, Unicode IDs, account/ACL isolation, guest editable-parent actual UI child creation and readonly denial');
 } catch (error) { console.error('Mutation controller QA failed at: ' + stage); throw error; }
 finally {
   if (browser) await browser.close();

@@ -34,6 +34,10 @@
       this.profile = copy(profile); this.offline = FountainOffline; this.transport = FountainTransport;
       this.onChange = onChange; this.onDenied = onDenied; this.onError = onError;
       preparedImports.set(this,new Map()); this.importBusy=0; this.importResume=false; this.importResumeAt=Infinity; this.scheduled=false; this.scheduledAt=0;
+      this.nativePause=null;
+      this.pauseNative=event=>{this.nativePause={owner:event.detail?.owner,token:event.detail?.token,resume:this.scheduled};clearTimeout(this.timer);this.scheduled=false;};
+      this.resumeNative=event=>{if(this.nativePause?.owner!==event.detail?.owner||this.nativePause?.token!==event.detail?.token)return;const resume=this.nativePause.resume;this.nativePause=null;if(resume&&!event.detail.blocked)this.schedule();};
+      addEventListener('fountain-native-outbox-pause',this.pauseNative);addEventListener('fountain-native-outbox-resume',this.resumeNative);
       this.closed = false; this.writing = 0; this.requests = new Set(); this.workspaceSource = copy(profile.workspace || {}); this.pages = new Map(); this.delay = 1000;
       this.online = () => this.sync().catch(error => this.report(error));
       this.queueChanged = event => { if (!this.closed && event.detail?.profileId === this.profile.id && !this.writing) { this.changed({ reason: event.detail?.recoveryImport ? 'recovery-import' : 'queue' }).catch(error => this.report(error)); if(!event.detail?.recoveryImport)this.schedule(); } };
@@ -85,6 +89,7 @@
     async records() { await this.guard(); return this.offline.listMutations(this.profile); }
     async changed(detail = {}) { if (this.closed) return; const records = await this.records(); if (!this.closed) { try { this.onChange({ ...detail, records }); } catch (error) { this.report(error); } } }
     schedule(delay = 180) {
+      if(this.nativePause){this.nativePause.resume=true;return;}
       clearTimeout(this.timer); this.scheduled=false; if (this.closed || !navigator.onLine) return;
       if(this.importBusy){this.importResume=true;this.importResumeAt=Math.min(this.importResumeAt,Date.now()+delay);return;}
       this.scheduled=true; this.scheduledAt=Date.now()+delay; this.timer = setTimeout(async () => { this.scheduled=false; try { if ((await this.records()).some(record => ACTIVE.has(record.status))) await this.sync(); } catch (error) { this.report(error); } }, delay);
@@ -283,7 +288,7 @@
       return page;
     }
     async createPage(body = {}) {
-      await this.guard(); require(this.profile.session.member.role !== 'guest', '게스트는 새 문서를 만들 수 없습니다.', 403);
+      await this.guard();
       const records = await this.records(), workspace = await this.workspace(), target = identity(body.id || uuid()), epoch = uuid();
       require(!workspace.pages.some(page => page.id === target), '이미 사용 중인 문서 식별자입니다.', 409);
       const payload = {}; for (const field of ['title', 'icon', 'cover', 'parent_id', 'teamspace_id', 'permissions']) if (own(body, field)) payload[field] = copy(body[field]);
@@ -293,6 +298,7 @@
         const parent = workspace.pages.find(page => page.id === payload.parent_id); require(parent && parent.access_level >= 3 && !parent.locked && !parent.archived, '상위 문서에 새 문서를 만들 권한이 없습니다.', 403);
         payload.teamspace_id = parent.teamspace_id ?? null; const prior = this.latest(records, parent.id); if (prior) dependencyIds.push(prior.id);
       } else {
+        require(this.profile.session.member.role !== 'guest', '게스트는 상위 문서 없이 새 문서를 만들 수 없습니다.', 403);
         payload.teamspace_id ??= workspace.teamspaces?.find(space => space.id === 'general')?.id || workspace.teamspaces?.[0]?.id || null;
         require(!payload.teamspace_id || workspace.teamspaces?.some(space => space.id === payload.teamspace_id), '팀스페이스에 문서를 만들 권한이 없습니다.', 403);
       }
@@ -318,7 +324,7 @@
     }
     proof(snapshot, record) { return this.bound(snapshot) && Number.isSafeInteger(record.result?.data_revision) && record.result.data_revision >= 0 && snapshot.data_revision >= record.result.data_revision; }
     async refreshApplied() {
-      const records = (await this.records()).filter(record => record.status === 'applied'), snapshots = new Map();
+      const records = (await this.records()).filter(record => record.status === 'applied'), snapshots = new Map(),confirmed=[];
       for (const record of records) {
         if (this.closed) return;
         const operation = record.operation, database = operation.kind.startsWith('row.');
@@ -327,11 +333,24 @@
           let snapshot = snapshots.get(key) || await (database ? this.offline.getDatabase(key) : this.offline.getSnapshot(key));
           if (!this.proof(snapshot, record)) snapshot = await (database ? this.canonicalDatabase(id) : this.canonicalPage(id));
           snapshots.set(key, snapshot);
-          if (this.proof(snapshot, record)) await this.write(() => this.offline.acknowledgeMutations(this.profile, [record.id]));
+          if (this.proof(snapshot, record)) confirmed.push(record.id);
         } catch (error) { if (this.closed) throw error; if (retryable(error)) this.retry(); else if (![403, 404].includes(error.status)) this.report(error); }
       }
+      if(confirmed.length)await this.write(()=>this.offline.acknowledgeMutations(this.profile,confirmed));
     }
-    selectBatch(records, attempted) {
+    async ordering(records) {
+      const edges=new Map(records.map(record=>[record.id,new Set(dependencies(record.operation))]));
+      const pages=new Map(records.filter(record=>record.operation.kind==='page.create').map(record=>[record.operation.target_id,record.id]));
+      const rows=new Map(records.filter(record=>record.operation.kind==='row.create').map(record=>[canonical([record.operation.database_id,record.operation.target_id]),record.id]));
+      const databases=new Map();for(const id of new Set(records.map(record=>record.operation.database_id).filter(Boolean)))databases.set(id,await this.offline.getDatabase(this.offline.databaseKey(this.profile,id)));
+      for(const record of records){const operation=record.operation,edge=id=>{if(id&&id!==record.id)edges.get(record.id).add(id);},row=(id,database=operation.database_id)=>edge(rows.get(canonical([database,id])));
+        if(operation.kind==='page.create')edge(pages.get(operation.body?.parent_id));else if(operation.kind.startsWith('page.'))edge(pages.get(operation.target_id));
+        if(!operation.database_id)continue;if(operation.kind!=='row.create')row(operation.target_id);
+        const fields=value=>{if(!value||typeof value!=='object')return;row(value.parent_row_id);for(const id of value.depends_on||[])row(id);for(const property of databases.get(operation.database_id)?.database?.properties||[])if(property.type==='relation')for(const id of value.properties?.[property.id]||[])row(id,property.database_id||operation.database_id);};
+        fields(operation.body);fields(operation.base);fields(operation.base?.fields);for(const [id,base]of Object.entries(operation.base_rows||{})){row(id);fields(base);fields(base?.fields);}
+      }return edges;
+    }
+    selectBatch(records, attempted, edges=null) {
       const known = new Map(records.map(record => [record.id, record])), selected = [], ids = new Set();
       let changed = true;
       while (changed && selected.length < 50) {
@@ -339,15 +358,15 @@
         for (const record of records) {
           if (selected.length >= 50) break;
           if (!['pending', 'deferred'].includes(record.status) || attempted.has(record.id) || ids.has(record.id)) continue;
-          if (dependencies(record.operation).every(id => !known.has(id) || known.get(id).status === 'applied' || ids.has(id))) { selected.push(record); ids.add(record.id); changed = true; }
+          if ([...(edges?.get(record.id)||dependencies(record.operation))].every(id => !known.has(id) || known.get(id).status === 'applied' || ids.has(id))) { selected.push(record); ids.add(record.id); changed = true; }
         }
       }
       return selected;
     }
     sync() {
-      if(this.importBusy){this.importResume=true;this.importResumeAt=Math.min(this.importResumeAt,Date.now());return Promise.resolve({paused:true});}
+      if(this.nativePause)return Promise.resolve({paused:true});if(this.importBusy){this.importResume=true;this.importResumeAt=Math.min(this.importResumeAt,Date.now());return Promise.resolve({paused:true});}
       if (this.syncing) return this.syncing.then(async result => {
-        if (!this.closed && navigator.onLine && (await this.records()).some(record => ACTIVE.has(record.status))) return this.sync();
+        if (!this.closed && navigator.onLine && (await this.records()).some(record => ['pending','deferred'].includes(record.status))) return this.sync();
         return result;
       });
       this.syncing = this.runSync().finally(() => { this.syncing = null; }); return this.syncing;
@@ -357,8 +376,8 @@
       try {
         await this.guard(); if (!navigator.onLine) return { offline: true };
         await this.authenticate(); await this.refreshApplied();
-        while (!this.closed) {
-          const batch = this.selectBatch(await this.records(), attempted); if (!batch.length) break;
+        while (!this.closed&&!this.nativePause) {
+          const records=await this.records(),batch = this.selectBatch(records, attempted,await this.ordering(records)); if (!batch.length) break;
           await this.authenticate(); batch.forEach(record => attempted.add(record.id));
           const response = await this.request('/sync', { workspace_id: this.profile.workspaceId, session_binding: this.profile.cacheBinding, operations: batch.map(record => copy(record.operation)) });
           require(this.bound(response), '다른 로그인에서 도착한 변경 응답입니다.', 403, 'SESSION_CHANGED');
@@ -524,9 +543,9 @@
           let bodyDeferred=false,preservedBlocks=0,preservedCodePoints=0;
           let operation={id:opIds.get(original.id),kind:original.kind,target_id:target,body,depends_on:[...new Set([...(original.depends_on||[]),...(extraEdges.get(original.id)||[])].filter(id=>opIds.has(id)).map(id=>opIds.get(id)))]},before=null,after=null,deleteRows;
           if (original.kind==='page.create') {
-            require(this.profile.session.member.role!=='guest','게스트는 새 문서를 만들 수 없습니다.',403);
             require(!workspace.pages.some(page=>page.id===target),'새 문서 식별자가 이미 사용 중입니다.',409);
             let parent=body.parent_id&&(pageValues.get(body.parent_id)||(await read('page',body.parent_id)).page);
+            require(parent ? parent.access_level>=3&&!parent.locked&&!parent.archived : this.profile.session.member.role!=='guest','새 문서를 만들 권한이 없습니다.',403);
             if(parent)body.teamspace_id=parent.teamspace_id??null;
             else if(own(original.body,'teamspace_id')){require(body.teamspace_id===null||workspace.teamspaces?.some(space=>space.id===body.teamspace_id),'원래 팀스페이스가 없거나 새 문서를 만들 권한이 없습니다.',403);}
             else body.teamspace_id=workspace.teamspaces?.find(space=>space.id==='general')?.id??workspace.teamspaces?.[0]?.id??null;
@@ -649,7 +668,7 @@
       await this.changed({ reason: 'reapplied' }); this.schedule(); return { operations: fresh.map(record => record.operation) };
     }
     close() {
-      if (this.closed) return; this.closed = true; preparedImports.get(this)?.clear(); clearTimeout(this.timer);
+      if (this.closed) return; this.closed = true;removeEventListener('fountain-native-outbox-pause',this.pauseNative);removeEventListener('fountain-native-outbox-resume',this.resumeNative); preparedImports.get(this)?.clear(); clearTimeout(this.timer);
       for (const request of this.requests) request.abort(); this.requests.clear();
       removeEventListener('online', this.online); removeEventListener('fountain-offline-mutations-changed', this.queueChanged);
       removeEventListener('fountain-offline-profile-cleared', this.profileCleared); removeEventListener('fountain-offline-profile-changed', this.profileChanged);

@@ -501,6 +501,10 @@
     if (!Array.isArray(ids) || !ids.every(id => typeof id === 'string')) throw new TypeError('Mutation IDs required');
     await profileScoped(profile, 'readwrite', async (tx, current) => {
       const store = tx.objectStore('mutations');
+      const records=await request(store.index('profileId').getAll(current.id));
+      // Retain accepted immutable predecessors while a queued operation still refers to them.
+      // Rewriting dependencies under the same mutation ID would change a lost-ACK retry body.
+      const acknowledged=new Set(),dependencies=record=>[...(record.operation.depends_on||[]),...Object.values(record.operation.base_rows||{}).map(base=>base?.after_operation).filter(Boolean)];
       for (const id of ids) {
         const record = await request(store.get([current.id, id]));
         if (!record) continue;
@@ -515,8 +519,12 @@
           throw new DOMException('Cache the canonical snapshot before acknowledging a mutation', 'InvalidStateError');
         }
         await confirmLocalPage(tx, record);
-        store.delete([current.id, id]);
+        acknowledged.add(id);
       }
+      const retained=new Set(records.filter(record=>!acknowledged.has(record.id)).flatMap(dependencies).filter(id=>acknowledged.has(id)));
+      const byId=new Map(records.map(record=>[record.id,record])),pending=[...retained];
+      for(let index=0;index<pending.length;index++)for(const id of dependencies(byId.get(pending[index])))if(acknowledged.has(id)&&!retained.has(id)){retained.add(id);pending.push(id);}
+      for(const id of acknowledged)if(!retained.has(id))store.delete([current.id,id]);
     });
     mutationsChanged(namespace(profile));
   }

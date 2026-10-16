@@ -206,7 +206,10 @@ def apply_operations(state, operations):
     for (operation, stamp), digest in zip(validated, digests):
         result["max_clock"] = max(result.get("max_clock", 0), operation["clock"])
         if operation["id"] in result["seen"]:
-            require(result["seen"][operation["id"]] == digest, "Operation id was reused with different content", 409)
+            known = result["seen"][operation["id"]]
+            # Public snapshots carry acknowledgement sentinels, never hashes of
+            # private operations. Only authoritative server state keeps digests.
+            require(known is True or known == digest, "Operation id was reused with different content", 409)
             continue
         result["seen"][operation["id"]] = digest
         block_id, kind = operation["block_id"], operation["type"]
@@ -321,6 +324,8 @@ def project(state):
 
 def public_state(state):
     result = copy.deepcopy(state)
+    # A hash of a short deleted insert can reveal its text by dictionary attack.
+    result["seen"] = {identity: True for identity in result.get("seen", {})}
     for block in result.get("blocks", {}).values():
         if block["deleted"]:
             for register in block["fields"].values(): register.pop("value", None)

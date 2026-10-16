@@ -104,6 +104,29 @@ class CRDTTests(unittest.TestCase):
         self.assertEqual(error.exception.status, 409)
         self.assertEqual(apply_operations(changed, [op]), changed)
 
+    def test_public_seen_is_ack_only_and_replayed_insert_cannot_restore_deleted_payload(self):
+        initial = seed_state([{"id": "block", "text": ""}])
+        insert = operation("actor", 1, "text.insert", after_id=None, text="秘")
+        delete = operation("actor", 2, "text.delete", char_ids=["actor:1:0"])
+        private = apply_operations(initial, [insert, delete])
+        public = public_state(private)
+        self.assertTrue(all(value is True for value in public["seen"].values()))
+        encoded = json.dumps(public, ensure_ascii=False)
+        for digest in private["seen"].values(): self.assertNotIn(digest, encoded)
+        self.assertNotIn("秘", encoded)
+        self.assertEqual(apply_operations(public, [insert, delete]), public)
+        forged_replay = {**insert, "text": "revive"}
+        self.assertEqual(apply_operations(public, [forged_replay]), public)
+        with self.assertRaises(APIError) as error: apply_operations(private, [forged_replay])
+        self.assertEqual(error.exception.status, 409)
+        pending = operation("local", 3, "text.insert", after_id=None, text="新")
+        optimistic = apply_operations(public, [pending])
+        self.assertIsInstance(optimistic["seen"]["local:3"], str)
+        self.assertEqual(len(optimistic["seen"]["local:3"]), 64)
+        self.assertIs(public_state(optimistic)["seen"]["local:3"], True)
+        self.assertEqual(project(optimistic)[0]["text"], "新")
+        self.assertTrue(all(isinstance(value, str) for value in private["seen"].values()))
+
     def test_normalization_supports_aliases_merges_tokens_and_legacy_plain_replacement(self):
         block = {"id": "b", "type": "to_do", "checked": False, "text": "가나", "rich_text": [
             {"text": "가", "marks": {"bold": True}}, {"text": "나", "marks": {"bold": True}}]}

@@ -114,6 +114,8 @@ class CollaborationTests(unittest.TestCase):
         result = self.call('POST', '/operations', {'epoch': base['epoch'], 'ops': [operation('d', 1, 'text.delete', char_ids=['seed:text:0'])]})
         self.assertNotIn('가', json.dumps(result, ensure_ascii=False))
         self.assertTrue(result['state']['blocks']['text']['chars']['seed:text:0']['deleted'])
+        self.assertIs(result['state']['seen']['d:1'], True)
+        self.assertIsInstance(self.store.get('collaboration', self.page['id'])['state']['seen']['d:1'], str)
         self.assertEqual(base['workspace_id'], self.app.workspace.snapshot()['workspace_id'])
         self.assertEqual(len(base['workspace_id']), 32)
 
@@ -127,6 +129,15 @@ class CollaborationTests(unittest.TestCase):
         self.assertEqual(viewer['versions'], [])
         self.assertNotIn('가🙂', json.dumps(viewer, ensure_ascii=False))
         self.assertTrue(self.call('GET', '')['versions'])
+
+    def test_retention_removes_collaboration_state_with_page(self):
+        self.call('GET', '/collaboration')
+        page = self.app.workspace.page(self.page['id'])
+        page.update(archived=True, deleted_at='2000-01-01T00:00:00+00:00')
+        self.store.put('page', page)
+        self.app.advanced.cleanup()
+        self.assertIsNone(self.store.get('page', page['id']))
+        self.assertIsNone(self.store.get('collaboration', page['id']))
 
     def test_independent_connections_preserve_one_epoch_and_all_operations(self):
         with tempfile.TemporaryDirectory() as folder:

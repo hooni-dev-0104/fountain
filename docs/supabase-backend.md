@@ -4,9 +4,9 @@
 
 ## 현재 범위와 완료 기준
 
-2026-10-17 확인 시점의 Supabase 프로젝트는 `ehnovtfadpkwtubmwltl`이다. `fountain-api` version 6에 문서·DB·공동 편집·동기화·첨부·presence/SSE·AI·계정·백업·연동 권한 관리 handler가 연결됐다. 서비스 객체는 actor를 공유하지 않고 각 요청의 쿠키로 인증한다. 운영 원본은 entities 153개·meta 6개, 실사용 Auth 사용자·identity mapping은 0개다. `fountain-files`는 비공개 bucket이며 QA 정리 후 객체는 0개다. `/health`의 `ready:false`는 전체 전환이 아직 끝나지 않았다는 뜻이다.
+2026-10-17 확인 시점의 Supabase 프로젝트는 `ehnovtfadpkwtubmwltl`이다. `fountain-api` version 7에 문서·DB·공동 편집·동기화·첨부·presence/SSE·AI·계정·백업·연동 권한 관리·SCIM bearer handler가 연결됐다. 서비스 객체는 actor를 공유하지 않고 사람의 요청은 각 쿠키, SCIM은 별도 위임 토큰으로 인증한다. 운영 원본은 entities 153개·meta 6개, 실사용 Auth 사용자·identity mapping은 0개다. `fountain-files`는 비공개 bucket이며 QA 정리 후 객체는 0개다. `/health`의 `ready:false`는 전체 전환이 아직 끝나지 않았다는 뜻이다.
 
-Auth/Vault·Store부터 계정 생성·관리·백업·분할 백업·연동 권한 관리·예약 실행까지 migration 18개를 적용했다. 적용된 SQL은 `supabase/migrations`의 실제 버전 파일로만 보관하고 중복 초안은 제거했다. 공개 RPC는 service_role 전용이며, private 테이블은 강제 RLS와 직접 접근 거절을 유지한다. 익명·일반 로그인 역할의 실행 권한 거절, 연결되지 않은 세션의 백업/정리 거절 등 실제 PostgreSQL 검사 10개가 통과했다. 이 구조는 서버의 신뢰된 권한 검사이며 최종 사용자별 RLS를 사용한다는 뜻이 아니다.
+Auth/Vault·Store부터 계정 생성·관리·백업·분할 백업·연동 권한 관리·예약 실행·SCIM까지 migration 19개를 적용했다. 적용된 SQL은 `supabase/migrations`의 실제 버전 파일로만 보관하고 중복 초안은 제거했다. 공개 RPC는 service_role 전용이며, private 테이블은 강제 RLS와 직접 접근 거절을 유지한다. 익명·일반 로그인 역할의 실행 권한 거절, 연결되지 않은 세션의 백업/정리 거절 등 실제 PostgreSQL 검사 10개가 통과했다. 이 구조는 서버의 신뢰된 권한 검사이며 최종 사용자별 RLS를 사용한다는 뜻이 아니다.
 
 기초 실제 클라우드 QA에서는 비밀번호 로그인·신뢰된 기존 역할 연결·동시 CAS·정확한 receipt 재시도·refresh lease·폐기된 세션 거절을 확인했다. 후속 문서·버전·typed row/수식·ACL·공동 편집/Undo·sync 10개 그룹, presence 6개, SSE 2개가 통과했다. 실제 비공개 Storage의 9MiB+123바이트 업로드·전체 SHA-256·청크 경계 Range·HEAD·416·다른 멤버 거절·물리 삭제, Realtime WebSocket 구독과 변경 알림도 확인했다. Realtime은 본문 없이 재조회를 깨운다.
 
@@ -38,9 +38,19 @@ provisional 완료 뒤 Store 오류는 작업·문서·receipt까지 원자적�
 
 전체 Node 239개와 실제 PostgreSQL의 기존 Python 481개 검사가 실패 없이 통과했다. 전송 20개 검사는 실제 loopback HTTP와 RPC 모델을 사용하며 SQL·Cron 실검증과 구분한다. 실제 타입 컴파일러 검증은 여전히 없다. 테스트 계정 2개·행·권한·작업·Cron을 정리했고 검증 함수 version 34는 기존 nonce에도 404를 반환한다. 원본 6개 데이터 지문은 유지됐다. [예약 실행 증거와 제한](research/cloud-scheduler-verification.json).
 
-현재 Advisors에는 `pg_net`의 [public schema WARN](https://supabase.com/docs/guides/database/database-linter?lint=0014_extension_in_public) 한 개가 남아 있다. 실제 catalog에서 이 확장은 이동 불가능하고 public 소속 함수는 0개였다. catalog 강제 수정이나 확장 삭제·재설치로 경고를 숨기지 않았다. 외래 키 조회 인덱스는 별도 migration으로 보완했으며 정책 없는 private RLS 19개와 아직 사용되지 않은 인덱스 3개는 INFO다.
+현재 Advisors에는 `pg_net`의 [public schema WARN](https://supabase.com/docs/guides/database/database-linter?lint=0014_extension_in_public) 한 개가 남아 있다. 실제 catalog에서 이 확장은 이동 불가능하고 public 소속 함수는 0개였다. catalog 강제 수정이나 확장 삭제·재설치로 경고를 숨기지 않았다. 외래 키 조회 인덱스는 별도 migration으로 보완했으며 정책 없는 private RLS 19개와 아직 사용되지 않은 인덱스 5개는 INFO다.
 
-`deployment.setupEnabled`는 false이고 web origin도 비어 있다. 실사용 계정·초기 연결 코드·공개 HTTPS 호스트를 아직 활성화하지 않았다. 정적 웹 배포물은 16개 allowlist 파일이며 모바일에는 19개 public asset을 복사해 두 플랫폼의 SHA 38개를 비교했다. localhost:8787은 기존 동작 보존용 불변 Python 미리보기이며 새 클라우드 운영 전환이 아니다. SCIM bearer 진입점·토큰 관리 UI·업로드 및 백업 파일의 예약 물리 GC·전체 다섯 플랫폼 편집 전파 검증은 남아 있다. 현재 owner 요청으로 실행되는 정리를 가짜 owner 세션으로 예약 실행하지 않는다. 무료 정적 웹 배포를 위해 Vercel 팀 요금제 확인이 남아 있지만 다른 백엔드 구현을 막지는 않는다.
+SCIM bearer 요청은 사람의 쿠키와 분리해 현재 활성·미만료 grant 및 실제 연결된 소유자를 SQL에서 확인한다. Users/Groups 처리와 삭제 시 ACL·멤버십 정리는 기존 `Advanced`·`ServiceStore`를 재사용한다. 응답 직전에도 같은 grant를 다시 확인해 철회된 권한으로 결과를 공개하지 않는다. 소유자 설정 화면에서 발급·명시적 활성화·페이지 목록·영구 철회를 할 수 있다. 토큰은 최초 응답과 해당 화면의 RAM에만 두며 닫기·설정 이동·로그아웃·계정 변경 때 지운다. 발급 응답이 불확실하면 같은 ID로만 재확인한다.
+
+멤버 비활성화는 해당 workspace의 기존 Vault를 영구 철회하고, 삭제는 로그인 연결·과거 계정 작업 증거·사용 및 미사용 초대 claim도 함께 제거한다. 진행 중인 Admin 작업은 삭제하지 않고 409로 차단한다. 추가 잠금 경합도 NOWAIT·try-lock으로 쓰기 전에 거절한다. 로그인 Vault 생성은 같은 workspace 잠금 뒤 프로필을 다시 확인해 늦은 로그인 삽입이 철회를 피하지 못하게 한다. 마지막 실제 로그인 가능한 소유자 보호와 후속 오류의 전체 롤백은 기존 저장 커널에서 유지한다. 다른 workspace의 세션이나 전역 Auth 사용자를 SCIM이 삭제하지 않는다.
+
+실제 Supabase에서 사용자·그룹 CRUD, 토큰 활성화 전/철회 후 거절, 동일 commit ACK 재시도, 응답 직전 철회, 마지막 소유자 보호, 비활성화·재활성화 후 이전 쿠키 거절과 비밀번호로 다시 로그인을 확인했다. 별도 PostgreSQL 연결로 동시 로그인 Vault가 잠금에서 기다리는 것을 확인했고, 비활성화 후 503·쿠키 없음으로 끝났다. 실제 로그인 세션을 유지한 SQL 검사에서도 local/다른 workspace의 pending 작업 6건을 거절하고, 삭제·같은 ID 재생성·후속 오류·revision 초과 뒤 관련 9개 상태의 SHA가 복구되는 것을 확인했다. pending·초대·실패는 운영자 fixture이며 실제 외부 Admin 요청이나 장애로 주장하지 않는다.
+
+실제 Chrome 화면에서 발급·활성화·철회·닫기 시 토큰 폐기와 390px 화면을 검증했다. 이 화면은 로컬 presentation proxy로 실제 Supabase를 호출하며 네이티브 앱의 새 실행 검증을 대신하지 않는다. 웹 빌드는 16개 allowlist 파일이며, 모바일 빌드와 iOS·Android 복사본은 각 19개 public asset의 SHA가 일치했다. Node 전체 259개, UI 및 웹 호스트 21개, 실제 PostgreSQL의 기존 Python 481개 검사가 통과했다. main version 7의 실제 경계 12개도 확인했다. 잘못된 `%ZZ` URI는 앞단 gateway가 앱 실행 전에 HTML 400으로 거절하며, 앱 자체 오류 형식과 구분한다. 테스트 계정·데이터·권한은 모두 정리했고 검증 함수 version 38은 이전 nonce에도 404를 반환한다. [SCIM 실행 증거와 제한](research/cloud-scim-verification.json).
+
+클라우드의 ServiceProviderConfig는 GET/HEAD만 허용하고 다른 메서드는 인증 후 405로 거절한다. 이는 메서드와 무관하게 응답하던 기존 Python의 예외를 의도적으로 수정한 계약이다. 필터·bulk는 계속 미지원으로 명시한다. SCIM이 만드는 논리 멤버의 실제 비밀번호 로그인 연결은 소유자의 별도 계정 작업이며, 외부 IdP나 SAML 로그인 연동이 완료됐다는 뜻은 아니다.
+
+`deployment.setupEnabled`는 false이고 web origin도 비어 있다. 실사용 계정·초기 연결 코드·공개 HTTPS 호스트를 아직 활성화하지 않았다. 정적 웹 배포물은 16개 allowlist 파일이며 모바일에는 19개 public asset을 복사해 두 플랫폼의 SHA 38개를 비교했다. localhost:8787은 기존 동작 보존용 불변 Python 미리보기이며 새 클라우드 운영 전환이 아니다. 업로드 및 백업 파일의 예약 물리 GC·외부 IdP와 SAML·전체 다섯 플랫폼 편집 전파 검증은 남아 있다. 현재 owner 요청으로 실행되는 정리를 가짜 owner 세션으로 예약 실행하지 않는다. 무료 정적 웹 배포를 위해 Vercel 팀 요금제 확인이 남아 있지만 다른 백엔드 구현을 막지는 않는다.
 
 [라우트 인벤토리](../supabase/tests/route-inventory.json)는 현재 Python 라우트의 **method/path 201개 행**을 기록한다. HEAD와 기존 suffix alias도 별도 행이다. 각 행에는 인증 경계, 익명 접근 여부, handler/domain/module, 실제 Python AST 분기의 근거와 cloud 상태가 있다. `public`은 익명 인증 경계를 뜻하며 단순히 게시된 콘텐츠라는 뜻이 아니다.
 

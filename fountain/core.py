@@ -94,6 +94,10 @@ class Store:
         if not self.transaction_depth:
             self.db.commit()
 
+    def _advance_revision(self):
+        self.db.execute("INSERT INTO meta(key,data) VALUES ('_entity_revision','1') "
+                        "ON CONFLICT(key) DO UPDATE SET data=CAST(CAST(meta.data AS INTEGER)+1 AS TEXT)")
+
     def get(self, kind, entity_id):
         with self.lock:
             row = self.db.execute("SELECT data FROM entities WHERE kind=? AND id=?", (kind, entity_id)).fetchone()
@@ -114,12 +118,14 @@ class Store:
             data.update(id=entity_id, created_at=(previous or {}).get("created_at", now()), updated_at=now())
             self.db.execute("INSERT OR REPLACE INTO entities VALUES (?,?,?,?,?)", (
                 kind, entity_id, json.dumps(data, ensure_ascii=False), data["created_at"], data["updated_at"]))
+            self._advance_revision()
             self.commit()
         return data
 
     def delete(self, kind, entity_id):
         with self.lock:
-            self.db.execute("DELETE FROM entities WHERE kind=? AND id=?", (kind, entity_id))
+            cursor = self.db.execute("DELETE FROM entities WHERE kind=? AND id=?", (kind, entity_id))
+            if cursor.rowcount: self._advance_revision()
             self.commit()
 
     def meta(self, key, default=None):
@@ -130,6 +136,7 @@ class Store:
     def set_meta(self, key, value):
         with self.lock:
             self.db.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (key, json.dumps(value, ensure_ascii=False)))
+            if key != '_entity_revision': self._advance_revision()
             self.commit()
         return value
 
@@ -425,7 +432,8 @@ class Workspace:
         from .tasks import TaskGraph
         with self.store.transaction():
             database = self.database(database_id)
-            identity = uid()
+            identity = text(body.get('id') or uid(), 'row id', 160, False)
+            require(self.store.get('row', identity) is None, 'Row id already exists', 409)
             values = body.get('properties', body.get('values', {}))
             settings = database.get('task_settings', {})
             has_links = bool(body.get('parent_row_id') or body.get('depends_on') or settings.get('subitems') or settings.get('dependencies'))

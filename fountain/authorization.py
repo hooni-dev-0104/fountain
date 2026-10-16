@@ -202,6 +202,11 @@ class Authorization:
                 if 'parent_row_id' in body and body['parent_row_id'] is not None:
                     parent = a.require_resource('row', body['parent_row_id'])
                     require(parent.get('database_id') == database['id'], 'Parent belongs to another database')
+                elif 'parent_row_id' in body and old_row and old_row.get('parent_row_id'):
+                    parent = self.store.get('row', old_row['parent_row_id'])
+                    # A hidden parent is projected as null. Clearing that
+                    # visible value must not detach an unseen existing link.
+                    if parent and not a.can('row', parent): body['parent_row_id'] = parent['id']
                 if 'depends_on' in body:
                     require(isinstance(body['depends_on'], list), 'Dependencies must be a list')
                     for identity in body['depends_on']:

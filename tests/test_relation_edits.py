@@ -52,3 +52,43 @@ class RelationEditTests(unittest.TestCase):
             self.patch(['hidden-target'])
         self.assertIn(error.exception.status, (403, 404))
         self.assertEqual(self.store.get('row', 'source'), before)
+
+    def prepare_hidden_parent(self):
+        database = self.store.get('database', 'projects')
+        database['task_settings']['subitems'] = True
+        self.store.put('database', database)
+        source = self.store.get('row', 'source')
+        source['parent_row_id'] = 'hidden-target'
+        self.store.put('row', source)
+
+    def test_projected_null_parent_edit_preserves_hidden_parent(self):
+        self.prepare_hidden_parent()
+        detail = self.app.dispatch('GET', '/api/databases/projects', {}, {}, principal=self.member)[1]
+        self.assertIsNone(next(row for row in detail['rows'] if row['id'] == 'source')['parent_row_id'])
+        result = self.app.dispatch('PATCH', '/api/databases/projects/rows/source',
+                                   {'parent_row_id': None}, {}, principal=self.member)[1]
+        self.assertIsNone(result['parent_row_id'])
+        self.assertEqual(self.store.get('row', 'source')['parent_row_id'], 'hidden-target')
+        self.assertNotIn('hidden-target', json.dumps(result))
+
+    def test_explicit_visible_parent_move_and_owner_detach_are_allowed(self):
+        self.prepare_hidden_parent()
+        self.app.dispatch('PATCH', '/api/databases/projects/rows/source',
+                          {'parent_row_id': 'visible-target'}, {}, principal=self.member)
+        self.assertEqual(self.store.get('row', 'source')['parent_row_id'], 'visible-target')
+        self.prepare_hidden_parent()
+        self.app.dispatch('PATCH', '/api/databases/projects/rows/source', {'parent_row_id': None}, {})
+        self.assertIsNone(self.store.get('row', 'source')['parent_row_id'])
+
+    def test_sync_null_parent_uses_visible_base_without_erasing_hidden_link(self):
+        self.prepare_hidden_parent()
+        info = self.app.dispatch('GET', '/api/workspace', {}, {}, principal=self.member)[1]
+        operation = {'id': 'parent-clear:1', 'kind': 'row.patch', 'database_id': 'projects',
+                     'target_id': 'source', 'body': {'parent_row_id': None},
+                     'base': {'fields': {'parent_row_id': None}}}
+        result = self.app.dispatch('POST', '/api/sync', {
+            'workspace_id': info['workspace_id'], 'session_binding': info['session_binding'],
+            'operations': [operation]}, {}, principal=self.member)[1]
+        self.assertEqual(result['results'][0]['status'], 'applied')
+        self.assertEqual(self.store.get('row', 'source')['parent_row_id'], 'hidden-target')
+        self.assertNotIn('hidden-target', json.dumps(result))

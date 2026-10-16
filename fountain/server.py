@@ -727,11 +727,12 @@ class FountainServer(ThreadingHTTPServer):
 
 
 def create_server(host="127.0.0.1", port=8787, db_path=".data/fountain.db", static=STATIC, allowed_hosts=None,
-                  tls_cert=None, tls_key=None, database_url=None, workspace_id=None):
+                  tls_cert=None, tls_key=None, database_url=None, workspace_id=None, attachment_root=None):
     require((tls_cert is None) == (tls_key is None), 'TLS requires both a certificate and a private key')
     require(database_url is None or isinstance(database_url, str) and bool(database_url.strip()),
             'PostgreSQL requires a database connection', 503)
     require(database_url is not None or workspace_id is None, 'Workspace namespace requires PostgreSQL mode')
+    require(database_url is not None or attachment_root is None, 'Attachment directory requires PostgreSQL mode')
     tls_context = None
     if tls_cert is not None:
         # Validate TLS before creating the user's database or data directory.
@@ -758,7 +759,7 @@ def create_server(host="127.0.0.1", port=8787, db_path=".data/fountain.db", stat
             os.close(descriptor)
     if database_url is not None:
         from .postgres import PostgresStore
-        store = PostgresStore(database_url, workspace_id=workspace_id)
+        store = PostgresStore(database_url, workspace_id=workspace_id, attachment_root=attachment_root)
     else:
         store = Store(db_path)
     server = None
@@ -787,10 +788,16 @@ def main():
     parser.add_argument("--database", choices=('sqlite', 'postgres'), default='sqlite')
     parser.add_argument("--database-config", help="Private JSON file containing database_dsn (PostgreSQL only)")
     parser.add_argument("--workspace-id", help="Stable PostgreSQL workspace namespace")
+    parser.add_argument("--attachment-root", help="Shared private file directory for PostgreSQL attachment bytes")
+    parser.add_argument("--collect-files", action='store_true', help="Collect one bounded batch of file orphans older than 24 hours, then exit")
+    parser.add_argument("--gc-limit", type=int, default=500, help="Maximum file entries in a collection batch")
     parser.add_argument("--tls-cert", help="PEM certificate chain for direct HTTPS")
     parser.add_argument("--tls-key", help="Matching unencrypted PEM private key")
     args = parser.parse_args()
     if bool(args.tls_cert) != bool(args.tls_key): parser.error('--tls-cert and --tls-key must be supplied together')
+    if args.collect_files and (args.database != 'postgres' or not args.attachment_root):
+        parser.error('--collect-files requires --database postgres and --attachment-root')
+    if not 1 <= args.gc_limit <= 10000: parser.error('--gc-limit must be between 1 and 10000')
     database_url = None
     if args.database == 'postgres':
         if not args.workspace_id: parser.error('--workspace-id is required for PostgreSQL')
@@ -810,13 +817,23 @@ def main():
                 parser.error('Unable to read the private database configuration')
         if not isinstance(database_url, str) or not database_url.strip():
             parser.error('Set FOUNTAIN_DATABASE_URL or --database-config for PostgreSQL')
-    elif args.database_config or args.workspace_id:
-        parser.error('--database-config and --workspace-id require --database postgres')
+    elif args.database_config or args.workspace_id or args.attachment_root:
+        parser.error('--database-config, --workspace-id and --attachment-root require --database postgres')
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     try:
+        if args.collect_files:
+            from .postgres import PostgresStore
+            store = PostgresStore(database_url, workspace_id=args.workspace_id, attachment_root=args.attachment_root)
+            try:
+                result = store.file_garbage_collect(limit=args.gc_limit)
+            finally:
+                store.close()
+            print(json.dumps(result), flush=True)
+            return
         server = create_server(args.host, args.port, args.data, allowed_hosts=args.allowed_host,
                                tls_cert=args.tls_cert, tls_key=args.tls_key,
-                               database_url=database_url, workspace_id=args.workspace_id)
+                               database_url=database_url, workspace_id=args.workspace_id,
+                               attachment_root=args.attachment_root)
     except (APIError, OSError) as error:
         parser.error(str(error))
     print(f"Fountain: {server.scheme}://localhost:{server.server_port}", flush=True)

@@ -16,7 +16,7 @@ class DatabaseConfigurationTests(unittest.TestCase):
     def test_invalid_backend_context_does_not_create_sqlite_file(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'untouched' / 'workspace.db'
-            for options in ({'database_url': ''}, {'workspace_id': 'unexpected'}):
+            for options in ({'database_url': ''}, {'workspace_id': 'unexpected'}, {'attachment_root': 'unexpected'}):
                 with self.subTest(options=options), self.assertRaises(APIError):
                     create_server(db_path=path, **options)
             self.assertFalse(path.parent.exists())
@@ -33,6 +33,9 @@ class DatabaseConfigurationTests(unittest.TestCase):
     def test_postgres_selection_requires_namespace_and_separate_configuration(self):
         self.reject_cli(['--database', 'postgres'], '--workspace-id is required')
         self.reject_cli(['--workspace-id', 'family'], 'require --database postgres')
+        self.reject_cli(['--attachment-root', 'unexpected'], 'require --database postgres')
+        self.reject_cli(['--collect-files'], 'requires --database postgres and --attachment-root')
+        self.reject_cli(['--gc-limit', '0'], '--gc-limit must be between')
         self.reject_cli(['--database', 'postgres', '--workspace-id', 'family', '--data', 'other.db'],
                         '--data is for SQLite mode')
         with patch.dict(os.environ, {'FOUNTAIN_DATABASE_URL': ''}):
@@ -61,6 +64,7 @@ class DatabaseConfigurationTests(unittest.TestCase):
             arguments = ['fountain.server', '--database', 'postgres', '--workspace-id', 'family',
                          '--database-config', str(path)]
             with (patch('sys.argv', arguments), patch('fountain.server.create_server') as factory,
+                  patch('fountain.server.logging.basicConfig'),
                   contextlib.redirect_stdout(io.StringIO())):
                 server = factory.return_value
                 server.serve_forever.side_effect = KeyboardInterrupt
@@ -69,6 +73,19 @@ class DatabaseConfigurationTests(unittest.TestCase):
             self.assertEqual(factory.call_args.kwargs['workspace_id'], 'family')
             server.server_close.assert_called_once()
             server.application.store.close.assert_called_once()
+
+    def test_file_collection_closes_store_without_starting_http(self):
+        output = io.StringIO()
+        arguments = ['fountain.server', '--database', 'postgres', '--workspace-id', 'family',
+                     '--attachment-root', '/private/test-files', '--collect-files', '--gc-limit', '2']
+        with (patch('sys.argv', arguments), patch.dict(os.environ, {'FOUNTAIN_DATABASE_URL': 'private-test-dsn'}),
+              patch('fountain.postgres.PostgresStore') as factory, patch('fountain.server.create_server') as server,
+              patch('fountain.server.logging.basicConfig'), contextlib.redirect_stdout(output)):
+            factory.return_value.file_garbage_collect.return_value = {'scanned': 2, 'removed': 1}
+            main()
+        self.assertEqual(json.loads(output.getvalue()), {'scanned': 2, 'removed': 1})
+        factory.return_value.close.assert_called_once()
+        server.assert_not_called()
 
 
 if __name__ == '__main__':

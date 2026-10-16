@@ -96,6 +96,65 @@ const rejected=(promise,status)=>assert.rejects(promise,e=>e.status===status&&!e
 async function upload(f,bytes,name='가족 파일 😀.bin',page_id='page'){const item=await f.files.begin(f.auth(),{name,size:bytes.length,page_id});for(let offset=0;offset<bytes.length;offset+=CHUNK_SIZE)await f.files.append(f.auth(),item.id,offset,bytes.subarray(offset,offset+CHUNK_SIZE));return item;}
 const req=(path,method='GET',body,headers={})=>new Request('https://app.test'+path,{method,...(body===undefined?{}:{body}),headers});
 
+// Separate private-byte source MODEL. General snapshots above still redact data;
+// actual SQL/base64 validation is covered by dedicated provider/live SQL tests.
+async function legacyFixture(t,bytes=Buffer.from('existing inline attachment')){
+ let f;const reads=[],io={afterRead:null};
+ const inlineSource={async read(input){
+  input.signal?.throwIfAborted();f.provider.authorize(input.context);reads.push({...input,signal:undefined});
+  const original=f.raw('attachment',input.attachmentId);if(!original)throw error('NOT_FOUND',404);
+  const metadata=clone(original);delete metadata.data;assert.equal(canonicalJSON(input.metadata),canonicalJSON(metadata));
+  const sourceDigest=digest(Buffer.from(canonicalJSON(original)));
+  if(input.sourceDigest!==null&&input.sourceDigest!==sourceDigest)throw error('SOURCE_CHANGED');
+  const content=Buffer.from(original.data,'base64'),result={offset:input.offset,size:content.length,sha256:digest(content),sourceDigest,bytes:new Uint8Array(content.subarray(input.offset,input.offset+input.length))};
+  if(io.afterRead)await io.afterRead(input);input.signal?.throwIfAborted();return result;
+ }};
+ f=await fixture(t,{inlineSource});f.seed('attachment',{id:'legacy-inline',owner_id:'alice',name:'가족 원본.html',mime:'text/html',size:bytes.length,data:bytes.toString('base64')});
+ return {...f,inlineReads:reads,inlineIO:io};
+}
+test('existing inline download preserves IDs/bytes and never exposes raw data in a snapshot or writes Storage/quota',async t=>{
+ const bytes=Buffer.from('기존 가족 첨부 🏠'),f=await legacyFixture(t,bytes),before=clone(f.raw('attachment','legacy-inline')),revision=f.provider.revision,metadata=clone(f.provider.metadata);
+ const response=await f.files.handle(req('/api/attachments/legacy-inline/download'),'/api/attachments/legacy-inline/download',f.auth());
+ assert.equal(response.status,200);assert.equal(response.headers.get('Content-Type'),'application/octet-stream');assert.match(response.headers.get('Content-Disposition'),/attachment;/);assert.equal(response.headers.get('X-Content-Type-Options'),'nosniff');assert.equal(response.headers.get('ETag'),'"'+digest(bytes)+'"');
+ assert.deepEqual(Buffer.from(await response.arrayBuffer()),bytes);assert.equal(f.inlineReads.length,2);assert.deepEqual(f.inlineReads.map(read=>[read.offset,read.length]),[[0,0],[0,bytes.length]]);
+ for(const read of f.inlineReads)assert.equal(Object.hasOwn(read.metadata,'data'),false);
+ assert.deepEqual(f.raw('attachment','legacy-inline'),before);assert.equal(f.provider.revision,revision);assert.deepEqual(f.provider.metadata,metadata);assert.equal(f.provider.receipts.size,0);assert.equal(f.calls.length,0);assert.equal(f.objects.size,0);
+ const dto=await f.files.metadata(f.auth(),'legacy-inline');assert.equal(dto.storage,'inline');assert(!JSON.stringify(dto).includes(before.data));assert.equal(dto.sourceDigest,undefined);
+});
+test('inline ranges, suffixes, HEAD and If-Range use full-source preflight and existing HTTP semantics',async t=>{
+ const bytes=Buffer.from('0123456789'),f=await legacyFixture(t,bytes),path='/api/attachments/legacy-inline/download',etag='"'+digest(bytes)+'"';
+ for(const [range,ifRange,status,expected] of [['bytes=2-5',null,206,'2345'],['bytes=-3',null,206,'789'],['bytes=8-',etag,206,'89'],['bytes=2-3','"old"',200,'0123456789']]){
+  const response=await f.files.download(f.auth(),'legacy-inline',req(path,'GET',undefined,{Range:range,...ifRange?{'If-Range':ifRange}:{}}));assert.equal(response.status,status);assert.equal(response.headers.get('Content-Length'),String(expected.length));assert.equal(await response.text(),expected);
+ }
+ for(const range of ['bytes=10-','bytes=0-1,3-4','bytes=-0','bogus']){const response=await f.files.download(f.auth(),'legacy-inline',req(path,'GET',undefined,{Range:range}));assert.equal(response.status,416);assert.equal(response.headers.get('Content-Range'),'bytes */10');assert.equal(await response.text(),'');}
+ const prior=f.inlineReads.length,head=await f.files.download(f.auth(),'legacy-inline',req(path,'HEAD',undefined,{Range:'bytes=2-4'}));assert.equal(head.status,200);assert.equal(head.headers.get('Content-Length'),'10');assert.equal(await head.text(),'');assert.equal(f.inlineReads.length,prior+1);assert.equal(f.inlineReads.at(-1).length,0);
+ const empty=await legacyFixture(t,Buffer.alloc(0)),response=await empty.files.download(empty.auth(),'legacy-inline',req(path));assert.equal(response.status,200);assert.equal(response.headers.get('ETag'),'"'+digest(Buffer.alloc(0))+'"');assert.equal((await response.arrayBuffer()).byteLength,0);assert.equal(empty.inlineReads.length,1);
+});
+test('inline stream rechecks shared ACL after the private byte read and stops on same-size source replacement',async t=>{
+ for(const when of ['between-pieces','during-private-read']){
+  const f=await legacyFixture(t,Buffer.alloc(150000,0x61));f.raw('page','page').owner_id='nobody';f.raw('page','page').blocks=[{id:'file',attachment_id:'legacy-inline'}];f.provider.revision++;f.setActor(second);
+  const response=await f.files.download(f.auth(),'legacy-inline',req('/api/attachments/legacy-inline/download')),reader=response.body.getReader();
+  if(when==='between-pieces'){assert.equal((await reader.read()).value.length,65536);f.raw('page','page').permissions.members.bob='none';f.provider.revision++;}
+  else f.inlineIO.afterRead=input=>{if(input.length){f.raw('page','page').permissions.members.bob='none';f.provider.revision++;}};
+  await rejected(reader.read(),404);assert(f.raw('attachment','legacy-inline'));assert.equal(f.calls.length,0);
+ }
+ const f=await legacyFixture(t,Buffer.alloc(150000,0x61)),response=await f.files.download(f.auth(),'legacy-inline',req('/api/attachments/legacy-inline/download')),reader=response.body.getReader();await reader.read();
+ f.raw('attachment','legacy-inline').data=Buffer.alloc(150000,0x62).toString('base64');await rejected(reader.read(),409);assert.equal(f.provider.receipts.size,0);
+});
+test('inline body cancellation/logout has no further reads, and a cloud overlay never falls back to original inline data',async t=>{
+ const path='/api/attachments/legacy-inline/download';
+ for(const action of ['cancel','logout','abort']){
+  const f=await legacyFixture(t,Buffer.alloc(150000,0x61)),abort=new AbortController(),response=await f.files.download(f.auth(),'legacy-inline',new Request('https://app.test'+path,{signal:abort.signal})),reader=response.body.getReader();await reader.read();const before=f.inlineReads.length;
+  if(action==='cancel'){await reader.cancel();assert.equal((await reader.read()).done,true);}
+  else if(action==='logout'){f.provider.active.delete(context.sessionHash);await rejected(reader.read(),401);}
+  else{abort.abort();await assert.rejects(reader.read(),error=>error.name==='AbortError');}
+  assert.equal(f.inlineReads.length,before);assert.equal(f.calls.length,0);
+ }
+ const f=await legacyFixture(t),original=f.raw('attachment','legacy-inline'),fields=['id','owner_id','page_id','name','size','mime','storage','sha256','created_at','updated_at'];
+ f.seed('attachment_cloud',{...Object.fromEntries(Object.entries(original).filter(([key])=>key!=='data')),storage:'chunks',storage_id:'missing-cloud',cloud_chunks:[],source_fingerprint:canonicalJSON(Object.fromEntries(fields.map(key=>[key,original[key]??null])))});
+ await rejected(f.files.download(f.auth(),'legacy-inline',req(path)),409);assert.equal(f.inlineReads.length,0);assert(f.raw('attachment','legacy-inline').data);
+});
+
 test('manual GC keeps bytes and reservation while a materialized backup pins them (SQL pins modeled)',async t=>{
  const f=await fixture(t,{quotaBytes:4}),item=await upload(f,Buffer.from('safe'));f.io.deleteStatus=503;await f.files.cancel(f.auth(),item.id);f.io.deleteStatus=200;f.backupPins.add(item.id);const deletes=f.calls.filter(([verb])=>verb==='DELETE').length;
  await rejected(f.files.garbageCollect(f.auth(),item.id),409);assert.equal(f.objects.size,1);assert.equal(f.raw('upload_gc',item.id).reserved_bytes,4);assert.equal(f.calls.filter(([verb])=>verb==='DELETE').length,deletes);

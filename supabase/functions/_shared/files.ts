@@ -11,10 +11,11 @@ import type {AuthContext} from './auth.ts';
 import {CloudStore,MissingSelection,StoreError,canonicalJSON,mergeSelection} from './store.ts';
 import type {Selection,StoreProvider} from './store.ts';
 import {createTransactions,storeContext} from './transaction.ts';
-import {createStorage,StorageError,checkQuota,CHUNK_SIZE,MAX_FILE_SIZE} from './storage.ts';
+import {createStorage,StorageError,checkQuota,byteRange,READ_SIZE,CHUNK_SIZE,MAX_FILE_SIZE} from './storage.ts';
 import type {ChunkManifest,AttachmentManifest} from './storage.ts';
+import type {InlineAttachmentSource} from './inline-attachments.ts';
 import {jsonResponse,readBytes,readJSON} from './http.ts';
-type Config={provider:StoreProvider;storage:ReturnType<typeof createStorage>;authorize:()=>Promise<AuthContext>;fenceGarbage?:(initial:AuthContext,id:string,items:ChunkManifest[])=>Promise<void>;clock?:()=>number;quotaBytes?:number;verifyChunks?:number};
+type Config={provider:StoreProvider;storage:ReturnType<typeof createStorage>;inlineSource?:InlineAttachmentSource;authorize:()=>Promise<AuthContext>;fenceGarbage?:(initial:AuthContext,id:string,items:ChunkManifest[])=>Promise<void>;clock?:()=>number;quotaBytes?:number;verifyChunks?:number};
 const TTL=86400_000,HASH=/^[a-f0-9]{64}$/;
 const integer=(v:unknown):v is number=>Number.isSafeInteger(v)&&(v as number)>=0;
 async function hash(data:Uint8Array):Promise<string>{return [...new Uint8Array(await crypto.subtle.digest('SHA-256',data))].map(v=>v.toString(16).padStart(2,'0')).join('');}
@@ -213,9 +214,45 @@ export function createFiles(config:Config){
   }
   async function metadata(initial:AuthContext,id:string):Promise<Entity>{return view(initial,(s,a)=>{const file=resolve(s,a,id);require(integer(file.size)&&file.size<=MAX_FILE_SIZE,'Attachment metadata is invalid',409);const result:Entity={id:file.id,name:fileName(file.name),size:file.size,mime:file.mime??'application/octet-stream',storage:file.storage??'inline',status:'complete'};require(typeof result.mime==='string'&&result.mime.length>0&&result.mime.length<=255&&['inline','chunks'].includes(result.storage),'Attachment metadata is invalid',409);if(file.sha256){require(HASH.test(file.sha256),'Attachment metadata is invalid',409);result.sha256=file.sha256;}return result;});}
   async function download(initial:AuthContext,id:string,request:Request):Promise<Response>{
-    const file=await view(initial,(s,a)=>resolve(s,a,id)),pinned=canonicalJSON([file.id,file.size,file.sha256??null,file.cloud_chunks??null]);
+    const file=await view(initial,(s,a)=>resolve(s,a,id));
+    if(file.storage==null||file.storage==='inline')return downloadInline(initial,file,request);
+    const pinned=canonicalJSON([file.id,file.size,file.sha256??null,file.cloud_chunks??null]);
     const access=currentGate(initial,(s,a)=>{const current=resolve(s,a,id);require(canonicalJSON([current.id,current.size,current.sha256??null,current.cloud_chunks??null])===pinned,'Attachment changed during download',409);});
     return config.storage.download(manifest(file),access,{method:request.method==='HEAD'?'HEAD':'GET',range:request.headers.get('Range'),ifRange:request.headers.get('If-Range'),signal:request.signal});
+  }
+  async function downloadInline(initial:AuthContext,file:Entity,request:Request):Promise<Response>{
+    require(config.inlineSource,'Attachment bytes need a verified migration',503);
+    require(integer(file.size)&&file.size<=5_000_000&&!Object.hasOwn(file,'cloud_chunks')&&!Object.hasOwn(file,'storage_id'),'Legacy attachment metadata is invalid',409);
+    const name=fileName(file.name),metadata=canonicalJSON(file),source=config.inlineSource,context=storeContext(initial);
+    const access=currentGate(initial,(s,a)=>{require(canonicalJSON(resolve(s,a,file.id))===metadata,'Attachment changed during download',409);});
+    const aborted=()=>{if(request.signal.aborted)throw new DOMException('Attachment download cancelled','AbortError');};
+    aborted();await access();aborted();
+    // Even HEAD/range headers follow full source validation. The private RPC
+    // returns no bytes for this preflight and pins the hidden original payload.
+    const first=await source.read({context,attachmentId:file.id,metadata:file,offset:0,length:0,sourceDigest:null,signal:request.signal});
+    aborted();await access();aborted();
+    require(first.offset===0&&first.size===file.size&&first.bytes.length===0&&HASH.test(first.sha256)&&HASH.test(first.sourceDigest),'Legacy attachment source is invalid',409);
+    const etag='"'+first.sha256+'"',head=request.method==='HEAD';
+    let range:{start:number;end:number;partial:boolean};
+    try{range=byteRange(head||request.headers.get('If-Range')&&request.headers.get('If-Range')!==etag?null:request.headers.get('Range'),file.size);}
+    catch(error){if(!(error instanceof StorageError)||error.status!==416)throw error;return new Response(null,{status:416,headers:{'Content-Range':'bytes */'+file.size,'Content-Length':'0','Accept-Ranges':'bytes','Cache-Control':'no-store'}});}
+    const headers=new Headers({'Content-Type':'application/octet-stream','Content-Length':String(range.end-range.start),'Accept-Ranges':'bytes','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','ETag':etag,'Content-Disposition':"attachment; filename=download; filename*=UTF-8''"+encodeURIComponent(name).replace(/[!'()*]/g,c=>'%'+c.charCodeAt(0).toString(16).toUpperCase())});
+    if(range.partial)headers.set('Content-Range','bytes '+range.start+'-'+(range.end-1)+'/'+file.size);
+    if(head)return new Response(null,{status:200,headers});
+    const abort=new AbortController(),signal=AbortSignal.any([request.signal,abort.signal]);
+    async function* slices(){
+      for(let offset=range.start;offset<range.end;offset+=READ_SIZE){
+        if(signal.aborted)throw new DOMException('Attachment download cancelled','AbortError');
+        await access();if(signal.aborted)throw new DOMException('Attachment download cancelled','AbortError');
+        const length=Math.min(READ_SIZE,range.end-offset),part=await source.read({context,attachmentId:file.id,metadata:file,offset,length,sourceDigest:first.sourceDigest,signal});
+        if(signal.aborted)throw new DOMException('Attachment download cancelled','AbortError');
+        require(part.offset===offset&&part.size===file.size&&part.bytes.length===length&&part.sourceDigest===first.sourceDigest&&part.sha256===first.sha256,'Legacy attachment changed during download',409);
+        await access();if(signal.aborted)throw new DOMException('Attachment download cancelled','AbortError');
+        yield part.bytes;
+      }
+    }
+    const iterator=slices(),body=new ReadableStream<Uint8Array>({async pull(controller){try{const next=await iterator.next();if(next.done)controller.close();else controller.enqueue(next.value);}catch(error){abort.abort();controller.error(error);}},async cancel(){abort.abort();await iterator.return(undefined).catch(()=>{});}}, {highWaterMark:0});
+    return new Response(body,{status:range.partial?206:200,headers});
   }
   /** Root-owned one-time migrator only; never expose a source path/bytes setter
    * over HTTP. Keep the legacy attachment row and original bytes untouched. */

@@ -21,12 +21,13 @@ import {createScimHTTP} from './scim-http.ts';
 import {createBackup,createBackupProvider} from './backup.ts';
 import {createBackupJobs,createBackupJobProvider,createBackupSourceRangeReader,collectBackupJobGarbage} from './backup-jobs.ts';
 import {HttpError,jsonResponse,readJSON} from './http.ts';
+import {createInlineAttachmentSource} from './inline-attachments.ts';
 type Config={supabaseUrl:string;publishableKey:string;serviceKey:string;cryptoKeys:Array<{id:string;secret:string|Uint8Array}>;workspaceId:string;origins:string[];publicWebOrigin?:string|null;fetch?:typeof fetch;env?:Record<string,string|undefined>;setupEnabled?:boolean};
 export function createApplication(config:Config):(request:Request)=>Promise<Response>{
   const connection={supabaseUrl:config.supabaseUrl,serviceKey:config.serviceKey,workspaceId:config.workspaceId,fetch:config.fetch};
   const onboarding=createOnboarding({...connection,publishableKey:config.publishableKey});
   const auth=createAuth({...connection,publishableKey:config.publishableKey,cryptoKeys:config.cryptoKeys,vault:createSessionVault(connection),...(config.setupEnabled?{setupClaim:onboarding.claim}:{})});
-  const provider=createStoreProvider(connection),storage=createStorage({...connection,bucket:'fountain-files',maxObjectBytes:CHUNK_SIZE}),backupProvider=createBackupProvider(connection);
+  const provider=createStoreProvider(connection),storage=createStorage({...connection,bucket:'fountain-files',maxObjectBytes:CHUNK_SIZE}),backupProvider=createBackupProvider(connection),inlineSource=createInlineAttachmentSource(connection);
   const backupJobProvider=createBackupJobProvider(connection),readSourceRange=createBackupSourceRangeReader({...connection,bucket:'fountain-files'});
   const env={...config.env};
   // The local process-wide SCIM secret is not a cloud credential. Cloud SCIM
@@ -54,7 +55,7 @@ export function createApplication(config:Config):(request:Request)=>Promise<Resp
       if(jobResponse)return jobResponse;
       const backup=createBackup({provider:backupProvider,storage,authorize}),backupResponse=await backup.handle(current,path,context);
       if(backupResponse)return backupResponse;
-      const base={...connection,provider,authorize},files=createFiles({...base,storage,fenceGarbage:createUploadGarbageFence({...connection,authorize})});
+      const base={...connection,provider,authorize},files=createFiles({...base,storage,inlineSource,fenceGarbage:createUploadGarbageFence({...connection,authorize})});
       const events=createActivity({...base,...(config.serviceKey.startsWith('sb_secret_')?{realtime:()=>createRealtime({url:config.supabaseUrl,workspaceId:config.workspaceId,serverKey:config.serviceKey})}:{})});
       return createDomain({...base,extensions:[createAdvancedExtension({cloud:true,env})],ai:createAI({...base,env}),files:files.handle,events})(current,path,context);
     },

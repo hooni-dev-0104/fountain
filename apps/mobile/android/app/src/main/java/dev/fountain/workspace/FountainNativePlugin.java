@@ -21,6 +21,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URI;
 import java.net.URL;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -70,6 +71,8 @@ public class FountainNativePlugin extends Plugin {
         volatile long authGeneration;
         volatile HttpsURLConnection connection;
         volatile File file;
+        volatile String backupCookie, backupScope;
+        volatile long backupUntil;
         volatile OutputStream exportStream;
         volatile ScheduledFuture<?> timeout;
         volatile long deadline;
@@ -462,6 +465,11 @@ public class FountainNativePlugin extends Plugin {
 
     private Response exchange(Operation operation, String server, String path, String method, Map<String, String> headers,
                               byte[] body, String cookie, File destination) throws Exception {
+        return exchange(operation, server, path, method, headers, body, cookie, destination, NativePolicy.MAX_RESPONSE);
+    }
+
+    private Response exchange(Operation operation, String server, String path, String method, Map<String, String> headers,
+                              byte[] body, String cookie, File destination, int memoryLimit) throws Exception {
         check(operation);
         HttpsURLConnection connection = open(server, path, method, headers, body, cookie,
             (int) Math.max(1, operation.deadline - SystemClock.elapsedRealtime()), operation.boundaryEpoch);
@@ -480,7 +488,7 @@ public class FountainNativePlugin extends Plugin {
             if (destination != null && response.status != 200) throw new IOException();
             long expected = connection.getContentLengthLong();
             if (response.status == 204 || response.status == 304) expected = 0;
-            if (destination == null && expected > NativePolicy.MAX_RESPONSE) throw new IOException();
+            if (destination == null && expected > memoryLimit) throw new IOException();
             ByteArrayOutputStream memory = destination == null ? new ByteArrayOutputStream() : null;
             long received = 0;
             try (InputStream input = response.status >= 400 ? connection.getErrorStream() : connection.getInputStream();
@@ -490,7 +498,7 @@ public class FountainNativePlugin extends Plugin {
                     int count;
                     while ((count = input.read(buffer)) != -1) {
                         check(operation); received += count;
-                        if (received < 0 || destination == null && received > NativePolicy.MAX_RESPONSE) throw new IOException();
+                        if (received < 0 || destination == null && received > memoryLimit) throw new IOException();
                         output.write(buffer, 0, count);
                     }
                 }
@@ -617,7 +625,8 @@ public class FountainNativePlugin extends Plugin {
             if (operation.closed.get() || broken || destroyed || operation.generation != generation
                 || operation.authGeneration != authGeneration || !Objects.equals(operation.origin, origin)
                 || !NativeCookieBoundary.permits(operation.boundaryEpoch)
-                || SystemClock.elapsedRealtime() > operation.deadline) throw new IOException();
+                || SystemClock.elapsedRealtime() > operation.deadline
+                || operation.backupScope != null && (!Objects.equals(activeCookie, operation.backupCookie) || System.currentTimeMillis() >= operation.backupUntil)) throw new IOException();
         }
     }
 
@@ -735,7 +744,9 @@ public class FountainNativePlugin extends Plugin {
 
     @PluginMethod public void download(PluginCall call) {
         entry(call, () -> {
-            String path = NativePolicy.path(call.getString("path"), true);
+            String raw = call.getString("path");
+            String backupId = backupJobId(raw);
+            String path = NativePolicy.path(raw, backupId == null);
             String filename = NativePolicy.filename(call.getString("filename"));
             Operation operation = begin(call, false, 45000);
             workers.execute(() -> {
@@ -743,11 +754,85 @@ public class FountainNativePlugin extends Plugin {
                     operation.file = temporaryFile();
                     String cookie;
                     synchronized (lock) { check(operation); cookie = activeCookie; }
-                    exchange(operation, operation.origin, path, "GET", new HashMap<>(), new byte[0], cookie, operation.file);
+                    if (backupId != null) downloadBackup(operation, backupId, cookie);
+                    else exchange(operation, operation.origin, path, "GET", new HashMap<>(), new byte[0], cookie, operation.file);
                     showSave(operation, filename);
                 } catch (Exception error) { fail(operation, "Native download failed", "DOWNLOAD_FAILED"); }
             });
         });
+    }
+
+    // Only this canonical query enters the resumable backup path; no signed URL or arbitrary query.
+    static String backupJobId(String path) {
+        if (path == null || !path.startsWith("/api/backup?")) return null;
+        NativePolicy.require(path.matches("/api/backup\\?job_id=[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}"));
+        return path.substring("/api/backup?job_id=".length());
+    }
+
+    static final class BackupPlan {
+        final long size, expires; final String sha;
+        BackupPlan(JSONObject value, String id) throws Exception {
+            NativePolicy.require(id.equals(value.opt("id")) && "ready".equals(value.opt("phase")));
+            size = OutboxPolicy.integer(value.opt("size"), 1, 9_007_199_254_740_991L);
+            sha = value.getString("sha256"); NativePolicy.require(sha.matches("[a-f0-9]{64}"));
+            expires = OutboxPolicy.expiry(value.getString("expires_at"));
+            NativePolicy.require(expires > System.currentTimeMillis());
+        }
+        void piece(long offset, int length, int status, String range, String contentLength, int received) {
+            NativePolicy.require(offset >= 0 && offset < size && length > 0 && length <= 262144 && received == length
+                && status == 206 && ("bytes " + offset + "-" + (offset + length - 1) + "/" + size).equals(range)
+                && Integer.toString(length).equals(contentLength) && expires > System.currentTimeMillis());
+        }
+    }
+
+    private void backupDeadline(Operation operation) throws Exception {
+        synchronized (lock) {
+            check(operation);
+            if (operation.timeout != null) operation.timeout.cancel(false);
+            operation.deadline = SystemClock.elapsedRealtime() + 45000;
+            operation.timeout = deadlines.schedule(() -> fail(operation, "Native backup timed out", "TIMEOUT"), 45, TimeUnit.SECONDS);
+        }
+    }
+
+    private void backupOwner(Operation operation) throws Exception {
+        backupDeadline(operation);
+        synchronized (lock) { check(operation); NativePolicy.require(operation.backupCookie != null && Objects.equals(activeCookie, operation.backupCookie)); }
+        Response response = exchange(operation, operation.origin, "/api/session", "GET", new HashMap<>(), new byte[0], operation.backupCookie, null, 65536);
+        NativePolicy.require(response.status == 200);
+        JSONObject body = new JSONObject(OutboxPolicy.utf8(response.body));
+        NativePolicy.require("owner".equals(body.getJSONObject("member").opt("role")));
+        NativeRecovery.Session proof = new NativeRecovery.Session(operation.origin, body, operation.backupCookie, "backup");
+        synchronized (lock) {
+            check(operation); NativePolicy.require(Objects.equals(activeCookie, operation.backupCookie));
+            if (operation.backupScope == null) operation.backupScope = proof.scope;
+            NativePolicy.require(operation.backupScope.equals(proof.scope));
+            operation.backupUntil = proof.validUntil;
+        }
+    }
+
+    private static String backupHex(byte[] bytes) { StringBuilder value = new StringBuilder(); for (byte b : bytes) value.append(String.format(Locale.ROOT, "%02x", b & 255)); return value.toString(); }
+
+    private void downloadBackup(Operation operation, String id, String cookie) throws Exception {
+        operation.backupCookie = cookie;
+        backupOwner(operation);
+        Response metadata = exchange(operation, operation.origin, "/api/backup/jobs/" + id, "GET", new HashMap<>(), new byte[0], cookie, null, 65536);
+        NativePolicy.require(metadata.status == 200);
+        BackupPlan plan = new BackupPlan(new JSONObject(OutboxPolicy.utf8(metadata.body)), id);
+        MessageDigest hash = MessageDigest.getInstance("SHA-256");
+        try (FileOutputStream output = new FileOutputStream(operation.file)) {
+            for (long offset = 0; offset < plan.size;) {
+                backupOwner(operation);
+                int length = (int) Math.min(262144L, plan.size - offset);
+                Map<String,String> headers = new HashMap<>(); headers.put("Range", "bytes=" + offset + "-" + (offset + length - 1));
+                Response piece = exchange(operation, operation.origin, "/api/backup?job_id=" + id, "GET", headers, new byte[0], cookie, null, length);
+                plan.piece(offset, length, piece.status, piece.headers.optString("content-range"), piece.headers.optString("content-length"), piece.body.length);
+                synchronized (lock) { check(operation); NativePolicy.require(Objects.equals(activeCookie, cookie)); }
+                output.write(piece.body); hash.update(piece.body); offset += length;
+            }
+            output.getFD().sync();
+        }
+        NativePolicy.require(plan.sha.equals(backupHex(hash.digest())) && operation.file.length() == plan.size);
+        backupOwner(operation);
     }
 
     @PluginMethod public void saveData(PluginCall call) {
@@ -804,6 +889,7 @@ public class FountainNativePlugin extends Plugin {
             synchronized (lock) {
                 try {
                     check(operation);
+                    if (operation.backupScope != null) NativePolicy.require(Objects.equals(activeCookie, operation.backupCookie) && operation.backupUntil > System.currentTimeMillis());
                     if(operation.recoveryExport!=null)recovery.checkPrepared(operation.recoveryExport,operation.recoveryAuthority);
                     if (!bundleAllowed() || picker != null) throw new IOException();
                     picker = operation;
@@ -845,14 +931,21 @@ public class FountainNativePlugin extends Plugin {
             boolean complete = false;
             try {
                 check(operation);
+                if (operation.backupScope != null) backupOwner(operation);
                 if(operation.recoveryExport!=null)recovery.checkSavedSource(operation.recoveryExport,operation.recoveryAuthority);
                 try (InputStream input = new FileInputStream(operation.file);
                      OutputStream output = getContext().getContentResolver().openOutputStream(destination, "wt")) {
                     if (output == null) throw new IOException();
                     synchronized (lock) { operation.exportStream = output; check(operation); }
                     byte[] buffer = new byte[65536]; int count;
-                    while ((count = input.read(buffer)) != -1) { check(operation);if(operation.recoveryExport!=null)recovery.checkPrepared(operation.recoveryExport,operation.recoveryAuthority);output.write(buffer, 0, count); }
+                    while ((count = input.read(buffer)) != -1) {
+                        check(operation);
+                        if (operation.backupScope != null && operation.deadline - SystemClock.elapsedRealtime() < 30000) backupDeadline(operation);
+                        if(operation.recoveryExport!=null)recovery.checkPrepared(operation.recoveryExport,operation.recoveryAuthority);
+                        output.write(buffer, 0, count);
+                    }
                     output.flush(); check(operation);
+                    if (operation.backupScope != null) backupOwner(operation);
                     if(operation.recoveryExport!=null)recovery.checkSavedSource(operation.recoveryExport,operation.recoveryAuthority);
                 }
                 complete = true;

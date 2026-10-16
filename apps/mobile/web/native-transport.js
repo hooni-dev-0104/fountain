@@ -71,14 +71,19 @@
     if(body.byteLength>limit)throw new RangeError('데이터가 허용된 크기를 넘었습니다.');return body;
   }
   function create(bridge,{pollInterval=1000}={}) {
-    let configuration={origin:null,generation:0,outboxVersion:0,outboxEnabled:false},authGeneration=0,configurationFence=0,authTail=Promise.resolve(),serial=0;
+    let configuration={origin:null,generation:0,outboxVersion:0,outboxEnabled:false,recoveryVersion:0,recoveryEnabled:false},authGeneration=0,configurationFence=0,publicScopeEpoch=0,authTail=Promise.resolve(),serial=0;
     const calls=new Map(),sources=new Set(),downloadLinks=new Map();
     const id=()=>`mobile_${Date.now().toString(36)}_${++serial}`;
     function configured(){if(!configuration.origin)throw new Error('먼저 HTTPS 서버 주소를 설정해 주세요.');}
+    function announceScope(reason){publicScopeEpoch++;root.dispatchEvent(new CustomEvent('fountain-native-scope-changed',{detail:{scopeEpoch:publicScopeEpoch,reason}}));}
     function setConfiguration(value) {
       if(!value||!Number.isSafeInteger(value.generation)||value.generation<configuration.generation)invalid();
+      const previous=configuration;
       configuration={origin:value.origin===null?null:validateOrigin(value.origin),generation:value.generation,
-        outboxVersion:value.outboxVersion===1?1:0,outboxEnabled:value.outboxVersion===1&&value.outboxEnabled===true};
+        outboxVersion:value.outboxVersion===1?1:0,outboxEnabled:value.outboxVersion===1&&value.outboxEnabled===true,
+        recoveryVersion:value.recoveryVersion===1?1:0,recoveryEnabled:value.recoveryVersion===1&&value.recoveryEnabled===true};
+      if(previous.origin!==configuration.origin||previous.generation!==configuration.generation
+          ||previous.recoveryVersion!==configuration.recoveryVersion||previous.recoveryEnabled!==configuration.recoveryEnabled)announceScope('configuration');
       return {...configuration};
     }
     function cancelCalls() {
@@ -102,7 +107,7 @@
     }
     async function initialize(){const fence=configurationFence,result=await bridge.getConfiguration();if(fence!==configurationFence)throw abortError();return setConfiguration(result);}
     async function configure(input) {
-      const origin=validateOrigin(input?.origin),fence=++configurationFence;authGeneration++;cancelCalls();
+      const origin=validateOrigin(input?.origin),fence=++configurationFence;authGeneration++;cancelCalls();announceScope('configuration');
       const result=await bridge.configure({origin});if(fence!==configurationFence)throw abortError();return setConfiguration(result);
     }
     function apiURL(value){configured();return new URL(path(value),configuration.origin).href;}
@@ -113,7 +118,7 @@
       const timeoutMs=options.timeoutMs??45000;if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>45000)invalid();
       if(method==='GET'&&options.body!=null)invalid();
       const transition=value==='/api/session'&&['POST','DELETE'].includes(method);
-      if(transition){authGeneration++;cancelCalls();}
+      if(transition){authGeneration++;cancelCalls();announceScope('authentication');}
       const expected=scope();
       const perform=async()=>{
         if(!current(expected)||options.signal?.aborted)throw abortError();
@@ -122,6 +127,7 @@
         if(!Number.isInteger(result.status)||result.status<200||result.status>599||result.status>=300&&result.status<400&&result.status!==304)throw new TypeError('리디렉션 또는 잘못된 서버 응답을 거부했습니다.');
         const safe=new Headers();for(const [key,val] of Object.entries(result.headers||{}))if(responseHeaders.has(key.toLowerCase()))safe.set(key,String(val));
         const decoded=decode(result.bodyBase64,RESPONSE_LIMIT);
+        if(result.status===401&&!transition)announceScope('unauthenticated');
         if(value==='/api/session'&&['GET','POST','DELETE'].includes(method)&&root.FountainNativeStorage){
           try{await root.FountainNativeStorage.refreshAuth();}
           catch(error){
@@ -200,7 +206,7 @@
       event.preventDefault();event.stopImmediatePropagation();const entry=downloadLinks.get(url.hash.slice('#fountain-download/'.length));if(!entry||!current(entry.scope))return;
       download(entry.path,anchor.download||'fountain-download').catch(error=>{if(error.name!=='AbortError')root.dispatchEvent(new CustomEvent('fountain-native-error',{detail:{message:error.message}}));});
     },true);
-    return Object.freeze({native:true,get origin(){return configuration.origin;},get generation(){return configuration.generation;},get outboxVersion(){return configuration.outboxVersion;},get outboxEnabled(){return configuration.outboxEnabled;},initialize,configure,apiURL,request,events,xhr,download,saveData,downloadURL,publicURL,appURL});
+    return Object.freeze({native:true,get origin(){return configuration.origin;},get generation(){return configuration.generation;},get outboxVersion(){return configuration.outboxVersion;},get outboxEnabled(){return configuration.outboxEnabled;},get recoveryVersion(){return configuration.recoveryVersion;},get recoveryEnabled(){return configuration.recoveryEnabled;},get scopeEpoch(){return publicScopeEpoch;},initialize,configure,apiURL,request,events,xhr,download,saveData,downloadURL,publicURL,appURL});
   }
   root.FountainNativeTransport=Object.freeze({create,validateOrigin});
 })(globalThis);

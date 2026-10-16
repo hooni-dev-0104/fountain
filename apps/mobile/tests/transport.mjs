@@ -19,6 +19,7 @@ function fixture(){
   return{transport,bridge,calls,cancellations,document,events,context,setHandler:fn=>handler=fn};
 }
 const f=fixture(),T=f.transport;await T.initialize();assert.equal(T.native,true);assert.equal(T.origin,'https://family.example');
+assert.equal(T.recoveryVersion,0);assert.equal(T.recoveryEnabled,false);const scopeNotices=[];f.events.addEventListener('fountain-native-scope-changed',event=>scopeNotices.push(event.detail));
 for(const value of ['http://family.example','https://user:password@family.example','https://family.example/path','https://family.example/?q=1','https://family.example/#a','https://family.example\\x','https://family.example/.','https://family.example/%2e','https://family.example/..','https://family.example?','https://family.example/?','https://family.example#','https://family.example/#'])assert.throws(()=>f.context.FountainNativeTransport.validateOrigin(value));
 for(const value of ['https://evil.example/api/x','//evil.example/api/x','/api/../private','/api/%2e%2e/private','/api/%252e%252e/private','/api/%255cprivate','/api/x#fragment','/api/x\n','/api//x','/public','/api/%00','/api/%'])assert.throws(()=>T.request(value));
 assert.equal(T.apiURL('/api/search?q='+encodeURIComponent('가족 / 메모 #1')),'https://family.example/api/search?q='+encodeURIComponent('가족 / 메모 #1'));
@@ -43,6 +44,13 @@ f.setHandler(async()=>({...response({}),bodyBase64:Buffer.alloc(16*1024*1024+1).
 const storageFixture=fixture(),S=storageFixture.transport;
 storageFixture.bridge.getConfiguration=async()=>({origin:'https://family.example',generation:1,outboxVersion:1,outboxEnabled:false});
 await S.initialize();assert.equal(S.outboxVersion,1);assert.equal(S.outboxEnabled,false);
+assert.equal(S.recoveryEnabled,false);
+storageFixture.bridge.getConfiguration=async()=>({origin:'https://family.example',generation:1,outboxVersion:1,outboxEnabled:false,recoveryVersion:1,recoveryEnabled:true});
+const beforeCapability=S.scopeEpoch;await S.initialize();assert.equal(S.recoveryVersion,1);assert.equal(S.recoveryEnabled,true);assert.ok(S.scopeEpoch>beforeCapability,'recovery capability changes invalidate a view even when the server generation is unchanged');
+const initialScope=S.scopeEpoch;storageFixture.setHandler(async value=>response({error:'Authentication required'},401,value.generation));
+assert.equal((await S.request('/api/session')).status,401);assert.ok(S.scopeEpoch>initialScope,'expired authentication invalidates pending recovery UI');
+const failedLoginScope=S.scopeEpoch;assert.equal((await S.request('/api/session',{method:'POST',body:'{}'})).status,401);assert.equal(S.scopeEpoch,failedLoginScope+1,'wrong-password response does not emit a second unrelated scope transition');
+storageFixture.setHandler(async value=>response({ok:true},200,value.generation));
 let barrierCalls=0,releaseBarrier;
 storageFixture.context.FountainNativeStorage={refreshAuth:()=>{barrierCalls++;return new Promise(resolve=>releaseBarrier=resolve);}};
 let sessionReturned=false;const sessionResult=S.request('/api/session').then(value=>{sessionReturned=true;return value;});
@@ -83,5 +91,6 @@ f.setHandler(async value=>response({error:'권한 없음'},403,value.generation)
 // Upload facade emits acknowledged chunk completion, never fabricated socket progress.
 let chunkResolve;f.setHandler(value=>new Promise(resolve=>chunkResolve=()=>resolve(response({offset:4*1024*1024},200,value.generation))));let progress=[],loaded=false,ended=0;const xhr=T.xhr('PUT','/api/uploads/file/chunks?offset=0');xhr.setRequestHeader('Content-Type','application/octet-stream');xhr.upload.onprogress=event=>progress.push([event.loaded,event.acknowledged]);xhr.onload=()=>loaded=true;xhr.onloadend=()=>ended++;xhr.send(new Blob([new Uint8Array(4*1024*1024)]));await until(()=>!!chunkResolve);assert.equal(progress.length,0);chunkResolve();await until(()=>ended);assert.equal(loaded,true);assert.deepEqual(progress,[[4*1024*1024,true]]);assert.equal(xhr.status,200);
 let lateChunk;f.setHandler(value=>new Promise(resolve=>lateChunk=()=>resolve(response({},200,value.generation))));const cancelled=T.xhr('PUT','/api/uploads/file/chunks?offset=0');cancelled.setRequestHeader('Content-Type','application/octet-stream');let callbacks=0;cancelled.onload=()=>callbacks++;cancelled.upload.onprogress=()=>callbacks++;cancelled.send(new Blob(['tiny']));await until(()=>!!lateChunk);cancelled.abort();lateChunk();await sleep(20);assert.equal(callbacks,0);
+assert.ok(scopeNotices.some(event=>event.reason==='authentication'));assert.ok(scopeNotices.some(event=>event.reason==='configuration'));assert.ok(scopeNotices.every(event=>Number.isSafeInteger(event.scopeEpoch)&&Object.keys(event).every(key=>['scopeEpoch','reason'].includes(key))));
 const temporary=await mkdtemp(join(tmpdir(),'fountain-mobile-build-'));try{const output=join(temporary,'www'),result=await build(output),files=await readdir(output),html=await readFile(join(output,'index.html'),'utf8');assert.ok(files.includes('capacitor.js'));assert.ok(files.includes('native-transport.js'));assert.ok(!files.includes('transport.js'));assert.match(html,/Content-Security-Policy/);assert.match(html,/connect-src 'self'/);assert.ok(!html.includes('src="/app.js"'));assert.ok(!files.some(name=>/\.db$|\.json$|\.env|node_modules|supabase/i.test(name)));assert.ok(result.assets.length>5);}finally{await rm(temporary,{recursive:true,force:true});}
 console.log('PASS native transport: strict paths/headers/bytes, real Response, redirects, cancel/auth/config fences, serial foreground polls, acknowledged chunks and public-only bundle');

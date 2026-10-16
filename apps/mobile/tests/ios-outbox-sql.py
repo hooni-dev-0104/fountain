@@ -94,9 +94,9 @@ os._exit(9)
             self.db.execute('COMMIT' if commit else 'ROLLBACK')
             self.assertEqual(self.db.execute('SELECT count(*) FROM records').fetchone()[0], 1 if commit else 3)
         self.db.execute('BEGIN IMMEDIATE')
-        self.db.execute(sql('INSERT OR IGNORE INTO tombstones(scope,kind,profile_id) VALUES(?,\'profile\''), ('profile', 'profile'))
-        self.db.execute(sql('DELETE FROM records WHERE profile_id='), ('profile',))
-        self.db.execute(sql('DELETE FROM recovery WHERE profile_id='), ('profile',))
+        self.db.execute(sql("INSERT OR IGNORE INTO tombstones(scope,kind,profile_id) SELECT profile_id,'profile',profile_id FROM records"), ('profile', 'profile'))
+        self.db.execute(sql('DELETE FROM records WHERE substr(profile_id,'), ('profile', 'profile'))
+        self.db.execute(sql('DELETE FROM recovery WHERE substr(profile_id,'), ('profile', 'profile'))
         self.db.execute('COMMIT')
         self.assertEqual(self.db.execute('SELECT count(*) FROM records').fetchone()[0], 0)
         self.assertEqual(self.db.execute('SELECT count(*) FROM tombstones').fetchone()[0], 2)
@@ -139,7 +139,7 @@ os._exit(9)
         self.assertIn('private let OUTBOX_ENABLED = false', plugin)
         self.assertIn('"outboxEnabled": OUTBOX_ENABLED', plugin)
         self.assertIn('guard OUTBOX_ENABLED else { call.reject(', plugin)
-        self.assertIn('if OUTBOX_ENABLED, !recoveryMode, value.active == nil { try outboxStore().revoke() }', plugin)
+        self.assertIn('if OUTBOX_ENABLED, !recoveryMode, value.active == nil { try outboxStore().suspend() }', plugin)
         observer = plugin.split('private func observeOutboxSession', 1)[1].split('private func validOrigin', 1)[0]
         self.assertLess(observer.index('guard OUTBOX_ENABLED, !recoveryMode else'), observer.index('try outboxStore()'))
         self.assertIn('self.auth == startingAuth', plugin)
@@ -150,9 +150,16 @@ os._exit(9)
         self.assertIn('webView.evaluateJavaScript(', delivery)
         self.assertNotIn('call.resolve(', delivery)
         receipt = SOURCE.split('if let receipt = try rows("SELECT digest,head', 1)[1].split('var bytes = Data()', 1)[0]
-        self.assertIn('DELETE FROM staging WHERE tx_id=?', receipt)
-        self.assertTrue('if !sameIdentity { _ = try self.advance();' in SOURCE)
-        self.assertIn('if item.bucket == "profiles" { try self.purgeProfile(item.profile) }', SOURCE)
+        self.assertNotIn('DELETE FROM staging', receipt)
+        self.assertIn('requireReceiptOwner(txID, current: currentProfile)', receipt)
+        stage = SOURCE.split('func stage(', 1)[1].split('private struct Change', 1)[0]
+        self.assertIn('requireReceiptOwner(txID, current: current)', stage)
+        receipt_owner = SOURCE.split('private func requireReceiptOwner(', 1)[1].split('func commit(', 1)[0]
+        self.assertIn('guard owner == current', receipt_owner)
+        self.assertIn('control("suspended:" + owner) == nil', receipt_owner)
+        self.assertIn('try self.markSuspended(old)', SOURCE)
+        self.assertIn('if fencedProfiles.contains(item.profile) { continue }', SOURCE)
+        self.assertNotIn('purgeProfile(', SOURCE)
         profile_lookup = SOURCE.split('private func availableProfile()', 1)[1].split('func ensureOwner', 1)[0]
         self.assertIn('do { return try verifiedProfile() }', profile_lookup)
         self.assertIn('catch FountainOutboxError.blocked { return nil }', profile_lookup)
@@ -174,7 +181,8 @@ os._exit(9)
         self.assertEqual(found, payload)
         self.assertNotEqual(found, json.dumps({**receipt, 'operationIds': ['forged']}).encode())
         self.assertEqual(self.db.execute(sql('SELECT rowid,bucket,key,length(value) FROM records'), ('other-profile', 0)).fetchall(), [])
-        self.db.execute(sql('DELETE FROM records WHERE profile_id='), (profile,))
+        prefix = profile.rsplit('|', 1)[0] + '|'
+        self.db.execute(sql('DELETE FROM records WHERE substr(profile_id,'), (prefix, prefix))
         self.assertEqual(self.db.execute('SELECT count(*) FROM records').fetchone()[0], 0)
         parser = SOURCE.split('private func importReceiptProfile(', 1)[1].split('private func purgeProfile(', 1)[0]
         self.assertIn('key.lastIndex(of: ":")', parser)
@@ -184,6 +192,31 @@ os._exit(9)
         self.assertIn('previous != item.payload', SOURCE)
         self.assertIn('if op == "delete" { return profile }', parser)
         self.assertIn('SELECT count(*) FROM tombstones WHERE scope=?", [item.profile]', SOURCE)
+
+    def test_passive_suspension_retains_source_and_actor_deletion_is_native_only(self):
+        plugin = (APP / 'AppDelegate.swift').read_text()
+        suspend = SOURCE.split('func suspend()', 1)[1].split('func grant(', 1)[0]
+        grant = SOURCE.split('func grant(', 1)[1].split('func actorForLogout(', 1)[0]
+        owner = SOURCE.split('func ensureOwner(', 1)[1].split('private func checkLease', 1)[0]
+        for section in (suspend, grant, owner):
+            self.assertNotIn('DELETE FROM', section)
+        self.assertIn('"suspended:" + profile', SOURCE)
+        self.assertIn('"needsFloor": true', grant)
+        self.assertIn('anchored["needsFloor"] = false', SOURCE)
+        self.assertIn('if try identity()["needsFloor"] as? Bool == true', SOURCE)
+        self.assertIn('if mode == "active" && identity["needsFloor"] as? Bool == true', SOURCE)
+        self.assertIn('guard active == item.profile else', SOURCE)
+        self.assertIn('guard active == profile else', SOURCE)
+        request = plugin.split('@objc func request(', 1)[1].split('@objc func cancel(', 1)[0]
+        self.assertIn('job.mode == "logout", OUTBOX_ENABLED, !self.recoveryMode', request)
+        self.assertIn('actorForLogout(reference: reference)', request)
+        self.assertNotIn('call.getString("profile', request)
+        self.assertIn('job.mode == "logout" ? job.logoutActor : nil', plugin)
+        self.assertIn('catch FountainOutboxError.access { return }', plugin)
+        erase = SOURCE.split('func eraseActor(', 1)[1].split('func revocationConfirmed(', 1)[0]
+        self.assertIn('substr(profile_id,1,length(?))=?', erase)
+        self.assertIn("substr(id,1,12)='stagedOwner:'", erase)
+        self.assertNotIn('DELETE FROM staging"', erase)
 
     def control(self, name):
         found = self.db.execute(sql('SELECT value FROM control'), (name,)).fetchone()

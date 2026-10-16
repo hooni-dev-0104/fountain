@@ -61,6 +61,115 @@ final class FountainNativeTests: XCTestCase {
     }
     private func handles(_ result: [String: Any]) -> [String] { (result["items"] as! [[String: Any]]).map { $0["handle"] as! String } }
 
+    private func sql(_ file: URL, _ statement: String, _ values: [String] = []) throws -> [[String]] {
+        var db: OpaquePointer?; XCTAssertEqual(sqlite3_open(file.path, &db), SQLITE_OK); defer { sqlite3_close_v2(db) }
+        var query: OpaquePointer?; XCTAssertEqual(sqlite3_prepare_v2(db, statement, -1, &query, nil), SQLITE_OK); defer { sqlite3_finalize(query) }
+        for (index, value) in values.enumerated() { sqlite3_bind_text(query, Int32(index + 1), value, -1, transient) }
+        var result: [[String]] = []
+        while true {
+            let status = sqlite3_step(query)
+            if status == SQLITE_DONE { break }
+            guard status == SQLITE_ROW else { throw FountainOutboxError.storage }
+            result.append((0..<sqlite3_column_count(query)).map { sqlite3_column_text(query, $0).map { String(cString: $0) } ?? "" })
+        }
+        return result
+    }
+    private func retainedBytes(_ file: URL) throws -> [[String]] {
+        try sql(file, "SELECT 'record',bucket,key,profile_id,hex(value) FROM records UNION ALL SELECT 'recovery',bucket,key,profile_id,hex(value) FROM recovery UNION ALL SELECT 'staging',tx_id,CAST(part AS TEXT),lease,hex(data) FROM staging UNION ALL SELECT 'receipt',tx_id,digest,CAST(head AS TEXT),'' FROM tx_receipts ORDER BY 1,2,3,4,5")
+    }
+    private func session(_ member: String, _ binding: String) -> [String: Any] {
+        ["authenticated": true, "mode": "accounts", "required": true, "workspace_id": "qa-workspace", "cache_binding": binding,
+         "expires_at": ISO8601DateFormatter().string(from: Date().addingTimeInterval(3600)),
+         "member": ["id": member, "active": true, "role": "member"]]
+    }
+    private func seedOwnedScratch(_ file: URL, _ profile: String, _ tx: String) throws {
+        _ = try sql(file, "INSERT INTO staging(tx_id,part,lease,base_head,data) VALUES(?,0,'old-lease',0,x'010203')", [tx])
+        _ = try sql(file, "INSERT INTO tx_receipts(tx_id,digest,head) VALUES(?, 'fixture-digest',0)", [tx])
+        for kind in ["stagedOwner:", "receiptOwner:"] { _ = try sql(file, "INSERT INTO control(id,value) VALUES(?,CAST(? AS BLOB))", [kind + tx, try json(profile)]) }
+    }
+    func testPassiveAuthRetentionFreshBindingFloorAndActorOnlyLogout() throws {
+        let authority = try context(), origin = authority.origin
+        let a1 = origin + "|qa-workspace|A|first", a2 = origin + "|qa-workspace|A|second", b = origin + "|qa-workspace|B|first"
+        func draft(_ profile: String) -> [String: Any] { ["key": profile + "|welcome", "profileId": profile, "clientId": "first", "draft": ["blocks": [["id": "x", "type": "paragraph", "text": "미전송🙂"]]]] }
+        let file = try source(authority, records: [("drafts", [a1 + "|welcome", "first"], draft(a1), false), ("drafts", [a2 + "|welcome", "first"], draft(a2), true), ("drafts", [b + "|welcome", "first"], draft(b), false)])
+        try seedOwnedScratch(file, a1, "a-owned"); try seedOwnedScratch(file, b, "b-owned")
+        _ = try sql(file, "INSERT INTO staging(tx_id,part,lease,base_head,data) VALUES('legacy-unknown',0,'legacy',0,x'ff')")
+        let store = try FountainOutbox(origin: origin); defer { store.close() }
+        try store.grant(session("A", "first"), sessionRef: "cookie-a1")
+        try store.ensureOwner("first-webview", epoch: 1)
+        let initial = try store.open(), before = try retainedBytes(file), oldBoundary = store.boundary
+        XCTAssertEqual(initial["resourceAccess"] as? String, "required")
+        XCTAssertThrowsError(try store.read(lease: initial["lease"] as! String, head: initial["head"] as! Int, proofEpoch: initial["proofEpoch"] as! Int, cursor: nil, byteLimit: 1024))
+        try store.validateSession("cookie-a1", eligible: false)
+        XCTAssertNotEqual(oldBoundary, store.boundary); XCTAssertEqual(try retainedBytes(file), before)
+        try store.ensureOwner("second-webview", epoch: 2)
+        XCTAssertEqual(try store.open()["identityState"] as? String, "blocked")
+        XCTAssertThrowsError(try store.grant(session("A", "first"), sessionRef: "cookie-a1"))
+        let blocked = try store.open()
+        XCTAssertThrowsError(try store.stage(lease: blocked["lease"] as! String, txID: "late", baseHead: blocked["head"] as! Int, proofEpoch: blocked["proofEpoch"] as! Int, part: 0, bytes: Data("{}".utf8)))
+        try store.grant(session("A", "second"), sessionRef: "cookie-a2")
+        try store.ensureOwner("second-webview", epoch: 3)
+        XCTAssertEqual(try retainedBytes(file), before)
+        XCTAssertEqual(try store.open()["resourceAccess"] as? String, "required")
+        // A query-bearing response cannot anchor a fresh native grant.
+        let workspace: [String: Any] = ["workspace_id": "qa-workspace", "current_member_id": "A", "session_binding": "second", "access_revision": 5, "data_revision": 9, "pages": [], "databases": []]
+        try store.observeResource(path: "/api/workspace?q=1", method: "GET", status: 200, data: encoded(workspace), sessionRef: "cookie-a2")
+        XCTAssertEqual(try store.open()["resourceAccess"] as? String, "required")
+        try store.observeResource(path: "/api/workspace", method: "GET", status: 200, data: encoded(workspace), sessionRef: "cookie-a2")
+        let anchored = try sql(file, "SELECT CAST(value AS TEXT) FROM control WHERE id='identity'")[0][0]
+        XCTAssertTrue(anchored.contains("\"needsFloor\":false"))
+        let stable = store.boundary, head = try store.open()["head"] as! Int
+        try store.grant(session("A", "second"), sessionRef: "cookie-a2")
+        XCTAssertEqual(store.boundary, stable); XCTAssertEqual(try store.open()["head"] as? Int, head)
+        XCTAssertNil(try store.actorForLogout(reference: "unrelated-cookie"))
+        let actor = try XCTUnwrap(store.actorForLogout(reference: "cookie-a2"))
+        try store.eraseActor(actor)
+        XCTAssertEqual(try sql(file, "SELECT count(*) FROM records WHERE profile_id=?", [b])[0][0], "1")
+        XCTAssertEqual(try sql(file, "SELECT count(*) FROM records WHERE profile_id=?", [a1])[0][0], "0")
+        XCTAssertEqual(try sql(file, "SELECT count(*) FROM recovery WHERE profile_id=?", [a2])[0][0], "0")
+        XCTAssertEqual(try sql(file, "SELECT tx_id FROM staging ORDER BY tx_id").map { $0[0] }, ["b-owned", "legacy-unknown"])
+        XCTAssertEqual(try sql(file, "SELECT tx_id FROM tx_receipts").map { $0[0] }, ["b-owned"])
+        XCTAssertThrowsError(try store.grant(session("A", "second"), sessionRef: "cookie-a2"))
+    }
+    func testActorEraseFailureRollsBackAllSourceAndUnknownActorIsOpaque() throws {
+        let authority = try context(), own = authority.origin + "|qa-workspace|A|first", resource = own + "|welcome"
+        let draft: [String: Any] = ["key": resource, "profileId": own, "clientId": "first", "draft": ["blocks": [["id": "x", "type": "paragraph", "text": "rollback"]]]]
+        let file = try source(authority, records: [("drafts", [resource, "first"], draft, false), ("drafts", [resource, "wrapped"], draft, true)])
+        let store = try FountainOutbox(origin: authority.origin); defer { store.close() }
+        XCTAssertNil(try store.actorForLogout(reference: "cookie"))
+        try store.grant(session("A", "first"), sessionRef: "cookie")
+        let actor = try XCTUnwrap(store.actorForLogout(reference: "cookie")), before = try retainedBytes(file)
+        _ = try sql(file, "CREATE TRIGGER fail_erase BEFORE DELETE ON recovery BEGIN SELECT RAISE(ABORT,'QA rollback'); END")
+        XCTAssertThrowsError(try store.eraseActor(actor))
+        XCTAssertEqual(try retainedBytes(file), before)
+        XCTAssertEqual(try sql(file, "SELECT count(*) FROM tombstones")[0][0], "0")
+    }
+    func testReceiptAcknowledgementRequiresExactNativeOwnerAndPreservesLegacy() throws {
+        let authority = try context(), own = authority.origin + "|qa-workspace|A|first"
+        let file = try source(authority, records: []), digest = String(repeating: "a", count: 64)
+        try seedOwnedScratch(file, own, "owned")
+        _ = try sql(file, "UPDATE tx_receipts SET digest=?", [digest])
+        _ = try sql(file, "INSERT INTO control(id,value) VALUES('receiptProof:owned',x'30')")
+        _ = try sql(file, "INSERT INTO tx_receipts(tx_id,digest,head) VALUES('legacy',?,0)", [digest])
+        _ = try sql(file, "INSERT INTO control(id,value) VALUES('receiptProof:legacy',x'30')")
+        _ = try sql(file, "INSERT INTO staging(tx_id,part,lease,base_head,data) VALUES('legacy',0,'opaque',0,x'ff')")
+        let store = try FountainOutbox(origin: authority.origin); defer { store.close() }
+        try store.grant(session("A", "first"), sessionRef: "cookie-a")
+        try store.ensureOwner("a", epoch: 1)
+        let first = try store.open(), before = try retainedBytes(file)
+        try store.stage(lease: first["lease"] as! String, txID: "owned", baseHead: 0, proofEpoch: 0, part: 0, bytes: Data("{}".utf8))
+        XCTAssertEqual(try store.commit(lease: first["lease"] as! String, txID: "owned", baseHead: 0, proofEpoch: 0, digest: digest)["txId"] as? String, "owned")
+        XCTAssertEqual(try retainedBytes(file), before)
+        try store.grant(session("B", "first"), sessionRef: "cookie-b")
+        try store.ensureOwner("b", epoch: 2)
+        let second = try store.open(), lease = second["lease"] as! String
+        XCTAssertThrowsError(try store.stage(lease: lease, txID: "owned", baseHead: 0, proofEpoch: 0, part: 0, bytes: Data("{}".utf8)))
+        XCTAssertThrowsError(try store.commit(lease: lease, txID: "owned", baseHead: 0, proofEpoch: 0, digest: digest))
+        try store.stage(lease: lease, txID: "legacy", baseHead: 0, proofEpoch: 0, part: 0, bytes: Data("{}".utf8))
+        XCTAssertEqual(try store.commit(lease: lease, txID: "legacy", baseHead: 0, proofEpoch: 0, digest: digest)["txId"] as? String, "legacy")
+        XCTAssertEqual(try retainedBytes(file), before)
+    }
+
     func testReadonlyNativeRoundtripRawWrappedAndActorIsolation() throws {
         let authority = try context(), own = profile(authority), resource = own + "|welcome"
         let draft: [String: Any] = ["key": resource, "profileId": own, "clientId": "first", "draft": ["blocks": [["id": "original", "type": "paragraph", "text": "한글🙂 <img src=x>", "rich_text": [["text": "한글🙂 <img src=x>", "marks": ["bold": true]]]]]]]

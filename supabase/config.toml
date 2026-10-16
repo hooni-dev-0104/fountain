@@ -4,6 +4,13 @@
 # working directory name when running `supabase init`.
 project_id = "fountain"
 
+[functions.fountain-api]
+enabled = true
+# The BFF validates its private opaque session against Supabase Auth itself.
+# Public health/session entry points must also work without a caller JWT.
+verify_jwt = false
+entrypoint = "./functions/fountain-api/index.ts"
+
 [api]
 enabled = true
 # Port to use for the API URL.

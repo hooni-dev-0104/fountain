@@ -190,3 +190,35 @@ xcresult/log paths. Reviewers independently inspected the result bundle and hash
 These tests do not prove remote HTTPS login, Keychain storage failures, OS picker
 completion/partial save, physical-device file protection, process-death faults,
 WebView eviction recovery or ordinary outbox activation. Those remain separate.
+
+## Authentication retention checkpoint — 2026-10-16
+
+The disabled native outbox prototype now separates passive suspension from native
+explicit actor deletion. Expiry, passive 401, login transitions and new bindings
+fence the old exact profile without deleting records, recovery, receipt or staged
+input. A suspended binding cannot reactivate. A fresh binding requires an actual
+native, query-free workspace GET to establish its revision floor before active
+read or commit. Successful session HTTP responses remain HTTP responses even when
+the separate outbox gate requires recovery. Renderer profile/revocation deltas
+cannot authorize archive erasure, and active deletion cannot target another profile.
+
+Explicit DELETE captures a native-private actor before invalidation and removes
+that origin/workspace/member's bindings only. Tagged staging and receipts may be
+removed with that actor; unattributed legacy staging remains opaque and preserved.
+Recovery mode's original read-only exception is unchanged. `OUTBOX_ENABLED=false`
+and the ordinary disabled path's zero SQLite access remain in force.
+
+The portable SQL/source suite has 22 passing checks. Three additional actual Swift
+XCTest cases extend the dedicated Fountain QA Simulator suite to nine: source
+byte preservation across passive invalidation/new binding, same-binding fences,
+workspace-floor anchoring, unrelated-cookie rejection, actor-scoped deletion with
+other-actor and unattributed staging preserved, and atomic rollback under a real
+SQLite abort trigger, plus exact native receipt-owner positive/foreign-negative
+checks and legacy metadata-only receipt acknowledgement without deleting staging.
+Existing six recovery/bridge/asset tests also pass. These
+tests call actual Swift/SQLite methods; passive HTTP/Keychain callback integration
+and physical-device behavior are not claimed by these tests. No UI layout changed.
+
+Final retention evidence is in `.data/ios-retention-owner-tests.log` and
+`.data/ios-retention-owner-results`, using the same isolated QA Simulator command
+above. No existing user simulator or production database was used.

@@ -180,3 +180,33 @@ These tests verify explicit recovery and the existing secure transport on an
 emulator. They do not activate or prove ordinary native outbox replay, mobile
 crash durability, unproven local creation closure, arbitrary physical devices,
 or automatic recovery promotion. `OUTBOX_ENABLED=false` remains unchanged.
+
+## Authentication retention checkpoint
+
+Native auth invalidation now suspends the exact private profile instead of
+purging its source. Private control markers block the old binding and rotate
+its proofs/head/owner lease while preserving records, recovery, original
+receipts and uncertain staged parts. An actual session response cannot resume
+an expired or suspended binding. A fresh binding needs a new native workspace
+GET before active reads/commits. Unexpired identical grants preserve the
+original deadline and lease. The public recovery error remains
+`OUTBOX_ACCESS_REQUIRED`; no bridge method was added.
+
+Only explicit native DELETE can erase all bindings of the privately verified
+origin/workspace/member. Actor capture precedes auth invalidation and checks
+the private active/revoke cookie hash; unknown actors cannot trigger an erase.
+Recovery-mode DELETE retains its existing read-only override. Renderer profile
+deletes/revocations suspend rather than erase the archive; quarantine deletes
+do not remove originals, and conflicting quarantine overwrites abort atomically.
+Native owner tags attribute new staged parts/receipts to an actor. Legacy
+unattributed parts/recovery remain opaque and preserved even on actor logout;
+their ownership or automatic promotion is not inferred.
+
+The existing device runner now additionally executes
+`AuthRetentionDeviceTest` (five tests) against the actual Android SQLite driver.
+These tests invoke the inactive storage class directly with synthetic native
+grants; they do **not** turn on the production gate or claim an enabled-plugin
+HTTP auth flow. Existing real WebView/HTTPS/Keystore/picker cases run separately
+in the same fresh QA environment. The constructor also canonicalizes the
+app-owned `noBackupFilesDir` before checking children, so Android's legitimate
+`/data/user/0` alias does not fail the private-file guard.

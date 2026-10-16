@@ -1,0 +1,443 @@
+{
+  "observedAt": "2026-10-16T16:51:19.766809+00:00",
+  "sourceCommit": "fb5410c011d460fe16063c7313bac82c1bbc9f7c",
+  "sourceSHA256": {
+    "supabase/functions/_shared/scim-http.ts": "47e09c8868261ddb023d48cc7c0fe4422f0d9c14f8d52891d1d5d71e2b4f18bb",
+    "supabase/functions/_shared/application.ts": "24f9ac8669867b0a81d8495183340b7b191d930aa0b045aa70af8389b3af6fb6",
+    "supabase/functions/_shared/backend.ts": "d2bd9fa16e12c40fa454e6d63ad2fbc356a570043befc22aff8f2d6267c733c8",
+    "static/app.js": "7598397b92f902bc1c1c93230db229a164aa71749446df9b03682df8dadd5853",
+    "supabase/migrations/20261016164219_fountain_cloud_scim_bearer.sql": "caab1d2ea36b40dfb353a064a407cd5063715eca3a4c20db753cd2d497b6bc89",
+    "supabase/tests/scim-http.mjs": "17c3744bda74ec879d106a4aa4c1e25149abd53b2eb38767a9d46d3fec4d74bd",
+    "supabase/tests/cloud-scim-bearer-denials.sql": "cbe26aa128a854aa2050304614496a50371bc7c3ca620a1adc04813b0eedc404",
+    "supabase/tests/live-scim.ts": "b77b8de192f8dfc7495e13ed172d483ce9e4531ffb1e160db49007bb4c978922",
+    "supabase/tests/live-scim-deprovision-proofs.sql": "fc46e7b747563211326556f7e625f6d543a60efa74e25baaac75d37606b44968",
+    "tests/scim-ui.mjs": "46a587485941c719e68eed5d999eb171dd29691b29308e3054ad2de75fdf759d",
+    "supabase/tests/route-inventory.json": "a9c2f5015764ceb0e212adb8ffa616b86288818755898c1e058ea2245b4b41a7"
+  },
+  "scope": "Actual Supabase owner-issued bearer SCIM Users/Groups, current issuer grants, scoped member deprovision, atomic rollback and concurrent login serialization. Disposable workspace only; no external IdP integration.",
+  "productionCutover": false,
+  "migrationsApplied": 19,
+  "migration": "20261016164219_fountain_cloud_scim_bearer",
+  "mainFunction": {
+    "version": 7,
+    "bundleSHA256": "f0c1bf78a14fb23bd526133c765af2096bc409b830afcfabfd6663a7f1d635e3",
+    "sourceCommit": "02531b2",
+    "ready": false,
+    "setupEnabled": false,
+    "webOrigins": []
+  },
+  "schedulerWorkerVersion": 3,
+  "sourceTests": {
+    "nodeRunner": 259,
+    "failed": 0,
+    "skipped": 0,
+    "scimLoopbackHTTPWithModeledRPC": 20,
+    "ownerUITabRAMModel": 13,
+    "ownerUIAndWebHostCombinedRunner": 21,
+    "actualTypeScriptCompiler": false
+  },
+  "actualPostgreSQLPythonRegression": {
+    "passed": 481,
+    "seconds": 225.488,
+    "scope": "Existing Python tests against actual PostgreSQL with migration 19 installed; independent unregistered namespaces."
+  },
+  "actualSQLDenials": {
+    "metadataChecks": 4,
+    "persistentWrites": false,
+    "credentialsIssued": false,
+    "uniformTokenDenials": 8,
+    "deprovisionLifecycleExecuted": false
+  },
+  "actualPhases": {
+    "bootstrap": {
+      "stage": "bootstrap",
+      "checks": [
+        "real_application_explicit_bootstrap_creates_signed_local_owner_and_opaque_session",
+        "same_signed_setup_after_discarded_ack_reuses_auth_uuid_no_second_admin_create",
+        "explicit_setup_envelope_rejects_client_metadata_no_implicit_owner_signup"
+      ],
+      "users": [
+        {
+          "id": "1ef376ff-4f84-4ff6-a28d-d4a534270963",
+          "email": "5c2c908cf9979ed3-owner@fountain.invalid",
+          "memberId": "local"
+        }
+      ]
+    },
+    "accounts": {
+      "stage": "accounts",
+      "checks": [
+        "real_application_owner_creates_existing_child_member_no_provider_role_authority",
+        "real_child_workspace_private_projection_denial_and_current_view_acl",
+        "malformed_account_fields_and_nonowner_management_rejected"
+      ],
+      "users": [
+        {
+          "id": "1ef376ff-4f84-4ff6-a28d-d4a534270963",
+          "email": "5c2c908cf9979ed3-owner@fountain.invalid",
+          "memberId": "local"
+        },
+        {
+          "id": "1b5a053b-c362-4c28-9c56-ba1ab19e6d9d",
+          "email": "5c2c908cf9979ed3-child@fountain.invalid",
+          "memberId": "child"
+        }
+      ]
+    },
+    "lifecycle": {
+      "stage": "lifecycle",
+      "phase": "lifecycle",
+      "checks": [
+        "real_owner_issued_inactive_bearer_denied_then_activated_grant",
+        "actual_bearer_scim_media_head_and_service_provider_config",
+        "anonymous_wrong_header_origin_cookie_and_query_auth_denied_before_authorize_rpc",
+        "actual_users_crud_and_operator_dropped_real_commit_ack_exact_retry_creates_one_member",
+        "actual_groups_crud_member_add_basic_pages_and_explicit_unsupported_filter",
+        "actual_owner_revoke_denies_bearer_afterward"
+      ],
+      "counts": {
+        "logins": 2,
+        "scimRequests": 26,
+        "authorizeRPCs": 37,
+        "serviceCommitRPCs": 17,
+        "acceptedServiceCommits": 17,
+        "operatorDroppedAcceptedACKs": 1,
+        "exactRetries": 1,
+        "responseFences": 0
+      },
+      "createdIds": {
+        "grants": [
+          "61de6b83-e8ef-49a5-a2f2-00a6048c4986"
+        ],
+        "users": [
+          "192d659154f9498e89264bd5dc1bf30d"
+        ],
+        "groups": [
+          "ba8d9721f79a4708844176497796e4e7"
+        ],
+        "pages": [],
+        "databases": [],
+        "teamspaces": []
+      }
+    },
+    "deprovision": {
+      "stage": "deprovision",
+      "phase": "deprovision",
+      "checks": [
+        "real_owner_issued_inactive_bearer_denied_then_activated_grant",
+        "actual_bearer_scim_media_head_and_service_provider_config",
+        "actual_last_owner_scim_deactivate_delete_409_preserves_original",
+        "actual_child_deactivation_revokes_old_cookie_reactivation_does_not_revive_it_fresh_password_login_succeeds",
+        "actual_unlinked_scim_member_group_delete_cleans_membership_and_page_database_acl_in_owner_api_snapshot",
+        "actual_owner_revoke_denies_bearer_afterward"
+      ],
+      "counts": {
+        "logins": 3,
+        "scimRequests": 14,
+        "authorizeRPCs": 24,
+        "serviceCommitRPCs": 10,
+        "acceptedServiceCommits": 10,
+        "operatorDroppedAcceptedACKs": 0,
+        "exactRetries": 0,
+        "responseFences": 0
+      },
+      "createdIds": {
+        "grants": [
+          "5222a8e6-4b80-4eff-b65e-eb5fff173bdd"
+        ],
+        "users": [
+          "8ba1c36c583841039464c2b6792f4e61"
+        ],
+        "groups": [
+          "12552e5e5582453d8c0d25f686daa394"
+        ],
+        "pages": [
+          "qa-scim-cleanup-page-cim-5c2c908cf9979ed3"
+        ],
+        "databases": [
+          "qa-scim-cleanup-db-cim-5c2c908cf9979ed3"
+        ],
+        "teamspaces": [
+          "f3131816adfc4b72b1d077e8b1fc9d36"
+        ]
+      }
+    },
+    "response-fence": {
+      "stage": "response-fence",
+      "phase": "response-fence",
+      "checks": [
+        "real_owner_issued_inactive_bearer_denied_then_activated_grant",
+        "actual_bearer_scim_media_head_and_service_provider_config",
+        "real_service_commit_completed_owner_revokes_original_grant_before_final_authorize_response_is_standard_401",
+        "actual_owner_revoke_denies_bearer_afterward"
+      ],
+      "counts": {
+        "logins": 2,
+        "scimRequests": 5,
+        "authorizeRPCs": 8,
+        "serviceCommitRPCs": 3,
+        "acceptedServiceCommits": 3,
+        "operatorDroppedAcceptedACKs": 0,
+        "exactRetries": 0,
+        "responseFences": 1
+      },
+      "createdIds": {
+        "grants": [
+          "97de147b-d24e-4011-a4a4-d7e15a7cd785"
+        ],
+        "users": [
+          "130bad73f8a34380aeaf45cc5a4aa835"
+        ],
+        "groups": [],
+        "pages": [],
+        "databases": [],
+        "teamspaces": []
+      }
+    }
+  },
+  "actualDeprovisionSQL": {
+    "persistentWrites": false,
+    "globalAuthPreserved": true,
+    "localPendingDenials": 4,
+    "sameIdDoesNotRelink": true,
+    "operatorFixturesOnly": true,
+    "foreignPendingDenials": 2,
+    "lateInvalidPutRollback": true,
+    "lateRevisionLimitRollback": true,
+    "usedAndUnusedClaimsPurged": true,
+    "allNineStateHashesRestored": true
+  },
+  "actualConcurrentLogin": {
+    "noAuthSessionFabricated": true,
+    "onlyChildLoginDispatched": true,
+    "actualVaultCreateWaitObserved": true,
+    "operatorConcurrentDeactivation": true,
+    "actualClient503NoCookieVerified": true,
+    "reactivatedOldVaultStillRevoked": true,
+    "liveWorkspaceHolderObservedViaIndependentPostgres": true,
+    "actualConcurrentPasswordLoginRejected": true,
+    "httpStatus": 503,
+    "sessionCookiePublished": false,
+    "errorCode": "SESSION_STORAGE_UNAVAILABLE",
+    "qualifiedRunExcludesOtherQAHTTP": true,
+    "excludedInstrumentationAttempts": 2,
+    "scope": "Independent PostgreSQL observer confirms a live workspace-holder barrier; a real child password login reaches vault_create and waits. Operator private kernel deactivates the child while holding that workspace lock. The actual login is denied 503 without publishing a cookie; operator reactivation leaves every old vault revoked."
+  },
+  "actualHTTPSBearerProbe": {
+    "actualHTTPS": true,
+    "actualEdgeGatewayOpaqueAuthorization": true,
+    "actualSupabaseRPC": true,
+    "sealedQAPathTranslation": true,
+    "productionFunctionWorkspace": false,
+    "usersRead": true,
+    "headBodyless": true,
+    "readOnlyDiscovery405": true,
+    "userCreateDelete204": true,
+    "revoked401": true,
+    "requests": 10
+  },
+  "actualBrowserUI": {
+    "actualChrome": true,
+    "actualSupabase": true,
+    "qaProxyOnly": true,
+    "productionHTTPS": false,
+    "proofs": [
+      {
+        "firstTokenShown": true,
+        "sharedStateContainsToken": false,
+        "persistentStorageContainsToken": false,
+        "actualActivation": true,
+        "permanentRevocation": true,
+        "closeClearsDOMAndRAM": true,
+        "abandonedPendingTokenRevoked": true
+      },
+      {
+        "actualMobileBrowserViewport": true,
+        "viewport": 390,
+        "document": 390,
+        "modal": 370
+      }
+    ],
+    "requests": 25,
+    "errors": [],
+    "screenshots": [
+      "scim-reference-settings-desktop.png",
+      "scim-settings-desktop.png",
+      "scim-reference-settings-mobile.png",
+      "scim-settings-mobile.png"
+    ]
+  },
+  "visualReview": {
+    "reference_images": [
+      "/Users/hooni.dev/fountain/.data/scim-reference-settings-desktop.png",
+      "/Users/hooni.dev/fountain/.data/scim-reference-settings-mobile.png"
+    ],
+    "generated_screenshots": [
+      "/Users/hooni.dev/fountain/.data/scim-settings-desktop.png",
+      "/Users/hooni.dev/fountain/.data/scim-settings-mobile.png"
+    ],
+    "visual_verdict": {
+      "score": 92,
+      "verdict": "pass",
+      "category_match": true,
+      "differences": [
+        "SCIM content has more instructions and token rows than the existing family-account settings reference, so its modal is taller and scrolls on mobile.",
+        "The optional expiry field uses the browser date control alongside the existing button styles."
+      ],
+      "suggestions": [],
+      "reasoning": "Both actual Chrome viewports preserve the existing settings typography, colors, navigation, card borders and spacing. Mobile document width stays 390px with a 370px modal; no page overflow or secret appears in these post-revocation screenshots. This compares existing Fountain settings style, not Notion visual fidelity."
+    },
+    "threshold": 90,
+    "threshold_passed": true,
+    "next_actions": [
+      "Continue actual SQL deprovision and concurrency verification."
+    ],
+    "actual_supabase_ui": true,
+    "production_https": false
+  },
+  "mobilePublicAssets": {
+    "publicAssetSHA256Comparisons": {
+      "ios": 19,
+      "android": 19
+    },
+    "nativeSDKOrDeviceExecution": false
+  },
+  "actualMainBoundary": {
+    "passed": 12,
+    "observed": [
+      {
+        "path": "/health",
+        "method": "GET",
+        "status": 200
+      },
+      {
+        "path": "/api/session",
+        "method": "GET",
+        "status": 200
+      },
+      {
+        "path": "/api/workspace",
+        "method": "GET",
+        "status": 401
+      },
+      {
+        "path": "/api/scim/tokens",
+        "method": "GET",
+        "status": 401
+      },
+      {
+        "path": "/scim/v2/Users",
+        "method": "GET",
+        "status": 401
+      },
+      {
+        "path": "/scim/v2/Users",
+        "method": "GET",
+        "status": 401
+      },
+      {
+        "path": "/scim/v2/ServiceProviderConfig",
+        "method": "HEAD",
+        "status": 401
+      },
+      {
+        "path": "/scim/v2/Users",
+        "method": "GET",
+        "status": 403
+      },
+      {
+        "path": "/scim/v2/Users",
+        "method": "GET",
+        "status": 403
+      },
+      {
+        "path": "/scim/v2/Users?access_token=fixture",
+        "method": "GET",
+        "status": 400
+      },
+      {
+        "path": "/scim/v2/Users/%2f",
+        "method": "GET",
+        "status": 400
+      },
+      {
+        "path": "/scim/v2/Users/%ZZ",
+        "method": "GET",
+        "status": 400,
+        "gatewayRejectedBeforeHandler": true,
+        "media": "text/html"
+      }
+    ],
+    "productionWorkspaceProvisioned": false
+  },
+  "cleanup": {
+    "grants": 0,
+    "leases": 0,
+    "cronJobs": 0,
+    "authUsers": 0,
+    "registries": 0,
+    "fixtureMeta": 0,
+    "authSessions": 0,
+    "fixtureVault": 0,
+    "originalMeta": 6,
+    "fixtureClaims": 0,
+    "schedulerJobs": 0,
+    "fixtureIntents": 0,
+    "fixtureSignals": 0,
+    "fixtureUnlinks": 0,
+    "queuedRequests": 0,
+    "storageObjects": 0,
+    "fixtureEntities": 0,
+    "serviceReceipts": 0,
+    "identityMappings": 0,
+    "originalEntities": 153,
+    "protectedQAAuthUsersDeleted": 2,
+    "protectedMarkersCheckedBeforeDeletion": true,
+    "namespaceRemovedBeforeAuthDelete": true,
+    "retiredVerifierVersion": 38,
+    "retiredVerifierBundleSHA256": "90e62b758cf315aee6ba2beef382a3c34ede3b36d494a897577bcd2e5b3ba29c",
+    "oldNonceHTTPStatus": 404,
+    "privateConfigRemoved": true,
+    "heldCookieRemoved": true,
+    "sixOriginalCollectionFingerprintsUnchanged": true,
+    "productionWorkspaceNeverRegistered": true
+  },
+  "advisors": {
+    "security": [
+      {
+        "name": "rls_enabled_no_policy",
+        "level": "INFO",
+        "count": 19,
+        "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy"
+      },
+      {
+        "name": "extension_in_public",
+        "level": "WARN",
+        "count": 1,
+        "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0014_extension_in_public"
+      }
+    ],
+    "performance": [
+      {
+        "name": "unused_index",
+        "level": "INFO",
+        "count": 5,
+        "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0005_unused_index"
+      }
+    ]
+  },
+  "limits": [
+    "The database, service RPCs, GoTrue accounts and Edge execution in actual phases are real. The 20 loopback tests explicitly model SQL/Auth/grant state and are separate evidence.",
+    "The HTTPS bearer probe uses the sealed QA Edge path translator and fixed disposable workspace; it is not proof of real owner provisioning on the production function workspace.",
+    "The UI runs actual Chrome against Supabase through a local presentation proxy. The 390px viewport is a mobile browser, not a new native SDK/device run. Native public assets match 19 files on each platform.",
+    "Visual comparison uses existing Fountain family-account settings as its reference, not Notion visual fidelity. Post-revocation screenshots contain no raw bearer.",
+    "Lost accepted ACK, copied pending intents, used/unused invite claims, identity recreation and revision-limit failures are scoped operator fault fixtures, not real network failures or pending Admin requests.",
+    "The successful concurrent-login proof is isolated after other QA HTTP stops. Two earlier instrumentation runs were excluded: one did not observe the waiter and rolled back, another overlapped an unrelated QA owner login and was not counted as a child-login proof.",
+    "Cloud discovery deliberately permits only GET/HEAD. Other legacy ServiceProviderConfig methods now return authenticated 405 SCIM Error with no data snapshot or commit.",
+    "The actual gateway rejects an invalid percent escape (%ZZ) with 400 text/html before application execution. Application-level malformed URI tests return 400 SCIM Error; this does not claim control over gateway-generated errors.",
+    "SCIM creates logical workspace members/groups. Creating/linking a real password login remains an explicit owner account operation; no global Auth identity is adopted by email and no Auth user is deleted by SCIM.",
+    "Filtering/bulk, external IdP interoperability, SAML SSO, full five-platform editing propagation, scheduled physical file GC and public production HTTPS/owner setup remain incomplete. No whole-product parity or paid hosting/AI activation is claimed.",
+    "The non-relocatable pg_net public-schema warning remains open. Private no-policy RLS is an intentional deny-all service boundary; no client table access was added.",
+    "localhost:8787 remains the preserved immutable Python preview. Original data, local attachments, portable backup and private database connection file remain intact."
+  ]
+}

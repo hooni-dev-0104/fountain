@@ -91,7 +91,9 @@ class Advanced:
     def capabilities(self):
         return {'mode': 'member-accounts' if self.store.meta('auth_accounts_required', False) else 'trusted-family-shared' if os.environ.get('FOUNTAIN_ACCESS_TOKEN') else 'local-single-user', 'features': [dict(zip(
             ('id', 'name', 'plan', 'status', 'detail'), item)) for item in FEATURES],
-            'ai_configured': bool(os.environ.get('FOUNTAIN_AI_MODEL') and (os.environ.get('FOUNTAIN_AI_KEY') or self.local_ai())),
+            'ai_configured': bool(os.environ.get('FOUNTAIN_AI_PROVIDER', 'compatible-http') == 'compatible-http'
+                                  and os.environ.get('FOUNTAIN_AI_MODEL')
+                                  and (os.environ.get('FOUNTAIN_AI_KEY') or self.local_ai())),
             'scim_configured': bool(os.environ.get('FOUNTAIN_SCIM_TOKEN')),
             'source': 'https://www.notion.com/pricing'}
 
@@ -367,6 +369,8 @@ class Advanced:
     def prepare_ai(self, body):
         """Capture the exact authorized source while the caller owns the writer."""
         require(isinstance(body, dict), 'JSON 객체가 필요합니다')
+        require(os.environ.get('FOUNTAIN_AI_PROVIDER', 'compatible-http') == 'compatible-http',
+                '지원하지 않는 AI 공급자입니다. 로컬 모델 또는 호환 HTTP API를 설정해 주세요.', 503)
         key = os.environ.get('FOUNTAIN_AI_KEY')
         endpoint = os.environ.get('FOUNTAIN_AI_URL', 'https://api.openai.com/v1/chat/completions')
         parsed = urllib.parse.urlparse(endpoint)
@@ -378,7 +382,7 @@ class Advanced:
         instructions = {'summarize': '주어진 문서를 한국어로 간결하게 요약하세요.', 'write': '사용자 요청에 맞춰 문서를 작성하세요.',
                         'translate': '사용자가 요청한 언어로 번역하세요.', 'answer': '주어진 문맥으로 답하고 근거 없는 주장을 하지 마세요.',
                         'meeting': '회의 대화록을 결정 사항, 담당자와 후속 작업으로 정리하세요.', 'autofill': '요청한 데이터베이스 속성 값을 제안하세요.'}
-        require(action in instructions, '지원하지 않는 AI 작업입니다')
+        require(isinstance(action, str) and action in instructions, '지원하지 않는 AI 작업입니다')
         prompt = text(body.get('prompt', ''), '프롬프트', 50000)
         context = ''
         page_id = body.get('page_id')

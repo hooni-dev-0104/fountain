@@ -50,6 +50,28 @@ class AIAdapterTests(unittest.TestCase):
         self.assertEqual(caught.exception.status, 503)
         self.assertEqual(self.requests, [])
 
+    def test_unsupported_subscription_provider_never_falls_back_to_http(self):
+        for provider in ('gemini-cli', 'antigravity-cli', 'unknown'):
+            with self.subTest(provider=provider), patch.dict(os.environ, {
+                    'FOUNTAIN_AI_PROVIDER': provider, 'FOUNTAIN_AI_KEY': 'fixture-key',
+                    'FOUNTAIN_AI_MODEL': 'fixture-model',
+                    'FOUNTAIN_AI_URL': f'http://127.0.0.1:{self.server.server_port}/v1/chat/completions'}):
+                self.assertFalse(self.advanced.capabilities()['ai_configured'])
+                with self.assertRaises(AdvancedError) as caught:
+                    self.advanced.ai({'prompt': 'do not send this document', 'page_id': 'welcome'})
+                self.assertEqual(caught.exception.status, 503)
+        self.assertEqual(self.requests, [])
+        self.assertFalse(any(item['action'] == 'ai.executed' for item in self.store.list('audit')))
+
+    def test_nontext_action_is_a_validation_error_before_network(self):
+        with patch.dict(os.environ, {'FOUNTAIN_AI_MODEL': 'fixture-model', 'FOUNTAIN_AI_KEY': '',
+                'FOUNTAIN_AI_URL': f'http://127.0.0.1:{self.server.server_port}/v1/chat/completions'}):
+            for action in ([], {}, None, 12):
+                with self.subTest(action=action), self.assertRaises(AdvancedError) as caught:
+                    self.advanced.ai({'action': action, 'prompt': 'validation'})
+                self.assertEqual(caught.exception.status, 400)
+        self.assertEqual(self.requests, [])
+
     def test_inference_uses_only_captured_document_and_provider_configuration(self):
         with patch.dict(os.environ, {'FOUNTAIN_AI_KEY': 'initial-fixture-key', 'FOUNTAIN_AI_MODEL': 'initial-model',
                                      'FOUNTAIN_AI_URL': f'http://127.0.0.1:{self.server.server_port}/v1/chat/completions'}):

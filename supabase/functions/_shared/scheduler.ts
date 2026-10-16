@@ -110,8 +110,16 @@ export class Scheduler {
   }
   tick(input:unknown=new Date()):Entity[]{
     const current=scheduleDatetime(input,'now'),now=scheduleISO(current),runs:Entity[]=[];
-    for(const candidate of this.store.list('automation'))this.store.transaction(()=>{
-      const automation=this.store.get('automation',candidate.id);if(!automation||automation.trigger!=='scheduled'||!truth(get(automation,'enabled',true)))return;
+    for(const candidate of this.store.list('automation'))this.tick_candidate(candidate.id,current,now,runs);return runs;
+  }
+  /** Execute only the selected job. No collection scan or authority is granted. */
+  tick_one(identity:string,input:unknown=new Date()):Entity[]{
+    const current=scheduleDatetime(input,'now'),now=scheduleISO(current),runs:Entity[]=[];
+    this.tick_candidate(identity,current,now,runs);return runs;
+  }
+  private tick_candidate(identity:string,current:bigint,now:string,runs:Entity[]):void{
+    this.store.transaction(()=>{
+      const automation=this.store.get('automation',identity);if(!automation||automation.trigger!=='scheduled'||!truth(get(automation,'enabled',true)))return;
       let following:string|null,due:bigint;
       try{
         const schedule=validate_schedule(get(automation,'schedule'));due=scheduleDatetime(get(automation,'next_run_at')||schedule.start_at,'next_run_at');
@@ -129,6 +137,6 @@ export class Scheduler {
       catch(error){if(error instanceof MissingSelection)throw error;delete run.result;Object.assign(run,{status:'failed',error:(error instanceof Error?error.message:String(error)).slice(0,1000)});}
       run.finished_at=now;const saved=this.store.put('automation_run',run),latest=this.store.get('automation',automation.id);
       if(latest){Object.assign(latest,{next_run_at:following,last_run_at:now,last_run_status:run.status,last_error:get(run,'error')});if(following===null)Object.assign(latest,{enabled:false,schedule_status:'completed'});this.store.put('automation',latest);}runs.push(saved);
-    });return runs;
+    });
   }
 }

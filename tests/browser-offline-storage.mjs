@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import assert from 'node:assert/strict';
+import { waitForAsync } from './async-browser.mjs';
 const require = createRequire(import.meta.url);
 const { chromium } = require(process.env.FOUNTAIN_PLAYWRIGHT || join(homedir(), '.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'));
 const source = await readFile(new URL('../static/offline.js', import.meta.url));
@@ -29,6 +30,11 @@ try {
   const context = await browser.newContext({ serviceWorkers: 'block' });
   const page = await context.newPage();
   await page.goto(origin);
+  const started = Date.now();
+  await assert.rejects(waitForAsync(page, async () => false, null, { timeout: 80 }), /Timed out/);
+  assert.ok(Date.now() - started >= 70, 'an unresolved or false async condition must never report success');
+  await page.evaluate(() => { globalThis.asyncReady = false; setTimeout(() => { globalThis.asyncReady = true; }, 100); });
+  assert.equal(await waitForAsync(page, async () => globalThis.asyncReady, null, { timeout: 1500 }), true);
   stage = 'real version-1 fixture and migration';
   const fixture = await page.evaluate(async () => {
     const profile = { origin: location.origin, workspaceId: 'workspace|family', memberId: 'member|one', cacheBinding: 'login-one',

@@ -1,3 +1,4 @@
+import { waitForAsync } from './async-browser.mjs';
 /** Disposable end-to-end project graph, timeline and real scheduler verification. */
 import {
   createRequire
@@ -173,13 +174,25 @@ try {
   assert.equal(await page.locator('#row-form [name="parent_row_id"]').inputValue(),parent.id);
   assert.deepEqual(await page.locator('#row-form [name="depends_on"]').evaluate(select=>[...select.selectedOptions].map(option=>option.value)),[parent.id]);
   await action('close-modal');
-  // A graph cycle is rejected by the actual backend and leaves the editor open.
+  // A graph cycle is rejected by the actual backend and retained for recovery.
   await action('edit-row',`[data-id="${parent.id}"]`);
   await page.locator('#row-form [name="depends_on"]').selectOption(child.id);
-  const cycleResponse=page.waitForResponse(response=>response.url().endsWith('/rows/'+parent.id)&&response.request().method()==='PATCH');
+  const cycleResponse=page.waitForResponse(async response=>{
+    if(!response.url().endsWith('/api/sync')||response.request().method()!=='POST')return false;
+    const operation=response.request().postDataJSON()?.operations?.find(operation=>operation.kind==='row.patch'&&operation.target_id===parent.id);
+    if(!operation)return false;
+    const payload=await response.json();
+    return payload.results?.some(result=>result.id===operation.id&&result.status==='invalid'&&result.http_status===400);
+  });
   await page.locator('#row-form .solid-btn').click();
-  assert.equal((await cycleResponse).status(),400);
-  assert.equal(await page.locator('#row-form').count(),1);
+  const rejected=await cycleResponse;
+  assert.equal(rejected.status(),200);
+  await waitForAsync(page,async id=>(await state.mutations.records()).some(record=>record.status==='invalid'&&record.operation.target_id===id),parent.id);
+  assert.equal(await page.locator('#row-form').count(),1,'online validation errors must keep the editing form open');
+  const recovery=await page.evaluate(async id=>(await state.mutations.records()).find(record=>record.status==='invalid'&&record.operation.target_id===id),parent.id);
+  assert.ok(recovery,'invalid graph intent must remain in durable recovery');
+  assert.deepEqual(recovery.operation.body.depends_on,[child.id]);
+  assert.deepEqual((await api('/databases/'+databaseId)).rows.find(row=>row.id===parent.id).depends_on,[],'rejected cycle must not change the canonical graph');
   await action('close-modal');
   await action('db-view','[data-view="timeline"]');
   await page.waitForSelector('.timeline-bar');

@@ -1,3 +1,4 @@
+import { waitForAsync } from './async-browser.mjs';
 /** Independent account contexts exercise real CRDT operations, SSE and durable recovery. */
 import {
   createRequire
@@ -301,7 +302,7 @@ try {
   await owner.goto(origin+'/#home');
   await owner.reload();
   await owner.waitForSelector('.recent-grid');
-  await owner.waitForFunction(async id=> {
+  await waitForAsync(owner,async id=> {
     const profile=await FountainOffline.getProfile(); return !!(profile&&await FountainOffline.getSnapshot(FountainOffline.key(profile,id)));
   },favorite.id);
   await ownerContext.setOffline(true);
@@ -365,7 +366,7 @@ try {
   await member.goto(origin+'/#home');
   await member.reload();
   await member.waitForSelector('.recent-grid');
-  await member.waitForFunction(async id=> {
+  await waitForAsync(member,async id=> {
     const profile=await FountainOffline.getProfile(); return !!(profile&&await FountainOffline.getSnapshot(FountainOffline.key(profile,id)));
   },favorite.id);
   await member.goto(origin+'/#page/'+id);

@@ -1,3 +1,4 @@
+import { waitForAsync } from './async-browser.mjs';
 /** Durable IndexedDB queues plus real service-worker reload and concurrent offline edits. */
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
@@ -213,7 +214,7 @@ try {
     await page.waitForSelector('.block-content[contenteditable="true"]');
     await page.waitForFunction(() => !!navigator.serviceWorker.controller);
     await page.evaluate(() => FountainOffline.serviceWorkerReady);
-    await page.waitForFunction(async id => {
+    await waitForAsync(page,async id => {
       const profile = await FountainOffline.getProfile();
       return profile && await FountainOffline.getSnapshot(FountainOffline.key(profile, id));
     }, pageId);
@@ -230,7 +231,7 @@ try {
     await page.keyboard.insertText(' · 오프라인첫탭');
     await tab.locator('.block-content').first().press('End');
     await tab.keyboard.insertText(' · 오프라인둘째탭');
-    await page.waitForFunction(async id => {
+    await waitForAsync(page,async id => {
       const profile = await FountainOffline.getProfile();
       return profile && (await FountainOffline.pendingOperations(FountainOffline.key(profile, id))).length >= 2;
     }, pageId);
@@ -254,7 +255,7 @@ try {
       .every(marker => document.querySelector('.block-content')?.textContent.includes(marker)), null, { timeout: 20000 });
     await remote.waitForFunction(() => ['오프라인첫탭', '오프라인둘째탭', '원격변경']
       .every(marker => document.querySelector('.block-content')?.textContent.includes(marker)), null, { timeout: 20000 });
-    await page.waitForFunction(async id => {
+    await waitForAsync(page,async id => {
       const profile = await FountainOffline.getProfile();
       return profile && (await FountainOffline.pendingOperations(FountainOffline.key(profile, id))).length === 0;
     }, pageId);
@@ -263,7 +264,7 @@ try {
     const urls = await page.evaluate(async () => (await Promise.all((await caches.keys()).map(async name =>
       (await (await caches.open(name)).keys()).map(request => new URL(request.url).pathname)))).flat());
     assert.ok(urls.includes('/') && urls.includes('/offline.js') && urls.includes('/collaboration.js'));
-    assert.ok(urls.every(path => ['/', '/index.html', '/app.js', '/style.css', '/collaboration.js', '/offline.js', '/uploads.js', '/transport.js'].includes(path)), 'SW must never cache private responses');
+    assert.ok(urls.every(path => ['/', '/index.html', '/app.js', '/style.css', '/collaboration.js', '/offline.js', '/uploads.js', '/transport.js', '/mutations.js'].includes(path)), 'SW must never cache private responses');
     stage = 'fresh boot after authoritative online 401';
     // Close every old live channel before the policy change: a fresh boot must
     // purge its existing cache without relying on another tab's SSE denial.
@@ -276,7 +277,7 @@ try {
     await page.goto(origin + '/#page/' + pageId);
     await page.waitForSelector('#login-form');
     assert.equal(await page.locator('.block-content').count(), 0, 'online 401 must not fall back to cached private page');
-    await page.waitForFunction(async () => await FountainOffline.getProfile() === null, null, { timeout: 5000 });
+    await waitForAsync(page,async () => await FountainOffline.getProfile() === null, null, { timeout: 5000 });
     assert.equal(await page.evaluate(async () => !!await FountainOffline.getProfile()), false);
     await remoteContext.close();
     console.log('PASS offline E2E: real SW reload, durable two-tab edits, reconnect plus remote merge, private cache allowlist, online 401 denial');

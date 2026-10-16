@@ -1,3 +1,4 @@
+import { waitForAsync } from './async-browser.mjs';
 /** Real Chrome transfers bounded raw chunks, resumes after reload and respects changing access. */
 import {
   createRequire
@@ -382,7 +383,7 @@ try {
   await action('settings');
   await action('logout');
   await page.waitForSelector('#login-form');
-  await page.waitForFunction(async()=> {
+  await waitForAsync(page,async()=> {
     const db=await new Promise(resolve=> {
       const opening=indexedDB.open('fountain-upload-metadata-v1'); opening.onsuccess=()=>resolve(opening.result);
     }); const values=await new Promise(resolve=> {

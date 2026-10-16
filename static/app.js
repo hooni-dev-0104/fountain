@@ -27,6 +27,54 @@ const icon = name => `<svg viewBox="0 0 18 18" aria-hidden="true">${icons[name] 
 const state = {
   collapsedRows:new Set(),timelineProperty:null,timelineZoom:'day',timelineBounds:null,timelineFocusDay:null,channel:null,offline:false,offlineProfile:null,session:null,workspace:null, route:'home',page:null,blocks:[],versions:[],comments:[],database:null,rows:[],view:'table',filter:'',sort:false,saving:null,saveTimer:null,advanced:null,settingsTab:'members',loaded:false,activeBlock:null,trash:false,dirty:false,editSequence:0
 };
+// SCIM credentials belong to this settings view only. Never add them to state or caches.
+let scimPanel=null;
+function clearScimPanel(){const panel=scimPanel;scimPanel=null;for(const input of $$('#scim-secret,#scim-proof'))input.value='';panel?.close();}
+// BEGIN SCIM VIEW MODEL — response secrets remain inside this disposable closure.
+function scimGrantStatus(grant,now=Date.now()) {
+  if(!grant.enabled&&grant.version>1)return '철회됨';
+  if(grant.expires_at&&Date.parse(grant.expires_at)<=now)return '만료됨';
+  if(grant.enabled)return '활성';
+  if(grant.version===1&&grant.pending_until)return Date.parse(grant.pending_until)>now?'활성화 대기':'활성화 기한 만료';
+  return '비활성';
+}
+function createScimView({request,current,changed,newId,now=Date.now,disposed=()=>{}}) {
+  let closed=false,busy=false,secret=null,tokens=[],cursor=null,creation=null,selected=null,error='',available=false,confirmation=null;
+  const live=()=>!closed&&current();
+  const update=()=>{if(live())changed();else close();};
+  function close(){if(closed)return;closed=true;secret=null;creation=null;selected=null;confirmation=null;tokens=[];cursor=null;disposed();}
+  const metadata=value=>{const {id,purpose,version,enabled,issuer_member_id,created_at,expires_at,pending_until}=value;return {id,purpose,version,enabled,issuer_member_id,created_at,expires_at,pending_until};};
+  function snapshot(){return {busy,tokens:tokens.map(metadata),cursor,creation:creation?{...creation}:null,selected:selected?metadata(selected):null,error,available,confirmation,hasSecret:!!secret};}
+  function merge(grant){grant=metadata(grant);tokens=[grant,...tokens.filter(item=>item.id!==grant.id)];selected=grant;}
+  async function run(operation){if(!live()||busy)return;busy=true;error='';update();try{await operation();}catch(e){if(live())error=e.code==='STALE_REQUEST'?'로그인 상태가 변경되었습니다.':(!e.status||e.status>=500)?'응답을 확인하지 못했습니다. 같은 요청을 다시 시도하거나 목록에서 현재 상태를 확인하세요.':'요청하지 못했습니다. 최신 목록과 권한·만료 시각을 확인하세요.';}finally{busy=false;update();}}
+  async function load(more=false){return run(async()=>{
+    try{const result=await request('/scim/tokens?limit=50'+(more&&cursor?'&cursor='+encodeURIComponent(cursor):''));if(!live())return;
+      const items=result.tokens.map(metadata);tokens=more?[...tokens,...items.filter(item=>!tokens.some(old=>old.id===item.id))]:items;cursor=result.next_cursor;available=true;
+    }catch(e){if(!live())return;if([404,405,501,503].includes(e.status)){available=false;error='현재 서버에서 SCIM 토큰 관리를 사용할 수 없습니다. Supabase 백엔드 연결과 서버 설정을 확인하세요.';}else throw e;}
+  });}
+  async function issue(expiresAt=null){return run(async()=>{
+    if(!available||selected)return;
+    if(!creation){if(expiresAt&&(!Number.isFinite(Date.parse(expiresAt))||Date.parse(expiresAt)<=now())){error='미래의 만료 시각을 입력하세요.';return;}creation={transaction_id:newId(),expires_at:expiresAt};}
+    // A lost acknowledgement must reuse this exact transaction, including expiry.
+    const result=await request('/scim/tokens',{...creation});if(!live())return;merge(result.grant);
+    if(typeof result.token==='string'&&/^[A-Za-z0-9_-]{43}$/.test(result.token)){secret=result.token;creation=null;}
+    else{secret=null;creation=null;error='토큰은 최초 응답에서만 표시됩니다. 이 항목을 철회한 뒤 새 토큰을 발급하세요.';}
+  });}
+  function select(id){if(!live()||busy)return;secret=null;creation=null;confirmation=null;selected=tokens.find(item=>item.id===id)||null;error='';update();}
+  async function activate(proof,acknowledged){return run(async()=>{
+    if(!selected||scimGrantStatus(selected,now())!=='활성화 대기')return;
+    if(!acknowledged){error='토큰 보관과 계정 연동 허용 확인란을 선택하세요.';return;}
+    const token=secret||proof;if(typeof token!=='string'||! /^[A-Za-z0-9_-]{43}$/.test(token)){error='발급 시 보관한 토큰을 입력하세요.';return;}
+    const result=await request('/scim/tokens/'+encodeURIComponent(selected.id)+'/activate',{token});if(!live())return;secret=null;merge(result.grant);
+  });}
+  async function revoke(id){if(confirmation!==id){if(live()&&!busy){confirmation=id;update();}return;}return run(async()=>{
+    const result=await request('/scim/tokens/'+encodeURIComponent(id),{},'DELETE');if(!live())return;
+    secret=null;creation=null;confirmation=null;merge(result.grant);
+  });}
+  function restart(){if(!live()||busy||creation||selected&&scimGrantStatus(selected,now())!=='철회됨')return;secret=null;selected=null;error='';update();}
+  return {close,snapshot,load,issue,select,activate,revoke,restart,secret:()=>live()?secret:null};
+}
+// END SCIM VIEW MODEL
 function isOwner() { return state.session?.member?.role==='owner'; }
 function isAdmin() { return ['owner','admin'].includes(state.session?.member?.role); }
 function resourceLevel(resource) {
@@ -1208,7 +1256,7 @@ async function reloadDatabase() {
   applyDatabaseControls();
 }
 function openModal(title,content,cls='') {
-  stopBackup();clearRecoveryImport();state.versionView=null;closeSlash();
+  clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;closeSlash();
   $('#overlay-root').innerHTML=`<div class="modal-backdrop"><section class="modal ${cls}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="modal-head"><h2>${esc(title)}</h2><button class="modal-close" data-action="close-modal" aria-label="닫기">×</button></header><div class="modal-body">${content}</div></section></div>`;
   if(state.route==='page'&&resourceLevel(state.page)<4)$$('[data-action="delete-page"],[data-action="move-page"]',$('.modal')).forEach(el=>el.remove());
   if(state.route==='page'&&resourceLevel(state.page)<3){for(const action of ['lock-page','delete-page','verify-page','move-page','change-block-type','move-block','delete-block','restore-version'])$$(`[data-action="${action}"]`,$('.modal')).forEach(el=>el.remove());}
@@ -1217,7 +1265,7 @@ function openModal(title,content,cls='') {
   requestAnimationFrame(()=>{if(body?.isConnected)$('input:not([type=checkbox]),textarea,select,button',body)?.focus();});
 }
 function closeModal() {
-  stopBackup();clearRecoveryImport();state.versionView=null;$('#overlay-root').innerHTML='';
+  clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;$('#overlay-root').innerHTML='';
   closeSlash();
 }
 function stopBackup(){const manager=state.backupManager;state.backupManager=null;if(manager)void manager.close();}
@@ -1323,6 +1371,7 @@ async function openPermissions(kind,id) {
 }
 
 async function openSettings(tab='members') {
+  clearScimPanel();
   if(!isAdmin()){openModal('내 계정',`<p><strong>${esc(state.session?.member?.name||'가족')}</strong><br>${esc(state.session?.member?.email||'')}<br>${esc(state.session?.member?.role||'')}</p><button class="outline-btn" data-action="logout">로그아웃</button>`);return;}
   state.settingsTab=tab;
   try {
@@ -1337,16 +1386,18 @@ async function openSettings(tab='members') {
   $('.modal-body').style.padding='0';
   await renderSettings();
 }
-const settingsTabs=[['accounts','가족 계정'],['members','멤버 및 그룹'],['security','보안 및 권한'],['automations','자동화'],['forms','폼'],['sites','사이트'],['AI','AI 및 연결'],['analytics','워크스페이스 분석'],['features','기능 제공 현황'],['export','가져오기 / 내보내기']];
+const settingsTabs=[['accounts','가족 계정'],['members','멤버 및 그룹'],['security','보안 및 권한'],['scim','SCIM 계정 연동'],['automations','자동화'],['forms','폼'],['sites','사이트'],['AI','AI 및 연결'],['analytics','워크스페이스 분석'],['features','기능 제공 현황'],['export','가져오기 / 내보내기']];
 async function renderSettings() {
+  clearScimPanel();
   const tab=state.settingsTab;
-  $('#settings-tabs').innerHTML=settingsTabs.filter(([key])=>!['accounts','security','analytics','export','AI'].includes(key)||isOwner()).map(([key,name])=>`<button data-action="settings-tab" data-tab="${key}" class="${tab===key?'active':''}">${name}</button>`).join('');
+  $('#settings-tabs').innerHTML=settingsTabs.filter(([key])=>!['accounts','security','scim','analytics','export','AI'].includes(key)||isOwner()).map(([key,name])=>`<button data-action="settings-tab" data-tab="${key}" class="${tab===key?'active':''}">${name}</button>`).join('');
   const content=$('#settings-content'),a=state.advanced|| {
   };
   const header=(title,desc,button='')=>`<div class="section-heading"><h3>${title}</h3>${button}</div><p>${desc}</p>`;
   const add=(kind,label)=>`<button class="outline-btn" data-action="add-advanced" data-kind="${kind}">+ ${label}</button>`;
   const items=(kind,detail)=>`<div class="settings-list">${normalizeList(a[kind]).map(item=>`<div class="settings-item"><div><strong>${esc(item.name||item.title||item.email||item.id)}</strong><small>${esc(detail(item))}</small></div><div>${kind==='automations'?`<button data-action="toggle-automation" data-id="${esc(item.id)}">${item.enabled===false?'사용':'일시 중지'}</button><button data-action="automation-runs" data-id="${esc(item.id)}">기록</button><button data-action="run-automation" data-id="${esc(item.id)}" ${item.enabled===false?'disabled title="직접 실행하려면 먼저 자동화를 사용 상태로 바꾸세요"':''}>한 번 실행</button>`:''}${kind==='forms'?`<button data-action="fill-form" data-id="${esc(item.id)}">응답</button>`:''}${kind==='sites'?`<button data-action="site-link" data-id="${esc(item.id)}">링크</button>`:''}<button data-action="edit-advanced" data-kind="${kind}" data-id="${esc(item.id)}">관리</button></div></div>`).join('')||'<div class="empty">아직 항목이 없어요. 첫 번째 항목을 만들어 보세요.</div>'}</div>`;
-  if(tab==='accounts'){await renderAccounts(content);}
+  if(tab==='scim'){await renderScimSettings(content);}
+  else if(tab==='accounts'){await renderAccounts(content);}
   else if(tab==='members') {
     content.innerHTML=header('함께 만드는 워크스페이스','팀원을 초대하고, 역할과 그룹을 관리하세요.',add('members','멤버 초대'))+items('members',m=>`${m.email||''} · ${m.role||'member'}`)+`<div class="section-heading" style="margin-top:28px"><h3>그룹</h3>${add('groups','그룹 추가')}</div>`+items('groups',g=>`${(g.members||[]).length}명의 멤버`);
   }
@@ -1388,6 +1439,31 @@ async function renderSettings() {
   else if(tab==='export') {
     content.innerHTML=header('데이터는 언제나 내 손에','문서를 내보내거나 댓글·이력·설정을 포함한 전체 백업을 다운로드하세요.')+'<button class="solid-btn" data-action="backup">전체 백업 다운로드</button><div class="form-actions" style="justify-content:flex-start"><button class="outline-btn" data-action="export" data-format="json">문서·DB JSON</button><button class="outline-btn" data-action="export" data-format="markdown">Markdown</button><button class="outline-btn" data-action="export" data-format="csv">CSV</button></div><form class="form-grid" id="import-form" style="margin-top:25px"><label>가져올 형식<select name="format"><option value="markdown">Markdown</option><option value="csv">CSV</option><option value="json">JSON 백업</option></select></label>'+field('제목','title','가져온 문서')+'<label>내용<textarea name="content" required placeholder="파일 내용을 여기에 붙여넣으세요"></textarea></label><button class="solid-btn">가져오기</button></form>';
   }
+}
+async function renderScimSettings(content) {
+  if(!isOwner()){content.textContent='소유자만 SCIM 토큰을 관리할 수 있습니다.';return;}
+  const scope={binding:state.session?.cache_binding,member:state.session?.member?.id,workspace:state.workspace?.workspace_id,boot:state.bootGeneration,epoch:FountainTransport.scopeEpoch};
+  const current=()=>content.isConnected&&$('#settings-content')===content&&state.settingsTab==='scim'&&isOwner()&&!state.offline&&!state.nativeRecoveryPaused&&scope.workspace===state.workspace?.workspace_id&&scope.binding===state.session?.cache_binding&&scope.member===state.session?.member?.id&&scope.boot===state.bootGeneration&&scope.epoch===FountainTransport.scopeEpoch;
+  const panel=createScimView({request:api,current,newId:uid,changed:()=>renderScimPanel(content,panel),disposed:()=>{for(const input of $$('#scim-secret,#scim-proof',content))input.value='';}});scimPanel=panel;
+  renderScimPanel(content,panel);await panel.load();
+}
+function renderScimPanel(content,panel) {
+  if(scimPanel!==panel)return;
+  const view=panel.snapshot(),selected=view.selected,when=value=>value?new Date(value).toLocaleString('ko-KR'):'없음';
+  const pending=selected&&scimGrantStatus(selected)==='활성화 대기';
+  content.innerHTML=`<h3>SCIM 계정 연동</h3><p>외부 인증 서비스에서 멤버와 그룹을 관리할 때 사용하는 소유자 전용 토큰입니다. 연동 서비스를 별도로 설정해야 하며, 기존 가족 로그인은 그대로 사용할 수 있습니다.</p><div class="info-box">토큰은 발급 직후 한 번만 표시됩니다. 안전하게 보관한 뒤 15분 안에 명시적으로 활성화하세요. 이 화면을 닫거나 다른 설정으로 이동하면 표시된 토큰을 지웁니다. 철회는 영구적입니다.</div>${view.error?`<p role="alert">${esc(view.error)}</p>`:''}<div class="form-actions" style="justify-content:flex-start"><button class="outline-btn" data-action="scim-refresh" ${view.busy?'disabled':''}>목록 새로고침</button></div>${view.available?`<section aria-label="SCIM 토큰 발급"><label>만료 시각 · 선택<input id="scim-expiry" type="datetime-local" ${view.creation||view.selected||view.busy?'disabled':''}></label><button class="solid-btn" data-action="scim-issue" ${view.busy||selected?'disabled':''}>${view.creation?'같은 발급 요청 다시 확인':'새 토큰 발급'}</button>${view.creation?`<p>응답 확인 중인 발급 ID: ${esc(view.creation.transaction_id)}. 다른 발급으로 바꾸지 않고 같은 요청을 확인합니다.</p>`:''}</section>`:''}${selected?`<section aria-label="선택한 SCIM 토큰"><h4>${esc(selected.id)}</h4><p>${esc(scimGrantStatus(selected))} · 만료 ${esc(when(selected.expires_at))}</p>${view.hasSecret?'<label>이번에만 표시되는 토큰<input id="scim-secret" type="text" readonly autocomplete="off" spellcheck="false" aria-label="이번에만 표시되는 SCIM 토큰"></label>':''}${pending?`${!view.hasSecret?'<label>발급 시 보관한 토큰<input id="scim-proof" type="password" autocomplete="off" spellcheck="false" maxlength="43"></label>':''}<p>활성화 기한: ${esc(when(selected.pending_until))}. 발급한 소유자만 활성화할 수 있습니다.</p><label class="checkbox-label"><input id="scim-ack" type="checkbox">토큰을 보관했으며 이 토큰으로 계정 연동을 허용합니다.</label><button class="solid-btn" data-action="scim-activate" ${view.busy?'disabled':''}>활성화</button>`:''}${scimGrantStatus(selected)==='철회됨'?'<button class="outline-btn" data-action="scim-new">새 토큰 발급으로 돌아가기</button>':''}</section>`:''}<div class="settings-list" aria-label="SCIM 토큰 목록">${view.tokens.map(grant=>`<div class="settings-item"><div><strong>${esc(grant.id)}</strong><small>${esc(scimGrantStatus(grant))} · 발급 ${esc(when(grant.created_at))}<br>발급자 ${esc(grant.issuer_member_id)} · 만료 ${esc(when(grant.expires_at))}</small></div><div>${scimGrantStatus(grant)==='활성화 대기'?`<button data-action="scim-select" data-id="${esc(grant.id)}" ${view.busy?'disabled':''}>활성화 준비</button>`:''}${scimGrantStatus(grant)!=='철회됨'?`<button data-action="scim-revoke" data-id="${esc(grant.id)}" ${view.busy?'disabled':''}>${view.confirmation===grant.id?'영구 철회 확인':'철회'}</button>`:''}</div></div>`).join('')||'<p>발급된 토큰이 없습니다.</p>'}</div>${view.cursor?`<button class="outline-btn" data-action="scim-more" ${view.busy?'disabled':''}>다음 50개</button>`:''}${view.busy?'<p role="status">요청을 확인하는 중…</p>':''}`;
+  const input=$('#scim-secret',content);if(input)input.value=panel.secret()||'';
+}
+async function scimAction(action,id) {
+  if(!isOwner()||state.offline)throw new Error('온라인 소유자만 SCIM 토큰을 관리할 수 있습니다.');
+  const panel=scimPanel;if(!panel)return;
+  if(action==='scim-refresh')await panel.load();
+  else if(action==='scim-more')await panel.load(true);
+  else if(action==='scim-select')panel.select(id);
+  else if(action==='scim-new')panel.restart();
+  else if(action==='scim-issue'){const value=$('#scim-expiry')?.value;await panel.issue(value?new Date(value).toISOString():null);}
+  else if(action==='scim-activate'){const proof=$('#scim-proof'),token=proof?.value||'',ack=$('#scim-ack')?.checked===true;if(proof)proof.value='';await panel.activate(token,ack);}
+  else if(action==='scim-revoke')await panel.revoke(id);
 }
 function zonedParts(value,timezone) {
   try {
@@ -1605,6 +1681,7 @@ async function showActivity() {
 }
 async function doAction(target,grouped=false) {
   const a=target.dataset.action,id=target.dataset.id;
+  if(a.startsWith('scim-')){await scimAction(a,id);return;}
   if(state.nativeRecoveryPaused&&!['native-recovery','reload-after-native-recovery'].includes(a))throw new Error('보관 내용을 확인한 뒤 앱을 다시 열어 주세요.');
   if(['undo','redo'].includes(a)){await runHistory(a);return;}
   if(['block-menu','rich-mark','rich-link','add-file','apply-recovery','indent-block','outdent-block','add-block','change-block-type','set-block-type','delete-block','move-block'].includes(a)&&!blockEditable())throw new Error('본문 편집 결과를 확인하는 중입니다. 잠시 기다려 주세요.');
@@ -1665,6 +1742,7 @@ async function doAction(target,grouped=false) {
     case'close-modal':closeModal();
     break;
     case'logout':{
+      clearScimPanel();
       const actor=state.offlineProfile;if(actor&&state.authRecoveryMemory)for(const [key,value] of state.authRecoveryMemory)if(value.profile.origin===actor.origin&&value.profile.workspaceId===actor.workspaceId&&value.profile.memberId===actor.memberId)state.authRecoveryMemory.delete(key);
       const binding=actor?.cacheBinding||state.session?.cache_binding,generation=state.bootGeneration;
       closeDocument();closeMutations();await window.FountainOffline?.clearActiveProfile(actor);
@@ -1965,6 +2043,7 @@ async function doAction(target,grouped=false) {
     }
   }
 }
+window.addEventListener('pagehide',clearScimPanel);
 document.addEventListener('click',event=> {
   if(event.target.closest?.('.block-content a.rich-link')&&pageEditable()&&!event.metaKey&&!event.ctrlKey){event.preventDefault();return;}
   const target=event.target.closest('[data-action]'); if(target) {
@@ -2240,7 +2319,7 @@ window.addEventListener('beforeunload',event=> {
   }
 });
 function renderLogin(preserve=true) {
-  stopBackup();
+  clearScimPanel();stopBackup();
   if(state.nativeRecoveryPaused)return;
   if(preserve)return suspendLoginInput().then(current=>{if(current)renderLogin(false);});
   closeDocument();closeMutations();state.offlineProfile=null;state.offline=false;
@@ -2259,6 +2338,7 @@ function renderLogin(preserve=true) {
   if(state.authRetentionError&&$('#login-error'))$('#login-error').textContent=state.authRetentionError;
 }
 async function boot() {
+  clearScimPanel();
   if(state.nativeRecoveryPaused)return;
   const generation=(state.bootGeneration||0)+1;state.bootGeneration=generation;
   const cachedIdentity=await window.FountainOffline?.getProfile().catch(()=>null);

@@ -12,6 +12,7 @@ import json
 import logging
 import hmac
 import os
+import threading
 from contextlib import nullcontext
 import mimetypes
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -40,6 +41,8 @@ class Application:
         self.store, self.workspace, self.static = store, Workspace(store), Path(static).resolve()
         from .auth import Auth
         self.auth = Auth(store)
+        from .collaboration import Collaboration
+        self.collaboration = Collaboration(store, self.workspace)
         self.advanced = None
         from .scheduler import Scheduler
         self.scheduler = Scheduler(store, self.run_scheduled)
@@ -50,35 +53,41 @@ class Application:
             self.advanced = Advanced(self.store, self.workspace)
         return self.advanced.run_as_author(automation_id, body)
 
-    def dispatch(self, method, path, body, query, principal=_INTERNAL_PRINCIPAL):
+    def dispatch(self, method, path, body, query, principal=_INTERNAL_PRINCIPAL, session_cookie=_INTERNAL_PRINCIPAL):
         body = copy.deepcopy(body)
         with self.store.lock:
-            if principal is _INTERNAL_PRINCIPAL:
-                principal = {'id': 'local', 'role': 'owner', 'active': True, '_service': True}
-            else:
-                require(isinstance(principal, dict), 'Authentication required', 401)
-            if self.auth.accounts_required and not principal.get('_service'):
-                principal = self.auth._member(principal.get('id'))
-                require(principal is not None, 'Authentication required', 401)
-            access = Access(self.store, principal)
-            authority = Authorization(access)
-            if self.advanced is None:
-                from .advanced import Advanced
-                self.advanced = Advanced(self.store, self.workspace)
-            authority.prepare(method, path, body)
-            if not (method == 'POST' and path == '/api/ai'):
-                transaction = self.store.transaction() if method in {'POST', 'PATCH', 'PUT', 'DELETE'} else nullcontext()
-                token = AUDIT_ACTOR.set(access.member_id)
-                access_token = CURRENT_ACCESS.set(access)
-                try:
-                    with transaction:
+            inference = method == 'POST' and path == '/api/ai'
+            # Claim the SQLite writer before authentication and ACL reads. A
+            # process-local lock alone cannot fence logout in another server.
+            claiming = (method in {'POST', 'PATCH', 'PUT', 'DELETE'} and not inference
+                        or method == 'GET' and path.endswith('/collaboration'))
+            with self.store.transaction() if claiming else nullcontext():
+                if session_cookie is not _INTERNAL_PRINCIPAL:
+                    principal = self.auth.principal(session_cookie)
+                if principal is _INTERNAL_PRINCIPAL:
+                    principal = {'id': 'local', 'role': 'owner', 'active': True, '_service': True}
+                else:
+                    require(isinstance(principal, dict), 'Authentication required', 401)
+                if self.auth.accounts_required and not principal.get('_service'):
+                    principal = self.auth._member(principal.get('id'))
+                    require(principal is not None, 'Authentication required', 401)
+                access = Access(self.store, principal)
+                authority = Authorization(access)
+                if self.advanced is None:
+                    from .advanced import Advanced
+                    self.advanced = Advanced(self.store, self.workspace)
+                authority.prepare(method, path, body)
+                if not inference:
+                    token = AUDIT_ACTOR.set(access.member_id)
+                    access_token = CURRENT_ACCESS.set(access)
+                    try:
                         status, payload = self._dispatch(method, path, body, query, access)
                         if method in {'POST', 'PATCH', 'PUT', 'DELETE'} and (path.startswith('/api/members') or path.startswith('/scim/v2/Users') or path.startswith('/api/accounts')):
                             require(not self.auth.accounts_required or self.auth._owners(), 'Cannot remove the last active owner account', 409)
                         return status, authority.project(path, payload)
-                finally:
-                    AUDIT_ACTOR.reset(token)
-                    CURRENT_ACCESS.reset(access_token)
+                    finally:
+                        AUDIT_ACTOR.reset(token)
+                        CURRENT_ACCESS.reset(access_token)
         # Inference has no write transaction or workspace-wide lock across the network.
         token = AUDIT_ACTOR.set(access.member_id)
         access_token = CURRENT_ACCESS.set(access)
@@ -167,6 +176,10 @@ class Application:
                 if method == "PATCH": return 200, w.update_page(page_id, body)
                 if method == "DELETE": return 200, w.update_page(page_id, {"archived": True})
             if len(parts) == 4:
+                if parts[3] == 'collaboration' and method == 'GET':
+                    return 200, self.collaboration.snapshot(page_id, access)
+                if parts[3] == 'operations' and method == 'POST':
+                    return 200, self.collaboration.apply(page_id, body, access)
                 if parts[3] == "blocks" and method == "PUT": return 200, w.save_blocks(page_id, body.get("blocks"), body.get("revision"))
                 if parts[3] == "restore" and method == "POST": return 200, w.update_page(page_id, {"archived": False})
                 if parts[3] == "comments" and method == "POST": return 201, w.create_comment(page_id, body)
@@ -326,6 +339,48 @@ def handler_for(application):
                 if download.cleanup_dir:
                     shutil.rmtree(download.cleanup_dir)
 
+        def stream_page(self, page_id, cookie):
+            def snapshot():
+                # Authentication and group membership are live on every poll;
+                # never keep the Access object from the first HTTP request.
+                with application.store.transaction():
+                    principal = application.auth.principal(cookie)
+                    require(principal is not None, 'Authentication required', 401)
+                    return application.collaboration.snapshot(page_id, Access(application.store, principal))
+
+            current = snapshot()
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('X-Accel-Buffering', 'no')
+            self.send_header('X-Content-Type-Options', 'nosniff')
+            self.end_headers()
+            self.close_connection = True
+            self.connection.settimeout(5)
+            previous, heartbeat = None, 0
+            try:
+                while not self.server.stream_stop.is_set():
+                    encoded = json.dumps(current, ensure_ascii=False, separators=(',', ':'))
+                    if encoded != previous:
+                        self.wfile.write(('event: snapshot\ndata: ' + encoded + '\n\n').encode())
+                        previous = encoded
+                        heartbeat = 0
+                    elif heartbeat >= 20:
+                        self.wfile.write(b': heartbeat\n\n')
+                        heartbeat = 0
+                    self.wfile.flush()
+                    if self.server.stream_stop.wait(0.5):
+                        break
+                    heartbeat += 1
+                    try:
+                        current = snapshot()
+                    except APIError as error:
+                        self.wfile.write(('event: denied\ndata: ' + json.dumps({'status': error.status, 'error': error.message}) + '\n\n').encode())
+                        self.wfile.flush()
+                        break
+            except (BrokenPipeError, ConnectionResetError, TimeoutError, OSError):
+                pass
+
         def handle_request(self):
             try:
                 self._cookie_header = None
@@ -386,7 +441,12 @@ def handler_for(application):
                     principal = {'id': 'scim', 'role': 'owner', 'active': True, '_service': True} if is_scim else application.auth.principal(cookie)
                     if principal is None and path == '/api/health': principal = {'id': 'health', 'role': 'guest', 'active': True, '_service': True}
                     require(principal is not None, 'Authentication required', 401)
-                    status, payload = application.dispatch(method, path, body, parse_qs(url.query, keep_blank_values=True), principal=principal)
+                    parts = path.strip('/').split('/')
+                    if self.command == 'GET' and len(parts) == 4 and parts[:2] == ['api', 'pages'] and parts[3] == 'events':
+                        self.stream_page(parts[2], cookie)
+                        return
+                    status, payload = application.dispatch(method, path, body, parse_qs(url.query, keep_blank_values=True), principal=principal,
+                        session_cookie=cookie if not is_scim and path != '/api/health' else _INTERNAL_PRINCIPAL)
                     if isinstance(payload, Download):
                         self.send_download(payload)
                     elif path.startswith(("/sites/", "/forms/")) and isinstance(payload, dict) and "_html" in payload:
@@ -415,7 +475,16 @@ def handler_for(application):
 
 
 class FountainServer(ThreadingHTTPServer):
+    def __init__(self, *args, **kwargs):
+        self.stream_stop = threading.Event()
+        super().__init__(*args, **kwargs)
+
+    def shutdown(self):
+        self.stream_stop.set()
+        super().shutdown()
+
     def serve_forever(self, poll_interval=0.5):
+        self.stream_stop.clear()
         self.application.scheduler.start()
         try:
             super().serve_forever(poll_interval)
@@ -423,6 +492,7 @@ class FountainServer(ThreadingHTTPServer):
             self.application.scheduler.stop()
 
     def server_close(self):
+        self.stream_stop.set()
         if hasattr(self, 'application'):
             self.application.scheduler.stop()
         super().server_close()

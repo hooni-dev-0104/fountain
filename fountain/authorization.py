@@ -68,7 +68,7 @@ class Authorization:
             for version in self.store.list('version'):
                 if any(block.get('attachment_id') == identity for block in version.get('blocks', [])):
                     page = self.store.get('page', version.get('page_id'))
-                    if a.can('page', page):
+                    if a.can('page', page, 3):
                         allowed = True
                         break
         require(allowed, 'Attachment not found', 404)
@@ -148,6 +148,10 @@ class Authorization:
                 for block in body.get('blocks', []) if isinstance(body.get('blocks'), list) else []:
                     if isinstance(block, dict) and block.get('attachment_id'):
                         self.attachment(block['attachment_id'])
+                if parts[-1] == 'operations' and isinstance(body.get('ops'), list):
+                    for operation in body['ops']:
+                        if isinstance(operation, dict) and operation.get('type') == 'block.set' and operation.get('field') == 'attachment_id' and operation.get('value'):
+                            self.attachment(operation['value'])
                 if parts[-1] == 'comments': body['author'] = a.member_id
             return
         if parts[:2] == ['api', 'comments'] and len(parts) == 3:
@@ -301,6 +305,8 @@ class Authorization:
         if 'page' in result and isinstance(result['page'], dict):
             result['page']['access_level'] = a.level('page', result['page'])
             result['page'].setdefault('owner_id', 'local')
+            if 'versions' in result and not a.can('page', result['page'], 3):
+                result['versions'] = []
         if path.startswith('/api/pages/') and 'id' in result and 'title' in result:
             result['access_level'] = a.level('page', result)
             result.setdefault('owner_id', 'local')

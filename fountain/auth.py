@@ -166,7 +166,7 @@ class Auth:
             for session in self.store.list("session"):
                 if session.get("expires_at", "") <= current:
                     self.store.delete("session", session["id"])
-            session = {"id": digest, "expires_at": expires.isoformat(),
+            session = {"id": digest, "expires_at": expires.isoformat(), 'cache_binding': secrets.token_hex(16),
                        "credential_tag": self._account_tag(digest, credential) if member else self._tag(digest)}
             if member: session["member_id"] = member["id"]
             self.store.put("session", session)
@@ -219,6 +219,8 @@ class Auth:
         digest = self._digest(cookie)
         if digest:
             self.store.delete("session", digest)
+        if not self.enabled:
+            self.store.set_meta('local_cache_binding', secrets.token_hex(16))
 
     def principal(self, cookie):
         session = self._session(cookie)
@@ -234,10 +236,21 @@ class Auth:
         session = self._session(cookie)
         member = self.principal(cookie)
         account = self.accounts_required or bool(session and session.get("member_id"))
+        binding = None
+        if session:
+            binding = session.get('cache_binding', session['created_at'])
+        elif member:
+            with self.store.transaction():
+                binding = self.store.meta('local_cache_binding')
+                if not binding:
+                    binding = secrets.token_hex(16)
+                    self.store.set_meta('local_cache_binding', binding)
         return {"enabled": self.enabled, "required": self.enabled, "authenticated": member is not None,
                 "mode": "accounts" if account else "family" if self._secret else "local",
                 "identity": member["name"] if member else None, "member": member,
-                "expires_at": session["expires_at"] if session else None}
+                "expires_at": session["expires_at"] if session else None,
+                'workspace_id': self.store.meta('workspace_id'),
+                'cache_binding': binding}
 
 
 def main(argv=None):

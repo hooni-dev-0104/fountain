@@ -116,7 +116,28 @@ export function createStorage(config:Config){
   async function objectPath(item:ChunkManifest):Promise<string>{chunk(item);return 'v1/'+await digest(enc.encode(workspaceId))+'/'+await digest(enc.encode(item.attachmentId))+'/'+item.offset+'-'+item.sha256;}
   async function readChunk(item:ChunkManifest,access:AccessGate,signal?:AbortSignal):Promise<Uint8Array>{
     chunk(item);item=structuredClone(item);await privateBucket(access,signal);const path=await objectPath(item),response=await fetchStorage('object/authenticated/'+bucket+'/'+path,'GET',access,undefined,{},signal);
-    if(response.status!==200){await response.body?.cancel().catch(()=>{});throw new StorageError(response.status===404?409:503,response.status===404?'STORAGE_BYTES_MISSING':'STORAGE_UNAVAILABLE');}
+    if(response.status!==200){
+      let missing=response.status===404;
+      // Storage still serves legacy HTTP400 not_found bodies alongside the
+      // current NoSuchKey code. Absence remains uncertainty, never GC proof or
+      // permission to publish again. Only this bounded typed JSON is recognized.
+      if(response.status===400&&/^application\/json(?:\s*;|$)/i.test(response.headers.get('Content-Type')??'')){
+        try{
+          const value:unknown=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(await bytes(response,4096,access)));
+          if(object(value)){
+            const codes=['error','code'].filter(name=>Object.hasOwn(value,name)).map(name=>value[name]);
+            missing=Object.keys(value).every(name=>['error','code','message','statusCode','httpStatusCode'].includes(name))
+              &&codes.length>0&&codes.every(code=>code==='not_found'||code==='NoSuchKey')
+              &&(!Object.hasOwn(value,'message')||typeof value.message==='string')
+              &&['statusCode','httpStatusCode'].every(name=>!Object.hasOwn(value,name)||[400,404,'400','404'].includes(value[name]));
+          }
+        }catch(error){
+          if(error instanceof AuthError||error instanceof APIError&&(!(error instanceof StorageError)||[401,403].includes(error.status)))throw error;
+        }finally{await response.body?.cancel().catch(()=>{});}
+      }else await response.body?.cancel().catch(()=>{});
+      await gate(access);if(signal?.aborted)throw new StorageError();
+      throw new StorageError(missing?409:503,missing?'STORAGE_BYTES_MISSING':'STORAGE_UNAVAILABLE');
+    }
     const data=await bytes(response,item.size,access);if(data.length!==item.size||await digest(data)!==item.sha256)throw new StorageError(409,'STORAGE_HASH_MISMATCH','첨부 바이트 무결성을 확인할 수 없습니다.');await gate(access);return data;
   }
   async function writeChunk(attachmentId:string,offset:number,data:Uint8Array,access:AccessGate,signal?:AbortSignal):Promise<ChunkManifest>{

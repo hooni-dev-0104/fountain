@@ -11,8 +11,8 @@ const key='sb_secret_fixture_storage_key_never_public',bucket='fountain-private'
 const sha=bytes=>createHash('sha256').update(bytes).digest('hex');
 const allow=()=>{};
 let server,origin;
-const provider={objects:new Map(),calls:[],public:false,limit:50_000_000,uploadStatus:200,readMode:null,loseACK:false};
-function reset(){provider.objects.clear();provider.calls=[];provider.public=false;provider.limit=50_000_000;provider.uploadStatus=200;provider.readMode=null;provider.loseACK=false;return createStorage({supabaseUrl:origin,serviceKey:key,bucket,workspaceId:'family-한글',maxObjectBytes:50_000_000});}
+const provider={objects:new Map(),calls:[],public:false,limit:50_000_000,uploadStatus:200,readMode:null,readError:null,loseACK:false};
+function reset(){provider.objects.clear();provider.calls=[];provider.public=false;provider.limit=50_000_000;provider.uploadStatus=200;provider.readMode=null;provider.readError=null;provider.loseACK=false;return createStorage({supabaseUrl:origin,serviceKey:key,bucket,workspaceId:'family-한글',maxObjectBytes:50_000_000});}
 function json(response,status,value){response.writeHead(status,{'Content-Type':'application/json'});response.end(JSON.stringify(value));}
 before(async()=>{
   server=createServer(async(req,res)=>{
@@ -23,6 +23,7 @@ before(async()=>{
       if(path==='/storage/v1/bucket/'+bucket){json(res,200,{id:bucket,public:provider.public,file_size_limit:provider.limit,allowed_mime_types:['application/octet-stream']});return;}
       const authenticated='/storage/v1/object/authenticated/'+bucket+'/',upload='/storage/v1/object/'+bucket+'/';
       if(req.method==='GET'&&path.startsWith(authenticated)){
+        if(provider.readError){const error=provider.readError;res.writeHead(error.status,{'Content-Type':'application/json',...error.headers});if(error.wait){const split=Math.floor(error.body.length/2);res.write(error.body.slice(0,split));await error.wait;res.end(error.body.slice(split));}else res.end(error.body);return;}
         const id=path.slice(authenticated.length),stored=provider.objects.get(id);if(!stored){json(res,404,{message:'private provider diagnostic '+key});return;}
         if(provider.readMode==='redirect'){res.writeHead(302,{Location:origin+'/must-not-follow'});res.end();return;}
         const bytes=Buffer.from(stored);
@@ -116,4 +117,53 @@ test('physical removal requires a separate authoritative unreferenced claim and 
   const storage=reset(),item=await storage.writeChunk('file',0,Buffer.from([1,2,3]),allow);
   await reject(()=>storage.removeChunks([item],allow,async()=>false),409,'STORAGE_STILL_REFERENCED');assert.equal(provider.objects.size,1);
   await storage.removeChunks([item],allow,async()=>true);assert.equal(provider.objects.size,0);await storage.removeChunks([item],allow,async()=>true);assert.equal(provider.objects.size,0);
+});
+test('HTTP400 typed legacy/current missing objects map to missing bytes without publication or deletion',async()=>{
+ const storage=reset(),item=await storage.writeChunk('missing-shape',0,Buffer.from([1,2,3]),allow),before=provider.calls.length;
+ for(const body of [{error:'not_found'},{statusCode:'404',error:'not_found',message:'Object not found'},{httpStatusCode:400,code:'not_found',message:'legacy'},{code:'NoSuchKey',message:'missing'}]){
+  provider.readError={status:400,body:JSON.stringify(body)};await reject(()=>storage.readChunk(item,allow),409,'STORAGE_BYTES_MISSING');
+ }
+ assert.equal(provider.objects.size,1);assert(provider.calls.slice(before).every(([method])=>method==='GET'));
+});
+test('unknown, denied, malformed and oversized HTTP400 bodies remain sanitized unavailable',async()=>{
+ const storage=reset(),item=await storage.writeChunk('bad-shape',0,Buffer.from([1]),allow);
+ const cases=[
+  [400,JSON.stringify({error:'AccessDenied',message:key})],
+  [400,JSON.stringify({code:'NoSuchKey',error:'AccessDenied'})],
+  [400,JSON.stringify({error:{code:'not_found',private:key}})],
+  [400,JSON.stringify({error:'not_found',statusCode:403})],
+  [400,JSON.stringify({error:'not_found',message:{private:key}})],
+  [400,JSON.stringify({error:'not_found',privateProviderValue:key})],
+  [400,'["not_found"]'],[400,'null'],[400,'{"error":"not_found"'],
+  [400,Buffer.from([255,254,253])],
+  [400,'<html>not_found '+key+'</html>'],
+  [400,JSON.stringify({error:'not_found',message:'x'.repeat(5000)})],
+  [403,JSON.stringify({error:'not_found',message:key})],
+  [500,JSON.stringify({code:'NoSuchKey',message:key})],
+ ];
+ for(const [status,body] of cases){provider.readError={status,body};await reject(()=>storage.readChunk(item,allow),503,'STORAGE_UNAVAILABLE');}
+ provider.readError={status:400,body:'{"error":"not_found"}',headers:{'Content-Type':'text/html'}};await reject(()=>storage.readChunk(item,allow),503,'STORAGE_UNAVAILABLE');
+});
+test('revocation during a typed missing-error body wins over missing classification',async()=>{
+ const storage=reset(),item=await storage.writeChunk('revoked-error',0,Buffer.from([1]),allow);let active=true,calls=0,release,entered;
+ const waiting=new Promise(r=>{entered=r;});provider.readError={status:400,body:'{"error":"not_found"}',wait:new Promise(r=>{release=r;})};
+ const pending=storage.readChunk(item,()=>{if(!active)throw new APIError(403,'Permission changed');if(++calls===5)entered();});
+ try{await waiting;active=false;release();await assert.rejects(()=>pending,error=>error.status===403&&!error.message.includes(key));}finally{release();}
+ assert.equal(provider.objects.size,1);
+});
+test('oversized chunked missing-error responses are cancelled before JSON parsing',async()=>{
+ let cancelled=false,offered=0;
+ const storage=createStorage({supabaseUrl:origin,serviceKey:key,bucket,workspaceId:'family-한글',maxObjectBytes:CHUNK_SIZE,fetch:async input=>{
+  if(String(input).includes('/bucket/'))return Response.json({id:bucket,public:false});
+  return new Response(new ReadableStream({pull(controller){offered+=256;controller.enqueue(new Uint8Array(256).fill(32));},cancel(){cancelled=true;}}),{status:400,headers:{'Content-Type':'application/json'}});
+ }});
+ await reject(()=>storage.readChunk({version:1,attachmentId:'missing',offset:0,size:1,sha256:sha(Buffer.from([1]))},allow),503,'STORAGE_UNAVAILABLE');
+ assert(cancelled);assert(offered<=4096+512,'stop reading at the bound plus one queued piece');
+});
+test('abort during a typed missing-error body remains unavailable and never publishes again',async()=>{
+ const storage=reset(),item=await storage.writeChunk('aborted-error',0,Buffer.from([1]),allow);let calls=0,release,entered;
+ const waiting=new Promise(r=>{entered=r;}),abort=new AbortController();provider.readError={status:400,body:'{"error":"not_found"}',wait:new Promise(r=>{release=r;})};
+ const before=provider.calls.length,pending=storage.readChunk(item,()=>{if(++calls===5)entered();},abort.signal);
+ try{await waiting;abort.abort();await reject(()=>pending,503,'STORAGE_UNAVAILABLE');}finally{release();}
+ assert.equal(provider.objects.size,1);assert(provider.calls.slice(before).every(([method])=>method==='GET'));
 });

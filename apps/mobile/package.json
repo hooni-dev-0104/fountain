@@ -9,7 +9,8 @@
     "android": "cap open android",
     "build": "node scripts/build.mjs",
     "test": "node tests/transport.mjs && node tests/browser.mjs",
-    "test:outbox": "node tests/outbox-bootstrap.mjs && node tests/outbox-browser.mjs && node tests/outbox-resource-http.mjs"
+    "test:outbox": "node tests/outbox-bootstrap.mjs && node tests/outbox-browser.mjs && node tests/outbox-resource-http.mjs",
+    "test:recovery": "node tests/native-recovery.mjs && node tests/recovery-http.mjs && node ../../tests/browser-native-recovery-entry.mjs"
   },
   "dependencies": {
     "@capacitor/core": "8.5.3"

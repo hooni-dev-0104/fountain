@@ -8,7 +8,7 @@
 | --- | --- | --- |
 | 웹 | Python HTTP/선택 HTTPS 서버, SQLite 또는 선택 PostgreSQL 원본 DB, 웹 편집기, 개별 계정·권한, 문서 공동 편집·오프라인 보관 | 인증서 운영·상시 접속 가능한 서버 배포 |
 | macOS·Windows | Electron 44.8.0, 서버별 저장소, macOS arm64 실제 앱 실행·로그인/문서/SSE·재시작, Windows x64 portable 생성 | Windows OS 실행, 서명·업데이트·설치 프로그램 |
-| iOS·Android | Capacitor 8.5.3 프로젝트, 제한된 native HTTP·보안 세션·파일 내보내기 코드, mock bridge+실제 HTTP/Chrome 검증 | SDK 빌드·설치·실제 TLS/보안 저장소/파일 UI·키보드·중단/복귀·영구 outbox·실기기 검증 |
+| iOS·Android | Capacitor 8.5.3, 실제 iOS Simulator/Android Debug 빌드, 격리 SDK 검사와 mock bridge+실제 HTTP/Chrome 검증 | 물리 기기·실제 보안 저장소 장애·전체 TLS/파일 흐름·키보드·중단/복귀·영구 outbox·배포 검증 |
 | 기기 간 동기화 | 같은 서버를 사용하는 브라우저들은 같은 원본 DB를 읽고 문서 편집을 병합 | 네이티브 전송·인증 연결과 다섯 플랫폼 간 검증 |
 | Supabase | 서울 원본 DB·강제 RLS·최소 권한·TLS, 공유 파일 저장소, 기존 자료/계정 이관, 실제 5GB 저장소·SQLite 백업 복원 검증 | 상시 HTTPS 서버 운영·Supabase Auth 연결·대용량 전체 HTTP 전송 성능 |
 
@@ -78,10 +78,10 @@ Postgres 어댑터는 실제 트랜잭션·SAVEPOINT·작업공간 잠금으로 
 ## 실제 앱으로 연결하기 전에 필요한 작업
 
 1. 공통 서버 주소, 안정적인 사용자/작업공간 식별, 재시도 가능한 동기화 계약을 사용한다. 웹 화면의 문서·DB 행·새 페이지·메타데이터 편집은 기기별 캐시와 작업 큐에 연결했다. 네이티브 저장소·전송 어댑터도 같은 계약을 유지해야 한다.
-2. `fetch`·EventSource·업로드 XHR·다운로드·공개/공유 링크를 `static/transport.js`로 모았다. 브라우저·Electron은 같은 출처 연결을 유지한다. 모바일은 자체 plugin에서 비공개 Cookie를 주입하고 Set-Cookie를 제거하며, 기존 서버의 Origin·인증 규칙을 완화하지 않는다. 이 코드의 SDK 실행은 아직 검증하지 않았다. 로그인 쿠키는 `HttpOnly; SameSite=Strict`이고 직접 HTTPS에서는 `Secure`도 설정한다. 서버 URL만 바꾸면 네이티브 로그인·실시간 연결이 완성되지 않는다. 네이티브 인증 전송과 세션 철회를 검증해야 한다. 허용 Origin을 무조건 풀어 해결하지 않는다.
+2. `fetch`·EventSource·업로드 XHR·다운로드·공개/공유 링크를 `static/transport.js`로 모았다. 브라우저·Electron은 같은 출처 연결을 유지한다. 모바일은 자체 plugin에서 비공개 Cookie를 주입하고 Set-Cookie를 제거하며, 기존 서버의 Origin·인증 규칙을 완화하지 않는다. Android 전용 AVD에서는 실제 native HTTPS·보안 쿠키의 프로세스 재시작·로그아웃·OS 파일 저장을 검증했다. iOS는 실제 Swift/SQLite·WebView 검사까지 확인했으며 원격 HTTPS와 OS 파일 저장 완료는 남아 있다. 로그인 쿠키는 `HttpOnly; SameSite=Strict`이고 직접 HTTPS에서는 `Secure`도 설정한다. 서버 URL만 바꾸면 네이티브 로그인·실시간 연결이 완성되지 않는다. 네이티브 인증 전송과 세션 철회를 검증해야 한다. 허용 Origin을 무조건 풀어 해결하지 않는다.
 3. `--tls-cert`·`--tls-key`로 직접 TLS 1.2 이상의 HTTPS를 제공할 수 있다. 인증서 발급·갱신과 공통 서버의 상시 운영 배포는 남아 있다. 실제 소켓의 HTTP/HTTPS에 맞는 Origin만 허용하며 forwarded 헤더로 이 검사를 바꾸지 않는다. 현재 Supabase 이관과 원본 보존을 검증했으며 로그인은 기존 Fountain 계정을 사용한다.
 4. 생성한 iOS/Android 프로젝트를 SDK로 빌드하고 영구 캐시·Keychain/Keystore·앱 중단·복귀·파일 선택·공유를 각각 검증한다. 현재 native bundle의 IndexedDB 오프라인 흐름은 mock 검증이며 OS 퇴거에도 버티는 영구 outbox를 보장하지 않는다.
-5. macOS arm64·Windows x64 standalone 결과를 보존하고 Windows 실행 및 모바일 SDK 빌드를 검증한다. Xcode SDK 도구는 라이선스 미동의로 차단됐고 Android SDK는 없다. 서명·설치 프로그램·업데이트·배포는 미진행이며 사용자의 라이선스 검토나 자격증명이 필요하다.
+5. macOS arm64·Windows x64 standalone 결과를 보존하고 Windows 실행 및 모바일 SDK 빌드를 검증한다. 사용자가 Xcode·Android Studio 설정을 마쳤고 기존 SDK로 iOS Simulator·Android Debug 빌드를 확인했다. 배포 서명·설치 프로그램·업데이트·상시 배포는 남아 있으며 실제 기기 배포에는 사용자 계정과 서명 설정이 필요하다.
 
 완료 기준은 다섯 플랫폼에서 같은 계정으로 로그인하고, 문서·DB·댓글·공유 설정·첨부의 생성·편집·삭제가 다른 기기에 반영되는 것이다. 이어서 동시 편집, 오프라인 재시작·재접속, 같은 필드 충돌, 권한 철회, 로그아웃 후 늦은 응답, 다른 가족의 비공개 자료 차단까지 확인한다. 설치 가능한 앱과 이 검증이 갖춰지기 전에는 전체 플랫폼 지원 완료로 표시하지 않는다.
 
@@ -101,3 +101,17 @@ Postgres 어댑터는 실제 트랜잭션·SAVEPOINT·작업공간 잠금으로 
 
 
 SQLite outbox의 기반 코드는 기본 비활성 상태입니다. 정상 모바일 경로는 기존 IDB를 보존하고 앱 캐시로 안내하며, 현재 접근 검증 코드·남은 자료 재조정/승격·기기 검증 조건은 [모바일 저장소 개발 상태](NATIVE_OUTBOX.md)를 따릅니다.
+
+이전 네이티브 기록의 읽기 전용 목록·현재 권한 확인·명시적 OS 파일 내보내기는 [기기 복구 안내](NATIVE_RECOVERY.md)를 따른다. 일반 outbox는 계속 비활성이며 자동 승격·재전송은 하지 않는다.
+
+
+2026-10-16 실제 SDK 검증 범위:
+
+| 대상 | 확인한 동작 | 남은 범위 |
+| --- | --- | --- |
+| iOS Simulator | unsigned build·설치·실행, Swift/SQLite 복구·WebView 차단 XCTest 6개 | 원격 HTTPS 로그인·Keychain 실패·OS 저장 완료·물리 기기 |
+| Android API 36 AVD | Debug APK, 실제 WebView→native HTTPS·SQLite 복구, 시스템 저장 취소/완료, 저장 JSON 원문 일치, 보안 쿠키 강제 종료/복원·로그아웃 | 물리 기기·저장 실패/공간 부족·앱 캐시 퇴거·장시간 대용량 전송 |
+
+두 대상 모두 일반 영구 outbox는 기본 비활성 상태다. 테스트 CA는 Android
+Debug 전용이며 릴리스 인증서 검증을 바꾸지 않는다. 기존 사용자 가상 기기와
+생산 데이터는 시험에 사용하지 않았다.

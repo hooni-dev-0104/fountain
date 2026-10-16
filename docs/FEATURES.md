@@ -4,7 +4,7 @@
 
 | 영역 | 현재 동작 | 남은 차이 |
 | --- | --- | --- |
-| 플랫폼 | 웹·macOS arm64 Electron 실제 실행, Windows x64 portable 생성, iOS·Android 프로젝트·자체 native 연결 코드·mock 통합 검증 | Windows 실행, 모바일 SDK 빌드·보안 저장소/전송 실기기 검증·영구 outbox 활성화(현재는 비활성 기반), 서명·배포·상시 HTTPS 서버; [플랫폼 안내](PLATFORMS.md) |
+| 플랫폼 | 웹·macOS arm64 Electron 실제 실행, Windows x64 portable 생성, iOS Simulator·Android Debug 실제 빌드·자체 native 연결 코드·격리 SDK 및 mock 통합 검증 | Windows 실행, 모바일 보안 저장소/전송 전체 흐름과 물리 기기 검증·영구 outbox 활성화(현재는 비활성 기반), 서명·배포·상시 HTTPS 서버; [플랫폼 안내](PLATFORMS.md) |
 | 클라우드 | Supabase 서울 원본 DB·강제 RLS·TLS·공유 파일 저장소·기존 자료/세션 이관·실제 5GB 저장소/백업 복원·두 서버 Chrome 동기화 검증 | 상시 HTTPS 서버 운영·Supabase Auth 연결·대용량 전체 HTTP 전송 성능; [연결 안내](SUPABASE.md) |
 | 문서 | 중첩 페이지·블록, 굵게·기울임·밑줄·취소선·코드·링크·색상, 문자 단위 공동 편집, 접속자·원격 커서·선택 영역, 내 작업 실행 취소·다시 실행, 자동 저장, 잠금·즐겨찾기·검색·휴지통 | 열·동기화 블록·모든 Notion 고급 블록 |
 | 이력 | 기한 없는 저장 버전, 제목·본문 변경 비교·읽기 전용 미리보기, 현재 revision 확인 후 원자적 복원 | 버전 이름·북마크·작성자 정밀 정보·DB 전체 복원·이력 페이지 나누기; [안내](VERSION_HISTORY.md) |

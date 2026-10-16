@@ -31,8 +31,9 @@ purge including transfer metadata, and bounded BLOB substring reconstruction.
 Source assertions check the disabled gate and final callback fence. They do
 not execute the Swift validators, Keychain, Capacitor or iOS file protection.
 
-Swift parse/build/device execution remains **unverified**: the installed Xcode
-requires its license agreement, and this task neither accepts nor bypasses it.
+The user completed Xcode installation/setup. Actual unsigned SDK build, installation
+and launch now pass on the dedicated Fountain QA iOS Simulator; the earlier license
+block is resolved. Physical-device execution remains unverified.
 The resource-access layer now has a **source implementation**, still behind
 the disabled gate. Only actual native, exact query-free canonical GET responses
 for workspace, collaboration and database can update a private SQLite control
@@ -43,7 +44,8 @@ changed evidence updates a separate proof epoch without advancing the business
 data head or changing its lease. Actual resource 403/404 follows the existing
 resource purge/tombstone policy; unsent operations/drafts and mutation input are
 first preserved in the private recovery table, which cannot hydrate or replay.
-Explicit profile logout still purges all corresponding private records/recovery.
+The ordinary outbox's logout policy still purges corresponding private records;
+the separate explicit recovery mode described below never invokes that writer.
 Malformed 200 invalidates only evidence and
 retains input. Workspace denial fences the whole profile without logging it out.
 Terminal resource/workspace denial also rejects an older in-flight canonical
@@ -89,4 +91,102 @@ the Python transaction fault model does not prove Swift API or OS behavior.
 
 Activation still requires explicit quarantine promotion/recovery UI, complete
 local-create dependency closure, a reconciliation/fresh-fetch path, actual
-Swift/SDK execution, and real device storage/auth/process-death fault tests.
+full native HTTPS/picker integration, and real device storage/auth/process-death fault tests.
+
+## Explicit read-only recovery source
+
+`recoveryVersion: 1, recoveryEnabled: true` advertises the two explicit bridge
+methods `recoveryInventory` and `recoveryExport`. This does not activate ordinary
+outbox storage. With `OUTBOX_ENABLED=false`, ordinary boot/configuration/HTTP
+still opens no SQLite; only the explicit recovery action reaches the new reader.
+
+Recovery first latches a mode that blocks ordinary business non-GET requests
+(session login/logout remain available), then obtains an actual native HTTPS
+session response. Its separate memory context binds origin, current workspace,
+member, login binding, private cookie reference, owner/auth/generation and expiry.
+It never invokes outbox `grant`/`revoke` or writes a session grant into SQLite.
+Recovery-mode login/logout/401/configuration changes close capabilities/readers
+and clean private outputs while preserving the source archive. Closing or saving
+does not automatically resume outbox writes or sync. Existing ordinary auth
+retention/purge behavior remains an activation prerequisite, not solved by this
+export source.
+
+`FountainRecovery.swift` opens only an existing private per-origin file using
+read-only/no-follow checks, SQLite READONLY and query-only. Absent storage stays
+absent; no CREATE, migration, grant, head, receipt or business data writes occur.
+Inventory is current-actor-only metadata with random memory handles, a five-minute
+cap and bounded pagination. Raw resource-denial records and old wrapped change
+records are both supported, with exact SQL profile/key/inner ID checks before
+unwrapping. Other actors and profiles/meta/settings/provider/session/transfers
+are never exported.
+
+Prepare rechecks source head/fingerprint/SHA and fetches current canonical page,
+database, relation/previous-base and attachment metadata authorization through the
+native HTTPS helper. Edit level 3 is required for source resources; reference
+rows need current read access, including unspecified-database relations. Scalar
+and array property types, strict numeric/boolean envelopes, known rich-text
+tokens/marks, block languages and command-specific raw operation fields are
+validated. Unknown nested metadata is blocked rather than copied into readable
+JSON. Native never executes old RGA operations. Implicit `after_operation`
+dependencies join the explicit DAG; only a complete same-binding selected graph
+may become a normal typed file. Unproven local page closure stays blocked.
+
+Normal output is sanitized `fountain-recovery-v2`: desired user edits and known
+body drafts, with ACL/owner/session/provider/status/receipt/base metadata omitted.
+Old bases constrain authorization but do not grant export/import authority.
+Known overflow or unresolved operations become ordered readable JSON code parts
+with offsets and SHA context; the entire safe projection is retained without
+truncation or partial typed execution. The original SQL always stays unchanged.
+Limits are 100 selected records, 16 MiB per source/file, 64 MiB total prepared
+output, 1,000 files and the existing parser's depth/node/block limits. File I/O
+uses at most 256 KiB writes/reads for hashing/streaming; JS receives only names,
+sizes/counts/warnings and random capabilities, never file bodies or private paths.
+
+Save requires a second explicit action, fresh native session/resource checks,
+unchanged source digests, two-minute bounded authorization, and private output
+SHA verification before the existing multi-URL OS export picker. Canonical
+authorization fingerprints ignore only validated canonical top-level
+`data_revision`; all identity, access revision, contents, rows and references
+remain exact, and attachment metadata uses its raw hash. Known denials/newer
+observations invalidate prepared capabilities. Owner/auth/generation/boundary
+checks fence final callbacks; stale cleanup targets the matching capability so
+it cannot delete a newer preparation. Picker cancellation/partial completion is
+reported and private temporary files are cleaned; source records are not deleted.
+
+The portable suite now has 21 tests. It executes production SQL read-only and
+transaction statements on isolated temporary files, checks raw/wrapped source
+and actor filtering, verifies no source creation/hash changes, checks native
+source invariants, and runs representative normal/readable format models through
+the actual JavaScript recovery parser. This is **not execution of the Swift
+serializer/validators, native HTTPS stack or OS picker**. Actual SDK verification is recorded separately below; portable tests alone do
+not prove these platform behaviors. No SDK/license acceptance or bypass was performed.
+
+
+## Actual Xcode / Simulator evidence — 2026-10-16
+
+Xcode 27.0 (27A266a), iOS Simulator 27.0 arm64, dedicated `Fountain QA`
+UDID `AA8931A4-B783-47B8-AA7D-243B8DB5A448`. Existing user simulators and data
+were not reused. Unsigned build/install/launch passed. Actual launch exposed a
+duplicate `capacitor` scheme handler registration; a fresh public
+WKWebViewConfiguration preserving Capacitor settings fixes it while retaining the
+confined asset gate. No private API, vendored patch, CA or TLS bypass was added.
+
+```sh
+xcodebuild -project apps/mobile/ios/App/App.xcodeproj -scheme FountainQA \
+  -configuration Debug \
+  -destination 'platform=iOS Simulator,id=AA8931A4-B783-47B8-AA7D-243B8DB5A448' \
+  -derivedDataPath .data/ios-build CODE_SIGNING_ALLOWED=NO test
+```
+
+The separate XCTest target executes six tests: absent DB/no creation; actual
+Swift/SQLite raw and wrapped records/current actor isolation/output; malformed
+metadata and counter-only authority change; oversized Unicode readable projection
+byte determinism/reassembly; both previous-properties locations and strict typed
+values with a valid positive case; and the actual bundled bridge/disabled outbox
+plus asset-path/proxy gates. All six passed with zero failures/skips. Test code
+is not compiled into the app target. `.data/ios-qa.json` records source SHA256 and
+xcresult/log paths. Reviewers independently inspected the result bundle and hashes.
+
+These tests do not prove remote HTTPS login, Keychain storage failures, OS picker
+completion/partial save, physical-device file protection, process-death faults,
+WebView eviction recovery or ordinary outbox activation. Those remain separate.

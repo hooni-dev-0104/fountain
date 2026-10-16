@@ -1,0 +1,113 @@
+{
+  "date": "2026-10-16",
+  "scope": "Explicit native archive recovery and actual SDK verification; full five-platform/all-paid-feature objective remains active",
+  "rollout": {
+    "outboxEnabled": false,
+    "recoveryVersion": 1,
+    "recoveryEnabled": true,
+    "automatic_promotion": false,
+    "source_sql_writes": false
+  },
+  "authority": "Separate native current HTTPS session; exact actor/origin/workspace/binding/private cookie; fresh resource/row/reference/attachment authority; original SQL existing-only READONLY/query-only",
+  "output": {
+    "primary": "fountain-recovery-v2",
+    "overflow": "Ordered lossless readable JSON parts with exact projection checksum",
+    "excluded": "profiles, credentials, ACL/owner/session/provider/receipt/base metadata",
+    "source_record_bytes": 16777216,
+    "file_bytes": 16777216,
+    "prepared_total_bytes": 67108864,
+    "selection": 100,
+    "files": 1000,
+    "write_chunk_bytes": 262144
+  },
+  "web": {
+    "postgres": "461 actual PostgreSQL tests,447.672s,zero skipped",
+    "sqlite_sse": "37 collaboration/presence tests; canonical auth/data envelope and no redundant document after unrelated data change",
+    "regressions": [
+      "Actual Chrome offline/SW",
+      "Atomic ACK/process restart",
+      "Two-account collaboration",
+      "Full collaborative Undo/Redo and IME",
+      "Mobile transport/actual HTTP mock bridge",
+      "Default-disabled outbox/models",
+      "Recovery UI/model/actual HTTP/import/explicit apply"
+    ],
+    "recovery_model": "64 tracked checks plus strict projection/base/authority negatives; actual current web importer with fresh IDs and paused drafts; model OS picker only",
+    "entry": "Actual Chrome durably captures DOM body and pending title before pause; storage/IME/stale failures preserve editor; independent before/after reproductions for title timer late write, cached navigation reopen, late boot sidebar reveal and offline home repaint",
+    "reviews": "Independent APPROVE after reproduced defects fixed",
+    "visual": {
+      "panel": 95,
+      "paused_entry": 94
+    }
+  },
+  "ios": {
+    "sdk": "Xcode27.0 / iOS Simulator27.0 arm64",
+    "isolation": "Dedicated Fountain QA simulator; user devices/data unused",
+    "build_install_launch": "PASS unsigned; duplicate capacitor URL scheme registration fixed with fresh public configuration and preserved asset gate",
+    "xctest": {
+      "passed": 6,
+      "failed": 0,
+      "skipped": 0,
+      "actual": [
+        "Swift/SQLite readonly raw/wrapped/current actor/output",
+        "Absent DB no creation",
+        "Strict metadata/authority and counter-only revisions",
+        "Unicode overflow determinism and exact reassembly",
+        "Both previous-properties locations/hidden relations with valid positive case",
+        "Bundled Capacitor bridge disabled outbox/asset-path/proxy gates"
+      ]
+    },
+    "portable_sql_source_parser": 21,
+    "reviews": "Core and SDK/config/testtarget separately APPROVE",
+    "evidence": "apps/mobile/tests/ios-outbox-validation.md",
+    "unverified": [
+      "Remote HTTPS login",
+      "OS picker completion",
+      "Physical devices",
+      "Keychain failure/file protection/process fault behavior"
+    ]
+  },
+  "android": {
+    "sdk": "Existing API36 arm64 Google APIs / JDK21 / Build Tools36.0.0",
+    "build": "App debug and app instrumentation APK PASS; qualified Gradle targets; SDK auto-download disabled",
+    "isolation": "Fresh FountainRecoveryQA AVD; test CA only in Debug; private key/signing key ignored; user AVD untouched; temporary servers/emulator stopped",
+    "instrumented": {
+      "passed": 3,
+      "failed": 0,
+      "actual": [
+        "Packaged main-frame Capacitor bridge/native HTTPS/Android SQLite readonly/source SHA",
+        "DocumentsUI real cancel and save; saved Unicode JSON parsed by actual web parser",
+        "Family POST login/private cookie; force-stop and separate process Keystore-backed restore/authenticated GET/logout"
+      ],
+      "seconds": [
+        24.962,
+        9.215,
+        10.161
+      ]
+    },
+    "release_manifest": "PASS offline; no QA network security configuration, debuggable flag or cleartext",
+    "portable": "JDK97,SQL14,signature compile and actual production Java with existing optional JSON jar/desktop SQLite+HTTP; exact overflow checksum and parser",
+    "evidence": "apps/mobile/tests/android-outbox/device-validation.md",
+    "sdk_side_effect": "Initial exploratory AGP run unintentionally auto-installed Build Tools35 using a preexisting license; no license-acceptance command; subsequent builds pin36 and disable automatic SDK download",
+    "unverified": [
+      "Physical devices",
+      "Ordinary activated outbox crash durability",
+      "Storage exhaustion and WebView eviction"
+    ]
+  },
+  "runtime": {
+    "snapshot": "be775c7c6ceac08ff7997c2bfaa4e63bd5b8c65f",
+    "files": 37,
+    "preview": "http://localhost:8787",
+    "backup": "private ignored portable PostgreSQL backup integrity PASS",
+    "preserved": "Six production business/session collection fingerprints unchanged; existing account/home/importer/exact committed app asset/zero JS errors PASS"
+  },
+  "remaining": [
+    "Ordinary passive-401/relogin pending-edit retention",
+    "Complete local dependency closure and safe quarantine promotion/reconciliation",
+    "iOS remote HTTPS and OS save integration",
+    "Physical-device lifecycle/storage/auth testing",
+    "Reachable common HTTPS hosting",
+    "Windows actual execution and remaining original feature parity"
+  ]
+}

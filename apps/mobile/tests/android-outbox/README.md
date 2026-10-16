@@ -86,3 +86,97 @@ rules. Portable SQL tests execute production DDL/statements for rejected-overlay
 rollback, proof control isolation, resource denial quarantine and lost-ACK
 receipt cleanup. Source assertions pin observer/UI callback and negative-evidence
 paths. None of these execute Android `SQLiteDatabase` or WebView on a device.
+
+## Explicit read-only recovery
+
+The two recovery methods are independent of the disabled outbox. Explicit
+inventory arms recovery mode before authentication, reads only an existing
+per-origin SQLite file, and does not create a grant, migrate, purge, or resume
+ordinary synchronization. Current native session and resource HTTP responses
+authorize export of the same actor's older bindings. Other actors, unpublished
+creation closures, unsafe projections and incomplete dependencies remain in the
+original file. Authentication, source SHA, permission and expiry changes fence
+prepared output. Output stays in private native files until the OS picker;
+JavaScript receives metadata and opaque capabilities only.
+
+An optional JVM exercise runs the production `NativeRecovery` class with a
+preexisting compatibility JSON jar and test-only Android API adapters:
+
+```
+FOUNTAIN_ANDROID_JSON_JAR=/absolute/path/to/preexisting/android-json-0.0.20131108.vaadin1.jar \
+  python3 apps/mobile/tests/android-outbox/recovery_fixture.py
+```
+
+No jar is downloaded or installed. Without that explicit path this optional
+exercise skips. The existing local artifact used for verification was
+`com.vaadin.external.google:android-json:0.0.20131108.vaadin1`, SHA256
+`dfb7bae2f404cfe0b72b4d23944698cb716b7665171812a0a4d0f5926c0fac79`.
+It is not an application dependency. The exercise uses actual temporary Python
+HTTP authorities, desktop SQLite read-only queries and the current web recovery
+parser. It checks source-byte preservation, absent storage, old bindings,
+strict malformed authority negatives, cancellation, source/auth/denial changes,
+stripped unknown secrets and lossless Unicode overflow parts. Compatibility
+JSON and SQLite/Os/Context adapters are not Android SDK, TLS, driver, device,
+bridge or OS-picker evidence.
+
+## Opt-in Android SDK and isolated emulator test
+
+`RecoveryDeviceTest` exercises the actual production plugin through Capacitor's
+packaged main-frame WebView bridge. The dedicated API36 arm64 QA emulator uses
+native HTTPS with a debug-only test CA, Android SQLite in read-only/query-only
+mode, real DocumentsUI cancellation/save and an exact source-file SHA check.
+The saved file is pulled from that fresh emulator and parsed by the current web
+importer. Two further, separately invoked tests log in to a disposable family
+server, force-stop the app, prove the private Keystore-backed cookie restores
+authentication, and perform an actual logout. They use a public fixture token;
+no personal account or production database is involved.
+
+The runner refuses every emulator name except `FountainRecoveryQA`. It resets
+only that QA app, uses a separate ignored QA signing key, and never enables the
+outbox. Start a fresh dedicated AVD using the **already installed** SDK image:
+
+```
+export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
+export JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home
+export ANDROID_AVD_HOME="$PWD/.data/android-qa/avd"
+export ANDROID_USER_HOME="$PWD/.data/android-qa/user"
+export ANDROID_EMULATOR_HOME="$PWD/.data/android-qa/emulator-home"
+mkdir -p "$ANDROID_AVD_HOME" "$ANDROID_USER_HOME" "$ANDROID_EMULATOR_HOME"
+printf 'no\n' | "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd \
+  --name FountainRecoveryQA --device pixel_7 \
+  --package 'system-images;android-36;google_apis;arm64-v8a' \
+  --path "$ANDROID_AVD_HOME/FountainRecoveryQA.avd"
+"$ANDROID_HOME/emulator/emulator" -avd FountainRecoveryQA -port 5580 \
+  -no-snapshot -no-boot-anim -no-audio -gpu swiftshader -memory 2048
+```
+
+In another terminal, with the same SDK/JDK environment and an existing Python:
+
+```
+FOUNTAIN_PYTHON=/absolute/path/to/python3 \
+FOUNTAIN_ANDROID_QA_SERIAL=emulator-5580 \
+  sh apps/mobile/tests/android-outbox/device-run.sh
+```
+
+Do not use an existing personal AVD. No SDK download, license acceptance,
+trust-all TLS, cleartext network or release trust override is part of this
+runner. It regenerates a public debug CA in `app/src/debug/res/raw`; the private
+key and test APK signing key remain protected under ignored `.data/android-qa`.
+The debug manifest/trust anchors are excluded from release. Ports61595/61596
+must be free. Logs and saved QA files stay under `.data/android-qa`.
+
+Initial SDK verification did reveal two build gaps: the app needed its existing
+Capacitor WebKit transitive version on the app compilation classpath, and the
+unqualified Gradle test task also built an unrelated Cordova library test APK
+with conflicting old Kotlin modules. App-qualified targets avoid that unrelated
+task; no Kotlin dependency was added. Before the SDK auto-download guard and
+explicit app Build Tools36 setting were added, the first Gradle invocation
+automatically installed Build Tools35 using a preexisting license. This was an
+unintended SDK side effect and is recorded explicitly; no license acceptance
+command was run. Later verification disables SDK auto-download.
+
+These tests verify explicit recovery and the existing secure transport on an
+emulator. They do not activate or prove ordinary native outbox replay, mobile
+crash durability, unproven local creation closure, arbitrary physical devices,
+or automatic recovery promotion. `OUTBOX_ENABLED=false` remains unchanged.

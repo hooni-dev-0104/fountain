@@ -69,6 +69,30 @@ class AuthTests(unittest.TestCase):
         self.assertFalse(self.auth.authenticate(self.cookie(raw)))
         self.auth.logout("invalid")
 
+    def test_logout_binding_rejects_another_login_without_deleting_either(self):
+        first = self.auth.login({"token": SECRET})
+        first_binding = self.auth.session_info(self.cookie(first))["cache_binding"]
+        second = self.auth.login({"token": SECRET})
+        with self.assertRaises(APIError) as error:
+            self.auth.logout(self.cookie(second), first_binding)
+        self.assertEqual(error.exception.status, 409)
+        self.assertTrue(self.auth.authenticate(self.cookie(first)))
+        self.assertTrue(self.auth.authenticate(self.cookie(second)))
+        self.auth.logout(self.cookie(first), first_binding)
+        self.assertFalse(self.auth.authenticate(self.cookie(first)))
+        self.assertTrue(self.auth.authenticate(self.cookie(second)))
+
+    def test_expired_logout_binding_retry_is_idempotent_and_validated(self):
+        token = self.auth.login({"token": SECRET})
+        binding = self.auth.session_info(self.cookie(token))["cache_binding"]
+        self.auth.logout(self.cookie(token), binding)
+        self.auth.logout(self.cookie(token), binding)
+        self.assertFalse(self.auth.authenticate(self.cookie(token)))
+        for invalid in (False, 1, {}, "", "x" * 1001):
+            with self.subTest(binding=invalid), self.assertRaises(APIError) as error:
+                self.auth.logout("", invalid)
+            self.assertEqual(error.exception.status, 400)
+
     def test_expired_sessions_are_rejected_and_removed(self):
         raw = self.auth.login({"token": SECRET})
         session = self.store.list("session")[0]
@@ -224,6 +248,17 @@ class LocalSessionRenewalHTTPTests(unittest.TestCase):
             else:
                 self.assertEqual(self.request(method, '/api/session/renew-local', {})[0], 405)
         self.assertEqual(self.request('GET', '/api/session')[1], result[1])
+
+    def test_logout_binding_mismatch_does_not_clear_cookie_or_rotate_local_session(self):
+        before = self.request('GET', '/api/session')[1]
+        status, _, cookie = self.request('DELETE', '/api/session', {'cache_binding': 'stale-binding'})
+        self.assertEqual(status, 409)
+        self.assertIsNone(cookie)
+        self.assertEqual(self.request('GET', '/api/session')[1], before)
+        status, _, cookie = self.request('DELETE', '/api/session', {'cache_binding': before['cache_binding']})
+        self.assertEqual(status, 200)
+        self.assertIn('Max-Age=0', cookie)
+        self.assertNotEqual(self.request('GET', '/api/session')[1]['cache_binding'], before['cache_binding'])
 
     def test_origin_host_header_and_json_validation_apply_before_renewal(self):
         before = self.request('GET', '/api/session')[1]

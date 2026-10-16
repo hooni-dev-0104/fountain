@@ -227,12 +227,19 @@ class Auth:
     def authenticate(self, cookie):
         return not self.enabled or self._session(cookie) is not None
 
-    def logout(self, cookie):
-        digest = self._digest(cookie)
-        if digest:
-            self.store.delete("session", digest)
-        if not self.enabled:
-            self.store.set_meta('local_cache_binding', secrets.token_hex(16))
+    def logout(self, cookie, expected_binding=None):
+        with self.store.transaction():
+            if expected_binding is not None:
+                require(isinstance(expected_binding, str) and 0 < len(expected_binding) <= 1000,
+                        'A valid logout binding is required')
+                current = self._session_info(cookie)
+                require(not current['authenticated'] or current['cache_binding'] == expected_binding,
+                        'Login changed before logout', 409)
+            digest = self._digest(cookie)
+            if digest:
+                self.store.delete("session", digest)
+            if not self.enabled:
+                self.store.set_meta('local_cache_binding', secrets.token_hex(16))
 
     def principal(self, cookie):
         session = self._session(cookie)

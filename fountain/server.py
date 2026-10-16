@@ -698,7 +698,7 @@ def handler_for(application):
                         self.send_payload(200, auth.session_info('fountain_session=' + token))
                         return
                     if method == 'DELETE':
-                        auth.logout(cookie)
+                        auth.logout(cookie, body.get('cache_binding'))
                         self._cookie_header = 'fountain_session=; Max-Age=0; HttpOnly; SameSite=Strict; Path=/' + ('; Secure' if self.server.scheme == 'https' else '')
                         self.send_payload(200, {'authenticated': not auth.enabled, 'required': auth.enabled})
                         return

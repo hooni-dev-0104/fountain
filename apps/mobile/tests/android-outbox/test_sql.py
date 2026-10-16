@@ -97,8 +97,8 @@ os._exit(9)
         self.assertIn('private static final boolean OUTBOX_ENABLED = false;', plugin)
         self.assertIn('result.put("outboxEnabled", OUTBOX_ENABLED)', plugin)
         self.assertIn('if (!OUTBOX_ENABLED)', plugin)
-        self.assertIn('if (OUTBOX_ENABLED) try { durableOutbox().revoke(); }', plugin)
-        self.assertIn('if (OUTBOX_ENABLED && session && response.status == 200)', plugin)
+        self.assertIn('if (OUTBOX_ENABLED && !recoveryMode) try { durableOutbox().revoke(); }', plugin)
+        self.assertIn('if (OUTBOX_ENABLED && !recoveryMode && session && response.status == 200)', plugin)
         logout = plugin.split('if (operation.logout) {', 1)[1].split('} else {', 1)[0]
         self.assertIn('exchange(operation, operation.origin, path, "DELETE", headers, body, null, null)', logout)
         self.assertNotIn('response.status = 200', logout)
@@ -117,6 +117,36 @@ os._exit(9)
         self.assertIn('db.disableWriteAheadLogging()', source)
         self.assertNotIn('java.time', source)
         self.assertNotIn('java.util.Base64', source)
+
+    def test_recovery_existing_only_read_only_and_text_bound_pagination(self):
+        source = (SOURCE / 'NativeRecovery.java').read_text()
+        self.assertIn('SQLiteDatabase.OPEN_READONLY', source)
+        self.assertIn('PRAGMA query_only=ON', source)
+        self.assertNotIn('CREATE TABLE', source)
+        self.assertNotIn('db.delete(', source)
+        self.assertNotIn('db.insert(', source)
+        self.assertIn('HAVING min(rowid)>CAST(? AS INTEGER)', source)
+        before = hashlib.sha256(self.path.read_bytes()).digest()
+        reader = sqlite3.connect(self.path.resolve().as_uri() + '?mode=ro', uri=True)
+        self.addCleanup(reader.close)
+        reader.execute('PRAGMA query_only=ON')
+        with self.assertRaises(sqlite3.OperationalError):
+            reader.execute("DELETE FROM control")
+        self.assertEqual(reader.execute("SELECT min(rowid) FROM control GROUP BY key HAVING min(rowid)>CAST(? AS INTEGER)", ('0',)).fetchall(), [(1,), (2,)])
+        self.assertEqual(hashlib.sha256(self.path.read_bytes()).digest(), before)
+        absent = self.path.parent / 'never-created.sqlite'
+        with self.assertRaises(sqlite3.OperationalError):
+            sqlite3.connect(absent.resolve().as_uri() + '?mode=ro', uri=True)
+        self.assertFalse(absent.exists())
+
+    def test_recovery_mode_arms_before_auth_and_preserves_source_on_logout(self):
+        plugin = (SOURCE / 'FountainNativePlugin.java').read_text()
+        self.assertIn('recoveryEnabled', plugin)
+        caller = plugin.split('private void recoveryCall(', 1)[1].split('@PluginMethod public void recoveryInventory', 1)[0]
+        self.assertLess(caller.index('if(inventory)recoveryMode=true;'), caller.index('refreshRecovery(operation,epoch)'))
+        self.assertIn('if (OUTBOX_ENABLED && !recoveryMode && origin != null) durableOutbox().revoke();', plugin)
+        observer = plugin.split('private void observeCanonical', 1)[1] if 'private void observeCanonical' in plugin else plugin
+        self.assertIn('recovery.observe', observer)
 
     def test_recovery_import_receipt_is_private_immutable_and_purged(self):
         source = (SOURCE / 'NativeOutbox.java').read_text()

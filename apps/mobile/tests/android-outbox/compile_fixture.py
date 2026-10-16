@@ -24,16 +24,16 @@ STUBS = {
 }''',
 'org/json/JSONArray.java': '''package org.json; public class JSONArray {
  public JSONArray(){} public JSONArray(String s)throws JSONException{} public int length(){return 0;}
- public JSONArray put(Object o){return this;} public Object get(int i)throws JSONException{return null;}
+ public JSONArray put(Object o){return this;} public Object get(int i)throws JSONException{return null;} public Object opt(int i){return null;}
  public String getString(int i)throws JSONException{return null;} public JSONObject getJSONObject(int i)throws JSONException{return null;} public JSONArray getJSONArray(int i)throws JSONException{return null;}
 }''',
 'android/database/Cursor.java': '''package android.database; public interface Cursor extends AutoCloseable {
  boolean moveToFirst(); boolean moveToNext(); String getString(int n); int getInt(int n); long getLong(int n); byte[] getBlob(int n); void close();
 }''',
 'android/database/sqlite/SQLiteDatabase.java': '''package android.database.sqlite; import android.database.Cursor; public class SQLiteDatabase {
- public static final int CREATE_IF_NECESSARY=1,NO_LOCALIZED_COLLATORS=2;
+ public static final int CREATE_IF_NECESSARY=1,NO_LOCALIZED_COLLATORS=2,OPEN_READONLY=4;
  public static SQLiteDatabase openDatabase(String p,Object f,int v){return null;}
- public void disableWriteAheadLogging(){} public boolean isWriteAheadLoggingEnabled(){return false;}
+ public void disableWriteAheadLogging(){} public boolean isWriteAheadLoggingEnabled(){return false;} public boolean isReadOnly(){return true;}
  public Cursor rawQuery(String q,String[] a){return null;} public void execSQL(String q){} public void execSQL(String q,Object[] a){}
  public void beginTransaction(){} public void setTransactionSuccessful(){} public void endTransaction(){} public void close(){}
 }''',
@@ -50,6 +50,10 @@ STUBS = {
 }''',
 'android/net/Uri.java': 'package android.net; public class Uri { public String getScheme(){return null;} public String getEncodedAuthority(){return null;} }',
 'android/os/SystemClock.java': 'package android.os; public class SystemClock { public static long elapsedRealtime(){return 0;} }',
+'android/os/Process.java': 'package android.os; public class Process { public static int myUid(){return 0;} }',
+'android/system/StructStat.java': 'package android.system; public class StructStat { public int st_uid,st_mode; public long st_dev,st_ino; }',
+'android/system/Os.java': 'package android.system; public class Os { public static StructStat lstat(String p)throws Exception{return null;} }',
+'android/system/OsConstants.java': 'package android.system; public class OsConstants { public static boolean S_ISDIR(int m){return true;} public static boolean S_ISREG(int m){return true;} }',
 'android/util/Base64.java': 'package android.util; public class Base64 { public static final int NO_WRAP=2; public static byte[] decode(String s,int n){return null;} public static String encodeToString(byte[] b,int n){return null;} }',
 'android/webkit/WebView.java': 'package android.webkit; public class WebView { public String getUrl(){return null;} }',
 'androidx/activity/result/ActivityResult.java': 'package androidx.activity.result; public class ActivityResult { public int getResultCode(){return 0;} public android.content.Intent getData(){return null;} }',
@@ -86,7 +90,7 @@ with tempfile.TemporaryDirectory(prefix='fountain-java-signatures-') as folder:
     javac = str(Path(home) / 'bin/javac') if home else 'javac'
     result = subprocess.run([javac, '--release', '8', '-d', str(root / 'compiled'),
         *map(str, root.rglob('*.java')),
-        *[str(SOURCE / name) for name in ('NativePolicy.java', 'NativeCookieBoundary.java', 'OutboxPolicy.java', 'NativeOutbox.java', 'FountainNativePlugin.java')]],
+        *[str(SOURCE / name) for name in ('NativePolicy.java', 'NativeCookieBoundary.java', 'OutboxPolicy.java', 'NativeOutbox.java', 'NativeRecovery.java', 'FountainNativePlugin.java')]],
         capture_output=True, text=True)
     if result.returncode:
         print(result.stderr)

@@ -1,0 +1,135 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-17",
+  "feature": "authorized lexical workspace search",
+  "wholeNotionGoalComplete": false,
+  "semanticAI": false,
+  "newDependencies": false,
+  "databaseMigrations": 0,
+  "deployments": {
+    "api": {
+      "version": 11,
+      "sha256": "02fb3c4b820db1f0111b4a12a26bb324e86871b8e9b2c462341d7d34d70871be"
+    },
+    "qaExecution": {
+      "version": 53,
+      "sha256": "5272139715603dc5e6658eec700e65d7d62dfe4f7aaa7a5f90ce8c26d27df716"
+    },
+    "qaCleanup": {
+      "version": 54,
+      "sha256": "7bbd28c629197bee55a4fc3b56441651973888868f15422f07a69ab4664d3e45"
+    },
+    "qaRetired": {
+      "version": 55,
+      "sha256": "d1273f6b19564dd8fca29e5d6e31d6cf9582183d7edac259ae385a55f184b38e"
+    }
+  },
+  "evidence": {
+    "sourceNode": {
+      "tests": 383,
+      "passed": 383,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 49521.5665
+    },
+    "python": {
+      "tests": 497,
+      "passed": 425,
+      "skipped": 72,
+      "failed": 0,
+      "durationSeconds": 64.501,
+      "postgresDSNConfigured": false
+    },
+    "pythonSQLitePayloadComparisons": 360,
+    "actualCloud": {
+      "realAuthAccounts": 2,
+      "roles": [
+        "owner",
+        "member",
+        "admin",
+        "guest"
+      ],
+      "visibleInitially": 6,
+      "visibleAfterPagePermissionRevocation": 5,
+      "visibleAfterRowDeletion": 4,
+      "guestVisible": 0,
+      "searchAudits": 31,
+      "auditFieldsOutsideCountsMode": 0,
+      "privateCookieFlagsVerified": true,
+      "phraseKoreanTypeOwnerSubtreeSixSortsPagination": true,
+      "hiddenBodyReferenceFieldMatches": 0,
+      "realStorageIO": false
+    },
+    "browser": {
+      "actualDisposablePythonAndChrome": true,
+      "staleQueryModalAccountTransportCases": "explicit injected HTTP/transport fixtures",
+      "newSearchRegressionPassed": true,
+      "existingTransportRegressionPassed": true,
+      "viewportWidths": [
+        1280,
+        390
+      ],
+      "visualScore": 94,
+      "visualVerdict": "pass",
+      "nativeRuntimeReexecuted": false,
+      "windowsRuntimeExecuted": false
+    },
+    "publicBundles": {
+      "targets": [
+        "web dist",
+        "desktop bundle",
+        "mobile www",
+        "Android assets",
+        "iOS assets"
+      ],
+      "changedAssetHashComparisons": 10,
+      "newNativeBinaryBuilt": false
+    },
+    "production": {
+      "anonymousBoundaryChecks": 8,
+      "ready": false,
+      "setupEnabled": false,
+      "publicWebOrigin": null,
+      "ownerMapped": false,
+      "originalCutover": false,
+      "originalPreview8787Status": 200
+    },
+    "cleanup": {
+      "qaTablesVerified": 29,
+      "qaRowsRemaining": 0,
+      "authUsersDeleted": 2,
+      "auth_users": 0,
+      "auth_sessions": 0,
+      "qa_entities": 0,
+      "qa_mappings": 0,
+      "storage_objects": 0,
+      "cron_jobs": 0,
+      "original_entities": 153,
+      "original_meta": 6,
+      "original_mappings": 0,
+      "privateQANoncesPasswordsCookiesRemoved": true,
+      "oldGatePathsRejected": 3
+    },
+    "securityAdvisors": {
+      "errors": 0,
+      "warnGroups": [
+        "extension_in_public"
+      ],
+      "infoGroups": [
+        "rls_enabled_no_policy"
+      ]
+    },
+    "review": {
+      "independentBackend": "APPROVE",
+      "independentUI": "APPROVE",
+      "strictTypeScriptChecked": false
+    }
+  },
+  "limitations": [
+    "External app indexing and semantic/generative AI are not configured.",
+    "Actual native search UI and Windows execution were not repeated in this milestone.",
+    "Databases without stored parent_id/page_id metadata are not included under a selected page.",
+    "Original owner identity and public HTTPS hosting are not connected; deployment remains ready:false.",
+    "Current Python full suite skipped 72 optional PostgreSQL tests; live cloud evidence is separately recorded."
+  ]
+}

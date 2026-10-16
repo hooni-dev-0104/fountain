@@ -59,6 +59,8 @@ AI는 기본 비활성 상태이며 무료 로컬 모델 또는 호환 API를 �
 
 기존 PostgreSQL inline 첨부도 별도 디스크 서버 없이 읽도록 API version 10에 반영했습니다. 격리된 실제 계정의 공유 권한과 최대 5MB 전체 다운로드·해시를 확인했으며 원본 첨부는 변경하지 않았습니다. [첨부 다운로드 검증 범위](docs/research/inline-attachment-verification.md)
 
+API version 11은 현재 권한에 따른 페이지·DB·행 통합 검색과 필터·정렬·페이지 나눔을 제공합니다. 실제 계정의 권한 철회와 삭제 후 결과 변경을 확인했습니다. AI 의미 검색과 외부 앱 색인은 연결하지 않았습니다. [검색 안내](docs/SEARCH.md) · [검증 범위](docs/research/advanced-search-verification.md)
+
 전체 백업은 설정 → 가져오기 / 내보내기 → 전체 백업 다운로드에서 받을 수 있습니다. 댓글·문서 이력·첨부·설정이 포함되고 로그인 세션·임시 클립보드는 제외됩니다. JSON은 문서와 데이터베이스의 이동용 내보내기입니다.
 
 ```sh

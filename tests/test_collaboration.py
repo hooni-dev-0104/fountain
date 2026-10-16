@@ -245,6 +245,18 @@ class CollaborationStreamTests(unittest.TestCase):
                 return event, json.loads(data)
         self.fail('No SSE event received')
 
+    def test_stream_retains_the_canonical_authorization_and_revision_envelope(self):
+        canonical = self.app.dispatch('GET', '/api/pages/stream/collaboration', {}, {}, session_cookie=self.cookie)[1]
+        initial = self.event(self.stream())[1]
+        fields = {'workspace_id', 'current_member_id', 'session_binding', 'access_revision', 'data_revision'}
+        self.assertTrue(fields.issubset(initial), 'SSE must not replace a canonical cache with an incomplete envelope')
+        for field in fields - {'data_revision'}:
+            self.assertEqual(initial[field], canonical[field])
+        self.assertIs(type(initial['data_revision']), int)
+        self.assertGreaterEqual(initial['data_revision'], canonical['data_revision'])
+        self.assertEqual(initial['page']['access_level'], initial['access_level'])
+        self.assertEqual(initial['page']['owner_id'], canonical['page']['owner_id'])
+
     def test_live_metadata_permission_downgrade_and_revocation(self):
         response = self.stream()
         initial = self.event(response)[1]

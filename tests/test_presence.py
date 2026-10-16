@@ -397,6 +397,8 @@ class PresenceHTTPTests(unittest.TestCase):
             name, snapshot = self.event(response)
             self.assertEqual(name, "snapshot")
             self.assertEqual(self.event(response)[0], "presence")
+            # An unrelated data revision is envelope metadata, not a new document body.
+            self.app.workspace.create_row("projects", {"properties": {"name": "Unrelated row"}})
             before_page, before_document, before_audit = self.store.get("page", "welcome"), self.store.get("collaboration", "welcome"), self.store.list("audit")
             self.assertEqual(self.request("PUT", "/api/pages/welcome/presence", self.body(), self.family)[0], 200)
             name, presence = self.event(response)

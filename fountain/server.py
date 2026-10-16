@@ -561,10 +561,14 @@ def handler_for(application):
                     context = application._request_context(_INTERNAL_PRINCIPAL, cookie)
                     if stream_binding is None: stream_binding = context['session_binding']
                     require(context['session_binding'] == stream_binding, 'Login changed', 401)
-                    current = application.collaboration.snapshot(page_id, context['access'])
-                    current['current_member_id'] = context['access'].member_id
-                    current['session_binding'] = stream_binding
-                    return current, application.presence.snapshot(page_id, cookie)
+                    access = context['access']
+                    current = application.collaboration.snapshot(page_id, access)
+                    current = Authorization(access).project('/api/pages/' + page_id + '/collaboration', current)
+                    presence = application.presence.snapshot(page_id, cookie)
+                    current.update(workspace_id=context['workspace_id'], current_member_id=access.member_id,
+                        session_binding=stream_binding, access_revision=application.store.meta('access_revision', 0),
+                        data_revision=application.store.meta('_entity_revision', 0))
+                    return current, presence
 
             current, presence = snapshot()
             self.send_response(200)
@@ -580,13 +584,17 @@ def handler_for(application):
                 while not self.server.stream_stop.is_set():
                     # PostgreSQL JSONB may reorder keys after the initial write.
                     # Compare canonical JSON so a cursor does not resend a body.
-                    encoded = json.dumps(current, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+                    # A global revision keeps an emitted cache canonical, but unrelated
+                    # row/presence writes must not publish the document body again.
+                    document_key = json.dumps({key: value for key, value in current.items() if key != 'data_revision'},
+                                              ensure_ascii=False, sort_keys=True, separators=(',', ':'))
                     presence_key = json.dumps({'epoch': presence['epoch'], 'participants': presence['participants']},
                                               ensure_ascii=False, sort_keys=True, separators=(',', ':'))
                     changed = False
-                    if encoded != previous:
+                    if document_key != previous:
+                        encoded = json.dumps(current, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
                         self.wfile.write(('event: snapshot\ndata: ' + encoded + '\n\n').encode())
-                        previous, changed = encoded, True
+                        previous, changed = document_key, True
                     if presence_key != previous_presence:
                         self.wfile.write(('event: presence\ndata: ' + json.dumps(presence, ensure_ascii=False, separators=(',', ':')) + '\n\n').encode())
                         previous_presence, changed = presence_key, True

@@ -247,7 +247,7 @@ export class CloudStore implements StoreReader {
     this.stage({op:'delete',kind:kindName,id:identity}); this.entities.get(kindName)!.delete(identity);
   }
   set_meta(key: string, value: any): any {
-    this.writable(); metaKey(key); check(key !== '_entity_revision' && (key !== 'workspace_id' || value === this.context.workspaceId),'SELECTION_FORBIDDEN');
+    this.writable(); metaKey(key); check(!['_entity_revision','_backup_storage_reserved'].includes(key) && (key !== 'workspace_id' || value === this.context.workspaceId),'SELECTION_FORBIDDEN');
     json(value); this.meta(key); this.stage({op:'meta',key,value:clone(value)});this.metadata.set(key,clone(value));return clone(value);
   }
   audit(action:string, details:Entity, user:string=this.context.memberId):Entity {

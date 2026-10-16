@@ -137,6 +137,15 @@ test('logical quota CAS survives races; failed GC retains quota until physical d
  assert.equal((await f.files.cancel(f.auth(),item.id)).cleanup_pending,true);assert.equal(f.raw('upload',item.id),undefined);assert.equal(f.raw('upload_gc',item.id).reserved_bytes,7);await rejected(f.files.begin(f.auth(),{name:'c',size:4}),507);
  f.io.deleteStatus=200;assert.equal((await f.files.garbageCollect(f.auth(),item.id)).removed,true);assert.equal(f.objects.size,0);await f.files.begin(f.auth(),{name:'new',size:10});
 });
+test('private backup reservations share attachment quota and a concurrent reservation invalidates stale file CAS',async t=>{
+ const f=await fixture(t,{quotaBytes:10});f.provider.metadata.set('_backup_storage_reserved',8);f.provider.revision++;
+ await rejected(f.files.begin(f.auth(),{name:'too-large',size:3}),507);assert.equal(f.objects.size,0);
+ const exact=await f.files.begin(f.auth(),{name:'fits',size:2});assert.equal(exact.size,2);
+ const second=await fixture(t,{quotaBytes:10}),commit=second.provider.commit.bind(second.provider);let injected=false;
+ second.provider.commit=async request=>{if(!injected){injected=true;second.provider.metadata.set('_backup_storage_reserved',8);second.provider.revision++;}return commit(request);};
+ await rejected(second.files.begin(second.auth(),{name:'stale',size:3}),507);assert.equal(injected,true);assert.equal([...second.provider.records.values()].filter(row=>row.kind==='upload').length,0);
+ second.provider.metadata.set('_backup_storage_reserved',-1);second.provider.revision++;await rejected(second.files.begin(second.auth(),{name:'invalid',size:0}),409);
+});
 test('expiry cleanup requires owner, preserves completed attachment and zero-byte full SHA',async t=>{
  const f=await fixture(t),empty=await upload(f,Buffer.alloc(0));const file=await f.files.complete(f.auth(),empty.id);assert.equal(file.sha256,digest(Buffer.alloc(0)));assert.equal(f.objects.size,0);
  const abandoned=await upload(f,Buffer.from('pending'));f.clock(86400_001);f.setActor(second);await rejected(f.files.cleanup(f.auth()),403);f.setActor(context);assert.equal((await f.files.cleanup(f.auth())).removed,2);assert(f.raw('attachment',empty.id));assert.equal(f.raw('upload',abandoned.id),undefined);assert.equal(f.objects.size,0);

@@ -74,6 +74,7 @@ export function createFiles(config:Config){
     for(const item of s.list('attachment')){require(integer(item.size),'Invalid attachment quota metadata',409);usedBytes+=item.size;}
     for(const item of s.list('upload'))if(item.id!==excluding&&!item.completed&&!item.migration){require(integer(item.size),'Invalid upload quota metadata',409);reservedBytes+=item.size;}
     for(const item of s.list('upload_gc')){require(integer(item.reserved_bytes),'Invalid upload cleanup metadata',409);reservedBytes+=item.reserved_bytes;}
+    const backupReserved=s.meta('_backup_storage_reserved',0);require(integer(backupReserved),'Invalid backup quota metadata',409);reservedBytes+=backupReserved;
     require(integer(usedBytes)&&integer(reservedBytes),'Invalid file quota totals',409);return {limitBytes:quota,usedBytes,reservedBytes};
   }
   async function begin(initial:AuthContext,body:unknown,legacyInline=false):Promise<Entity>{

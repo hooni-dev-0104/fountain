@@ -196,6 +196,7 @@ await test('bounds and invalid JSON preserve staged records and counters',async(
  expectCode(()=>store.put('page',{id:'third',text:'x'.repeat(16*1024*1024)}),'STORAGE_LIMIT');assert.equal(store.revision,7);assert.deepEqual(store.get('page','third'),before);
  expectCode(()=>normalizeSelection({ids:{page:Array.from({length:1001},(_,index)=>String(index))}}),'STORAGE_LIMIT');
  expectCode(()=>store.set_meta('_entity_revision',0),'SELECTION_FORBIDDEN');expectCode(()=>store.set_meta('workspace_id','other'),'SELECTION_FORBIDDEN');
+ expectCode(()=>store.set_meta('_backup_storage_reserved',0),'SELECTION_FORBIDDEN');
  const shared={text:'valid shared reference'};store.put('page',{id:'third',a:shared,b:shared});assert.equal(store.revision,8);
 });
 await test('RPC transport scopes requests and sanitizes errors/redirects without leaking keys',async()=>{

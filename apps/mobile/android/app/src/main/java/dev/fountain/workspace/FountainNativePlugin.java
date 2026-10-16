@@ -165,7 +165,10 @@ public class FountainNativePlugin extends Plugin {
     }
 
     private NativePolicy.SessionInvalidation invalidateSession() {
-        if (OUTBOX_ENABLED && !recoveryMode) try { durableOutbox().revoke(); }
+        return invalidateSession(null);
+    }
+    private NativePolicy.SessionInvalidation invalidateSession(String explicitNativeActor) {
+        if (OUTBOX_ENABLED && !recoveryMode) try { NativeOutbox storage=durableOutbox();storage.revoke();if(explicitNativeActor!=null)storage.eraseActor(explicitNativeActor); }
         catch (Exception failure) { broken = true; }
         NativePolicy.SessionInvalidation result = NativePolicy.invalidateSession(origin, activeCookie, revokeCookie, sessionStorage());
         activeCookie = null;
@@ -364,10 +367,12 @@ public class FountainNativePlugin extends Plugin {
             String id = call.getString("id");
             NativePolicy.require(id != null && id.matches("[A-Za-z0-9_.:-]{1,160}") && !operations.containsKey(id));
             if (mutation) {
+                String explicitNativeActor=null;
+                if(method.equals("DELETE")&&OUTBOX_ENABLED&&!recoveryMode)try{explicitNativeActor=durableOutbox().nativeActor(activeCookie!=null?activeCookie:revokeCookie);}catch(Exception unavailable){broken=true;}
                 invalidateRecovery();
                 authGeneration++;
                 cancelAll(null, "SESSION_CHANGED");
-                NativePolicy.SessionInvalidation invalidated = invalidateSession();
+                NativePolicy.SessionInvalidation invalidated = invalidateSession(explicitNativeActor);
                 if (!invalidated.saved) {
                     call.reject(invalidated.durable ? "Secure session storage failed; local session remains invalidated"
                         : "Durable session invalidation failed; remote revocation is being attempted",
@@ -533,7 +538,7 @@ public class FountainNativePlugin extends Plugin {
                     retryRevocationAfterStorageFailure();
                     throw new IOException();
                 }
-            } else if (response.status == 401 && (OUTBOX_ENABLED || sentCookie != null) && Objects.equals(sentCookie, activeCookie)) {
+            } else if (response.status == 401 && (OUTBOX_ENABLED || recoveryMode || sentCookie != null) && Objects.equals(sentCookie, activeCookie)) {
                 invalidateRecovery();
                 authGeneration++;
                 operation.authGeneration = authGeneration;
@@ -554,6 +559,7 @@ public class FountainNativePlugin extends Plugin {
                 else if (description.opt("authenticated") == Boolean.TRUE) {
                     NativePolicy.require(!outboxBlocked() && (response.cookie == null || response.cookie.equals(activeCookie)));
                     try { durableOutbox().grant(description, activeCookie); }
+                    catch(NativeOutbox.AccessRequired recoveryRequired) { /* Actual session HTTP remains authoritative; hydration requires explicit recovery. */ }
                     catch (Exception invalid) { durableOutbox().revoke(); throw new IOException(); }
                 } else { durableOutbox().revoke(); throw new IOException(); }
             }

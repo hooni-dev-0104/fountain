@@ -36,16 +36,17 @@ final class NativeOutbox implements AutoCloseable {
     private boolean failed;
     private long boundary;
     private long proofGeneration, deliveryDeadline = Long.MAX_VALUE;
-    static final class AccessRequired extends Exception {
+    static class AccessRequired extends Exception {
         AccessRequired() { super("Native resource access must be refreshed"); }
     }
+    static final class RecoveryRequired extends AccessRequired {}
     long boundary() { return boundary; } // Memory-only guard for results waiting on the UI thread.
     long proofEpoch() { return proofGeneration; }
     long deliveryDeadline() { return deliveryDeadline; }
 
     NativeOutbox(Context context, String origin) throws Exception {
         this.origin = origin;
-        File directory = new File(context.getNoBackupFilesDir(), "durable_outbox");
+        File directory = new File(context.getNoBackupFilesDir().getCanonicalFile(), "durable_outbox");
         if (!directory.isDirectory() && !directory.mkdirs()) throw new IllegalStateException();
         if (!directory.setReadable(false, false) || !directory.setWritable(false, false) || !directory.setExecutable(false, false)
             || !directory.setReadable(true, true) || !directory.setWritable(true, true) || !directory.setExecutable(true, true)) throw new IllegalStateException();
@@ -93,21 +94,58 @@ final class NativeOutbox implements AutoCloseable {
             db.execSQL("DELETE FROM records WHERE resource_key=? AND (mode='active' OR bucket='transfers')", new Object[]{identity});
         }
     }
+    private void suspendProfile(String profile)throws Exception {
+        NativePolicy.require(OutboxPolicy.actorPrefix(origin,profile)!=null);set("suspended:"+profile,"1");
+        String raw=get("grant");if(raw==null||!profile.equals(new JSONObject(raw).getString("profileId")))return;
+        set("identity_state","blocked");db.execSQL("DELETE FROM control WHERE key='resource_proofs'");set("needs_floor","1");advanceProof();
+        set("lease",UUID.randomUUID().toString());set("owner","");advance();
+    }
+    // Native auth invalidation preserves every source/uncertain transaction.
     void revoke() {
         db.beginTransaction();
         try {
             String grant = get("grant");
-            if (grant != null) purge("profile", new JSONObject(grant).getString("profileId"));
-            set("identity_state", "blocked"); db.execSQL("DELETE FROM control WHERE key='grant'");
-            db.execSQL("DELETE FROM control WHERE key='resource_proofs'"); advanceProof();
-            db.execSQL("DELETE FROM staging"); set("lease", UUID.randomUUID().toString()); set("owner", ""); advance(); db.setTransactionSuccessful();
+            if(grant!=null)suspendProfile(new JSONObject(grant).getString("profileId"));
+            else{set("identity_state","blocked");db.execSQL("DELETE FROM control WHERE key='resource_proofs'");set("needs_floor","1");advanceProof();set("lease",UUID.randomUUID().toString());set("owner","");advance();}
+            db.setTransactionSuccessful();
         } catch (Exception error) { failed = true; throw new IllegalStateException(); }
         finally { db.endTransaction(); }
         proofCommitted(); boundary++;
     }
+    String nativeActor(String cookie)throws Exception {
+        String raw=get("grant");if(raw==null)return null;JSONObject grant=new JSONObject(raw);String profile=grant.getString("profileId");
+        if(OutboxPolicy.actorPrefix(origin,profile)==null)return null;
+        if(cookie!=null&&!OutboxPolicy.hash(cookie).equals(grant.getString("session_ref")))return null;
+        if(cookie==null&&!"local".equals(grant.getString("session_ref"))&&!"blocked".equals(get("identity_state")))return null;
+        return profile;
+    }
+    void eraseActor(String nativeProfile)throws Exception {
+        String raw=get("grant");String prefix=OutboxPolicy.actorPrefix(origin,nativeProfile);
+        NativePolicy.require(prefix!=null&&raw!=null&&nativeProfile.equals(new JSONObject(raw).getString("profileId")));
+        db.beginTransaction();
+        try{
+            // Attribution comes only from private native grants, never JS deltas.
+            Object[] actor=new Object[]{prefix.length(),prefix};
+            db.execSQL("INSERT OR IGNORE INTO tombstones(kind,id) SELECT 'profile',profile_id FROM records WHERE substr(profile_id,1,?)=?",actor);
+            db.execSQL("DELETE FROM records WHERE substr(profile_id,1,?)=?",actor);
+            db.execSQL("DELETE FROM staging WHERE tx_id IN (SELECT substr(key,15) FROM control WHERE key LIKE 'staging-owner:%' AND substr(value,1,?)=?)",actor);
+            db.execSQL("DELETE FROM tx_receipts WHERE tx_id IN (SELECT substr(key,15) FROM control WHERE key LIKE 'receipt-owner:%' AND substr(value,1,?)=?)",actor);
+            db.execSQL("DELETE FROM control WHERE key IN (SELECT 'staged-proof:' || substr(key,15) FROM control WHERE key LIKE 'staging-owner:%' AND substr(value,1,?)=?)",actor);
+            db.execSQL("DELETE FROM control WHERE key IN (SELECT 'receipt-proof:' || substr(key,15) FROM control WHERE key LIKE 'receipt-owner:%' AND substr(value,1,?)=?)",actor);
+            // Legacy recovery/parts without native actor attribution stay opaque.
+            db.execSQL("DELETE FROM recovery WHERE id IN (SELECT substr(key,16) FROM control WHERE key LIKE 'recovery-owner:%' AND substr(value,1,?)=?)",actor);
+            db.execSQL("DELETE FROM control WHERE (key LIKE 'staging-owner:%' OR key LIKE 'receipt-owner:%' OR key LIKE 'recovery-owner:%') AND substr(value,1,?)=?",actor);
+            purge("profile",nativeProfile);suspendProfile(nativeProfile);db.setTransactionSuccessful();
+        }finally{db.endTransaction();}proofCommitted();boundary++;
+    }
+    private void retentionGate()throws Exception {
+        String raw=get("grant");if(raw==null)return;JSONObject grant=new JSONObject(raw);
+        if(get("suspended:"+grant.getString("profileId"))!=null)throw new RecoveryRequired();
+        if(grant.getLong("validUntil")<=System.currentTimeMillis()){revoke();throw new RecoveryRequired();}
+    }
     void grant(JSONObject session, String cookie) throws Exception {
         // This method is called only with an actual native session HTTP response.
-        NativePolicy.require(session.opt("authenticated") == Boolean.TRUE && session.getJSONObject("member").opt("active") != Boolean.FALSE);
+        NativePolicy.require(session.opt("authenticated") == Boolean.TRUE && session.getJSONObject("member").opt("active") == Boolean.TRUE);
         String mode = session.getString("mode");
         boolean local = mode.equals("local") && session.opt("required") == Boolean.FALSE && cookie == null;
         NativePolicy.require(local || (mode.equals("accounts") || mode.equals("family")) && cookie != null && !cookie.isEmpty());
@@ -117,22 +155,26 @@ final class NativeOutbox implements AutoCloseable {
             OutboxPolicy.text(session.getJSONObject("member").opt("id"), 1000), OutboxPolicy.text(session.opt("cache_binding"), 1000));
         JSONObject grant = new JSONObject().put("profileId", profile).put("validUntil", expiry)
             .put("session_ref", cookie == null ? "local" : OutboxPolicy.hash(cookie));
-        boolean changed = false;
+        boolean changed = false,recoveryRequired=false;
         db.beginTransaction();
         try {
             String old = get("grant");
-            if (old != null && !new JSONObject(old).getString("profileId").equals(profile)) { purge("profile", new JSONObject(old).getString("profileId")); set("lease", UUID.randomUUID().toString()); set("owner", ""); advance(); changed = true; }
-            NativePolicy.require(!tombstone("profile", profile));
-            if (old == null || !new JSONObject(old).getString("profileId").equals(profile)
-                || !new JSONObject(old).getString("session_ref").equals(grant.getString("session_ref"))) {
-                db.execSQL("DELETE FROM control WHERE key='resource_proofs'"); advanceProof();
+            JSONObject prior=old==null?null:new JSONObject(old);boolean same=prior!=null&&profile.equals(prior.getString("profileId"))&&grant.getString("session_ref").equals(prior.getString("session_ref"));
+            if(get("suspended:"+profile)!=null||tombstone("profile",profile)||prior!=null&&profile.equals(prior.getString("profileId"))&&(!same||prior.getLong("validUntil")<=System.currentTimeMillis())){
+                if(!(same&&"blocked".equals(get("identity_state"))&&get("suspended:"+profile)!=null)){
+                    if(prior!=null&&!profile.equals(prior.getString("profileId")))suspendProfile(prior.getString("profileId"));
+                    set("grant",grant.toString());suspendProfile(profile);
+                }recoveryRequired=true;
+            }else{
+                if(prior!=null&&!same)suspendProfile(prior.getString("profileId"));
+                if(!same){db.execSQL("DELETE FROM control WHERE key='resource_proofs'");set("needs_floor","1");advanceProof();set("lease",UUID.randomUUID().toString());set("owner","");advance();changed=true;}
+                else{grant.put("validUntil",Math.min(grant.getLong("validUntil"),prior.getLong("validUntil")));if(grant.getLong("validUntil")<prior.getLong("validUntil"))advanceProof();}
+                set("grant",grant.toString());set("identity_state","verified");
             }
-            else if (grant.getLong("validUntil") < new JSONObject(old).getLong("validUntil")) advanceProof();
-            set("grant", grant.toString()); set("identity_state", "verified");
             // Grant refresh does not move the data head; it contains no JS records.
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
-        proofCommitted(); if (changed) boundary++;
+        proofCommitted(); if (changed) boundary++;if(recoveryRequired)throw new RecoveryRequired();
     }
     private JSONObject verified(String cookie, boolean blocked) throws Exception {
         if (failed || blocked || !"verified".equals(get("identity_state"))) return null;
@@ -192,6 +234,7 @@ final class NativeOutbox implements AutoCloseable {
     }
     /** Native-only caller has already checked origin/auth/sent cookie under its owner lock. */
     void observe(String method, String path, int status, byte[] raw, String cookie, boolean blocked, String owner) throws Exception {
+        retentionGate();
         String[] resource = OutboxPolicy.canonicalResource(method, path); if (resource == null) return;
         if (status != 200 && status != 403 && status != 404) return;
         JSONObject grant = verified(cookie, blocked); if (grant == null) throw new AccessRequired();
@@ -279,6 +322,7 @@ final class NativeOutbox implements AutoCloseable {
         db.beginTransaction();
         try {
             set("resource_proofs", encodedLedger);
+            if(kind.equals("workspace")&&status==200&&!malformed&&!oversized)set("needs_floor","0");
             if ((status == 403 || status == 404) && !kind.equals("workspace")) purge("resource", profile + (kind.equals("database") ? "|database|" : "|") + OutboxPolicy.encode(id));
             advanceProof(); db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
@@ -485,6 +529,7 @@ final class NativeOutbox implements AutoCloseable {
         deliveryDeadline = report.deadline; return report;
     }
     private void scope(JSONObject input, long generation) throws Exception {
+        retentionGate();
         NativePolicy.require(!failed && OutboxPolicy.integer(input.opt("generation"), 0, OutboxPolicy.SAFE - 1) == generation
             && Long.toString(generation).equals(get("generation")) && input.getString("lease").equals(get("lease")));
     }
@@ -493,13 +538,13 @@ final class NativeOutbox implements AutoCloseable {
         catch (IllegalArgumentException missing) { throw new AccessRequired(); }
     }
     JSObject open(long generation, String cookie, boolean blocked, String owner) throws Exception {
-        NativePolicy.require(!failed);
+        NativePolicy.require(!failed);retentionGate();
         boolean changed = false;
         db.beginTransaction();
         try {
             if (!owner.equals(get("owner")) || !Long.toString(generation).equals(get("generation"))) {
                 set("lease", UUID.randomUUID().toString()); set("owner", owner); set("generation", Long.toString(generation));
-                db.execSQL("DELETE FROM staging"); db.execSQL("DELETE FROM control WHERE key LIKE 'staged-proof:%'"); advanceProof(); changed = true;
+                advanceProof(); changed = true;
             }
             db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
@@ -510,7 +555,7 @@ final class NativeOutbox implements AutoCloseable {
         out.put("profileId", grant == null ? JSONObject.NULL : grant.getString("profileId"));
         out.put("validUntil", grant == null ? JSONObject.NULL : grant.getLong("validUntil"));
         AccessReport report = grant == null ? new AccessReport(0) : preflight(grant);
-        out.put("proofEpoch", proofEpoch()); out.put("resourceAccess", grant != null && report.issues.length() == 0 ? "ready" : "required");
+        out.put("proofEpoch", proofEpoch()); out.put("resourceAccess", grant != null && !"1".equals(get("needs_floor")) && report.issues.length() == 0 ? "ready" : "required");
         out.put("accessIssues", grant == null ? new JSONArray() : report.issues); out.put("accessIssuesTruncated", grant != null && report.truncated);
         deliveryDeadline = grant == null ? 0 : Math.min(deliveryDeadline, grant.getLong("validUntil")); return out;
     }
@@ -524,11 +569,14 @@ final class NativeOutbox implements AutoCloseable {
         db.beginTransaction();
         try {
             String recorded = get("staged-proof:" + tx), accepted = get("receipt-proof:" + tx);
+            String nativeGrant=get("grant"),receiptOwner=get("receipt-owner:"+tx);
+            if(accepted!=null&&receiptOwner!=null&&(nativeGrant==null||!receiptOwner.equals(new JSONObject(nativeGrant).getString("profileId"))))throw new RecoveryRequired();
             if (accepted == null) try (Cursor legacy = db.rawQuery("SELECT 1 FROM tx_receipts WHERE tx_id=? LIMIT 1", new String[]{tx})) { if (legacy.moveToFirst()) throw new AccessRequired(); }
             if (accepted != null && !accepted.equals(Long.toString(proof)) || recorded != null && !recorded.equals(Long.toString(proof))) throw new AccessRequired();
             if (recorded == null) {
                 try (Cursor old = db.rawQuery("SELECT 1 FROM staging WHERE tx_id=? LIMIT 1", new String[]{tx})) { if (old.moveToFirst()) throw new AccessRequired(); }
                 set("staged-proof:" + tx, Long.toString(proof));
+                if(nativeGrant!=null&&"verified".equals(get("identity_state")))set("staging-owner:"+tx,new JSONObject(nativeGrant).getString("profileId"));
             }
             try (Cursor c = db.rawQuery("SELECT part,base_head,lease,data FROM staging WHERE tx_id=? ORDER BY part", new String[]{tx})) {
                 int count = 0, size = 0; boolean retry = false;
@@ -570,7 +618,7 @@ final class NativeOutbox implements AutoCloseable {
         if (bucket.equals("profiles")) {
             NativePolicy.require(originalKey instanceof String);
             profile = (String) originalKey;
-            if (op.equals("delete") && mode.equals("active")) { NativePolicy.require(knownProfile(profile)); purge("profile", profile); return; }
+            if (op.equals("delete")) { NativePolicy.require(knownProfile(profile)); suspendProfile(profile); return; }
             if (value != null) NativePolicy.require(value.getString("id").equals(profile) && origin.equals(value.getString("origin"))
                 && OutboxPolicy.profile(origin, value.getString("workspaceId"), value.getString("memberId"), value.getString("cacheBinding")).equals(profile)
                 && (!mode.equals("active") || grant != null && value.getDouble("validUntil") <= grant.getLong("validUntil")));
@@ -584,7 +632,7 @@ final class NativeOutbox implements AutoCloseable {
                 String owner = whole ? identity : identity.split("\\|", -1).length >= 5 ? identity.substring(0, identity.lastIndexOf('|')) : "";
                 if (!whole && owner.endsWith("|database")) owner = owner.substring(0, owner.length() - 9);
                 NativePolicy.require((!mode.equals("active") || knownProfile(owner)) && (whole || OutboxPolicy.resource(owner, identity)));
-                if (mode.equals("active")) purge(whole ? "profile" : "resource", identity); profile = owner;
+                if(whole){suspendProfile(owner);return;}if(mode.equals("active")){if(get("suspended:"+owner)!=null||grant==null||!owner.equals(grant.getString("profileId")))throw new RecoveryRequired();purge("resource",identity);}profile=owner;
             } else if (id.startsWith("recovery-import:")) {
                 NativePolicy.require(mode.equals("active"));
                 int separator = id.lastIndexOf(':');
@@ -615,7 +663,7 @@ final class NativeOutbox implements AutoCloseable {
                 }
             } else {
                 NativePolicy.require(id.equals("active") || id.startsWith("mutation-sequence:"));
-                if (op.equals("delete")) { db.execSQL("DELETE FROM records WHERE mode=? AND bucket='meta' AND key=?", new Object[]{mode, key}); return; }
+                if (op.equals("delete")) {try(Cursor original=db.rawQuery("SELECT profile_id FROM records WHERE mode=? AND bucket='meta' AND key=?",new String[]{mode,key})){if(original.moveToFirst()){String owner=original.getString(0);if(get("suspended:"+owner)!=null||grant==null||!owner.equals(grant.getString("profileId")))return;}}if(!mode.equals("quarantine"))db.execSQL("DELETE FROM records WHERE mode=? AND bucket='meta' AND key=?", new Object[]{mode, key}); return; }
                 profile = id.equals("active") ? value.getString("profileId") : id.substring("mutation-sequence:".length()); NativePolicy.require(id.equals(value.getString("id")));
             }
         } else {
@@ -650,14 +698,17 @@ final class NativeOutbox implements AutoCloseable {
             && "resource_revoked".equals(value.getJSONObject("recovery").optString("reason"))) {
             NativePolicy.require(knownProfile(profile)); mode = "quarantine"; // Recovery only; never hydrate/replay.
         }
+        if(value==null&&(get("suspended:"+profile)!=null||grant==null||!profile.equals(grant.getString("profileId"))))return;
+        if(value!=null&&get("suspended:"+profile)!=null)throw new RecoveryRequired();
         if (mode.equals("active")) {
             boolean cleanup = op.equals("delete") || bucket.equals("meta") && ((String) originalKey).startsWith("revoked");
             NativePolicy.require(cleanup ? knownProfile(profile) : grant != null && profile.equals(grant.getString("profileId")) && !tombstone("profile", profile)
                 && (resource == null || !tombstone("resource", resource)));
         } else NativePolicy.require(profile != null && profile.startsWith(origin + "|"));
-        if (value == null) db.execSQL("DELETE FROM records WHERE mode=? AND bucket=? AND key=?", new Object[]{mode, bucket, key});
+        if (value == null) {if(!mode.equals("quarantine"))db.execSQL("DELETE FROM records WHERE mode=? AND bucket=? AND key=?", new Object[]{mode, bucket, key});}
         else {
             byte[] bytes = value.toString().getBytes(StandardCharsets.UTF_8); NativePolicy.require(bytes.length <= OutboxPolicy.RECORD);
+            if(mode.equals("quarantine"))try(Cursor original=db.rawQuery("SELECT payload FROM records WHERE mode='quarantine' AND bucket=? AND key=?",new String[]{bucket,key})){if(original.moveToFirst()&&!Arrays.equals(original.getBlob(0),bytes))throw new RecoveryRequired();}
             db.execSQL("INSERT OR REPLACE INTO records(mode,bucket,key,profile_id,resource_key,payload) VALUES(?,?,?,?,?,?)", new Object[]{mode, bucket, key, profile, resource, bytes});
         }
     }
@@ -671,9 +722,10 @@ final class NativeOutbox implements AutoCloseable {
             try (Cursor c = db.rawQuery("SELECT digest,head FROM tx_receipts WHERE tx_id=?", new String[]{tx})) {
                 if (c.moveToFirst()) {
                     NativePolicy.require(c.getString(0).equals(digest)); result = c.getLong(1);
+                    String receiptOwner=get("receipt-owner:"+tx),nativeGrant=get("grant");if(receiptOwner!=null&&(nativeGrant==null||!receiptOwner.equals(new JSONObject(nativeGrant).getString("profileId"))))throw new RecoveryRequired();
                     String original = get("receipt-proof:" + tx); if (original == null) throw new AccessRequired();
-                    db.execSQL("DELETE FROM staging WHERE tx_id=?", new Object[]{tx});
-                    db.execSQL("DELETE FROM control WHERE key=?", new Object[]{"staged-proof:" + tx});
+                    String stageOwner=get("staging-owner:"+tx);
+                    if(stageOwner!=null&&nativeGrant!=null&&stageOwner.equals(new JSONObject(nativeGrant).getString("profileId"))){db.execSQL("DELETE FROM staging WHERE tx_id=?", new Object[]{tx});db.execSQL("DELETE FROM control WHERE key=?", new Object[]{"staged-proof:" + tx});}
                     db.setTransactionSuccessful(); return receipt(generation, result, tx, Long.parseLong(original));
                 }
             }
@@ -702,7 +754,7 @@ final class NativeOutbox implements AutoCloseable {
                 if (!"delete".equals(item.getString("op")) && !("meta".equals(item.getString("bucket")) && item.get("key") instanceof String
                     && (item.getString("key").startsWith("revoked:") || item.getString("key").startsWith("revoked-resource:")))) cleanup = false;
             }
-            if (mode.equals("active") && !cleanup && (grant == null || proof != proofEpoch())) throw new AccessRequired();
+            if (mode.equals("active") && !cleanup && (grant == null || "1".equals(get("needs_floor")) || proof != proofEpoch())) throw new AccessRequired();
             for (int i = 0; i < changes.length(); i++) change(changes.getJSONObject(i), mode, grant);
             if (mode.equals("active") && !cleanup) {
                 if (grant == null || preflight(grant).issues.length() > 0 || System.currentTimeMillis() >= grant.getLong("validUntil")) throw new AccessRequired();
@@ -710,10 +762,11 @@ final class NativeOutbox implements AutoCloseable {
             result = advance();
             db.execSQL("INSERT INTO tx_receipts(tx_id,digest,head) VALUES(?,?,?)", new Object[]{tx, digest, result});
             set("receipt-proof:" + tx, Long.toString(proof));
+            if(grant!=null)set("receipt-owner:"+tx,grant.getString("profileId"));
             db.execSQL("DELETE FROM staging WHERE tx_id=?", new Object[]{tx});
             db.execSQL("DELETE FROM control WHERE key=?", new Object[]{"staged-proof:" + tx}); db.setTransactionSuccessful();
         } finally { db.endTransaction(); }
-        boundary++; // A delayed page must also be fenced by resource/profile purge deltas.
+        proofCommitted();boundary++; // A delayed page must also be fenced by resource/profile purge deltas.
         try (Cursor c = db.rawQuery("SELECT digest,head FROM tx_receipts WHERE tx_id=?", new String[]{tx})) {
             NativePolicy.require(c.moveToFirst() && c.getString(0).equals(digest) && c.getLong(1) == result);
         }
@@ -723,7 +776,7 @@ final class NativeOutbox implements AutoCloseable {
         JSObject out = new JSObject(); out.put("generation", generation); out.put("head", head); out.put("txId", tx); out.put("proofEpoch", proof); return out;
     }
     JSObject read(JSONObject input, long generation, String cookie, boolean blocked) throws Exception {
-        scope(input, generation); JSONObject grant = verified(cookie, blocked); if (grant == null) throw new AccessRequired();
+        scope(input, generation); JSONObject grant = verified(cookie, blocked); if (grant == null||"1".equals(get("needs_floor"))) throw new AccessRequired();
         if (intentProof(input) != proofEpoch()) throw new AccessRequired();
         AccessReport report = preflight(grant); if (report.issues.length() > 0) throw new AccessRequired();
         NativePolicy.require(OutboxPolicy.integer(input.opt("head"), 0, OutboxPolicy.SAFE - 1) == head());

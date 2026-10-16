@@ -50,6 +50,12 @@ final class OutboxPolicy {
     static String profile(String origin, String workspace, String member, String binding) throws Exception {
         return origin + "|" + encode(workspace) + "|" + encode(member) + "|" + encode(binding);
     }
+    static String actorPrefix(String origin,String profile)throws Exception {
+        if(profile==null)return null;String[] parts=profile.split("\\|",-1);if(parts.length!=4||!origin.equals(parts[0]))return null;
+        try{for(int i=1;i<4;i++){String decoded=java.net.URLDecoder.decode(parts[i].replace("+","%2B"),"UTF-8");if(!encode(decoded).equals(parts[i]))return null;}}
+        catch(IllegalArgumentException malformed){return null;}
+        return parts[0]+"|"+parts[1]+"|"+parts[2]+"|";
+    }
     static final String ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     static String base64(byte[] bytes) {
         StringBuilder out = new StringBuilder(((bytes.length + 2) / 3) * 4);

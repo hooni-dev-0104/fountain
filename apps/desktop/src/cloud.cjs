@@ -136,7 +136,8 @@ async function createCloudClient({server,bundleRoot,fetch:send,requestTimeoutMs=
    const body=await input(request,record);requireValue(enabled&&!record.abort.signal.aborted);
    const target=backend+PREFIX+url.pathname+url.search;requireValue(networkAllowed(target,backend));const outgoing=new Headers({'X-Fountain-Request':'1','Accept-Encoding':'identity'});
    for(const name of REQUEST_HEADERS){const value=request.headers.get(name);if(value!==null){requireValue(value.length<=8192&&!controls(value));outgoing.set(name,value);}}
-   if(!['GET','HEAD'].includes(request.method))outgoing.set('Content-Length',String(body.length));
+   // Electron forbids a manual Content-Length extra header. Its bounded body
+   // buffer lets Chromium frame the validated bytes and calculate the length.
    const response=await wait(send(target,{method:request.method,headers:outgoing,credentials:'include',cache:'no-store',redirect:'error',signal:record.abort.signal,...(!['GET','HEAD'].includes(request.method)?{body}:{})}),record,record.deadline-Date.now());upstream=response;
    requireValue(enabled&&!record.abort.signal.aborted&&response instanceof Response&&!response.redirected&&response.status>=200&&response.status<600&&(response.status<300||response.status===304||response.status>=400));
    if(response.status>=500){

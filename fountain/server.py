@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse, quote
 
-from .core import APIError, Store, Workspace, require, AUDIT_ACTOR
+from .core import APIError, Store, Workspace, require, AUDIT_ACTOR, CURRENT_ACCESS
 from .access import Access
 from .authorization import Authorization
 
@@ -41,6 +41,14 @@ class Application:
         from .auth import Auth
         self.auth = Auth(store)
         self.advanced = None
+        from .scheduler import Scheduler
+        self.scheduler = Scheduler(store, self.run_scheduled)
+
+    def run_scheduled(self, automation_id, body):
+        if self.advanced is None:
+            from .advanced import Advanced
+            self.advanced = Advanced(self.store, self.workspace)
+        return self.advanced.run_as_author(automation_id, body)
 
     def dispatch(self, method, path, body, query, principal=_INTERNAL_PRINCIPAL):
         body = copy.deepcopy(body)
@@ -61,6 +69,7 @@ class Application:
             if not (method == 'POST' and path == '/api/ai'):
                 transaction = self.store.transaction() if method in {'POST', 'PATCH', 'PUT', 'DELETE'} else nullcontext()
                 token = AUDIT_ACTOR.set(access.member_id)
+                access_token = CURRENT_ACCESS.set(access)
                 try:
                     with transaction:
                         status, payload = self._dispatch(method, path, body, query, access)
@@ -69,13 +78,16 @@ class Application:
                         return status, authority.project(path, payload)
                 finally:
                     AUDIT_ACTOR.reset(token)
+                    CURRENT_ACCESS.reset(access_token)
         # Inference has no write transaction or workspace-wide lock across the network.
         token = AUDIT_ACTOR.set(access.member_id)
+        access_token = CURRENT_ACCESS.set(access)
         try:
             status, payload = self.advanced.dispatch(method, path, body, query)
             return status, authority.project(path, payload)
         finally:
             AUDIT_ACTOR.reset(token)
+            CURRENT_ACCESS.reset(access_token)
 
     def remove_access_references(self, kind, identity):
         field = 'members' if kind == 'member' else 'groups'
@@ -188,6 +200,9 @@ class Application:
                     database["name"] = text(body["name"], "name", 500, False)
                 if "properties" in body:
                     database["properties"] = w.validate_properties(body["properties"])
+                if "task_settings" in body or "properties" in body:
+                    from .tasks import validate_settings
+                    database["task_settings"] = validate_settings(body.get("task_settings", {}), database)
                 if "views" in body:
                     require(isinstance(body["views"], list) and len(body["views"]) <= 50, "Invalid views")
                     database["views"] = body["views"]
@@ -198,6 +213,12 @@ class Application:
                     self.advanced.trigger("row.created", database_id, row)
                     row = s.get("row", row["id"])
                 return 201, s.get("row", row["id"])
+            if len(parts) == 6 and parts[3] == 'rows' and parts[5] == 'duplicate' and method == 'POST':
+                result = w.duplicate_row(database_id, parts[4], lambda row: access.can('row', row))
+                if self.advanced:
+                    for row in result['rows']: self.advanced.trigger('row.created', database_id, row)
+                    result['rows'] = [s.get('row', row['id']) for row in result['rows']]
+                return 201, result
             if len(parts) == 5 and parts[3] == "rows":
                 if method == "PATCH":
                     row = w.update_row(database_id, parts[4], body)
@@ -206,11 +227,7 @@ class Application:
                         row = s.get("row", row["id"])
                     return 200, s.get("row", row["id"])
                 if method == "DELETE":
-                    w.database(database_id)
-                    row = s.get("row", parts[4])
-                    require(row and row["database_id"] == database_id, "Row not found", 404)
-                    s.delete("row", parts[4])
-                    return 200, {"deleted": True}
+                    return 200, w.delete_row(database_id, parts[4], lambda row: access.can("row", row, 3))
         if path == "/api/export" and method == "GET":
             require(not self.advanced or not self.advanced.settings().get("disable_export"), "Workspace export is disabled", 403)
             return 200, w.export(query.get("format", ["json"])[0], query.get("database", [None])[0])
@@ -397,6 +414,20 @@ def handler_for(application):
     return Handler
 
 
+class FountainServer(ThreadingHTTPServer):
+    def serve_forever(self, poll_interval=0.5):
+        self.application.scheduler.start()
+        try:
+            super().serve_forever(poll_interval)
+        finally:
+            self.application.scheduler.stop()
+
+    def server_close(self):
+        if hasattr(self, 'application'):
+            self.application.scheduler.stop()
+        super().server_close()
+
+
 def create_server(host="127.0.0.1", port=8787, db_path=".data/fountain.db", static=STATIC, allowed_hosts=None):
     allowed_hosts = allowed_hosts or []
     require(all(isinstance(h, str) and h and not any(c in h for c in '/:@ \t\r\n') for h in allowed_hosts), 'Invalid allowed host')
@@ -420,7 +451,7 @@ def create_server(host="127.0.0.1", port=8787, db_path=".data/fountain.db", stat
     except Exception:
         store.close()
         raise
-    server = ThreadingHTTPServer((host, port), handler_for(application))
+    server = FountainServer((host, port), handler_for(application))
     server.application = application
     server.allowed_hosts = allowed_hosts
     return server

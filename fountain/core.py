@@ -19,6 +19,7 @@ from typing import Any
 
 
 AUDIT_ACTOR = ContextVar("fountain_actor", default="local")
+CURRENT_ACCESS = ContextVar("fountain_access", default=None)
 
 def now():
     return datetime.now(timezone.utc).isoformat()
@@ -386,12 +387,16 @@ class Workspace:
     def create_database(self, body):
         if body.get("id"):
             require(self.store.get("database", body["id"]) is None, "Database id already exists", 409)
-        return self.store.put("database", {"id": body.get("id") or uid(), "name": text(body.get("name", "새 데이터베이스"), "name", 500, False),
+        database = {"id": body.get("id") or uid(), "name": text(body.get("name", "새 데이터베이스"), "name", 500, False),
             "owner_id": body.get("owner_id", AUDIT_ACTOR.get()), "teamspace_id": body.get("teamspace_id", "general"),
             "permissions": copy.deepcopy(body.get("permissions")) if "permissions" in body else None,
             "row_permissions": copy.deepcopy(body.get("row_permissions", {})),
             "icon": body.get("icon", "📊"), "properties": self.validate_properties(copy.deepcopy(body.get("properties", [{"id": "name", "name": "이름", "type": "title"}]))),
-            "views": body.get("views", [{"id": "table", "name": "테이블", "type": "table"}])})
+            "views": body.get("views", [{"id": "table", "name": "테이블", "type": "table"}])}
+
+        from .tasks import validate_settings
+        database['task_settings'] = validate_settings(body.get('task_settings', {}), database)
+        return self.store.put('database', database)
 
     def validate_values(self, database, values, relation_rows=None):
         require(isinstance(values, dict), "properties must be an object")
@@ -406,6 +411,9 @@ class Workspace:
                 require(type(value) in (int, float) and abs(value) < 1e15, f"{key} must be a finite number")
             elif kind == "checkbox":
                 require(type(value) is bool, f"{key} must be boolean")
+            elif kind == "date":
+                from .tasks import validate_date_value
+                values[key] = validate_date_value(value)
             elif kind in {"multi_select", "relation", "files"}:
                 require(isinstance(value, list) and len(value) <= 1000, f"{key} must be a list")
                 if kind == "relation":
@@ -419,16 +427,75 @@ class Workspace:
         return values
 
     def create_row(self, database_id, body):
-        database = self.database(database_id)
-        values = body.get("properties", body.get("values", {}))
-        return self.store.put("row", {"database_id": database_id, "owner_id": body.get("owner_id", AUDIT_ACTOR.get()), "properties": self.validate_values(database, values)})
+        from .tasks import TaskGraph
+        with self.store.transaction():
+            database = self.database(database_id)
+            identity = uid()
+            values = body.get('properties', body.get('values', {}))
+            settings = database.get('task_settings', {})
+            has_links = bool(body.get('parent_row_id') or body.get('depends_on') or settings.get('subitems') or settings.get('dependencies'))
+            links = TaskGraph(self.store).prepare_row(database, identity, body) if has_links else {'parent_row_id': None, 'depends_on': []}
+            if not has_links:
+                require(body.get('parent_row_id') is None and body.get('depends_on', []) == [], 'Enable task links before adding them')
+            row = self.store.put('row', {'id': identity, 'database_id': database_id,
+                'owner_id': body.get('owner_id', AUDIT_ACTOR.get()),
+                'properties': self.validate_values(database, values), **links})
+            self.store.audit('row.created', {'database_id': database_id, 'row_id': row['id']})
+            return row
 
-    def update_row(self, database_id, row_id, body):
-        database = self.database(database_id)
-        row = self.store.get("row", row_id)
-        require(row and row["database_id"] == database_id, "Row not found", 404)
-        row["properties"].update(self.validate_values(database, body.get("properties", body.get("values", {}))))
-        return self.store.put("row", row)
+    def update_row(self, database_id, row_id, body, can_edit=None):
+        from .tasks import TaskGraph
+        with self.store.transaction():
+            database = self.database(database_id)
+            row = self.store.get('row', row_id)
+            require(row and row['database_id'] == database_id, 'Row not found', 404)
+            access = CURRENT_ACCESS.get()
+            if can_edit is None and access is not None: can_edit = lambda item: access.can('row', item, 3)
+            require(can_edit is None or can_edit(row), 'Insufficient row edit permission', 403)
+            previous = copy.deepcopy(row)
+            row['properties'].update(self.validate_values(database, body.get('properties', body.get('values', {}))))
+            graph = TaskGraph(self.store)
+            settings = database.get('task_settings', {})
+            has_links = bool(previous.get('parent_row_id') or previous.get('depends_on') or settings.get('subitems') or settings.get('dependencies') or body.get('parent_row_id') or body.get('depends_on'))
+            if has_links: row.update(graph.prepare_row(database, row_id, body, existing=previous))
+            else: require(body.get('parent_row_id') is None and body.get('depends_on', []) == [], 'Invalid task links')
+            shifted = graph.plan_shift(database, previous, row, can_edit=can_edit) if settings.get('dependencies') else []
+            row = self.store.put('row', row)
+            self.store.audit('row.updated', {'database_id': database_id, 'row_id': row_id})
+            for dependent in shifted:
+                self.store.put('row', dependent)
+                self.store.audit('row.schedule.shifted', {'database_id': database_id, 'row_id': dependent['id'], 'source_row_id': row_id})
+            return row
+
+    def delete_row(self, database_id, row_id, can_edit=None):
+        from .tasks import TaskGraph
+        with self.store.transaction():
+            self.database(database_id)
+            root = self.store.get('row', row_id)
+            require(root and root['database_id'] == database_id, 'Row not found', 404)
+            has_children = any(item.get('database_id') == database_id and item.get('parent_row_id') == row_id for item in self.store.list('row'))
+            deleted = TaskGraph(self.store).descendants(database_id, row_id) if has_children else [root]
+            require(can_edit is None or all(can_edit(item) for item in deleted), 'Cannot delete a subitem without edit permission', 403)
+            deleted_ids = {item['id'] for item in deleted}
+            # Removing a predecessor clears its edges, so later edits never inherit dangling links.
+            for row in self.store.list('row'):
+                if row.get('database_id') != database_id or row['id'] in deleted_ids: continue
+                if deleted_ids.intersection(row.get('depends_on', [])):
+                    row['depends_on'] = [identity for identity in row['depends_on'] if identity not in deleted_ids]
+                    self.store.put('row', row)
+            for item in deleted:
+                self.store.delete('row', item['id'])
+                self.store.audit('row.deleted', {'database_id': database_id, 'row_id': item['id']})
+            return {'deleted': True, 'count': len(deleted_ids)}
+
+    def duplicate_row(self, database_id, row_id, can_read=None):
+        from .tasks import TaskGraph
+        with self.store.transaction():
+            planned = TaskGraph(self.store).duplicate_plan(database_id, row_id, AUDIT_ACTOR.get(), can_read)
+            rows = [self.store.put('row', item) for item in planned]
+            for row in rows:
+                self.store.audit('row.duplicated', {'database_id': database_id, 'row_id': row['id'], 'source_row_id': row_id})
+            return {'root_id': rows[0]['id'], 'rows': rows}
 
     def computed_rows(self, database, rows, can_read_row=None):
         cache, databases = {}, {database["id"]: database}
@@ -601,8 +668,14 @@ class Workspace:
             text(row.get("id"), "imported row id", 160, False)
             require(row["id"] not in imported_rows, "Duplicate imported row")
             imported_rows[row["id"]] = row
+        for database in databases:
+            from .tasks import validate_settings
+            database['task_settings'] = validate_settings(database.get('task_settings', {}), database)
         for row in rows:
             self.validate_values(db_ids[row["database_id"]], row.get("properties"), imported_rows)
+            if row.get('parent_row_id') or row.get('depends_on'):
+                from .tasks import TaskGraph
+                TaskGraph(self.store).prepare_row(db_ids[row['database_id']], row['id'], row, existing=row, rows=imported_rows)
         pages, page_map, database_map = [], {}, {}
         for page in data["pages"]:
             created = self.create_page({"title": page.get("title", "제목 없음"), "blocks": page.get("blocks", []), "icon": page.get("icon", "📄"), "cover": page.get("cover", ""), "permissions": private})
@@ -628,7 +701,7 @@ class Workspace:
             for prop in db_ids[row["database_id"]]["properties"]:
                 if prop["type"] == "relation" and values.get(prop["id"]):
                     values[prop["id"]] = [row_map[identity] for identity in values[prop["id"]]]
-            self.store.put("row", {"id": row_map[row["id"]], "owner_id": AUDIT_ACTOR.get(), "database_id": database_map[row["database_id"]], "properties": values})
+            self.store.put("row", {"id": row_map[row["id"]], "owner_id": AUDIT_ACTOR.get(), "database_id": database_map[row["database_id"]], "properties": values, "parent_row_id": row_map.get(row.get("parent_row_id")), "depends_on": [row_map[identity] for identity in row.get("depends_on", [])]})
         return {"pages": pages, "databases": list(database_map.values()), "count": len(pages), "row_count": len(rows)}
 
     def attachment(self, body):

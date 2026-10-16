@@ -47,7 +47,9 @@ class Authorization:
             require(other, 'Cannot remove or deactivate the last active owner', 409)
 
     def attachment(self, identity, edit=False):
-        item = self.owned('attachment', identity)
+        require(isinstance(identity, str) and 0 < len(identity) <= 160, 'Invalid resource ID')
+        item = self.store.get('attachment', identity)
+        require(item is not None, 'Attachment not found', 404)
         a = self.access
         if a.owner or item.get('owner_id', 'local') == a.member_id:
             return item
@@ -167,6 +169,11 @@ class Authorization:
             if len(parts) >= 4 and parts[3] == 'permissions':
                 if writing: a.require_resource('database', parts[2], 4)
                 return
+            if len(parts) == 6 and parts[3] == 'rows' and parts[5] == 'duplicate' and method == 'POST':
+                require(a.can_create_row(database), 'Creating database rows is not allowed', 403)
+                row = a.require_resource('row', parts[4])
+                require(row.get('database_id') == database['id'], 'Row not found', 404)
+                return
             if writing and len(parts) >= 4 and parts[3] == 'rows':
                 if len(parts) == 4 and method == 'POST':
                     require(a.can_create_row(database), 'Creating database rows is not allowed', 403)
@@ -175,6 +182,18 @@ class Authorization:
                     row = a.require_resource('row', parts[4], 3)
                     require(row.get('database_id') == database['id'], 'Row not found', 404)
                     body.pop('owner_id', None)
+                old_row = self.store.get('row', parts[4]) if len(parts) == 5 else None
+                if 'parent_row_id' in body and body['parent_row_id'] is not None:
+                    parent = a.require_resource('row', body['parent_row_id'])
+                    require(parent.get('database_id') == database['id'], 'Parent belongs to another database')
+                if 'depends_on' in body:
+                    require(isinstance(body['depends_on'], list), 'Dependencies must be a list')
+                    for identity in body['depends_on']:
+                        predecessor = a.require_resource('row', identity)
+                        require(predecessor.get('database_id') == database['id'], 'Dependency belongs to another database')
+                    if old_row:
+                        hidden = [identity for identity in old_row.get('depends_on', []) if not a.can('row', self.store.get('row', identity))]
+                        body['depends_on'] = list(dict.fromkeys([*body['depends_on'], *hidden]))
                 self.relation_values(database, body)
             return
         if path == '/api/attachments' and method == 'POST':
@@ -262,6 +281,8 @@ class Authorization:
             key = parts[1]
             target_kind, target_key = ('page', 'page_id') if key == 'sites' else ('database', 'database_id')
             result[key] = [item for item in result.get(key, []) if a.can(target_kind, self.store.get(target_kind, item.get(target_key)), 4)]
+        if 'rows' in result and 'database' not in result:
+            result['rows'] = [row_projection(row) for row in result['rows']]
         if 'database' in result and 'rows' in result:
             result = a.filter_database(result)
             result['database']['access_level'] = a.level('database', result['database'])

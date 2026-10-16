@@ -12,7 +12,7 @@ import urllib.request
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from .core import APIError, AUDIT_ACTOR
+from .core import APIError, AUDIT_ACTOR, CURRENT_ACCESS
 
 
 class AdvancedError(APIError):
@@ -37,9 +37,9 @@ def text(value, name, limit=10000):
 FEATURES = [
     ('pages', '블록 문서와 중첩 페이지', 'Plus', 'implemented', '페이지·블록·검색·휴지통·파일'),
     ('history', '페이지 버전 복원', 'Plus', 'implemented', 'SQLite에 저장한 버전 복원; 보존 기한 제한 없음'),
-    ('databases', '데이터베이스와 보기', 'Plus', 'implemented', '속성·테이블·보드·달력·차트'),
+    ('databases', '데이터베이스와 보기', 'Plus', 'implemented', '속성·테이블·보드·달력·차트·목록·타임라인·하위 작업·의존관계'),
     ('forms', '사용자 지정 양식과 조건부 질문', 'Business', 'implemented', '조건에 맞는 질문 검증 후 데이터베이스 행 생성'),
-    ('automations', '데이터베이스 자동화', 'Plus', 'implemented', '상태 변경·행 생성·명시적 실행; 주기 실행은 서버 작업 필요'),
+    ('automations', '데이터베이스 자동화', 'Plus', 'implemented', '행 변경·수동·시간대별 반복 예약; 실행 기록·중복 방지·실패 롤백'),
     ('sites', '사이트 게시와 메타데이터', 'Plus', 'implemented', '게시한 페이지의 공개 HTML; SEO 제목·설명'),
     ('domains', '사용자 지정 도메인', 'Plus', 'configuration', '호스트명 설정; 실제 DNS·TLS는 운영자 설정 필요'),
     ('teamspaces', '비공개 팀스페이스와 그룹', 'Business', 'implemented', '멤버 계정·비공개 공간·그룹 기반 접근 권한'),
@@ -149,11 +149,35 @@ class Advanced:
             require(not any(s['id'] != data['id'] and s.get('slug') == slug for s in self.store.list('site')), '이미 사용 중인 주소입니다', 409)
             data['slug'] = slug
         if kind == 'automations':
-            require(data.get('trigger', 'manual') in {'manual', 'row.created', 'row.updated'}, '지원하지 않는 실행 조건')
+            require(data.get('trigger', 'manual') in {'manual', 'row.created', 'row.updated', 'scheduled'}, '지원하지 않는 실행 조건')
             actions = data.get('actions', [])
             require(isinstance(actions, list) and 0 < len(actions) <= 20, '작업은 1개 이상 20개 이하입니다')
             for action in actions:
                 require(isinstance(action, dict) and action.get('type') in {'set_property', 'create_row', 'create_page'}, '지원하지 않는 자동화 작업')
+            require(type(data.get('enabled', True)) is bool, '자동화 활성 상태는 참·거짓이어야 합니다')
+            data.setdefault('owner_id', AUDIT_ACTOR.get())
+            for field in ('next_run_at', 'last_run_at', 'last_run_status', 'last_error', 'schedule_status'):
+                require(field not in body, '실행 상태는 서버에서 관리합니다')
+            if 'row_id' in data:
+                if data['row_id'] == '': data['row_id'] = None
+                require(data['row_id'] is None or isinstance(data['row_id'], str), '올바른 대상 항목 ID가 필요합니다')
+                if data['row_id']:
+                    target = self.store.get('row', data['row_id'])
+                    require(target and target.get('database_id') == data['database_id'], '예약 대상 항목을 찾을 수 없습니다', 404)
+                    access = CURRENT_ACCESS.get()
+                    if access is not None: access.require_resource('row', data['row_id'], 3)
+            if data.get('trigger') == 'scheduled':
+                from .scheduler import validate_schedule
+                schedule = validate_schedule(data.get('schedule'))
+                if not old or old.get('trigger') != 'scheduled' or old.get('schedule') != schedule:
+                    data['next_run_at'] = schedule['start_at']
+                    data['schedule_status'] = 'pending'
+                data['schedule'] = schedule
+                if any(action['type'] == 'set_property' for action in actions):
+                    require(bool(data.get('row_id')), '예약 속성 변경에는 대상 항목이 필요합니다')
+            else:
+                for field in ('schedule', 'next_run_at', 'schedule_status'): data.pop(field, None)
+
         self.store.put(kind[:-1] if kind in self.collections else kind, data)
         self.store.audit(f'{kind}.{"updated" if identity else "created"}', {'id': data['id']})
         return self.item(kind, data['id'])
@@ -207,10 +231,27 @@ class Advanced:
         for automation in self.store.list('automation'):
             if automation.get('enabled', True) and automation.get('trigger') == event and automation.get('database_id') == database_id:
                 try:
-                    results.append(self.run_automation(automation['id'], {'row_id': row['id']}))
+                    results.append(self.run_as_author(automation['id'], {'row_id': row['id']}))
                 except (APIError, ValueError, KeyError) as error:
                     self.store.audit('automation.failed', {'id': automation['id'], 'error': str(error)})
         return results
+
+    def run_as_author(self, identity, body):
+        from .access import Access
+        automation = self.item('automations', identity)
+        author = automation.get('owner_id', 'local')
+        member = self.store.get('member', author)
+        if member is None and (author == 'scim' or author == 'local' and not self.store.meta('auth_accounts_required', False)):
+            member = {'id': author, 'role': 'owner', 'active': True}
+        require(member and member.get('active', True) is True, '자동화 작성자가 비활성화되었습니다', 403)
+        access = Access(self.store, member)
+        access.require_resource('database', automation['database_id'], 4)
+        actor_token, access_token = AUDIT_ACTOR.set(author), CURRENT_ACCESS.set(access)
+        try:
+            return self.run_automation(identity, body)
+        finally:
+            AUDIT_ACTOR.reset(actor_token)
+            CURRENT_ACCESS.reset(access_token)
 
     def run_automation(self, identity, body):
         with self.store.transaction():
@@ -222,6 +263,8 @@ class Advanced:
         row_id = body.get('row_id')
         row = self.item('row', row_id) if row_id else None
         if row:
+            access = CURRENT_ACCESS.get()
+            if access is not None: access.require_resource('row', row_id, 3)
             require(row.get('database_id') == automation['database_id'], '다른 데이터베이스의 행입니다')
         conditions = automation.get('conditions', {})
         require(isinstance(conditions, dict), '조건 객체가 필요합니다')
@@ -229,17 +272,28 @@ class Advanced:
             return {'skipped': True, 'reason': '조건 불일치'}
         require(row is not None or not any(a['type'] == 'set_property' for a in automation['actions']), '속성을 변경할 행을 지정해 주세요')
         results = []
+        access = CURRENT_ACCESS.get()
+        if access is not None:
+            from .authorization import Authorization
+            authority = Authorization(access)
+        else: authority = None
         for action in automation['actions']:
             if action['type'] == 'set_property':
                 key = text(action.get('property_id', ''), '속성 ID', 100)
-                row = self.workspace.update_row(automation['database_id'], row_id, {'properties': {key: action.get('value')}})
+                changes = {'properties': {key: action.get('value')}}
+                if authority: authority.prepare('PATCH', '/api/databases/' + automation['database_id'] + '/rows/' + row_id, changes)
+                row = self.workspace.update_row(automation['database_id'], row_id, changes)
                 results.append({'type': action['type'], 'row_id': row_id})
             elif action['type'] == 'create_row':
-                results.append(self.create_row(automation['database_id'], action.get('values', {})))
+                changes = {'properties': action.get('values', {})}
+                if authority: authority.prepare('POST', '/api/databases/' + automation['database_id'] + '/rows', changes)
+                results.append(self.workspace.create_row(automation['database_id'], changes))
             else:
                 title = text(action.get('title', ''), '페이지 제목', 500)
                 if hasattr(self.workspace, 'create_page'):
-                    results.append(self.workspace.create_page({'title': title}))
+                    changes = {'title': title}
+                    if authority: authority.prepare('POST', '/api/pages', changes)
+                    results.append(self.workspace.create_page(changes))
         self.store.audit('automation.executed', {'id': identity, 'row_id': row_id, 'actions': len(results)})
         return {'results': results, 'executed_at': now()}
 
@@ -394,6 +448,11 @@ class Advanced:
             search = query.get('q', [''])[0].casefold()
             return 200, {'events': [e for e in events if search in json.dumps(e, ensure_ascii=False).casefold()]}
         parts = path.strip('/').split('/')
+        if len(parts) == 4 and parts[:2] == ['api', 'automations'] and parts[3] == 'runs' and method == 'GET':
+            self.item('automations', parts[2])
+            runs = [record for record in self.store.list('automation_run') if record.get('automation_id') == parts[2]]
+            runs.sort(key=lambda record: record.get('started_at', ''), reverse=True)
+            return 200, {'runs': [{key: value for key, value in record.items() if key != 'result'} for record in runs[:200]]}
         if len(parts) == 4 and parts[:2] == ['api', 'pages'] and parts[3] == 'verify':
             page = self.item('page', parts[2])
             if method == 'POST':

@@ -185,5 +185,14 @@ class WorkspaceTests(unittest.TestCase):
         with self.assertRaises(APIError) as error: self.workspace.save_blocks(page["id"], [])
         self.assertEqual(error.exception.status, 423)
 
+    def test_plain_database_crud_is_not_capped_by_task_graph_processing_limit(self):
+        database = self.workspace.create_database({'name': '큰 일반 DB'})
+        with self.store.transaction():
+            for number in range(10001):
+                self.store.put('row', {'id': 'plain-' + str(number), 'database_id': database['id'], 'properties': {'name': str(number)}})
+        row = self.workspace.create_row(database['id'], {'properties': {'name': '새 항목'}, 'depends_on': []})
+        self.assertEqual(self.workspace.update_row(database['id'], row['id'], {'properties': {'name': '수정'}, 'parent_row_id': None, 'depends_on': []})['properties']['name'], '수정')
+        self.assertTrue(self.workspace.delete_row(database['id'], row['id'])['deleted'])
+
 
 if __name__ == "__main__": unittest.main()

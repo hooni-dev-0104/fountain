@@ -203,6 +203,9 @@ class Access:
         for row in result["rows"]: row["properties"] = {key: value for key, value in row.get("properties", {}).items() if key in known}
         relations = {prop["id"] for prop in database.get("properties", []) if prop.get("type") == "relation"}
         for row in result["rows"]:
+            if row.get('parent_row_id') and not self.can('row', self.store.get('row', row['parent_row_id'])):
+                row['parent_row_id'] = None
+            row['depends_on'] = [identity for identity in row.get('depends_on', []) if self.can('row', self.store.get('row', identity))]
             for key in relations:
                 values = row.get("properties", {}).get(key)
                 if isinstance(values, list):

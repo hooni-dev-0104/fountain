@@ -127,6 +127,38 @@ class PostgresHTTPTests(unittest.TestCase):
         return self.ok("POST", "/api/sync", {"workspace_id": self.namespace,
             "session_binding": info["cache_binding"], "operations": operations}, server=server, cookie=cookie)
 
+    def test_cross_server_attachment_metadata_is_readonly_and_rechecks_acl(self):
+        import base64
+        content = b"metadata proof without reading attachment bytes"
+        attachment = self.ok("POST", "/api/attachments", {
+            "name": "복구 권한 확인.txt", "mime": "text/plain",
+            "data": base64.b64encode(content).decode("ascii")}, status=201)
+        page = self.page()
+        self.ok("PUT", "/api/pages/" + page["id"] + "/blocks", {
+            "blocks": [{"id": "metadata-file", "type": "file", "text": attachment["name"],
+                        "attachment_id": attachment["id"], "size": len(content)}]})
+        path = "/api/attachments/" + attachment["id"] + "/metadata"
+        before_revision = self.store.meta("_entity_revision")
+        before_attachment = self.store.get("attachment", attachment["id"])
+        before_page = self.store.get("page", page["id"])
+        replica = self.servers[1].application.store
+        with patch("fountain.server.base64.b64decode", side_effect=AssertionError("metadata must not decode file bytes")), \
+             patch.object(replica, "chunk_read_range", side_effect=AssertionError("metadata must not read chunks")):
+            metadata = self.ok("GET", path, server=1, cookie=self.family)
+            self.assertEqual(set(metadata) - {"sha256"}, {"id", "name", "size", "mime", "storage", "status"})
+            self.assertEqual((metadata["id"], metadata["name"], metadata["size"], metadata["status"]),
+                             (attachment["id"], attachment["name"], len(content), "complete"))
+            self.assertLess(len(json.dumps(metadata).encode()), 1024)
+            status, payload, headers = self.request("HEAD", path, server=1, cookie=self.owner_b)
+            self.assertEqual((status, payload), (200, b""))
+            self.assertGreater(int(headers["Content-Length"]), 0)
+        self.assertEqual(self.store.meta("_entity_revision"), before_revision)
+        self.assertEqual(self.store.get("attachment", attachment["id"]), before_attachment)
+        self.assertEqual(self.store.get("page", page["id"]), before_page)
+        self.ok("PATCH", "/api/pages/" + page["id"] + "/permissions", {"permissions": {"default": "private"}})
+        self.assertEqual(self.request("GET", path, server=1, cookie=self.family)[0], 404)
+        self.assertEqual(self.request("GET", path, server=1, cookie=self.owner_b)[0], 200)
+
     def test_cross_server_page_crdt_separate_presence_sse_and_session_logout(self):
         page = self.page()
         path = "/api/pages/" + page["id"]

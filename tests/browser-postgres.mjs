@@ -243,6 +243,33 @@ try {
   assert.ok(rows.some(row => row.properties.name === '두 번째 인스턴스에서도 읽는 새 항목'));
   console.log('PostgreSQL Chrome: row created in the UI is committed and readable through the other instance');
 
+  const recoveryRow = rows.find(row => row.properties.name === '두 번째 인스턴스에서도 읽는 새 항목');
+  await wait(a, () => !state.mutations.syncing);
+  await contextA.setOffline(true);
+  const recoveryFile = await evaluate(a, async id => {
+    await state.mutations.patchRow('projects', id, { properties: { name: '복구 파일로 다시 반영한 항목 🙂' } });
+    const file = await state.mutations.export();
+    const record = file.records.find(record => record.operation.target_id === id);
+    if (!record) throw new Error('The actual export must include the offline row edit');
+    await state.mutations.drop(record.id);
+    return { text: JSON.stringify(file), originalId: record.id };
+  }, recoveryRow.id);
+  await contextA.setOffline(false);
+  await wait(a, () => !state.offline && !state.mutations.syncing);
+  const recoveryResult = await evaluate(a, async text => {
+    const prepared = await state.mutations.prepareImport(text);
+    return state.mutations.importPrepared(prepared);
+  }, recoveryFile.text);
+  assert.equal(recoveryResult.operationIds.length, 1);
+  assert.notEqual(recoveryResult.operationIds[0], recoveryFile.originalId);
+  assert.deepEqual(await evaluate(a, async () => (await state.mutations.records()).map(record => record.status)), ['paused']);
+  assert.equal((await api(contextB, originB, '/databases/projects')).rows.find(row => row.id === recoveryRow.id).properties.name,
+    '두 번째 인스턴스에서도 읽는 새 항목', 'Import must not change the other server before explicit reapply');
+  await evaluate(a, async id => { await state.mutations.reapply(id); await state.mutations.sync(); }, recoveryResult.operationIds[0]);
+  assert.equal((await api(contextB, originB, '/databases/projects')).rows.find(row => row.id === recoveryRow.id).properties.name,
+    '복구 파일로 다시 반영한 항목 🙂');
+  console.log('PostgreSQL Chrome: actual export/import paused the fresh-ID edit and explicit recovery committed through the other server');
+
   await evaluate(a, id => navigate('page', id), pageId);
   await a.waitForSelector('#attachment-input', { state: 'attached' });
   }

@@ -279,7 +279,10 @@ export class Authorization {
     };
     if (is_object(get(result, 'properties')) && has(result, 'database_id') && has(result, 'id')) return row_projection(result);
     if (is_object(get(result, 'row'))) result.row = row_projection(result.row);
-    if (path === '/api/workspace') result = a.filter_workspace(result);
+    if (path === '/api/workspace') {
+      result = a.filter_workspace(result);
+      for (const teamspace of get(result, 'teamspaces', [])) teamspace.access_level = a.level('teamspace', teamspace);
+    }
     if (path === '/api/search') for (const key of ['results', 'pages']) if (has(result, key)) result[key] = result[key].filter((page: Entity) => a.can('page', page));
     const parts = path.replace(/^\/+|\/+$/g, '').split('/');
     if (path === '/api/advanced') {

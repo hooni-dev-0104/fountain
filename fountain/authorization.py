@@ -318,6 +318,8 @@ class Authorization:
             result['row'] = row_projection(result['row'])
         if path == '/api/workspace':
             result = a.filter_workspace(result)
+            for teamspace in result.get('teamspaces', []):
+                teamspace['access_level'] = a.level('teamspace', teamspace)
         if path == '/api/search':
             for key in ('results', 'pages'):
                 if key in result: result[key] = [p for p in result[key] if a.can('page', p)]

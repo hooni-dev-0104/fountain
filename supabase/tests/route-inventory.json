@@ -9,7 +9,7 @@
     "fountain/scim.py:scim_resource": "608931082a7fb9e062d17c6bb60273d36a74c9e307f20c50357ae928d7985824",
     "fountain/publishing.py:render_public": "68fec110fb1e43ed5ac9e7947b6e52ea7087ce8653e66fe0e7a3779af063a6c7",
     "fountain/authorization.py:Authorization.prepare": "53304846ec4360238c844f6d3ded90c9d9fc3c2f9c21ff6ddc64fe03354793a1",
-    "fountain/authorization.py:Authorization.project": "a7bcffaf5e15a36eef4d7ae677d44740367dab9f58c5a4ebe4cd7af7d2c14210"
+    "fountain/authorization.py:Authorization.project": "0322f3794ea8406bc8a113fa3288daa06fb2f97a1a0e0fc2370eefdcbe9b7ad9"
   },
   "advancedCollections": [
     "automations",

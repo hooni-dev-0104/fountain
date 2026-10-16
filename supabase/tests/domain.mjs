@@ -25,6 +25,7 @@ function fixture(){
 test('workspace is projected for each member and carries canonical synchronization metadata',async()=>{
  const f=fixture(),a=await f.call('alice','GET','/api/workspace'),b=await f.call('bob','GET','/api/workspace');
  assert.equal(a.status,200);assert.equal(a.body.pages.length,2);assert.deepEqual(b.body.pages.map(p=>p.id),['public']);assert.equal(b.body.current_member_id,'bob');assert.equal(b.body.session_binding,'c'.repeat(32));assert.equal(typeof b.body.data_revision,'number');
+ assert.equal(a.body.teamspaces[0].access_level,3);assert.equal(b.body.teamspaces[0].access_level,3);
 });
 test('hidden resources stay closed, captured revisions reject stale edits, comments keep verified authors',async()=>{
  const f=fixture();assert.equal((await f.call('bob','GET','/api/pages/private')).status,404);

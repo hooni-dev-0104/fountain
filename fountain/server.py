@@ -382,7 +382,7 @@ class Application:
                 database = s.get('database', row.get('database_id')) or {}
                 file_fields = [prop['id'] for prop in database.get('properties', []) if prop.get('type') == 'files']
                 require(not any(parts[2] in (row.get('properties', {}).get(key) or []) for key in file_fields), 'Attachment is still referenced by a database row', 409)
-            s.db.execute('DELETE FROM attachment_chunks WHERE attachment_id=?', (parts[2],))
+            s.chunk_delete(parts[2])
             s.delete('attachment', parts[2])
             return 200, {'deleted': True}
         if self.advanced:

@@ -140,6 +140,66 @@ class Store:
             self.commit()
         return value
 
+    def chunk_info(self, identity, offset):
+        with self.lock:
+            return self.db.execute("SELECT length(data),typeof(data) FROM attachment_chunks WHERE attachment_id=? AND offset=?",
+                                   (identity, offset)).fetchone()
+
+    def chunk_read_range(self, identity, offset, start, length):
+        """Return up to 4 MiB; close the BLOB handle before returning any bytes."""
+        require(type(start) is int and start >= 0 and type(length) is int and 0 <= length <= 4 * 1024 * 1024,
+                "Invalid attachment read range")
+        with self.lock:
+            row = self.db.execute("SELECT rowid,length(data),typeof(data) FROM attachment_chunks WHERE attachment_id=? AND offset=?",
+                                  (identity, offset)).fetchone()
+            if row is None: return None
+            require(row[2] == "blob", "Attachment bytes are invalid", 409)
+            if start >= row[1] or length == 0: return b""
+            try:
+                with self.db.blobopen("attachment_chunks", "data", row[0], readonly=True) as blob:
+                    blob.seek(start)
+                    return blob.read(min(length, row[1] - start))
+            except sqlite3.Error as error:
+                raise APIError(409, "Attachment bytes changed during transfer") from error
+
+    def chunk_write(self, identity, offset, data):
+        require(type(offset) is int and offset >= 0 and isinstance(data, (bytes, bytearray))
+                and len(data) <= 4 * 1024 * 1024, "Invalid attachment chunk")
+        with self.transaction():
+            self.db.execute("INSERT INTO attachment_chunks VALUES (?,?,?)", (identity, offset, bytes(data)))
+
+    def chunk_list(self, identity):
+        with self.lock:
+            return self.db.execute("SELECT offset,length(data),typeof(data) FROM attachment_chunks WHERE attachment_id=? ORDER BY offset",
+                                   (identity,)).fetchall()
+
+    def chunk_delete(self, identity):
+        with self.transaction():
+            return self.db.execute("DELETE FROM attachment_chunks WHERE attachment_id=?", (identity,)).rowcount
+
+    def presence_lookup(self, *, page=None, origin=None, now=None):
+        clauses, parameters = ["kind='presence'"], []
+        if page is not None:
+            clauses.append("json_extract(data,'$.page_id')=?")
+            parameters.append(page)
+        if origin is not None:
+            clauses.extend(["json_extract(data,'$.origin_kind')=?", "json_extract(data,'$.origin_id')=?"])
+            parameters.extend(origin)
+        if now is not None:
+            clauses.append("json_extract(data,'$.retain_until')>?")
+            parameters.append(now)
+        with self.lock:
+            return [json.loads(row[0]) for row in self.db.execute(
+                "SELECT data FROM entities WHERE " + " AND ".join(clauses), parameters).fetchall()]
+
+    def presence_cleanup(self, now, limit=500):
+        require(type(limit) is int and 0 < limit <= 500, "Invalid presence cleanup limit")
+        with self.transaction():
+            rows = self.db.execute("SELECT id FROM entities WHERE kind='presence' AND json_extract(data,'$.retain_until')<=? ORDER BY id LIMIT ?",
+                                   (now, limit)).fetchall()
+            for (identity,) in rows: self.delete("presence", identity)
+            return len(rows)
+
     def audit(self, action, details, user=None):
         return self.put("audit", {"action": action, "details": details, "user": user if user is not None else AUDIT_ACTOR.get()})
 
@@ -235,7 +295,7 @@ class Workspace:
     def seed(self):
         with self.store.transaction():
             if not self.store.meta('workspace_id'):
-                self.store.set_meta('workspace_id', uid())
+                self.store.set_meta('workspace_id', getattr(self.store, 'workspace_id', None) or uid())
             if self.store.meta("seeded"):
                 return
             self.store.set_meta("settings", {"name": "Fountain 워크스페이스", "icon": "⛲", "plan": "local", "locale": "ko"})

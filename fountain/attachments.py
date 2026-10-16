@@ -1,9 +1,8 @@
-"""Resumable SQLite BLOB attachments; all file reads remain bounded in memory."""
+"""Resumable chunk attachments; all file reads remain bounded in memory."""
 from __future__ import annotations
 
 import base64
 import hashlib
-import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from .core import APIError, require, text, uid
@@ -90,12 +89,12 @@ class FileStorage:
             require(offset % CHUNK_SIZE == 0 and offset < upload["size"], "Invalid chunk boundary")
             require(len(data) == min(CHUNK_SIZE, upload["size"] - offset), "Incorrect chunk length")
             if offset < upload["offset"]:
-                stored = self.store.db.execute("SELECT length(data),typeof(data) FROM attachment_chunks WHERE attachment_id=? AND offset=?", (identity, offset)).fetchone()
+                stored = self.store.chunk_info(identity, offset)
                 require(stored is not None and stored[1] == 'blob' and stored[0] == len(data), "Retry chunk differs from the stored bytes", 409)
-                content = self.store.db.execute("SELECT substr(data,1,?) FROM attachment_chunks WHERE attachment_id=? AND offset=?", (len(data), identity, offset)).fetchone()[0]
+                content = self.store.chunk_read_range(identity, offset, 0, len(data))
                 require(content == bytes(data), "Retry chunk differs from the stored bytes", 409)
                 return self._public(upload)
-            self.store.db.execute("INSERT INTO attachment_chunks VALUES (?,?,?)", (identity, offset, bytes(data)))
+            self.store.chunk_write(identity, offset, data)
             upload["offset"] += len(data)
             return self._public(self.store.put("upload", upload))
 
@@ -104,19 +103,11 @@ class FileStorage:
         relative = position - chunk_offset
         length = min(length, READ_SIZE, CHUNK_SIZE - relative)
         with self.store.lock:
-            row = self.store.db.execute("SELECT rowid,length(data),typeof(data) FROM attachment_chunks WHERE attachment_id=? AND offset=?",
-                                        (identity, chunk_offset)).fetchone()
-            require(row is not None and row[2] == "blob" and row[1] >= relative + length,
+            info = self.store.chunk_info(identity, chunk_offset)
+            require(info is not None and info[1] == "blob" and info[0] >= relative + length,
                     "Attachment bytes are missing or were removed", 409)
-            try:
-                # Close each incremental BLOB handle before yielding network bytes;
-                # no SQLite cursor or transaction is pinned across a slow client.
-                with self.store.db.blobopen("attachment_chunks", "data", row[0], readonly=True) as blob:
-                    blob.seek(relative)
-                    data = blob.read(length)
-            except sqlite3.Error as error:
-                raise APIError(409, "Attachment bytes changed during transfer") from error
-        require(len(data) == length, "Attachment bytes are incomplete", 409)
+            data = self.store.chunk_read_range(identity, chunk_offset, relative, length)
+        require(data is not None and len(data) == length, "Attachment bytes are incomplete", 409)
         return data
 
     def complete(self, identity, owner_id, access=None):
@@ -127,7 +118,7 @@ class FileStorage:
                 require(attachment is not None, "Completed attachment was removed", 410)
                 return attachment
             require(upload["offset"] == upload["size"], "Upload is not complete", 409)
-            rows = self.store.db.execute("SELECT offset,length(data),typeof(data) FROM attachment_chunks WHERE attachment_id=? ORDER BY offset", (identity,))
+            rows = self.store.chunk_list(identity)
             position = 0
             for offset, length, kind in rows:
                 require(offset == position and kind == "blob" and length == min(CHUNK_SIZE, upload["size"] - position)
@@ -150,7 +141,7 @@ class FileStorage:
             upload = self._load(identity, owner_id, access, cleaning=True)
             completed = upload.get("completed") or self.store.get("attachment", identity) is not None
             if not completed:
-                self.store.db.execute("DELETE FROM attachment_chunks WHERE attachment_id=?", (identity,))
+                self.store.chunk_delete(identity)
                 self.store.delete("upload", identity)
             return {"id": identity, "cancelled": not completed, "completed": bool(completed)}
 
@@ -167,7 +158,7 @@ class FileStorage:
                 except (ValueError, TypeError, KeyError): expired = True
                 if not expired: continue
                 if self.store.get("attachment", upload["id"]) is None:
-                    self.store.db.execute("DELETE FROM attachment_chunks WHERE attachment_id=?", (upload["id"],))
+                    self.store.chunk_delete(upload["id"])
                 self.store.delete("upload", upload["id"])
                 removed += 1
         return {"removed": removed}

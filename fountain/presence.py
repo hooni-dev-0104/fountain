@@ -1,4 +1,4 @@
-"""Short-lived, session-bound document presence shared through SQLite.
+"""Short-lived, session-bound document presence shared through workspace storage.
 
 Live leases last 15 seconds. Sequence high-water marks survive leave/expiry for
 60 more seconds, after which a client ID may be reused. Clients must generate a
@@ -6,7 +6,6 @@ fresh random ID per channel lifetime and never persist/replay presence offline.
 """
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 import math
@@ -37,21 +36,10 @@ class PresenceService:
         return value
 
     def _records(self, *, page=None, origin=None, now=None):
-        clauses, parameters = ["kind='presence'"], []
-        if page is not None:
-            clauses.append("json_extract(data,'$.page_id')=?")
-            parameters.append(page)
-        if origin is not None:
-            clauses.extend(["json_extract(data,'$.origin_kind')=?", "json_extract(data,'$.origin_id')=?"])
-            parameters.extend(origin)
-        if now is not None:
-            clauses.append("json_extract(data,'$.retain_until')>?")
-            parameters.append(now)
-        return [json.loads(row[0]) for row in self.store.db.execute("SELECT data FROM entities WHERE " + " AND ".join(clauses), parameters)]
+        return self.store.presence_lookup(page=page, origin=origin, now=now)
 
     def _cleanup(self, now):
-        expired = self.store.db.execute("SELECT id FROM entities WHERE kind='presence' AND json_extract(data,'$.retain_until')<=? LIMIT 500", (now,)).fetchall()
-        for (identity,) in expired: self.store.delete("presence", identity)
+        return self.store.presence_cleanup(now)
 
     def _context(self, page_id, cookie):
         info = self.auth.session_info(cookie)

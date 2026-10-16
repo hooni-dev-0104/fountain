@@ -32,7 +32,8 @@ function canCreateRow() {
 }
 const administrativeActions=new Set(['activity','invite','new-teamspace','teamspace','add-advanced','edit-advanced','run-automation','fill-form','site-link','open-sites','backup','export']);
 function pruneAdministrativeControls() {
-  if(state.offline){$$('[data-action="add-page"],[data-action="new-database"],[data-action="add-file"]').forEach(el=>el.remove());for(const el of $$('[data-action]'))if(administrativeActions.has(el.dataset.action))el.remove();}
+  if(state.offline){$$('[data-action="new-database"],[data-action="add-file"]').forEach(el=>el.remove());for(const el of $$('[data-action]'))if(administrativeActions.has(el.dataset.action)||serverOnlyActions.has(el.dataset.action))el.remove();}
+  if(state.localPageOnly)for(const el of $$('[data-action]'))if(serverOnlyActions.has(el.dataset.action))el.remove();
   if(!isOwner())$$('[data-action="activity"],[data-action="backup"],[data-action="export"]').forEach(el=>el.remove());
   if(!isAdmin()) {
     for(const el of $$('[data-action]'))if(administrativeActions.has(el.dataset.action))el.remove();
@@ -48,6 +49,174 @@ function pruneAdministrativeControls() {
     const parent=state.workspace?.pages.find(p=>p.id===el.dataset.parent);
     if(parent&&resourceLevel(parent)<3)el.remove();
   });
+}
+// Durable entity edits share the current login binding with document drafts.
+const serverOnlyActions=new Set(['new-database','teamspace','history','share','db-share','lock-page','delete-page','verify-page','move-page','duplicate-page','copy-blocks','new-property','task-settings','duplicate-row','restore-version','restore-page','trash','settings','ai','new-teamspace']);
+const activeMutationStatuses=new Set(['pending','deferred','applied']);
+function closeMutations() {
+  state.mutations?.close();state.mutations=null;state.mutationRecords=[];for(const channel of state.bodySyncChannels||[])channel.close();state.bodySyncChannels=new Set();
+  clearTimeout(state.mutationRefreshTimer);
+}
+function metadataOverlay(page,snapshot=state.channel?.pageId===page.id?state.channel.base:null) {
+  const value={...page};
+  for(const record of state.mutationRecords||[])if(activeMutationStatuses.has(record.status)&&record.operation.kind==='page.patch'&&record.operation.target_id===page.id){if(record.status==='applied'&&Number.isSafeInteger(record.result?.data_revision)&&snapshot?.data_revision>=record.result.data_revision)continue;Object.assign(value,record.operation.body);}
+  return value;
+}
+async function cachedResourceIds() {
+  const profile=state.offlineProfile;if(!profile)return;
+  const [pages,databases,locals]=await Promise.all([FountainOffline.listSnapshots(profile),FountainOffline.listDatabases(profile),FountainOffline.listLocalPages(profile)]);
+  if(state.offlineProfile?.id!==profile.id)return;
+  state.cachedPages=new Set([...pages.map(record=>record.snapshot.page.id),...locals.map(record=>record.metadata.page.id)]);
+  state.cachedDatabases=new Set(databases.map(record=>record.snapshot.database.id));
+}
+async function ensureMutations() {
+  if(!window.FountainMutations||!state.offlineProfile)return null;
+  const profile=state.offlineProfile;
+  if(state.mutations&&state.mutationProfileId===profile.id)return state.mutations;
+  closeMutations();state.mutationProfileId=profile.id;
+  const controller=new FountainMutations.Controller({profile,
+    onChange:()=>{if(state.mutations!==controller)return;clearTimeout(state.mutationRefreshTimer);state.mutationRefreshTimer=setTimeout(()=>refreshMutationUI(controller).catch(error=>{if(state.mutations===controller)toast(error.message);}),80);},
+    onDenied:detail=>{
+      if(state.mutations!==controller)return;
+      if(detail.kind==='session'){closeDocument();closeMutations();if(detail.switched){state.offlineProfile=null;boot();}else renderLogin(false);return;}
+      closeDeniedResource(detail);refreshMutationUI(controller).catch(()=>{});
+    },
+    onError:error=>{if(state.mutations===controller&&error.status)toast(error.message);}
+  });
+  state.mutations=controller;
+  state.mutationRecords=await controller.records();
+  if(state.mutations!==controller)return null;
+  await cachedResourceIds();
+  const workspace=await controller.workspace(state.serverWorkspace||state.workspace);
+  if(state.mutations!==controller)return null;state.workspace=workspace;
+  renderSyncIndicators();return controller;
+}
+function closeDeniedResource(detail) {
+  const id=detail.databaseId||detail.pageId;
+  if(detail.kind==='database'){
+    state.cachedDatabases?.delete(id);
+    if(state.workspace)state.workspace.databases=state.workspace.databases.filter(database=>database.id!==id);
+    if(state.serverWorkspace)state.serverWorkspace.databases=state.serverWorkspace.databases.filter(database=>database.id!==id);
+    if(state.database?.id===id||state.navigatingDatabaseId===id){state.database=null;state.rows=[];state.route='denied';closeModal();$('#main').innerHTML=`<div class="empty"><h2>이 데이터베이스에 접근할 수 없습니다.</h2><p>${esc(detail.message||'서버에서 읽기 권한을 확인해 주세요.')}</p><button class="outline-btn" data-action="home">홈으로 돌아가기</button></div>`;renderTopbar('접근 권한 없음');}
+  }else if(detail.kind==='page'&&state.page?.id===id){closeDocument();state.page=null;state.blocks=[];state.route='denied';closeModal();$('#main').innerHTML=`<div class="empty"><h2>이 페이지에 접근할 수 없습니다.</h2><button class="outline-btn" data-action="home">홈으로 돌아가기</button></div>`;renderTopbar('접근 권한 없음');}
+  renderSidebar();
+}
+async function refreshMutationUI(controller=state.mutations) {
+  if(!controller||state.mutations!==controller)return;
+  const records=await controller.records();if(state.mutations!==controller)return;
+  state.mutationRecords=records;
+  const workspace=await controller.workspace(state.serverWorkspace||state.workspace);
+  if(state.mutations!==controller)return;state.workspace=workspace;
+  await cachedResourceIds();
+  if(state.mutations!==controller)return;
+  renderSidebar();renderSyncIndicators();
+  if(state.route==='page'&&state.page){
+    const local=await controller.localPage(state.page.id);
+    if(state.mutations!==controller)return;
+    state.localPageOnly=!!local?.metadata.localOnly;
+    const basis=local?.metadata.page&&local.metadata.page.revision>=(state.channel?.base.page.revision||0)?local.metadata.page:state.channel?.base.page||state.page;
+    state.page=metadataOverlay({...state.page,...basis,access_level:state.channel?.base.access_level??state.page.access_level});
+    patchPageMetadataUI();
+    if(!state.localPageOnly&&state.channel?.remoteDeferred){await state.channel.resumeRemote();}
+    if(state.channel)documentStatus({status:state.channel.status,pending:state.channel.pending.size,durable:state.channel.durable!==false});
+  }
+  if(state.database&&['home','database'].includes(state.route)){
+    const id=state.database.id;
+    try{
+      const data=await controller.loadDatabase(id,{remote:false});
+      if(state.mutations!==controller||state.database?.id!==id)return;
+      state.database=data.database;state.rows=data.rows||[];
+      if(!$('.modal')&&!state.composition){
+        if(state.route==='database')renderDatabase();
+        else if($('#home-database')){$('#home-database').innerHTML=databaseToolbar(true)+tableHTML(state.rows.slice(0,5),true)+`<button class="new-row" data-action="add-row">+ 새 프로젝트</button>`;applyDatabaseControls();}
+      }
+    }catch(error){if(error.status&&[401,403,404].includes(error.status))toast(error.message);}
+  }
+  if($('#mutation-queue-list'))renderMutationQueue();
+  syncCreatedPageBodies(controller).catch(error=>{if(state.mutations===controller&&error.status)toast(error.message);});
+}
+async function syncCreatedPageBodies(controller) {
+  if(state.offline||!navigator.onLine||state.mutations!==controller||state.bodySyncRunning===controller)return;
+  const profile=state.offlineProfile;state.bodySyncRunning=controller;
+  try{
+    for(const record of await FountainOffline.listLocalPages(profile)){
+      if(state.mutations!==controller||state.offline)return;
+      const id=record.metadata.page.id;
+      if(record.metadata.localOnly||state.channel?.pageId===id||!(await controller.pageReady(id)))continue;
+      const key=FountainOffline.key(profile,id);
+      if(!(await FountainOffline.pendingOperations(key)).length)continue;
+      const local=await controller.localPage(id);if(!local?.snapshot||state.mutations!==controller)return;
+      const channel=new FountainCollaboration.DocumentChannel({pageId:id,profile,deferRemote:true,
+        fetcher:async(path,body,method)=>{if(state.mutations!==controller)throw new Error('로그인 계정이 변경되었습니다.');return api(path,body,method);},
+        onDenied:detail=>{if(state.mutations===controller&&[403,404].includes(detail.status))closeDeniedResource({kind:'page',pageId:id,...detail});}
+      });
+      state.bodySyncChannels||=new Set();state.bodySyncChannels.add(channel);
+      try{await channel.open(local.snapshot,{cached:true});if(state.mutations!==controller)return;await channel.resumeRemote();await channel.flush();await channel.persistence;}
+      finally{channel.close();state.bodySyncChannels.delete(channel);}
+    }
+  }finally{if(state.bodySyncRunning===controller)state.bodySyncRunning=null;}
+}
+function renderSyncIndicators() {
+  const records=state.mutationRecords||[],waiting=records.filter(record=>activeMutationStatuses.has(record.status)),paused=records.filter(record=>!activeMutationStatuses.has(record.status));
+  const label=paused.length?`충돌·확인 ${paused.length}개`:waiting.length?`동기화 대기 ${waiting.length}개`:state.offline?'오프라인 · 기기에 저장됨':'기기 저장 · 연결됨';
+  for(const el of $$('[data-sync-label]'))el.textContent=label;
+  for(const el of $$('[data-action="sync-queue"]')){el.classList.toggle('has-conflicts',!!paused.length);el.classList.toggle('has-pending',!!waiting.length);}
+}
+function mutationTitle(record) {
+  const op=record.operation;
+  return ({'page.create':'새 페이지 만들기','page.patch':'페이지 정보 수정','row.create':'새 항목 만들기','row.patch':'항목 수정','row.delete':'항목과 하위 항목 삭제'})[op.kind]||'저장된 변경';
+}
+function mutationDetail(record) {
+  const body=record.operation.body||{},values=body.properties||body;
+  return Object.entries(values).filter(([key])=>!['permissions','blocks'].includes(key)).map(([key,value])=>{
+    const name=state.database?.properties?.find(property=>property.id===key)?.name||({title:'제목',icon:'아이콘',cover:'커버',favorite:'즐겨찾기',parent_id:'상위 페이지',parent_row_id:'상위 항목',depends_on:'선행 작업'})[key]||key;
+    return name+': '+(typeof value==='object'?JSON.stringify(value):String(value??''));
+  }).join(' · ')||record.operation.target_id;
+}
+function mutationError(record) {
+  const raw=String(record.result?.error||record.error||'');
+  if(!raw)return '';
+  if(/Row properties changed/i.test(raw))return '다른 기기에서 같은 속성을 바꿨습니다. 보관한 내용을 내려받거나 현재 서버 값을 기준으로 다시 적용하세요.';
+  if(/schema|property definition|property.*changed/i.test(raw))return '서버의 속성 정의가 바뀌었습니다. 최신 속성을 확인한 뒤 다시 적용하세요.';
+  if(/Subitem changed|subtree|children/i.test(raw))return '하위 항목이 변경되었습니다. 삭제할 범위를 다시 확인한 뒤 적용하세요.';
+  if(/cycle|circular/i.test(raw))return '상위 항목이나 선행 작업에 순환 연결이 있습니다. 연결 관계를 다시 확인해 주세요.';
+  if(/locked/i.test(raw))return '문서가 잠겨 있습니다. 연결 후 잠금 상태를 확인하세요.';
+  if(record.status==='denied')return '현재 이 변경을 저장할 권한이 없습니다. 복구 내용을 보관하고 공유 권한을 확인하세요.';
+  if(record.status==='conflict')return '서버의 내용이 바뀌어 변경을 보관했습니다. 최신 내용을 확인한 뒤 다시 적용하세요.';
+  return /[가-힣]/.test(raw)?raw:'변경 내용이나 연결 상태를 확인해 주세요. 원본 변경은 복구 파일에 보관됩니다.';
+}
+function renderMutationQueue() {
+  const list=$('#mutation-queue-list');if(!list)return;
+  const records=state.mutationRecords||[];
+  const names={pending:'기기에 저장 · 동기화 대기',deferred:'선행 작업 완료 대기',applied:'서버 저장됨 · 최신 내용 확인 중',conflict:'같은 내용이 변경되어 확인 필요',denied:'변경 권한 확인 필요',invalid:'내용 또는 구조 확인 필요'};
+  list.innerHTML=records.length?records.map(record=>`<article class="mutation-card" data-mutation-id="${esc(record.id)}" data-mutation-status="${esc(record.status)}"><div class="mutation-heading"><strong>${esc(mutationTitle(record))}</strong><span>${esc(names[record.status]||'확인 필요')}</span></div><p>${esc(mutationDetail(record))}</p>${record.result?.error||record.error?`<p class="mutation-error">${esc(mutationError(record))}</p>`:''}<div class="mutation-actions"><button class="outline-btn" data-action="export-mutation" data-id="${esc(record.id)}">복구 내용 내려받기</button>${!activeMutationStatuses.has(record.status)?`<button class="outline-btn" data-action="reapply-mutation" data-id="${esc(record.id)}" ${state.offline?'disabled':''}>현재 값 기준으로 다시 적용</button>`:''}${record.status!=='applied'?`<button class="outline-btn" data-action="drop-mutation" data-id="${esc(record.id)}">변경 폐기</button>`:''}</div></article>`).join(''):'<div class="empty">동기화할 변경이 없습니다.<br>기기에 저장한 데이터는 연결 없이도 열 수 있습니다.</div>';
+  $('#sync-now')?.toggleAttribute('disabled',state.offline);
+}
+async function openMutationQueue() {
+  state.mutationRecords=await state.mutations.records();
+  openModal('기기 저장과 동기화',`<p>연결이 끊겨도 변경을 이 기기에 보관합니다. 서버에서도 같은 값이 바뀌면 자동으로 덮어쓰지 않고 여기서 확인합니다.</p><div class="mutation-toolbar"><button class="solid-btn" id="sync-now" data-action="sync-now">지금 동기화</button><button class="outline-btn" data-action="export-mutations">전체 복구 내용 내려받기</button></div><div id="mutation-queue-list" aria-live="polite"></div>`,'mutation-modal');
+  renderMutationQueue();
+}
+async function syncMutations() {
+  const controller=state.mutations;if(!controller)return;
+  const expected=new Set((await controller.records()).filter(record=>['pending','deferred'].includes(record.status)).map(record=>record.id));
+  try{
+    for(let attempt=0;attempt<3;attempt++){
+      await controller.sync();if(state.mutations!==controller)return;
+      const records=await controller.records(),paused=new Set(records.filter(record=>!activeMutationStatuses.has(record.status)).map(record=>record.id));
+      const remaining=records.filter(record=>expected.has(record.id)&&['pending','deferred'].includes(record.status));
+      if(!remaining.length||remaining.every(record=>(record.operation.depends_on||[]).some(id=>paused.has(id))))break;
+    }
+  }catch(error){if(error.status&&error.status<500)throw error;state.offline=true;toast('서버에 연결하지 못했습니다. 변경은 기기에 보관했으며 다시 연결되면 동기화합니다.');}
+  if(state.mutations!==controller)return;
+  await refreshMutationUI(controller);
+}
+async function loadDatabaseData(id,{remote=!state.offline}={}) {
+  const controller=await ensureMutations();
+  const data=controller?await controller.loadDatabase(id,{remote}):await api('/databases/'+encodeURIComponent(id));
+  if(controller&&controller!==state.mutations){const error=new Error('로그인 계정이 변경되었습니다.');error.code='STALE_REQUEST';throw error;}
+  if(state.offlineProfile)await cachedResourceIds();
+  return data;
 }
 async function api(path, body, method) {
   const requestBinding=state.session?.cache_binding;
@@ -112,7 +281,9 @@ async function refreshWorkspace() {
   const binding=state.session?.cache_binding,member=state.session?.member?.id;
   const workspace=await api('/workspace');
   if(binding!==state.session?.cache_binding||member!==state.session?.member?.id||workspace.current_member_id&&workspace.current_member_id!==member||workspace.session_binding&&workspace.session_binding!==binding){const error=new Error('로그인 정보를 다시 확인합니다.');error.code='SESSION_CHANGED';throw error;}
-  state.workspace=workspace;
+  const controller=state.mutations,overlay=controller?await controller.workspace(workspace):workspace;
+  if(binding!==state.session?.cache_binding||controller!==state.mutations){const error=new Error('로그인 계정이 변경되었습니다.');error.code='STALE_REQUEST';throw error;}
+  state.serverWorkspace=workspace;state.workspace=overlay;
   if(state.session?.authenticated&&window.FountainOffline)await cacheProfile().catch(error=>{if(error.name!=='SecurityError')toast(error.message);});
   renderSidebar();
 }
@@ -123,12 +294,12 @@ function renderSidebar() {
   const favorite=pages.filter(p=>p.favorite);
   const roots=pages.filter(p=>!p.parent_id);
   const pageItem=(p,depth=0)=>`<div class="nav-item page-nav ${state.page?.id===p.id&&state.route==='page'?'active':''}" style="padding-left:${10+depth*13}px"><button data-action="page" data-id="${esc(p.id)}" class="nav-item" style="padding:0;min-height:23px"><span class="page-icon">${esc(p.icon||'📄')}</span><span class="label">${esc(p.title||'제목 없음')}</span></button><button class="page-menu" aria-label="하위 페이지 추가" data-action="add-page" data-parent="${esc(p.id)}">+</button></div>${pages.filter(q=>q.parent_id===p.id).map(q=>pageItem(q,Math.min(depth+1,4))).join('')}`;
-  $('#sidebar').innerHTML=`<div class="brand"><span class="brand-mark">f</span>fountain<span style="font-family:sans-serif;font-size:9px;letter-spacing:1px;color:#a5a497;margin-left:2px;font-weight:400">WORKSPACE</span></div><button class="workspace-switch" data-action="settings"><span class="workspace-avatar">F</span><span class="workspace-name">${esc(w.settings?.name||'Fountain 스튜디오')}<small>함께 만드는 작은 가능성</small></span>${icon('down')}</button><nav><button class="nav-item" data-action="search">${icon('search')}<span class="label">검색</span><span class="shortcut">⌘ K</span></button><button class="nav-item ${state.route==='home'?'active':''}" data-action="home">${icon('home')}<span class="label">홈</span></button><button class="nav-item" data-action="activity">${icon('inbox')}<span class="label">업데이트</span></button><button class="nav-item" data-action="ai">${icon('spark')}<span class="label">Fountain AI</span><span class="badge">AI</span></button></nav><div class="sidebar-pages"><div class="section-label">즐겨찾기<span>${icon('star')}</span></div>${favorite.length?favorite.map(p=>pageItem(p)).join(''):'<div class="small muted" style="padding:5px 12px;font-size:10px">자주 찾는 페이지를 모아보세요</div>'}<div class="section-label">팀스페이스<button data-action="new-teamspace" aria-label="팀스페이스 추가">+</button></div>${(w.teamspaces||[{id:'general',name:'Fountain 팀'}]).map(t=>`<button class="nav-item" data-action="teamspace" data-id="${esc(t.id)}"><span class="team-icon">${esc((t.name||'팀')[0])}</span><span class="label">${esc(t.name||'Fountain 팀')}</span>${icon('down')}</button>`).join('')}${(w.databases||[]).map(d=>`<button class="nav-item ${state.route==='database'&&state.database?.id===d.id?'active':''}" data-action="database" data-id="${esc(d.id)}" style="padding-left:20px"><span class="page-icon">${esc(d.icon||'▤')}</span><span class="label">${esc(d.name||d.title||'프로젝트')}</span></button>`).join('')}<div class="section-label">페이지<button data-action="add-page" aria-label="새 페이지">+</button></div>${roots.map(p=>pageItem(p)).join('')}<button class="nav-item muted" data-action="add-page">${icon('plus')}<span class="label">새 페이지</span></button><button class="nav-item muted" data-action="new-database">${icon('table')}<span class="label">새 데이터베이스</span></button></div><div class="sidebar-bottom"><button class="nav-item" data-action="settings">${icon('settings')}<span class="label">설정 및 멤버</span></button><button class="nav-item" data-action="trash">${icon('trash')}<span class="label">휴지통</span></button><div class="invite-card"><strong>좋은 생각은, 함께 자라니까요.</strong>팀원을 초대하고 한곳에서 시작하세요.<br><button data-action="invite">멤버 초대하기 ↗</button></div></div>`;
-  pruneAdministrativeControls();
+  $('#sidebar').innerHTML=`<div class="brand"><span class="brand-mark">f</span>fountain<span style="font-family:sans-serif;font-size:9px;letter-spacing:1px;color:#a5a497;margin-left:2px;font-weight:400">WORKSPACE</span></div><button class="workspace-switch" data-action="settings"><span class="workspace-avatar">F</span><span class="workspace-name">${esc(w.settings?.name||'Fountain 스튜디오')}<small>함께 만드는 작은 가능성</small></span>${icon('down')}</button><nav><button class="nav-item" data-action="search">${icon('search')}<span class="label">검색</span><span class="shortcut">⌘ K</span></button><button class="nav-item ${state.route==='home'?'active':''}" data-action="home">${icon('home')}<span class="label">홈</span></button><button class="nav-item" data-action="activity">${icon('inbox')}<span class="label">업데이트</span></button><button class="nav-item" data-action="ai">${icon('spark')}<span class="label">Fountain AI</span><span class="badge">AI</span></button></nav><div class="sidebar-pages"><div class="section-label">즐겨찾기<span>${icon('star')}</span></div>${favorite.length?favorite.map(p=>pageItem(p)).join(''):'<div class="small muted" style="padding:5px 12px;font-size:10px">자주 찾는 페이지를 모아보세요</div>'}<div class="section-label">팀스페이스<button data-action="new-teamspace" aria-label="팀스페이스 추가">+</button></div>${(w.teamspaces||[{id:'general',name:'Fountain 팀'}]).map(t=>`<button class="nav-item" data-action="teamspace" data-id="${esc(t.id)}"><span class="team-icon">${esc((t.name||'팀')[0])}</span><span class="label">${esc(t.name||'Fountain 팀')}</span>${icon('down')}</button>`).join('')}${(w.databases||[]).filter(d=>!state.offline||state.cachedDatabases?.has(d.id)).map(d=>`<button class="nav-item ${state.route==='database'&&state.database?.id===d.id?'active':''}" data-action="database" data-id="${esc(d.id)}" style="padding-left:20px"><span class="page-icon">${esc(d.icon||'▤')}</span><span class="label">${esc(d.name||d.title||'프로젝트')}</span></button>`).join('')}<div class="section-label">페이지<button data-action="add-page" aria-label="새 페이지">+</button></div>${roots.map(p=>pageItem(p)).join('')}<button class="nav-item muted" data-action="add-page">${icon('plus')}<span class="label">새 페이지</span></button><button class="nav-item muted" data-action="new-database">${icon('table')}<span class="label">새 데이터베이스</span></button></div><div class="sidebar-bottom">${state.offline?'<button class="nav-item" data-action="logout">로그아웃</button>':''}<button class="nav-item sync-status-button" data-action="sync-queue"><span aria-hidden="true">↻</span><span class="label" data-sync-label>기기 저장과 동기화</span></button><button class="nav-item" data-action="settings">${icon('settings')}<span class="label">설정 및 멤버</span></button><button class="nav-item" data-action="trash">${icon('trash')}<span class="label">휴지통</span></button><div class="invite-card"><strong>좋은 생각은, 함께 자라니까요.</strong>팀원을 초대하고 한곳에서 시작하세요.<br><button data-action="invite">멤버 초대하기 ↗</button></div></div>`;
+  pruneAdministrativeControls();renderSyncIndicators();
 }
 function renderTopbar(title='홈',emoji='') {
-  $('#topbar').innerHTML=`<div class="crumb"><button class="mobile-toggle" data-action="toggle-sidebar" aria-label="메뉴 열기">${icon('menu')}</button><button data-action="home">Fountain 스튜디오</button><span>/</span><span>${esc(emoji)}</span><span class="current">${esc(title)}</span></div><div class="top-actions"><span class="save-status" id="save-status">${state.route==='page'?'모든 변경 사항 저장됨':'나만의 리듬으로, 함께'}</span><div class="avatar-stack" aria-label="워크스페이스 멤버">${(state.workspace?.members||[]).slice(0,3).map(m=>`<span>${esc((m.name||'나')[0])}</span>`).join('')}</div>${state.route==='page'?`<button ${resourceLevel(state.page)<3?'disabled':''} data-action="favorite" aria-label="즐겨찾기">${icon('star')}</button><button data-action="share">${icon('share')}공유</button><button data-action="history" aria-label="페이지 기록">${icon('clock')}</button><button data-action="page-menu" aria-label="페이지 메뉴">${icon('dots')}</button>`:`${state.route==='database'?`<button data-action="db-share">${icon('share')}공유</button>`:''}<button class="desktop-only" data-action="activity" aria-label="활동 기록">${icon('clock')}</button><button data-action="settings" aria-label="설정">${icon('dots')}</button>`}</div>`;
-  pruneAdministrativeControls();
+  $('#topbar').innerHTML=`<div class="crumb"><button class="mobile-toggle" data-action="toggle-sidebar" aria-label="메뉴 열기">${icon('menu')}</button><button data-action="home">Fountain 스튜디오</button><span>/</span><span>${esc(emoji)}</span><span class="current">${esc(title)}</span></div><div class="top-actions"><span class="save-status" id="save-status">${state.route==='page'?'모든 변경 사항 저장됨':'나만의 리듬으로, 함께'}</span><button class="sync-status-button sync-topbar" data-action="sync-queue" title="기기 저장과 동기화"><span aria-hidden="true">↻</span><span data-sync-label>기기 저장</span></button><div class="avatar-stack" aria-label="워크스페이스 멤버">${(state.workspace?.members||[]).slice(0,3).map(m=>`<span>${esc((m.name||'나')[0])}</span>`).join('')}</div>${state.route==='page'?`<button ${resourceLevel(state.page)<3?'disabled':''} data-action="favorite" aria-label="즐겨찾기">${icon('star')}</button><button data-action="share">${icon('share')}공유</button><button data-action="history" aria-label="페이지 기록">${icon('clock')}</button><button data-action="page-menu" aria-label="페이지 메뉴">${icon('dots')}</button>`:`${state.route==='database'?`<button data-action="db-share">${icon('share')}공유</button>`:''}<button class="desktop-only" data-action="activity" aria-label="활동 기록">${icon('clock')}</button><button data-action="settings" aria-label="설정">${icon('dots')}</button>`}</div>`;
+  pruneAdministrativeControls();renderSyncIndicators();
 }
 async function navigate(route,id) {
   state.uploadTargetPageId=route==='page'?id:null;state.uploadManager?.pauseAll('다른 문서를 여는 동안 파일 전송을 일시 중지했습니다.');
@@ -139,11 +310,14 @@ async function navigate(route,id) {
     closeDocument();
     closeModal();
     document.body.classList.remove('sidebar-open');
-    state.route=route;
+    state.route=route;if(route!=='page')state.localPageOnly=false;
     if(route==='page') {
       state.dirty=false;
-      if(state.offline){
-        const key=FountainOffline.key(state.offlineProfile,id),snapshot=await FountainOffline.getSnapshot(key);
+      const local=await state.mutations?.localPage(id);
+      if(binding!==state.session?.cache_binding||generation!==state.bootGeneration)return;
+      state.localPageOnly=!!local?.metadata.localOnly;
+      if(state.offline||state.localPageOnly){
+        const snapshot=local?.snapshot||await FountainOffline.getSnapshot(FountainOffline.key(state.offlineProfile,id));
         if(!snapshot)throw new Error('이 페이지는 기기에 보관되어 있지 않습니다. 연결 후 한 번 열어 주세요.');
         await openDocument(id,null,snapshot);
       }else{
@@ -153,8 +327,8 @@ async function navigate(route,id) {
       location.hash='page/'+id;
     }
     else if(route==='database') {
-      if(state.offline)throw new Error('오프라인에서는 문서 편집만 사용할 수 있습니다. 데이터베이스는 연결 후 열어 주세요.');
-      const data=await api('/databases/'+encodeURIComponent(id));
+      state.localPageOnly=false;state.navigatingDatabaseId=id;
+      const data=await loadDatabaseData(id);state.navigatingDatabaseId=null;
       state.database=data.database;
       state.rows=data.rows||[];
       renderDatabase();
@@ -168,7 +342,8 @@ async function navigate(route,id) {
     window.scrollTo(0,0);
   }
   catch(error) {
-    if(!error.status&&error instanceof TypeError&&route==='page'&&!state.offline&&state.offlineProfile){state.offline=true;state.cachedPages=new Set((await FountainOffline.listSnapshots(state.offlineProfile)).map(record=>record.snapshot.page.id));await navigate('page',id);return;}
+    if(!error.status&&error instanceof TypeError&&['page','database'].includes(route)&&!state.offline&&state.offlineProfile){state.offline=true;state.cachedPages=new Set((await FountainOffline.listSnapshots(state.offlineProfile)).map(record=>record.snapshot.page.id));await navigate(route,id);return;}
+    state.navigatingDatabaseId=null;
     if(error.code==='STALE_REQUEST')return;if(error.code==='SESSION_CHANGED'){boot();return;}toast(error.message);
   }
 }
@@ -183,11 +358,10 @@ function renderHome() {
   pruneAdministrativeControls();
 }
 async function loadHomeData() {
-  if(state.offline){if($('#home-database'))$('#home-database').innerHTML='<div class="empty">오프라인에서는 기기에 보관한 문서를 편집할 수 있습니다.<br>데이터베이스는 연결 후 사용할 수 있습니다.</div>';return;}
-  const id=state.workspace.databases?.[0]?.id;
+  const id=state.workspace.databases?.find(database=>!state.offline||state.cachedDatabases?.has(database.id))?.id;
   if(id) {
     try {
-      const data=await api('/databases/'+id);
+      const data=await loadDatabaseData(id);
       if(state.route!=='home')return;
       state.database=data.database;
       state.rows=data.rows||[];
@@ -197,8 +371,8 @@ async function loadHomeData() {
       if($('#home-database'))$('#home-database').innerHTML=`<div class="empty">${esc(e.message)}<br><button data-action="new-database">데이터베이스 만들기</button></div>`;
     }
   }
-  else if($('#home-database'))$('#home-database').innerHTML='<div class="empty"><button data-action="new-database">+ 첫 데이터베이스 만들기</button></div>';
-  if(!isOwner())return;
+  else if($('#home-database'))$('#home-database').innerHTML=state.offline?'<div class="empty">기기에 보관한 데이터베이스가 없습니다.<br>연결한 상태에서 한 번 열어 주세요.</div>':'<div class="empty"><button data-action="new-database">+ 첫 데이터베이스 만들기</button></div>';
+  if(state.offline||!isOwner())return;
   try {
     const data=await api('/audit');
     const records=normalizeList(data.events||data.audit||data.entries||data);
@@ -218,6 +392,7 @@ function nestBlock(id,direction) {
   renderBlocks(id);scheduleSave();
 }
 document.addEventListener('beforeinput',event=>{
+  if(event.target.id==='page-title'&&!state.titlePending)state.titleInputBasis={...structuredClone(state.pageViewBasis||state.page),title:event.target.innerText.trim()||'제목 없음'};
   const element=event.target.closest?.('.block-content');if(!element||!state.channel||state.composition)return;
   state.inputBaseline={id:element.closest('.block').dataset.id,chars:state.channel.chars(element.closest('.block').dataset.id)};
 });
@@ -238,7 +413,7 @@ document.addEventListener('selectionchange',()=>{
 });
 window.addEventListener('fountain-offline-profile-changed',async()=>{
   const current=await FountainOffline.getProfile().catch(()=>null);
-  if(state.offlineProfile&&current?.id!==state.offlineProfile.id||current&&current.session.cache_binding!==state.session?.cache_binding){closeDocument();state.offlineProfile=null;state.page=null;state.blocks=[];$('#main').innerHTML='<div class="loading">로그인 계정을 확인하는 중…</div>';boot();}
+  if(state.offlineProfile&&current?.id!==state.offlineProfile.id||current&&current.session.cache_binding!==state.session?.cache_binding){closeDocument();closeMutations();state.offlineProfile=null;state.page=null;state.blocks=[];$('#main').innerHTML='<div class="loading">로그인 계정을 확인하는 중…</div>';boot();}
 });
 window.addEventListener('fountain-offline-profile-cleared',event=>{
   if(state.loaded&&state.offlineProfile?.id===event.detail?.profileId)renderLogin();
@@ -246,16 +421,27 @@ window.addEventListener('fountain-offline-profile-cleared',event=>{
 window.addEventListener('fountain-offline-resource-purged',event=>{
   if(!state.offlineProfile||!event.detail?.key)return;
   let id;try{id=decodeURIComponent(event.detail.key.split('|').at(-1));}catch{return;}
+  if(event.detail.kind==='database'||event.detail.key.split('|').length===6){if(FountainOffline.databaseKey(state.offlineProfile,id)===event.detail.key)closeDeniedResource({kind:'database',databaseId:id});return;}
   if(FountainOffline.key(state.offlineProfile,id)!==event.detail.key)return;
   if(state.workspace){state.workspace.pages=state.workspace.pages.filter(page=>page.id!==id);if(state.route==='home')renderHome();renderSidebar();}
 });
 window.addEventListener('offline',async()=>{
   state.offline=true;const profile=state.offlineProfile;if(!profile)return;
   const snapshots=await FountainOffline.listSnapshots(profile);if(state.offlineProfile?.id!==profile.id)return;
-  state.cachedPages=new Set(snapshots.map(record=>record.snapshot.page.id));renderSidebar();if(state.route==='home')renderHome();
+  state.cachedPages=new Set(snapshots.map(record=>record.snapshot.page.id));await cachedResourceIds();renderSidebar();renderSyncIndicators();if(state.route==='home')renderHome();else if(state.route==='database')renderDatabase();
 });
-window.addEventListener('online',()=>{
-  if(!state.channel&&state.offline&&state.loaded)boot();
+window.addEventListener('online',async()=>{
+  if(!state.loaded)return;
+  if(!state.mutations){if(!state.channel&&state.offline)boot();return;}
+  const controller=state.mutations,binding=state.session?.cache_binding;
+  try{
+    const session=await api('/session');if(state.mutations!==controller||binding!==state.session?.cache_binding)return;
+    if(!session.authenticated||session.cache_binding!==binding){boot();return;}
+    state.offline=false;await refreshWorkspace();if(state.mutations!==controller)return;
+    await syncMutations();
+    if(state.route==='database'&&!$('.modal'))await reloadDatabase();
+    renderSyncIndicators();pruneAdministrativeControls();
+  }catch(error){if(!error.status)state.offline=true;else toast(error.message);renderSyncIndicators();}
 });
 
 function insertPlainText(element,text) {
@@ -288,6 +474,7 @@ async function warmOfflinePages() {
     if(generation!==state.bootGeneration||state.offlineProfile?.id!==profile.id)return;
     const key=FountainOffline.key(profile,id);
     try{
+      if((await state.mutations?.localPage(id))?.metadata.localOnly)continue;
       const response=await FountainTransport.request('/api/pages/'+encodeURIComponent(id)+'/collaboration');
       if(generation!==state.bootGeneration||state.offlineProfile?.id!==profile.id)return;
       if([403,404].includes(response.status)){await FountainOffline.purgeResource(key);continue;}
@@ -301,7 +488,7 @@ async function cacheProfile(workspaceId=state.workspace?.workspace_id||state.ses
   if(!window.FountainOffline||!workspaceId)return null;
   const session=state.session,workspace=state.workspace;
   if(workspace.current_member_id&&workspace.current_member_id!==session.member.id||workspace.session_binding&&workspace.session_binding!==session.cache_binding)throw new Error('로그인과 워크스페이스 정보가 일치하지 않습니다.');
-  const profile=await FountainOffline.saveProfile({workspaceId,memberId:session.member.id,session,workspace:metadataWorkspace(workspace)});
+  const profile=await FountainOffline.saveProfile({workspaceId,memberId:session.member.id,session,workspace:metadataWorkspace(state.serverWorkspace||workspace)});
   if(session.cache_binding!==state.session?.cache_binding){const error=new Error('로그인 계정이 변경되었습니다.');error.code='STALE_REQUEST';throw error;}
   state.offlineProfile=profile;return profile;
 }
@@ -311,12 +498,13 @@ function closeDocument() {
 }
 function documentStatus({status,pending,durable=true}) {
   if(!state.channel||state.route!=='page')return;
-  state.offline=status==='offline';state.dirty=durable===false;
-  const element=$('#save-status');if(element)element.textContent=status==='offline'?(durable?'오프라인 · 기기에 저장됨':'오프라인 · 기기 저장 실패'):status==='error'?'동기화 확인 필요':pending?'변경 사항 동기화 중…':'모든 변경 사항 저장됨';
+  state.offline=!navigator.onLine||status==='offline';state.dirty=durable===false;
+  const element=$('#save-status');if(element)element.textContent=status==='offline'?(durable?'오프라인 · 기기에 저장됨':'오프라인 · 기기 저장 실패'):status==='error'?'동기화 확인 필요':state.localPageOnly?'기기에 저장됨 · 새 페이지 동기화 대기':pending?'변경 사항 동기화 중…':'모든 변경 사항 저장됨';
   $('#offline-state')?.remove();
-  if(state.offline){const note=document.createElement('div');note.id='offline-state';note.className='offline-notice';note.textContent='오프라인에서 문서를 편집하고 있습니다. 연결되면 변경 사항을 합칩니다. 제목·댓글·파일·데이터베이스 작업은 연결 후 사용할 수 있습니다.';$('.editor-wrap')?.prepend(note);}
-  const title=$('#page-title');if(title)title.contentEditable=String(pageEditable()&&!state.offline);
-  const comment=$('#comment-form');if(comment)comment.hidden=state.offline||resourceLevel(state.page)<2;
+  if(state.offline){const note=document.createElement('div');note.id='offline-state';note.className='offline-notice';note.textContent='오프라인에서 문서를 편집하고 있습니다. 연결되면 변경 사항을 합칩니다. 제목과 문서, 보관한 데이터베이스의 변경은 이 기기에 저장됩니다. 댓글·파일·공유 설정은 연결 후 사용할 수 있습니다.';$('.editor-wrap')?.prepend(note);}
+  const title=$('#page-title');if(title)title.contentEditable=String(pageEditable());
+  const comment=$('#comment-form');if(comment)comment.hidden=state.offline||state.localPageOnly||resourceLevel(state.page)<2;
+  renderSyncIndicators();
 }
 function selectedTextPosition() {
   const selection=getSelection();if(!selection?.rangeCount)return null;
@@ -355,18 +543,18 @@ async function openDocument(id,detail,cachedSnapshot) {
   if(binding!==state.session?.cache_binding||snapshot.session_binding&&snapshot.session_binding!==binding){const error=new Error('로그인 계정이 변경되었습니다.');error.code='SESSION_CHANGED';throw error;}
   if(!state.offlineProfile&&!cachedSnapshot)await cacheProfile(snapshot.workspace_id);
   if(!state.offlineProfile)throw new Error('오프라인 저장 프로필을 확인하지 못했습니다. 다시 로그인해 주세요.');
-  state.page={...snapshot.page,access_level:snapshot.access_level};state.blocks=snapshot.blocks;
+  state.page=metadataOverlay({...snapshot.page,access_level:snapshot.access_level},snapshot);state.blocks=snapshot.blocks;
   state.versions=detail?.versions||[];state.comments=detail?.comments||[];state.openingDocument=true;
-  const channel=new FountainCollaboration.DocumentChannel({pageId:id,profile:state.offlineProfile,fetcher:api,
+  const channel=new FountainCollaboration.DocumentChannel({pageId:id,profile:state.offlineProfile,fetcher:api,deferRemote:!!state.localPageOnly,
     onChange:change=>{
       if(state.channel!==channel||state.route!=='page')return;
       const beforeEditable=pageEditable(),selection=selectedTextPosition();
-      state.page={...change.snapshot.page,access_level:change.snapshot.access_level};state.blocks=change.blocks;
+      state.page=metadataOverlay({...change.snapshot.page,access_level:change.snapshot.access_level},change.snapshot);state.blocks=change.blocks;
       if(!pageEditable())state.uploadManager?.pauseAll('문서가 읽기 전용으로 바뀌어 전송을 일시 중지했습니다.');
       if(state.openingDocument||state.composition)return;
       if(beforeEditable!==pageEditable()){renderPage();return;}
       patchDocumentBlocks(selection);
-      if($('#page-title')&&document.activeElement!==$('#page-title')&&!state.titlePending)$('#page-title').textContent=state.page.title;
+      patchPageMetadataUI();
     },onStatus:documentStatus,onDraft:drafts=>{if(state.channel===channel){state.recoveryDrafts=drafts;renderRecoveryDrafts();}},
     onError:error=>{if(state.channel===channel)toast(error.message);},
     onDenied:({status,message,switched})=>{
@@ -375,7 +563,7 @@ async function openDocument(id,detail,cachedSnapshot) {
       if(switched){state.offlineProfile=null;boot();return;}
       if(status===401)renderLogin(false);else{$('#main').innerHTML=`<div class="empty"><h2>이 문서에 접근할 수 없습니다.</h2><p>${esc(message)}</p><button class="outline-btn" data-action="home">홈으로 돌아가기</button></div>`;if(state.workspace)state.workspace.pages=state.workspace.pages.filter(page=>page.id!==id);renderSidebar();renderTopbar('접근 권한 없음');}
     }});
-  state.channel=channel;await channel.open(snapshot,{cached:!!cachedSnapshot});state.openingDocument=false;recordRecentPage(id);
+  state.channel=channel;await channel.open(snapshot,{cached:!!cachedSnapshot});if(state.localPageOnly&&!state.blocks.length&&pageEditable()){channel.reconcile([{id:uid(),type:'paragraph',text:'',parent_id:null}]);await channel.persistence;}state.openingDocument=false;recordRecentPage(id);
 }
 function richTextHTML(block) {
   const tokens=block.rich_text?.map(token=>token.text).join('')===block.text?block.rich_text:[{text:block.text||'',marks:{}}];
@@ -423,7 +611,7 @@ function renderRecoveryDrafts() {
 }
 
 function renderPage() {
-  const p=state.page;
+  const p=state.page;state.pageViewBasis=structuredClone(p);
   renderTopbar(p.title,p.icon);
   $('#main').innerHTML=`${p.cover?'<div class="page-cover"></div>':''}<article class="editor-wrap ${p.cover?'has-cover':''}"><button class="page-emoji" data-action="change-icon" aria-label="페이지 아이콘 변경">${esc(p.icon||'📄')}</button><h1 class="page-title" id="page-title" contenteditable="${pageEditable()}" role="textbox" aria-label="페이지 제목">${esc(p.title)}</h1><div class="page-tools" style="flex-wrap:wrap"><span>${icon('clock')}</span><span>${date(p.updated_at)} 수정</span><button data-action="favorite" class="${p.favorite?'favorite-on':''}">${p.favorite?'★ 즐겨찾기':'☆ 즐겨찾기'}</button><button data-action="toggle-cover">${p.cover?'커버 제거':'커버 추가'}</button>${!pageEditable()?'<span>🔒 읽기 전용</span>':'<button data-action="add-file" title="파일당 최대 5 GB">📎 파일 추가</button><input id="attachment-input" type="file" aria-label="첨부할 파일 (최대 5 GB)" hidden>'}<button data-action="ai" style="margin-left:auto">✦ AI 도우미</button></div>${pageEditable()?`<div class="rich-toolbar" aria-label="글자 서식"><button data-action="rich-mark" data-mark="bold" aria-label="굵게"><b>B</b></button><button data-action="rich-mark" data-mark="italic" aria-label="기울임"><i>I</i></button><button data-action="rich-mark" data-mark="underline" aria-label="밑줄"><u>U</u></button><button data-action="rich-mark" data-mark="strike" aria-label="취소선"><s>S</s></button><button data-action="rich-mark" data-mark="code" aria-label="인라인 코드">&lt;/&gt;</button><button data-action="rich-link">${icon('link')}링크</button><label>글자색<select id="rich-color" aria-label="글자색"><option value="default">기본</option>${FountainCollaboration.PALETTE.filter(color=>color!=='default').map(color=>`<option value="${color}">${esc(({gray:'회색',brown:'갈색',orange:'주황',yellow:'노랑',green:'초록',blue:'파랑',purple:'보라',pink:'분홍',red:'빨강'})[color])}</option>`).join('')}</select></label><label>배경<select id="rich-background" aria-label="글자 배경"><option value="default">없음</option>${FountainCollaboration.PALETTE.filter(color=>color!=='default').map(color=>`<option value="${color}">${esc(({gray:'회색',brown:'갈색',orange:'주황',yellow:'노랑',green:'초록',blue:'파랑',purple:'보라',pink:'분홍',red:'빨강'})[color])}</option>`).join('')}</select></label></div>`:''}<div id="blocks" aria-label="페이지 블록">${state.blocks.map(blockHTML).join('')}</div>${pageEditable()?'<button class="editor-end" data-action="add-block"><span>+</span> 글을 쓰거나 ‘/’로 블록을 추가하세요</button>':''}<section class="comment-section"><h3>댓글 <span class="muted">${state.comments.filter(c=>!c.resolved).length}</span></h3><div id="comments">${commentsHTML()}</div><form class="comment-form" id="comment-form"><input name="text" aria-label="댓글 내용" placeholder="생각을 나눠보세요…" required maxlength="10000"><button class="outline-btn">보내기 ${icon('arrow')}</button></form></section></article>`;
   if(!pageEditable()) {
@@ -434,6 +622,17 @@ function renderPage() {
   documentStatus({status:state.channel?.status||'synced',pending:state.channel?.pending.size||0,durable:state.channel?.durable!==false});renderRecoveryDrafts();ensureUploads();
   pruneAdministrativeControls();
 
+}
+function patchPageMetadataUI() {
+  if(!state.page||state.route!=='page')return;
+  state.pageViewBasis||=structuredClone(state.page);
+  const title=$('#page-title');
+  if(title&&document.activeElement!==title&&!state.titlePending&&!state.titleSaving){title.textContent=state.page.title;state.pageViewBasis.title=state.page.title;}
+  const emoji=$('.page-emoji');if(emoji){emoji.textContent=state.page.icon||'📄';state.pageViewBasis.icon=state.page.icon;}
+  for(const favorite of $$('.page-tools [data-action="favorite"]')){favorite.textContent=state.page.favorite?'★ 즐겨찾기':'☆ 즐겨찾기';favorite.classList.toggle('favorite-on',!!state.page.favorite);}
+  state.pageViewBasis.favorite=state.page.favorite;
+  const editor=$('.editor-wrap');if(editor){editor.classList.toggle('has-cover',!!state.page.cover);if(state.page.cover&&!$('.page-cover')){const cover=document.createElement('div');cover.className='page-cover';editor.before(cover);}if(!state.page.cover)$('.page-cover')?.remove();state.pageViewBasis.cover=state.page.cover;}
+  const crumb=$('.crumb .current');if(crumb&&document.activeElement!==title&&!state.titlePending)crumb.textContent=state.page.title;
 }
 function commentsHTML() {
   return state.comments.filter(c=>!c.resolved).map(c=>`<div class="comment-item">${resourceLevel(state.page)>=4||c.author===state.session?.member?.id?`<button data-action="resolve-comment" data-id="${esc(c.id)}">해결 ✓</button>`:''}<strong>${esc(c.author_name||c.author||'나')}</strong> <span class="muted small">${date(c.created_at)}</span><div>${esc(c.text)}</div></div>`).join('');
@@ -656,7 +855,7 @@ function databaseToolbar(compact=false) {
 }
 function tableHTML(rows,compact=false) {
   const props=(state.database?.properties||[]).slice(0,compact?4:20);
-  return `<div style="overflow-x:auto"><table class="data-table"><thead><tr>${props.map(property=>`<th>${property.type==='title'?'Aa':property.type==='status'?'◉':property.type==='date'?'▦':property.type==='person'?'☻':'≡'} &nbsp;${esc(property.name)}</th>`).join('')}</tr></thead><tbody>${rowHierarchy(rows).map(item=>`<tr tabindex="0" role="button" data-action="edit-row" data-id="${esc(item.row.id)}" aria-label="${esc(nameOf(item.row))}">${props.map((property,index)=>{const value=valuesOf(item.row)[property.id];return `<td>${index===0?taskTitle(item):['status','select'].includes(property.type)?status(value):property.type==='checkbox'?value?'☑':'☐':property.type==='date'?esc(dateRangeLabel(value)):property.type==='person'?esc(state.workspace.members.find(member=>member.id===value)?.name||value||'—'):esc(Array.isArray(value)?value.join(', '):value||'—')}</td>`;}).join('')}</tr>`).join('')}</tbody></table>${!rows.length?'<div class="empty">아직 항목이 없어요. 첫 번째 항목을 추가해 보세요.</div>':''}</div>`;
+  return `<div class="data-table-scroll"><table class="data-table" style="--table-columns:${props.length}"><thead><tr>${props.map(property=>`<th>${property.type==='title'?'Aa':property.type==='status'?'◉':property.type==='date'?'▦':property.type==='person'?'☻':'≡'} &nbsp;${esc(property.name)}</th>`).join('')}</tr></thead><tbody>${rowHierarchy(rows).map(item=>`<tr tabindex="0" role="button" data-action="edit-row" data-id="${esc(item.row.id)}" aria-label="${esc(nameOf(item.row))}">${props.map((property,index)=>{const value=valuesOf(item.row)[property.id];return `<td>${index===0?taskTitle(item):['status','select'].includes(property.type)?status(value):property.type==='checkbox'?value?'☑':'☐':property.type==='date'?esc(dateRangeLabel(value)):property.type==='person'?esc(state.workspace.members.find(member=>member.id===value)?.name||value||'—'):esc(Array.isArray(value)?value.join(', '):value||'—')}</td>`;}).join('')}</tr>`).join('')}</tbody></table>${!rows.length?'<div class="empty">아직 항목이 없어요. 첫 번째 항목을 추가해 보세요.</div>':''}</div>`;
 }
 function filteredRows() {
   let rows=[...state.rows];
@@ -699,7 +898,7 @@ function renderDatabase() {
   if(state.view==='timeline')focusTimeline();
 }
 async function reloadDatabase() {
-  const data=await api('/databases/'+state.database.id);
+  const data=await loadDatabaseData(state.database.id);
   state.database=data.database;
   state.rows=data.rows;
   if(state.route==='database')renderDatabase();
@@ -711,6 +910,7 @@ function openModal(title,content,cls='') {
   $('#overlay-root').innerHTML=`<div class="modal-backdrop"><section class="modal ${cls}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="modal-head"><h2>${esc(title)}</h2><button class="modal-close" data-action="close-modal" aria-label="닫기">×</button></header><div class="modal-body">${content}</div></section></div>`;
   if(state.route==='page'&&resourceLevel(state.page)<4)$$('[data-action="delete-page"],[data-action="move-page"]',$('.modal')).forEach(el=>el.remove());
   if(state.route==='page'&&resourceLevel(state.page)<3){for(const action of ['lock-page','delete-page','verify-page','move-page','change-block-type','move-block','delete-block','restore-version'])$$(`[data-action="${action}"]`,$('.modal')).forEach(el=>el.remove());}
+  pruneAdministrativeControls();
   const body=$('.modal-body');
   requestAnimationFrame(()=>{if(body?.isConnected)$('input:not([type=checkbox]),textarea,select,button',body)?.focus();});
 }
@@ -732,7 +932,7 @@ function openSearch() {
 }
 async function renderSearch(q) {
   try {
-    const data=await api('/search?q='+encodeURIComponent(q));
+    const data=state.offline?{results:[...state.workspace.pages.filter(page=>state.cachedPages?.has(page.id)).map(page=>({...page,type:'page'})),...state.workspace.databases.filter(database=>state.cachedDatabases?.has(database.id)).map(database=>({...database,title:database.name,type:'database'}))].filter(item=>(item.title||'').toLowerCase().includes(q.toLowerCase()))}:await api('/search?q='+encodeURIComponent(q));
     if(!$('#search-results'))return;
     const results=normalizeList(data.results||data.pages||data);
     $('#search-results').innerHTML=results.length?results.map(p=>`<button class="search-result" data-action="${p.type==='database'?'database':'page'}" data-id="${esc(p.id||p.page_id)}"><span class="page-icon">${esc(p.icon||'📄')}</span><span>${esc(p.title||p.name)}<small style="display:block">${esc(p.excerpt||p.snippet||'Fountain 스튜디오')}</small></span><span class="muted" style="margin-left:auto">↵</span></button>`).join(''):'<div class="empty">검색 결과가 없어요. 다른 단어로 찾아보세요.</div>';
@@ -743,6 +943,7 @@ async function renderSearch(q) {
 }
 function openRow(id,initialStatus) {
   const row=state.rows.find(r=>r.id===id);
+  state.rowEditingBaseline=row?structuredClone(row):null;state.rowEditingDatabase=structuredClone(state.database);
   const vals=row?valuesOf(row):state.database.row_permissions?.mode==='assigned'?{[state.database.row_permissions.property_id]:state.session?.member?.id||''}:{};
   const props=state.database.properties;
   const editable=row?resourceLevel(row)>=3:canCreateRow();
@@ -755,7 +956,7 @@ function openRow(id,initialStatus) {
 
 }
 function taskGraphChanges(formElement,data) {
-  const existing=state.rows.find(row=>row.id===formElement.dataset.id),changes={};
+  const existing=state.rowEditingBaseline?.id===formElement.dataset.id?state.rowEditingBaseline:null,changes={};
   if(formElement.elements.namedItem('parent_row_id')&&(!existing||(data.parent_row_id||null)!==(existing.parent_row_id||null)))changes.parent_row_id=data.parent_row_id||null;
   if(formElement.elements.namedItem('depends_on')){
     const selected=new FormData(formElement).getAll('depends_on');
@@ -764,13 +965,16 @@ function taskGraphChanges(formElement,data) {
   return changes;
 }
 async function deleteTaskRow(id) {
-  await api('/databases/'+state.database.id+'/rows/'+encodeURIComponent(id),{},'DELETE');
+  if(state.mutations){await state.mutations.deleteRow(state.database.id,id);if(!state.offline)await syncMutations();}
+  else await api('/databases/'+state.database.id+'/rows/'+encodeURIComponent(id),{},'DELETE');
   state.collapsedRows.delete(id);closeModal();await reloadDatabase();toast('항목을 삭제했습니다.');
 }
 function applyDatabaseControls() {
   if(resourceLevel(state.database)<4)$$('[data-action="new-property"],[data-action="task-settings"]').forEach(el=>el.remove());
   if(!canCreateRow())$$('[data-action="add-row"]').forEach(el=>el.remove());
-  pruneAdministrativeControls();
+  $('#database-offline-note')?.remove();
+  if(state.offline){const note=document.createElement('p');note.id='database-offline-note';note.className='offline-notice';note.textContent='기기에 보관한 데이터입니다. 변경은 연결 후 동기화됩니다. 수식·롤업과 연쇄 일정은 서버에 연결한 뒤 최종 계산됩니다.';($('.db-full>.panel')||$('#home-database'))?.before(note);}
+  pruneAdministrativeControls();renderSyncIndicators();
 }
 async function renderAccounts(content) {
   if(!isOwner())throw new Error('가족 계정은 소유자만 관리할 수 있습니다.');
@@ -971,8 +1175,8 @@ async function saveTitle() {
   state.titlePending = null;
   state.titleSaving = (async () => {
     try {
-      if (state.page?.id === pending.id) await updatePage({title:pending.title});
-      else await api('/pages/' + pending.id, {title:pending.title}, 'PATCH');
+      if (state.page?.id === pending.id) await updatePage({title:pending.title},pending.basePage);
+      else if(state.mutations){await state.mutations.patchPage(pending.id,{title:pending.title},{basePage:pending.basePage});if(!state.offline)await syncMutations();}else await api('/pages/' + pending.id, {title:pending.title}, 'PATCH');
     } catch (error) {
       state.titlePending ||= pending;
       throw error;
@@ -981,13 +1185,16 @@ async function saveTitle() {
   try { await state.titleSaving; }
   finally { state.titleSaving = null; }
 }
-async function updatePage(patch) {
+async function updatePage(patch,basePage=structuredClone(state.pageViewBasis||state.page)) {
   await savePage();
   const id = state.page.id;
-  const p=await api('/pages/'+id,{...patch,revision:state.page.revision},'PATCH');
+  const queued=state.mutations&&Object.keys(patch).every(key=>['title','icon','cover','favorite'].includes(key));
+  const p=queued?await state.mutations.patchPage(id,patch,{basePage}):await api('/pages/'+id,{...patch,revision:state.page.revision},'PATCH');
+  if(queued){state.mutationRecords=await state.mutations.records();if(!state.offline)await syncMutations();}
   if (state.page?.id !== id) return;
-  state.page=p.page||p;
-  if(state.channel?.pageId===id){const snapshot=await api('/pages/'+id+'/collaboration');await state.channel.receive(snapshot,'metadata');}
+  if(queued&&state.channel?.pageId===id){const cached=await FountainOffline.getSnapshot(FountainOffline.key(state.offlineProfile,id));if(state.page?.id!==id)return;if(cached&&!state.localPageOnly)await state.channel.receive(cached,'metadata');}
+  state.page=metadataOverlay(queued&&state.channel?.pageId===id?{...state.channel.base.page,access_level:state.channel.base.access_level}:(p.page||p));
+  if(!queued&&state.channel?.pageId===id){const snapshot=await api('/pages/'+id+'/collaboration');await state.channel.receive(snapshot,'metadata');}
   const index=state.workspace.pages.findIndex(p=>p.id===state.page.id);
   if(index>=0)state.workspace.pages[index]=state.page;
   renderSidebar();
@@ -1011,12 +1218,30 @@ async function showActivity() {
 }
 async function doAction(target) {
   const a=target.dataset.action,id=target.dataset.id;
+  if((state.offline||state.localPageOnly)&&(serverOnlyActions.has(a)||administrativeActions.has(a)))throw new Error('이 작업은 페이지가 서버에 저장되고 연결된 상태에서 사용할 수 있습니다.');
   if(administrativeActions.has(a)&&!isAdmin())throw new Error('관리자 권한이 필요합니다.');
   const edits=['favorite','toggle-cover','change-icon','add-file','add-block','block-menu','change-block-type','set-block-type','delete-block','move-block','restore-version','lock-page','delete-page','verify-page','move-page'];
   if(['delete-page','move-page'].includes(a)&&resourceLevel(state.page)<4)throw new Error('페이지 전체 권한이 필요합니다.');
   if(edits.includes(a)&&resourceLevel(state.page)<3)throw new Error('페이지 편집 권한이 없습니다.');
   if(['add-row','new-property'].includes(a)&&!(a==='add-row'?canCreateRow():resourceLevel(state.database)>=4))throw new Error('데이터베이스 편집 권한이 없습니다.');
   switch(a) {
+    case'sync-queue':await openMutationQueue();break;
+    case'sync-now':await syncMutations();renderMutationQueue();break;
+    case'export-mutations':download('fountain-offline-recovery.json',JSON.stringify(await state.mutations.export(),null,2),'application/json');break;
+    case'export-mutation':download('fountain-offline-recovery.json',JSON.stringify(await state.mutations.export(id),null,2),'application/json');break;
+    case'reapply-mutation':await state.mutations.reapply(id);await syncMutations();await refreshMutationUI();renderMutationQueue();toast('현재 서버 값을 기준으로 다시 적용했습니다.');break;
+    case'drop-mutation':{
+      const ids=new Set([id]);let changed=true;while(changed){changed=false;for(const record of state.mutationRecords||[])if(!ids.has(record.id)&&(record.operation.depends_on||[]).some(dependency=>ids.has(dependency))){ids.add(record.id);changed=true;}}
+      openModal('보관한 변경 폐기',`<p>이 변경${ids.size>1?'과 이를 기다리는 '+(ids.size-1)+'개 변경을':''} 기기에서 폐기합니다. 복구 내용이 필요하면 먼저 내려받으세요.</p><div class="form-actions"><button class="outline-btn" data-action="sync-queue">돌아가기</button><button class="danger-btn" data-action="confirm-drop-mutation" data-id="${esc(id)}">변경 폐기</button></div>`);break;
+    }
+    case'confirm-drop-mutation':{
+      const controller=state.mutations,currentPageId=state.page?.id,before=await controller.records(),result=await controller.drop(id),removed=new Set(result.droppedIds||[]);
+      if(state.mutations!==controller)return;
+      const removedPages=new Set(before.filter(record=>removed.has(record.id)&&record.operation.kind==='page.create').map(record=>record.operation.target_id));
+      if(removedPages.has(currentPageId)){closeDocument();state.page=null;state.localPageOnly=false;state.route='home';location.hash='home';await refreshMutationUI();renderHome();}
+      else await refreshMutationUI();
+      await openMutationQueue();toast('선택한 변경과 의존 변경을 폐기했습니다.');break;
+    }
     case'accounts':await openSettings('accounts');break;
     case'account-password':openAccountPassword(id);break;
     case'account-add-member':await openSettings('members');advancedForm('members');break;
@@ -1042,7 +1267,7 @@ async function doAction(target) {
     case'close-modal':closeModal();
     break;
     case'logout':{
-      closeDocument();await window.FountainOffline?.clearActiveProfile();state.offlineProfile=null;
+      closeDocument();closeMutations();await window.FountainOffline?.clearActiveProfile();state.offlineProfile=null;
       localStorage.setItem('fountain-logout-pending',JSON.stringify({mode:state.session?.mode||'accounts'}));
       try{await api('/session',{},'DELETE');localStorage.removeItem('fountain-logout-pending');state.session=await api('/session');}
       catch(error){if(error.status)throw error;}
@@ -1062,7 +1287,7 @@ async function doAction(target) {
     });
     renderPage();
     break;
-    case'change-icon':openModal('페이지 아이콘',form(field('이모지','icon','🌿','text',state.page.icon),'icon-form','변경하기'));
+    case'change-icon':state.iconEditingBasis=structuredClone(state.pageViewBasis||state.page);openModal('페이지 아이콘',form(field('이모지','icon','🌿','text',state.page.icon),'icon-form','변경하기'));
     break;
     case'rich-mark':{const selection=state.richSelection||richSelection();const value=!selection?.chars.every(char=>char.marks[target.dataset.mark]===true);applyRichMark(target.dataset.mark,value);break;}
     case'rich-link':{state.richSelection=state.richSelection||richSelection();if(!state.richSelection)return toast('링크를 적용할 글자를 선택해 주세요.');openModal('선택한 글자에 링크',form(field('주소','link','https://example.com'),'rich-link-form','링크 적용'));break;}
@@ -1336,9 +1561,10 @@ document.addEventListener('click',event=> {
 });
 document.addEventListener('input',event=> {
   const el=event.target; if(el.id==='page-title') {
-    if(state.offline)return;
+    if(!pageEditable())return;
     clearTimeout(state.titleTimer);
-    state.titlePending={id:state.page.id,title:el.innerText.trim()||'제목 없음'};
+    const basePage=state.titlePending?.id===state.page.id?state.titlePending.basePage:state.titleInputBasis||structuredClone(state.pageViewBasis||state.page);
+    state.titlePending={id:state.page.id,title:el.innerText.trim()||'제목 없음',basePage};state.titleInputBasis=null;
     state.titleTimer=setTimeout(()=>saveTitle().catch(e=>toast(e.message)),450);
   }
   if(el.classList.contains('block-content')) {
@@ -1459,13 +1685,18 @@ document.addEventListener('submit',async event=> {
         toast('공유 설정을 저장했습니다.');break;
       }
       case'login-form':await api('/session',state.session?.mode==='accounts'?{email:data.email,password:data.password}:{token:data.token}); await boot(); break; case'page-form': {
-        const p=await api('/pages', {
-          title:data.title||'제목 없음',icon:data.icon||'📄',parent_id:formElement.dataset.parent||null
-        }); await refreshWorkspace(); await navigate('page',p.id||p.page.id); break;
+        if(state.session?.member?.role==='guest')throw new Error('페이지 생성 권한이 없습니다.');
+        const parentId=formElement.dataset.parent||null,parent=state.workspace.pages.find(page=>page.id===parentId);
+        if(parentId&&(!parent||resourceLevel(parent)<3))throw new Error('상위 페이지 편집 권한이 없습니다.');
+        const body={title:data.title||'제목 없음',icon:data.icon||'📄',parent_id:parentId};
+        let p;
+        if(state.mutations){const created=await state.mutations.createPage(body);p=created.page;await refreshMutationUI();if(!state.offline)await syncMutations();}
+        else{p=await api('/pages',body);await refreshWorkspace();}
+        await navigate('page',p.id||p.page.id);break;
       }
       case'icon-form':await updatePage( {
         icon:data.icon
-      }); closeModal(); renderPage(); break; case'move-page-form':await updatePage( {
+      },state.iconEditingBasis); closeModal(); renderPage(); break; case'move-page-form':await updatePage( {
         parent_id:data.parent_id||null
       }); closeModal(); toast('페이지를 이동했습니다.'); break; case'comment-form': {
         const c=await api('/pages/'+state.page.id+'/comments', {
@@ -1474,14 +1705,26 @@ document.addEventListener('submit',async event=> {
       }
       case'row-form': {
         const properties= {
-        }; for(const p of state.database.properties) {
+        }; for(const p of state.rowEditingDatabase.properties) {
           if(['formula','rollup','created_time','last_edited_time'].includes(p.type))continue;
-          if(p.type==='date'){const start=data[p.id]||'',end=data[p.id+'__end']||'',original=valuesOf(state.rows.find(row=>row.id===formElement.dataset.id)||{})[p.id],range=dateRange(original);if(end&&(!start||end<start))throw new Error('종료일은 시작일 이후여야 합니다.');properties[p.id]=range&&start===range.startISO&&end===(typeof original==='object'&&original?.end?range.endISO:'')?original:end?{start,end}:start;continue;}
+          if(p.type==='date'){const start=data[p.id]||'',end=data[p.id+'__end']||'',original=valuesOf(state.rowEditingBaseline||{})[p.id],range=dateRange(original);if(end&&(!start||end<start))throw new Error('종료일은 시작일 이후여야 합니다.');properties[p.id]=range&&start===range.startISO&&end===(typeof original==='object'&&original?.end?range.endISO:'')?original:end?{start,end}:start;continue;}
           properties[p.id]=p.type==='checkbox'?formElement.elements.namedItem(p.id).checked:p.type==='number'?(data[p.id]!==''?Number(data[p.id]):null):['relation','multi_select','files'].includes(p.type)?String(data[p.id]||'').split(',').map(s=>s.trim()).filter(Boolean):data[p.id]||'';
         }
-        await api('/databases/'+state.database.id+'/rows'+(formElement.dataset.id?'/'+formElement.dataset.id:''), {
-          properties,...taskGraphChanges(formElement,data)
-        },formElement.dataset.id?'PATCH':'POST'); closeModal(); await reloadDatabase(); toast('프로젝트를 저장했습니다.'); break;
+        const body={properties,...taskGraphChanges(formElement,data)};
+        if(formElement.dataset.id&&state.rowEditingBaseline){
+          for(const property of state.rowEditingDatabase.properties){
+            if(!(property.id in properties))continue;
+            const original=valuesOf(state.rowEditingBaseline)[property.id];
+            const baseline=property.type==='checkbox'?!!original:property.type==='number'?(original===''||original==null?null:Number(original)):['relation','multi_select','files'].includes(property.type)?(Array.isArray(original)?original:[]):original??'';
+            if(JSON.stringify(properties[property.id])===JSON.stringify(baseline))delete properties[property.id];
+          }
+        }
+        if(state.mutations){
+          const previousIds=new Set((await state.mutations.records()).map(record=>record.id));
+          if(formElement.dataset.id)await state.mutations.patchRow(state.rowEditingDatabase.id,formElement.dataset.id,body,{baseline:state.rowEditingBaseline,schema:state.rowEditingDatabase.properties});else await state.mutations.createRow(state.rowEditingDatabase.id,body,{schema:state.rowEditingDatabase.properties});
+          if(!state.offline){await syncMutations();const invalid=(await state.mutations.records()).find(record=>!previousIds.has(record.id)&&record.status==='invalid');if(invalid)throw new Error(mutationError(invalid)+' 변경 내용은 동기화 목록에 보관했습니다.');}
+        }else await api('/databases/'+state.database.id+'/rows'+(formElement.dataset.id?'/'+formElement.dataset.id:''),body,formElement.dataset.id?'PATCH':'POST');
+        closeModal();await reloadDatabase();toast(state.offline?'변경을 기기에 저장했습니다. 연결되면 동기화합니다.':state.mutationRecords?.some(record=>record.operation.database_id===state.database.id)?'변경을 기기에 보관했습니다. 동기화 목록에서 상태를 확인하세요.':'프로젝트를 저장했습니다.');break;
       }
       case'task-settings-form':{
         await api('/databases/'+state.database.id,{task_settings:{subitems:formElement.subitems.checked,dependencies:formElement.dependencies.checked,date_property:data.date_property,shift:data.shift,skip_weekends:formElement.skip_weekends.checked}},'PATCH');state.timelineProperty=data.date_property;closeModal();await reloadDatabase();toast('프로젝트 일정 설정을 저장했습니다.');break;
@@ -1565,7 +1808,7 @@ window.addEventListener('beforeunload',event=> {
   }
 });
 function renderLogin(purge=true) {
-  closeDocument();if(purge&&state.offlineProfile)window.FountainOffline?.clearProfile(state.offlineProfile).catch(()=>{});state.offlineProfile=null;state.offline=false;
+  closeDocument();closeMutations();if(purge&&state.offlineProfile)window.FountainOffline?.clearProfile(state.offlineProfile).catch(()=>{});state.offlineProfile=null;state.offline=false;
   state.loaded=false;
   state.workspace=null;state.page=null;state.blocks=[];state.database=null;state.rows=[];state.dirty=false;state.titlePending=null;clearTimeout(state.saveTimer);clearTimeout(state.titleTimer);
   $('#sidebar').innerHTML='';
@@ -1579,10 +1822,11 @@ async function boot() {
   try {
     document.body.classList.remove('login-mode');
     if(localStorage.getItem('fountain-logout-pending')){const record=JSON.parse(localStorage.getItem('fountain-logout-pending'));try{await api('/session',{},'DELETE');localStorage.removeItem('fountain-logout-pending');}catch(error){if(!error.status){state.session={mode:['accounts','family','local'].includes(record.mode)?record.mode:'accounts',required:true,authenticated:false};renderLogin();return;}throw error;}}
-    const session=await api('/session');if(generation!==state.bootGeneration)return;state.session=session;
+    const session=await api('/session');if(generation!==state.bootGeneration)return;if(state.offlineProfile&&state.offlineProfile.session.cache_binding!==session.cache_binding){closeDocument();closeMutations();state.offlineProfile=null;}state.session=session;
     if(!state.session.authenticated&&state.session.required){if(cachedIdentity)await FountainOffline.clearProfile(cachedIdentity);if(generation!==state.bootGeneration)return;renderLogin(false);return;}
     state.offline=false;await refreshWorkspace();
     await cacheProfile();if(generation!==state.bootGeneration)return;
+    await ensureMutations();if(generation!==state.bootGeneration)return;
     state.loaded=true;
     const [route,id]=location.hash.slice(1).split('/');
     if(['page','database'].includes(route)&&id)await navigate(route,decodeURIComponent(id));
@@ -1594,7 +1838,7 @@ async function boot() {
     if(e.code==='SESSION_CHANGED'){boot();return;}
     if(!e.status&&(e instanceof TypeError||e.name==='NetworkError')){
       const profile=await window.FountainOffline?.getProfile().catch(()=>null);
-      if(profile){state.offlineProfile=profile;state.session=profile.session;state.workspace=profile.workspace;state.cachedPages=new Set((await FountainOffline.listSnapshots(profile)).map(record=>record.snapshot.page.id));state.offline=true;state.loaded=true;renderSidebar();const [route,id]=location.hash.slice(1).split('/');await navigate(route==='page'&&id?'page':'home',id?decodeURIComponent(id):undefined);return;}
+      if(profile){state.offlineProfile=profile;state.session=profile.session;state.serverWorkspace=profile.workspace;state.workspace=profile.workspace;state.offline=true;await ensureMutations();await cachedResourceIds();state.loaded=true;renderSidebar();const [route,id]=location.hash.slice(1).split('/');await navigate(['page','database'].includes(route)&&id?route:'home',id?decodeURIComponent(id):undefined);return;}
     }
     if(e.status===401) {
       renderLogin();

@@ -2053,3 +2053,21 @@ svg {
 .upload-actions button:hover{background:#f1f5e9}
 .upload-sample-note{font-size:9px;color:#a3ac96;line-height:1.9;margin:13px 1px 0;word-break:keep-all}
 @media(max-width:680px){.upload-panel{padding:13px 11px}.upload-card{padding:11px 10px}.upload-actions button{font-size:9px;padding:5px 7px}.upload-sample-note{font-size:8px}}
+
+/* Durable entity changes use the existing quiet workspace palette. */
+.sync-status-button{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:11px;min-width:0}
+.sync-status-button.has-pending{color:#527467}.sync-status-button.has-conflicts{color:#9a6632}
+.sync-topbar{border:1px solid var(--line);border-radius:7px;padding:6px 9px;white-space:nowrap}
+.mutation-toolbar,.mutation-actions{display:flex;flex-wrap:wrap;gap:8px}.mutation-toolbar{margin:18px 0}
+.mutation-card{border:1px solid var(--line);border-radius:10px;padding:16px;margin-top:12px;background:#fff}
+.mutation-heading{display:flex;justify-content:space-between;align-items:baseline;gap:12px;flex-wrap:wrap}
+.mutation-heading span{font-size:11px;color:#6b7f6e}.mutation-card[data-mutation-status="conflict"] .mutation-heading span{color:#9a6632}
+.mutation-card p{font-size:12px;line-height:1.7;overflow-wrap:anywhere;white-space:pre-wrap}.mutation-card .mutation-error{color:#9a6632}
+.mutation-actions .outline-btn{font-size:11px}.mutation-modal{max-width:760px}
+@media(max-width:700px){.sync-topbar{padding:5px 6px;font-size:10px;max-width:130px}.sync-topbar [data-sync-label]{overflow:hidden;text-overflow:ellipsis}.top-actions .avatar-stack{display:none}.mutation-card{padding:12px}.mutation-actions{align-items:stretch}.mutation-actions .outline-btn{white-space:normal;text-align:left}}
+
+.data-table-scroll{width:100%;max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}
+#database-offline-note{width:auto;max-width:100%;box-sizing:border-box;overflow-wrap:anywhere}
+@media(max-width:680px){.data-table-scroll .data-table{min-width:calc(180px + (var(--table-columns) - 1) * 112px)}.data-table-scroll .data-table th:first-child{width:180px}.data-table-scroll .data-table th:last-child,.data-table-scroll .data-table td:last-child{display:table-cell}.data-table-scroll .task-name{max-width:none;overflow:visible}}
+/* Grid children must shrink around the table's own horizontal scroll area. */
+.dashboard-bottom>section{min-width:0}

@@ -29,9 +29,12 @@
   function open() {
     if (!globalThis.indexedDB) return Promise.reject(new Error('Offline storage is unavailable'));
     if (!connection) connection = new Promise((resolve, reject) => {
-      const opening = indexedDB.open(DATABASE, 2);
+      const opening = indexedDB.open(DATABASE, globalThis.FountainTransport?.outboxEnabled ? 3 : 2);
       opening.onupgradeneeded = () => {
         const database = opening.result;
+        if (globalThis.FountainTransport?.outboxEnabled && !database.objectStoreNames.contains('nativeJournal')) {
+          database.createObjectStore('nativeJournal', { keyPath: 'txId' });
+        }
         if (!database.objectStoreNames.contains('profiles')) database.createObjectStore('profiles', { keyPath: 'id' });
         if (!database.objectStoreNames.contains('meta')) database.createObjectStore('meta', { keyPath: 'id' });
         for (const [name, keyPath] of [['snapshots', 'key'], ['operations', ['key', 'id']], ['drafts', ['key', 'clientId']],
@@ -54,6 +57,10 @@
   }
   async function transaction(names, mode, callback) {
     const database = await open();
+    if (globalThis.FountainTransport?.outboxEnabled) {
+      if (!globalThis.FountainNativeStorage) throw Object.assign(new Error('앱의 기기 저장소를 시작하지 못했습니다.'), { status: 503 });
+      return globalThis.FountainNativeStorage.run(database, names, mode, callback);
+    }
     return new Promise((resolve, reject) => {
       const tx = database.transaction(names, mode);
       let result;
@@ -118,6 +125,16 @@
       session: copy(safeSession), workspace: copy(input.workspace), validUntil, updatedAt: Date.now() };
     let changed = false;
     const saved = await transaction(STORES, 'readwrite', async tx => {
+      if (globalThis.FountainTransport?.outboxEnabled) {
+        const storage = globalThis.FountainNativeStorage;
+        const expiry = storage?.validUntil;
+        if (storage?.profileId !== id || !Number.isFinite(expiry) || expiry <= Date.now()) {
+          throw new DOMException('A current native login grant is required', 'SecurityError');
+        }
+        // The native observation precedes this call, especially for no-cookie
+        // local sessions. Never extend its lifetime by recomputing a fresh TTL.
+        profile.validUntil = Math.min(profile.validUntil, expiry);
+      }
       if (await request(tx.objectStore('meta').get('revoked:' + id))) {
         throw new DOMException('Offline session was logged out', 'SecurityError');
       }
@@ -580,7 +597,7 @@
       cursor.onerror = () => reject(cursor.error);
       cursor.onsuccess = () => {
         if (!cursor.result) { resolve(); return; }
-        cursor.result.delete();
+        store.delete(cursor.result.primaryKey);
         cursor.result.continue();
       };
     });
@@ -636,7 +653,7 @@
           cursor.onerror = () => reject(cursor.error);
           cursor.onsuccess = () => {
             if (!cursor.result) { resolve(); return; }
-            cursor.result.delete();
+            tx.objectStore(name).delete(cursor.result.primaryKey);
             cursor.result.continue();
           };
         });
@@ -647,7 +664,7 @@
         cursor.onsuccess = () => {
           if (!cursor.result) { resolve(); return; }
           const record = cursor.result.value;
-          cursor.result.update({ ...record, status: 'denied', recovery: { reason: 'resource_revoked', at: Date.now() }, updatedAt: Date.now() });
+          tx.objectStore('mutations').put({ ...record, status: 'denied', recovery: { reason: 'resource_revoked', at: Date.now() }, updatedAt: Date.now() });
           cursor.result.continue();
         };
       });

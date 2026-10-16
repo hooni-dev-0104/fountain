@@ -5,17 +5,24 @@
     operation.onsuccess=()=>resolve(operation.result); operation.onerror=()=>reject(operation.error);
   }); function open() {
     if(!database)database=new Promise((resolve,reject)=> {
-      const value=indexedDB.open(DATABASE,1); value.onupgradeneeded=()=> {
-        const store=value.result.createObjectStore('transfers', {
-          keyPath:'key'
-        }); store.createIndex('scopeId','scopeId'); store.createIndex('profileId','profileId');
+      const value=indexedDB.open(DATABASE,globalThis.FountainTransport?.outboxEnabled?2:1); value.onupgradeneeded=()=> {
+        if(!value.result.objectStoreNames.contains('transfers')) {
+          const store=value.result.createObjectStore('transfers', {keyPath:'key'});
+          store.createIndex('scopeId','scopeId'); store.createIndex('profileId','profileId');
+        }
+        if(globalThis.FountainTransport?.outboxEnabled&&!value.result.objectStoreNames.contains('nativeJournal'))value.result.createObjectStore('nativeJournal',{keyPath:'txId'});
       }; value.onsuccess=()=>resolve(value.result); value.onerror=()=> {
         database=null; reject(value.error);
       };
     }); return database;
   }
   async function transaction(mode,callback) {
-    const db=await open(); return new Promise((resolve,reject)=> {
+    const db=await open();
+    if(globalThis.FountainTransport?.outboxEnabled) {
+      if(!globalThis.FountainNativeStorage)throw Object.assign(new Error('앱의 기기 저장소를 시작하지 못했습니다.'),{status:503});
+      return globalThis.FountainNativeStorage.run(db,['transfers'],mode,tx=>callback(tx.objectStore('transfers')));
+    }
+    return new Promise((resolve,reject)=> {
       const tx=db.transaction('transfers',mode); let result; tx.oncomplete=()=>resolve(result); tx.onerror=()=>reject(tx.error); tx.onabort=()=>reject(tx.error||new Error('전송 정보를 저장하지 못했습니다.')); Promise.resolve(callback(tx.objectStore('transfers'))).then(value=>result=value).catch(error=> {
         try {
           tx.abort();

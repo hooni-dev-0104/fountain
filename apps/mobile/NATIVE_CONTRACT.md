@@ -6,6 +6,14 @@ endpoint, certificate exception, or server secret in the bundle is used.
 
 ## Bridge
 
+The configured value remains an HTTPS origin. For the exact default Supabase
+project hostname pattern `[a-z0-9]{20}.supabase.co` on the default port, native
+code adds the fixed `/functions/v1/fountain-api` transport prefix before the
+validated logical API path. JSON and download requests share this builder.
+No function path is accepted from JavaScript or stored in configuration; other
+hosts and non-default ports keep the existing root API routes. Cache and private
+cookie identity remain scoped to the canonical origin.
+
 - `getConfiguration()` -> `{origin: string|null, generation: integer}`.
 - `configure({origin})` -> same result. Accept only HTTPS origin/root, no
   credentials/path/query/hash. Change only after active session and revoke-only

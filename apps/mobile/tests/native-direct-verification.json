@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "verifiedAtUTC": "2026-10-16T17:57:08.174420+00:00",
+  "goalComplete": false,
+  "projectRef": "ehnovtfadpkwtubmwltl",
+  "sourceCommits": {
+    "android": "5763e84",
+    "ios": "4d541dd"
+  },
+  "sourceSHA256": {
+    "apps/mobile/android/app/src/main/java/dev/fountain/workspace/NativePolicy.java": "d87bc5ce6134cca1e2f19c1829867035bda3097a4c1e6a693ecb207ddf09c051",
+    "apps/mobile/android/app/src/main/java/dev/fountain/workspace/FountainNativePlugin.java": "6089e4b9d089afc6c06f4c4506f851cfa9e76e8fb8575dc28756e13dfb8ab361",
+    "apps/mobile/tests/android-policy/NativePolicyFixture.java": "d51571c5c5cdac8ba80b80c5b9a38695967f154be8e84812c2b1c8e69d10ea20",
+    "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/CloudDirectRouteDeviceTest.java": "38917b7725951424df6bbee7f7a465f5cbb5bbdb58a01732e1f171ee37656243",
+    "apps/mobile/ios/App/App/AppDelegate.swift": "1537ecd0c7f8eb2396cff3820f9699c89c7a8a48d848ebcce017d80d96f9c5df",
+    "apps/mobile/ios/App/AppTests/FountainNativeTests.swift": "0e4216ba148ae3c72646f10fbb76aaf5ed0c1dce926fe479b1666550ff40b296",
+    "apps/mobile/tests/prepare-cloud-direct-input.py": "0aa35a598b3b98e279277c6213ec66bb84e6cbd5a2518c49b322388ab78f0b81"
+  },
+  "routing": {
+    "configuredOriginOnly": true,
+    "rendererLogicalAPIPathsUnchanged": true,
+    "exactDefaultHostPattern": "^[a-z0-9]{20}\\.supabase\\.co$",
+    "nativeOwnedPrefix": "/functions/v1/fountain-api",
+    "defaultPortOnly": true,
+    "jsonAndDownloadsShareBuilder": true,
+    "customPortsAndOtherHostsKeepRootPaths": true
+  },
+  "baseline": [
+    {
+      "path": "/api/session",
+      "status": 404,
+      "expectedAnonymousEnvelope": false
+    },
+    {
+      "path": "/functions/v1/fountain-api/api/session",
+      "status": 200,
+      "expectedAnonymousEnvelope": true
+    }
+  ],
+  "sdk": {
+    "android": {
+      "build": true,
+      "offline": true,
+      "device": "FountainRecoveryQA",
+      "api": 36,
+      "testsPassed": 1,
+      "failed": 0,
+      "skipped": 0,
+      "durationSeconds": 1.34,
+      "client": "Production FountainNativePlugin.open / HttpsURLConnection via instrumentation reflection; no plugin load or Activity"
+    },
+    "ios": {
+      "buildForTesting": true,
+      "automaticPackageResolutionDisabled": true,
+      "simulator": "Fountain QA",
+      "runtime": "iOS 27.0 arm64",
+      "selectedTestsPassed": 2,
+      "failed": 0,
+      "skipped": 0,
+      "client": "Production FountainNative.network / URLSession through DEBUG-only nonbridge probe on fresh unloaded plugin",
+      "additionalCoreTestsPassed": 11,
+      "additionalCoreFailed": 0,
+      "additionalCoreSkipped": 0,
+      "routingUnitAlsoIncludedInCoreSuite": true
+    }
+  },
+  "observedResults": {
+    "android": {
+      "actualNativeHTTPS": true,
+      "directSupabaseRoute": true,
+      "anonymous": true,
+      "httpStatus": 200,
+      "requests": 1,
+      "postRequests": 0,
+      "identityFieldsNull": true,
+      "cookieHeadersExposed": false,
+      "privateConfigurationPreserved": true,
+      "bridgeLoginEditsVerified": false
+    },
+    "ios": {
+      "accountsMode": true,
+      "actualPluginNativeHTTPS": true,
+      "anonymous": true,
+      "bindingNull": true,
+      "enabled": true,
+      "http200": true,
+      "identityNull": true,
+      "memberNull": true,
+      "mutations": 0,
+      "noExposedSetCookie": true,
+      "requests": 1,
+      "required": true,
+      "workspaceNull": true
+    },
+    "privateInputsConsumed": true,
+    "credentialsTransferred": false
+  },
+  "regression": {
+    "androidJDKPolicyChecks": 148,
+    "iosPortableSQLiteChecks": 22,
+    "mobileTransportAndChromeMockSuitesPassed": 2,
+    "sourceReview": "APPROVE"
+  },
+  "preservation": {
+    "sourceOriginCacheAndCookieKeyUnchanged": true,
+    "privateDeviceInputsConsumed": true,
+    "credentialsTransferred": false,
+    "cloudMutations": 0,
+    "qaUsersCreated": 0,
+    "originalEntities": 153,
+    "originalMeta": 6,
+    "sixCollectionFingerprintsUnchanged": true,
+    "immutableLocalPreviewHTTP": 200
+  },
+  "limitations": [
+    "Anonymous GET /api/session only; null workspace/identity/binding is intentional. No native account login, UI edit propagation or download-to-OS proof is implied.",
+    "Android request construction used production open() through instrumentation reflection; no Capacitor renderer/bridge/configure/login was exercised in this direct routing test.",
+    "iOS used a DEBUG/FOUNTAIN_QA-only nonbridge fresh-instance probe with production network() and normal ephemeral URLSession; persistent settings/session/Keychain/outbox were not accessed.",
+    "Default Supabase project domains only; custom domains and public HTML forms/sites still need explicit frontend origin/relay setup.",
+    "macOS/Windows desktop still needs frontend hosting or bundled UI transport; Windows execution cannot be verified on this Darwin host.",
+    "Full same-account five-platform editing, owner onboarding, free public HTTPS host, external IdP/AI integration and complete original paid-feature parity remain unfinished."
+  ]
+}

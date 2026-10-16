@@ -1,9 +1,9 @@
 # Fountain Mobile
 
 Capacitor 8.5.3의 iOS·Android 프로젝트와 공통 웹 편집기를 연결합니다.
-**개발용 iOS 시뮬레이터 앱과 Android 디버그 APK를 실제 SDK로 빌드했습니다. 물리 기기·배포 서명·상시 서버 연결 검증은 남아 있습니다.**
+**개발용 iOS 시뮬레이터 앱과 Android 디버그 APK를 실제 SDK로 빌드했습니다. Supabase 직접 HTTPS 연결을 두 플랫폼에서 확인했으며, 운영 계정·전체 편집 동기화·물리 기기·배포 서명 검증은 남아 있습니다.**
 
-앱은 묶어 둔 화면을 열고, 설정한 공통 HTTPS 서버에 기존 Fountain 계정으로 로그인합니다. Supabase 키나 서버 DB를 앱에 넣지 않습니다. 현재 PC의 `localhost:8787`은 다른 휴대폰에서 접속할 주소가 아닙니다. 기기가 신뢰하는 인증서를 갖춘 상시 서버가 필요하며 이 배포는 아직 남아 있습니다.
+앱은 묶어 둔 화면을 열고, 설정한 공통 HTTPS 백엔드에 Fountain 계정으로 로그인합니다. Supabase 기본 프로젝트 주소도 지원하며 앱의 네이티브 전송부가 고정 API 경로를 붙입니다. 주소 칸에는 프로젝트 origin만 입력하고 함수 경로는 넣지 않습니다. Supabase 키나 서버 DB를 앱에 넣지 않습니다. 현재 PC의 `localhost:8787`은 다른 휴대폰에서 접속할 주소가 아닙니다. 운영 owner 연결과 공개 웹 호스트 활성화는 아직 남아 있습니다.
 
 ## 준비와 빌드
 
@@ -69,6 +69,12 @@ JVM 검사는 실제 생산 코드의 경로·헤더·쿠키 경계와 저장 �
 현재 SDK 증거는 iOS Simulator 실제 Swift/SQLite·WebView 접근 차단 6개 통과,
 Android API 36 전용 AVD의 실제 네이티브 HTTPS·SQLite·시스템 저장창 취소/저장·
 복구 중 로그아웃 검사 통과입니다. Android에서 저장한 JSON은 공통 웹 parser로
-다시 읽어 원문 Unicode를 비교했습니다. iOS의 원격 HTTPS 로그인과 OS 저장창
-완료는 아직 검증하지 않았습니다. [iOS 상세 기록](tests/ios-outbox-validation.md)과
+다시 읽어 원문 Unicode를 비교했습니다. 격리된 실제 Supabase 로그인·비공개 페이지 관찰은
+두 플랫폼에서 로컬 TLS relay를 통해 확인했습니다. iOS OS 저장창 완료와 전체 편집 전파는
+별도 검증이 필요합니다. [iOS 상세 기록](tests/ios-outbox-validation.md)과
 [Android 상세 기록](tests/android-outbox/README.md)에 재현 명령과 경계를 남깁니다.
+
+2026-10-17에는 두 플랫폼의 실제 네이티브 HTTPS 클라이언트로 Supabase에 직접 익명 GET을 수행했습니다.
+Android 기기 검사 1개, iOS 선택 검사 2개와 추가 core 검사 11개가 통과했습니다.
+이 검사는 계정 로그인·UI 편집 검증을 대신하지 않습니다.
+[직접 연결 절차·범위](tests/native-direct-validation.md)와 [실행 증거](tests/native-direct-verification.json)를 참고합니다.

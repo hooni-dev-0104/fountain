@@ -82,7 +82,7 @@ SCIM bearer 요청은 사람의 쿠키와 분리해 현재 활성·미만료 gra
 
 무료 Supabase 기본 도메인은 HTML GET 응답을 `text/plain`으로 바꾼다. 따라서 정적 웹 호스트가 HTML/CSS/JS를 제공하고, `/api/*` 등을 Supabase Edge로 전달하는 얇은 같은 출처 relay가 필요하다. 업무 로직이나 사용자 데이터는 relay에 두지 않는다. 쿠키·EventSource·XHR를 같은 출처로 유지하면 제3자 쿠키 차단에 의존하지 않는다. API·쿠키·개인 응답의 CDN 캐시는 끄고, 실제 Set-Cookie·SSE·Range 전달을 검사한다. 공개 sites/forms HTML 역시 브라우저에서 렌더링되는 최종 content type을 확인해야 한다.
 
-설치 앱은 같은 웹 HTTPS origin을 사용할 수 있다. Supabase origin에 직접 연결하려면 네이티브 내부에서 고정 `/functions/v1/fountain-api` 접두사를 붙이는 명시적 adapter가 필요하다. 현재 주소 입력은 순수 origin만 허용하고 요청은 `origin + /api/...`로 작성하므로 함수 URL 전체를 기존 주소 칸에 붙이는 방식은 동작하지 않는다. TLS·경로·헤더·쿠키 격리를 완화해서는 안 된다.
+설치 앱은 같은 웹 HTTPS origin을 사용할 수 있다. iOS·Android는 이제 정확한 기본 Supabase 프로젝트 도메인의 기본 HTTPS 포트에서만 네이티브 내부의 고정 `/functions/v1/fountain-api` 접두사를 붙인다. 주소 입력은 순수 origin, renderer 요청은 논리 `/api/...`로 유지하며 JSON·다운로드가 같은 URL 생성부를 사용한다. 실제 두 플랫폼에서 프록시·자격증명 없이 익명 session GET의 직접 HTTPS 응답을 확인했다. 이는 로그인·편집 전파 증거가 아니다. 다른 도메인·별도 포트는 기존 root API를 유지한다. 함수 URL 전체를 주소 칸에 붙이는 방식은 허용하지 않으며 TLS·경로·헤더·쿠키 격리는 유지한다. 데스크톱은 원격 웹 화면을 여는 구조이므로 API만 제공하는 Supabase origin을 입력하는 것만으로 동작하지 않는다. [네이티브 직접 연결 증거](../apps/mobile/tests/native-direct-validation.md).
 
 기존 `/sites/{slug}`·`/forms/{id}`는 게시 정책을 검사하지만, 현행 Python HTTP wrapper에서는 family/accounts 모드의 세션 인증도 거친다. 현재 동작과 최종 익명 공개 요구를 구분하고 의도한 변경은 별도 권한 테스트로 검증한다. SCIM은 별도 bearer 인증이다. 일반 legacy OPTIONS endpoint는 없지만 SCIM ServiceProviderConfig는 메서드 확인 전에 응답하는 기존 예외가 있다. Advanced collection은 임의의 추가 suffix를 받는 GET/PATCH/DELETE alias도 있으므로 조용히 누락하지 않는다.
 

@@ -1,0 +1,168 @@
+{
+  "schemaVersion": 1,
+  "verifiedAtUTC": "2026-10-16T17:44:30Z",
+  "projectRef": "ehnovtfadpkwtubmwltl",
+  "goalComplete": false,
+  "production": {
+    "workspaceId": "a2d18b6eef4444b0aa1e956496f7d9be",
+    "ready": false,
+    "setupEnabled": false,
+    "webOrigins": [],
+    "entities": 153,
+    "meta": 6,
+    "sixCollectionFingerprintsUnchanged": true,
+    "immutableLocalPreviewHTTP": 200,
+    "productionMaintenanceRegistered": false
+  },
+  "deployment": {
+    "migrationsApplied": 25,
+    "sourceCommit": "626dcc2",
+    "indexCommit": "51040a6",
+    "main": {
+      "version": 9,
+      "bundleSHA256": "6e6071ea9ac9239f657eb9ec76d45c505438b68418d9c4876033ea11506dba52",
+      "actualHostedBoundaries": 12
+    },
+    "maintenance": {
+      "version": 3,
+      "bundleSHA256": "d6553a5c39427d9327cea1e5dfb45c1407290a9220f625764f62317e67107c7d",
+      "standardEntryRestored": true,
+      "actualHostedBoundaries": 8
+    },
+    "verifier": {
+      "version": 43,
+      "bundleSHA256": "95990d9f4f023cbc7da1f2cf6d5d3fcf1e8743fa016c569c7842723eb537e6d8",
+      "inert404": true,
+      "oldNoncePathsRejected": 5
+    }
+  },
+  "checks": {
+    "nodeSourceRunner": {
+      "passed": 329,
+      "failed": 0,
+      "skipped": 0,
+      "durationMs": 47963.00275
+    },
+    "existingPythonActualPostgres": {
+      "passed": 481,
+      "durationSeconds": 224.55,
+      "pythonSourceChanged": false
+    },
+    "typeScriptCompilerVerified": false,
+    "maintenanceSQLBoundaryChecks": 34,
+    "actualStorageMetadataRollbackCases": 10,
+    "actualCron": {
+      "actual_cron_runs": 8,
+      "successful_cron_runs": 8,
+      "actual_attempts": 16,
+      "all_attempts_done": true,
+      "successful_hosted_worker_calls": 16,
+      "person_free_grants": 2,
+      "auth_sessions": 0,
+      "storage_objects": 0
+    },
+    "actualAuthorityReceiptChecks": {
+      "actualSQL": true,
+      "action": "done",
+      "checks": 4
+    },
+    "actualFreshReadRace": {
+      "actual_advisory_wait": true,
+      "new_reference_seen": true,
+      "no_tombstone": true,
+      "role": "operator metadata fixture",
+      "physicalStorageTouched": false,
+      "ownCronAndRowsRemoved": true
+    },
+    "repeatableReadDenials": {
+      "storage": "PT409",
+      "broker": "PT503"
+    }
+  },
+  "physicalFiles": {
+    "initialObjects": 4,
+    "attachmentAndUploadsBytesEach": 4,
+    "backupArtifactBytes": 36864,
+    "backupSourcePinnedOriginalObject": true,
+    "manualGCRefusedPinnedOriginal": true,
+    "confirmedCancelledUploadRemoved": true,
+    "pendingUploadRealStoragePosts": 1,
+    "pendingUploadAcceptedACKDiscardedByOperator": true,
+    "pendingUploadReadbackBlockedByOperator": true,
+    "backgroundObservedPendingBytes": true,
+    "reservationAfterObservation": 4,
+    "deletionInLaterAttempt": true,
+    "backupArtifactReservationAfterGC": 0,
+    "allObjectsAndReservationsAfterGC": 0,
+    "terminalACKFaults": {
+      "scope": "disposable QA only",
+      "realAcceptedSQLReplyDiscardedByOperator": true,
+      "exactBodyRetried": true,
+      "observedHeader": "observed",
+      "deleteHeader": "done",
+      "externalNetworkOutageClaimed": false
+    },
+    "expiry": {
+      "exactOwnQAJobExpiryChangedByOperator": true,
+      "actual24HoursElapsed": false,
+      "sourceRowsAfterCleanup": 0,
+      "originalBytesRemovedAfterSourceCleanup": true
+    },
+    "postDeleteReadback": {
+      "initialFailure": "legacy HTTP400 not_found was classified as generic unavailable",
+      "fixedStrictTypedBoundedJSON": true,
+      "maxErrorBytes": 4096,
+      "actualKnownOwnedObjectReadsMissing": 3,
+      "absenceDoesNotAuthorizeRepublishOrReleaseUnknownReservation": true
+    },
+    "backupASnapshotTotalSourceRows": 19
+  },
+  "cleanup": {
+    "qaWorkspace": "fountain-qa-cloud-maintenance-e99f3e88b8636f38",
+    "allWorkspaceTablesChecked": 29,
+    "qaRows": 0,
+    "authUsers": 0,
+    "authSessions": 0,
+    "storageObjects": 0,
+    "cronJobs": 0,
+    "protectedAuthMarkersVerifiedBeforeDeletingUsers": 2,
+    "privateNoncePasswordConfigRemoved": true,
+    "qaTombstonesRemovedOnlyAfterPhysicalAndAuthorityCleanup": true
+  },
+  "advisors": {
+    "security": [
+      {
+        "name": "rls_enabled_no_policy",
+        "level": "INFO",
+        "count": 23,
+        "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy"
+      },
+      {
+        "name": "extension_in_public",
+        "level": "WARN",
+        "count": 1,
+        "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0014_extension_in_public"
+      }
+    ],
+    "performance": [
+      {
+        "name": "unused_index",
+        "level": "INFO",
+        "count": 11,
+        "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0005_unused_index"
+      }
+    ]
+  },
+  "limitations": [
+    "Cron/Storage functional execution used standard worker version1 and scoped operator fault worker version2; restored standard version3 has refreshed Storage classification plus actual HTTP boundary checks.",
+    "Fresh-reference race used committed SQL metadata and real advisory waiting, not physical Storage I/O.",
+    "Missing unpublished bytes and late publishers remain conservatively quarantined; the actual fault producer covered a real successful publication with lost ACK, not every external network failure.",
+    "Legal 5GB/1193chunk/Unicode manifest bounds were metadata/model checks, not an actual5GB cloud transfer.",
+    "Full five-platform edit propagation, free public HTTPS static host and owner onboarding, external IdP/SAML, AI provider authorization and complete original paid-feature parity remain unfinished."
+  ],
+  "sources": [
+    "https://supabase.com/docs/guides/storage/debugging/error-codes",
+    "https://supabase.com/docs/guides/storage/management/delete-objects",
+    "https://www.postgresql.org/docs/current/xfunc-volatility.html"
+  ]
+}

@@ -7,7 +7,7 @@ in Supabase. There is no database connection, service key, package installation,
 or Python runtime in this web artifact. Desktop and mobile clients can select
 the same HTTPS web origin and use its `/api` contract.
 
-`dist` contains exactly 13 named public assets, `vercel.json`, and
+`dist` contains exactly 14 named public assets, `vercel.json`, and
 `api/public-relay.mjs`. Use that **directory** as the reviewed preview bundle;
 its `.mjs` entry is a standard Node Vercel Function. It is not a purely static
 hosting artifact. Alternatively, a Git project rooted at `apps/web` needs access
@@ -23,6 +23,17 @@ use a fixed CSP and `nosniff`. Only the bounded `fountain_session` cookie and a
 canonical HTTPS Origin are forwarded; there are no upstream/key request options.
 The response streams with cancellation, backpressure, a 15-second total deadline
 and a 16MiB byte ceiling. A stream failure after headers interrupts the body.
+
+Published forms and sites currently require a family account login. A GET
+document navigation that explicitly accepts `text/html` and receives upstream
+401 gets an empty, no-store 303 to `/#open-public=<encoded exact page path>`.
+The app can then show its normal login and return to that page after successful
+authentication. The relay cancels the 401 body; it never forwards an upstream
+Location, cookie or error body in this transition. HEAD, JSON/fetch requests,
+non-HTML Accept headers and 403 responses keep their original error status.
+Modern navigation headers must identify a document/navigation when present;
+older clients without those headers still need explicit positive HTML Accept.
+This transition does not grant anonymous access or bypass publication settings.
 
 The generic `/api` rewrite excludes the relay's internal endpoint and otherwise
 stays an external rewrite directly to Supabase. Raw 4MiB upload chunks, downloads,

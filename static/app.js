@@ -5,6 +5,16 @@ if(/^#setup=[A-Za-z0-9_-]{43}$/.test(location.hash)){
   setupCodeFromLink=location.hash.slice(7);
   history.replaceState(null,'',location.pathname+location.search+'#home');
 }
+// A public-page login return is a local path, held only for this tab's login.
+let publicReturnPath=null;
+if(location.hash.startsWith('#open-public=')){
+  const encoded=location.hash.slice(13);
+  try{
+    const path=decodeURIComponent(encoded);
+    if(!FountainTransport.native&&location.origin!=='https://fountain.desktop.invalid'&&/^\/(forms|sites)\/[A-Za-z0-9_-]{1,160}$/.test(path)&&encodeURIComponent(path)===encoded)publicReturnPath=path;
+  }catch{ /* Malformed return links never become navigation targets. */ }
+  history.replaceState(null,'',location.pathname+location.search+'#home');
+}
 const logoutPendingKey=()=>FountainTransport.native?'fountain-logout-pending:'+encodeURIComponent(FountainTransport.origin):'fountain-logout-pending';
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -1368,7 +1378,7 @@ async function openPermissions(kind,id) {
   const database=kind==='databases'?(state.database?.id===id?state.database:state.workspace.databases.find(d=>d.id===id)):null;
   const policy=result.row_permissions||database?.row_permissions||{mode:'all',allow_create:true,edit_assigned:true};
   const route=(kind==='pages'?'page':'database')+'/'+encodeURIComponent(id);
-  const shareURL=typeof FountainTransport.shareURL==='function'?FountainTransport.shareURL(route):FountainTransport.appURL(route);
+  const shareURL=typeof FountainTransport.shareURL==='function'?FountainTransport.shareURL(route,state.session?.public_web_origin):FountainTransport.appURL(route);
   openModal(kind==='pages'?'페이지 공유 및 권한':'데이터베이스 공유 및 권한',`<p>링크를 전달해도 아래에서 허용한 사람만 열 수 있습니다. 워크스페이스 소유자는 모든 문서에 접근할 수 있습니다. 그 외 멤버의 명시적 차단은 그룹과 상위 페이지의 허용보다 우선합니다.</p><div style="display:flex;gap:8px;margin-bottom:20px"><input id="share-url" style="flex:1;min-width:0" readonly value="${esc(shareURL||'')}" placeholder="${shareURL?'':'공유 웹 주소를 연결해 주세요.'}"><button class="outline-btn" data-action="copy-link" ${shareURL?'':'disabled'}>${icon('link')}링크 복사</button></div>${!manage?'<div class="info-box">현재 공유 설정을 볼 수 있습니다. 소유자 또는 전체 권한을 가진 사람만 변경할 수 있습니다.</div>':''}<form id="permissions-form" data-kind="${kind}" data-id="${esc(id)}" class="form-grid" style="margin-top:18px"><label>기본 공유 범위<select name="default" ${!manage?'disabled':''}><option value="private" ${acl.default==='private'?'selected':''}>지정·상속된 사람만 · 비공개</option><option value="workspace" ${acl.default==='workspace'?'selected':''}>워크스페이스 멤버 · 편집 (게스트 제외)</option></select></label><label style="display:flex;align-items:center"><input name="inherit" type="checkbox" style="width:auto" ${acl.inherit!==false?'checked':''} ${!manage?'disabled':''}>${kind==='pages'?'상위 페이지와 팀스페이스 권한 상속':'팀스페이스 권한 상속'}</label><div><strong class="small">가족 멤버</strong><div class="settings-list">${rows(result.members||[],'members')}</div></div>${result.groups?.length?`<div><strong class="small">그룹</strong><div class="settings-list">${rows(result.groups,'groups')}</div></div>`:''}${database?`<div style="border-top:1px solid var(--line);padding-top:15px"><strong class="small">항목별 접근</strong><label style="margin-top:12px">보여줄 항목<select name="row_mode" ${!manage?'disabled':''}><option value="all" ${policy.mode!=='assigned'?'selected':''}>접근 가능한 모든 항목</option><option value="assigned" ${policy.mode==='assigned'?'selected':''}>내가 담당자인 항목만</option></select></label><label style="margin-top:12px">담당자 속성<select name="property_id" ${!manage?'disabled':''}><option value="">선택하세요</option>${(database.properties||[]).filter(p=>p.type==='person').map(p=>`<option value="${esc(p.id)}" ${policy.property_id===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label><label style="display:flex;align-items:center;margin-top:12px"><input type="checkbox" name="edit_assigned" style="width:auto" ${policy.edit_assigned!==false?'checked':''} ${!manage?'disabled':''}>담당 항목 편집 허용</label><label style="display:flex;align-items:center;margin-top:12px"><input type="checkbox" name="allow_create" style="width:auto" ${policy.allow_create!==false?'checked':''} ${!manage?'disabled':''}>새 항목 생성 허용</label></div>`:''}${manage?'<div class="form-actions"><button class="solid-btn">공유 설정 저장</button></div>':''}</form>`);
 }
 
@@ -1969,15 +1979,20 @@ async function doAction(target,grouped=false) {
     case'automation-runs':await openAutomationRuns(id);break;
     case'automation-settings':await openSettings('automations');break;
     case'toggle-automation':{const automation=state.advanced.automations.find(item=>item.id===id);await api('/automations/'+encodeURIComponent(id),{enabled:automation.enabled===false},'PATCH');await openSettings('automations');toast(automation.enabled===false?'자동화를 사용하도록 설정했습니다.':'자동화를 일시 중지했습니다.');break;}
-    case'fill-form':window.open(FountainTransport.publicURL('/forms/'+encodeURIComponent(id)),'_blank','noopener');
-    break;
+    case'fill-form':{
+      const url=FountainTransport.publicURL('/forms/'+encodeURIComponent(id),state.session?.public_web_origin);
+      if(!url){toast('공유 웹 주소를 연결해 주세요.');break;}
+      window.open(url,'_blank','noopener');break;
+    }
     case'site-link': {
       const site=state.advanced.sites.find(s=>s.id===id);
       if(!site.published) {
         toast('먼저 사이트를 게시해 주세요.');
         break;
       }
-      window.open(FountainTransport.publicURL('/sites/'+encodeURIComponent(site.slug)),'_blank','noopener');
+      const url=FountainTransport.publicURL('/sites/'+encodeURIComponent(site.slug),state.session?.public_web_origin);
+      if(!url){toast('공유 웹 주소를 연결해 주세요.');break;}
+      window.open(url,'_blank','noopener');
       break;
     }
     case'add-row':if(!state.database) {
@@ -2361,6 +2376,10 @@ async function boot() {
       state.session=await api('/session');if(generation!==state.bootGeneration)return;await refreshWorkspace();await cacheProfile();
     }if(generation!==state.bootGeneration)return;
     await ensureMutations();if(generation!==state.bootGeneration)return;
+    if(publicReturnPath&&state.session.authenticated&&!state.offline){
+      const path=publicReturnPath;publicReturnPath=null;
+      location.replace(new URL(path,location.origin).href);return;
+    }
     state.loaded=true;
     const [route,id]=location.hash.slice(1).split('/');
     if(['page','database'].includes(route)&&id)await navigate(route,decodeURIComponent(id));

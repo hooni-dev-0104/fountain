@@ -122,6 +122,10 @@
       .map(field => [field, session.member[field]]));
     const safeSession = Object.fromEntries(['enabled', 'required', 'authenticated', 'mode', 'identity', 'expires_at', 'workspace_id', 'cache_binding']
       .filter(field => Object.hasOwn(session, field)).map(field => [field, session[field]]));
+    // This optional display/navigation metadata is never part of login authority.
+    if(typeof session.public_web_origin==='string'&&session.public_web_origin.length<=1024&&!/[\\\u0000-\u0020\u007f]/.test(session.public_web_origin)){
+      try{const url=new URL(session.public_web_origin);if(url.protocol==='https:'&&!url.username&&!url.password&&url.pathname==='/'&&!url.search&&!url.hash&&url.origin===session.public_web_origin)safeSession.public_web_origin=url.origin;}catch{ /* Ignore invalid optional metadata. */ }
+    }
     safeSession.member = safeMember;
     const profile = { id, origin: SERVER_ORIGIN, workspaceId: input.workspaceId, memberId: input.memberId,
       cacheBinding: session.cache_binding,

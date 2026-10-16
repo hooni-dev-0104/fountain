@@ -64,19 +64,24 @@ class Store:
 
     @contextmanager
     def transaction(self):
-        """Serialize a write group; nested groups roll back to their savepoint."""
+        """Claim the SQLite writer before a read-modify-write; nest with savepoints."""
         with self.lock:
+            outer = self.transaction_depth == 0
             name = f"fountain_{self.transaction_depth}"
-            self.db.execute(f"SAVEPOINT {name}")
+            self.db.execute("BEGIN IMMEDIATE" if outer else f"SAVEPOINT {name}")
             self.transaction_depth += 1
             try:
                 yield self
             except BaseException:
-                self.db.execute(f"ROLLBACK TO SAVEPOINT {name}")
-                self.db.execute(f"RELEASE SAVEPOINT {name}")
+                if outer:
+                    self.db.rollback()
+                else:
+                    self.db.execute(f"ROLLBACK TO SAVEPOINT {name}")
+                    self.db.execute(f"RELEASE SAVEPOINT {name}")
                 raise
             else:
-                self.db.execute(f"RELEASE SAVEPOINT {name}")
+                if outer: self.db.commit()
+                else: self.db.execute(f"RELEASE SAVEPOINT {name}")
             finally:
                 self.transaction_depth -= 1
 

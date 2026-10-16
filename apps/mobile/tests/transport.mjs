@@ -49,11 +49,23 @@ let sessionReturned=false;const sessionResult=S.request('/api/session').then(val
 await until(()=>!!releaseBarrier);assert.equal(sessionReturned,false,'session must not reach application before lease/head reconciliation');
 releaseBarrier();await sessionResult;assert.equal(barrierCalls,1);
 await S.request('/api/probe');assert.equal(barrierCalls,1,'ordinary data requests do not trigger an auth transition');
+const recoveryNotices=[];storageFixture.events.addEventListener('fountain-native-error',event=>recoveryNotices.push(event.detail.message));
+storageFixture.context.FountainNativeStorage={refreshAuth:async()=>{throw Object.assign(new Error('private outbox issue'),{code:'OUTBOX_ACCESS_REQUIRED',status:503});}};
+for(const method of ['GET','POST','DELETE']){const restored=await S.request('/api/session',{method,...(method==='POST'?{body:'{}'}:{})});assert.equal(restored.status,200,'resource recovery never replaces the actual session response');}
+assert.equal(recoveryNotices.length,3);assert.ok(recoveryNotices.every(message=>!message.includes('private')));
+assert.equal((await S.request('/api/probe')).status,200,'resource gate does not poison native HTTP');
+storageFixture.setHandler(async()=>{throw Object.assign(new Error('private canonical issue'),{code:'OUTBOX_ACCESS_REQUIRED'});});
+await assert.rejects(S.request('/api/workspace'),error=>error.code==='OUTBOX_ACCESS_REQUIRED'&&error.status===503&&!error.message.includes('private'));
+storageFixture.setHandler(async()=>response({ok:true}));
 storageFixture.context.FountainNativeStorage={refreshAuth:async()=>{throw Object.assign(new Error('storage fault'),{status:503});}};
 await assert.rejects(S.request('/api/session'),error=>error.status===503);
-let releaseStale;storageFixture.context.FountainNativeStorage={refreshAuth:()=>new Promise(resolve=>releaseStale=resolve)};
-const staleBarrier=S.request('/api/session').then(()=>false,error=>error.name);await until(()=>!!releaseStale);
-await S.configure({origin:'https://another.example'});releaseStale();assert.equal(await staleBarrier,'AbortError','old auth barrier completion cannot escape configuration fence');
+for(const accessFailure of [false,true]){
+  storageFixture.setHandler(async value=>response({ok:true},200,value.generation));
+  let releaseStale;storageFixture.context.FountainNativeStorage={refreshAuth:()=>new Promise((resolve,reject)=>releaseStale=()=>accessFailure?reject(Object.assign(new Error('stale access'),{code:'OUTBOX_ACCESS_REQUIRED'})):resolve())};
+  const staleNotices=recoveryNotices.length,staleBarrier=S.request('/api/session').then(()=>false,error=>error.name);await until(()=>!!releaseStale);
+  await S.configure({origin:'https://another.example'});releaseStale();assert.equal(await staleBarrier,'AbortError','old auth barrier completion cannot escape configuration fence');
+  assert.equal(recoveryNotices.length,staleNotices,'obsolete resource errors never reach the new account');
+}
 const count=f.calls.length;await assert.rejects(T.request('/api/probe',{method:'POST',body:new Blob([new Uint8Array(10_000_001)])}),error=>error.name==='RangeError');assert.equal(f.calls.length,count);
 let release;f.setHandler(value=>value.path==='/api/slow'?new Promise(resolve=>release=resolve):Promise.resolve(response({ok:true})));
 const old=T.request('/api/slow').then(()=>false,error=>error.name);await until(()=>!!release);await T.request('/api/session',{method:'POST',body:'{}'});assert.equal(await old,'AbortError');release(response({stale:true}));assert.ok(f.cancellations.length);

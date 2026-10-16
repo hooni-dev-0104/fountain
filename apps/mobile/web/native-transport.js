@@ -9,6 +9,7 @@
   const abortError=()=>new DOMException('연결 범위가 변경되었거나 요청이 취소되었습니다.','AbortError');
   function nativeFailure(error) {
     const code=error?.code;
+    if(code==='OUTBOX_ACCESS_REQUIRED')return Object.assign(new Error('보관된 내용의 접근 권한을 다시 확인해야 합니다. 미전송 내용은 유지했습니다.'),{code,status:503});
     if(['NETWORK_ERROR','NATIVE_NETWORK'].includes(code))return Object.assign(new TypeError('서버에 연결하지 못했습니다.'),{code});
     if(['TIMEOUT','NATIVE_TIMEOUT'].includes(code))return new DOMException('요청 시간이 초과되었습니다.','TimeoutError');
     if(['CANCELLED','SESSION_CHANGED','NATIVE_CANCELLED','NATIVE_STALE'].includes(code))return abortError();
@@ -122,7 +123,13 @@
         const safe=new Headers();for(const [key,val] of Object.entries(result.headers||{}))if(responseHeaders.has(key.toLowerCase()))safe.set(key,String(val));
         const decoded=decode(result.bodyBase64,RESPONSE_LIMIT);
         if(value==='/api/session'&&['GET','POST','DELETE'].includes(method)&&root.FountainNativeStorage){
-          await root.FountainNativeStorage.refreshAuth();
+          try{await root.FountainNativeStorage.refreshAuth();}
+          catch(error){
+            if(!current(expected))throw abortError();
+            if(error?.code!=='OUTBOX_ACCESS_REQUIRED')throw error;
+            // Resource recovery blocks cached business data, never the actual session response.
+            root.dispatchEvent(new CustomEvent('fountain-native-error',{detail:{message:'미전송 내용을 보관했습니다. 기기 저장을 다시 사용하기 전에 접근 권한을 확인해 주세요.'}}));
+          }
           if(!current(expected))throw abortError();
         }
         return new Response([204,205,304].includes(result.status)?null:decoded,{status:result.status,headers:safe});

@@ -1,0 +1,183 @@
+{
+  "observedAt": "2026-10-16T20:00:09.575601+00:00",
+  "codeHead": "daf0a455cc5ac950375e6051e80ed064fcfda5d4",
+  "goalComplete": false,
+  "scope": "authenticated legacy inline downloads using Supabase Auth/PostgreSQL and actual HTTP; original owner remains unlinked",
+  "production": {
+    "apiVersion": 10,
+    "apiBundleSHA256": "8e6422197588a306bf15dc9d8e69577b5af90c234a06fefa3522dba17f8da9f9",
+    "migrationsApplied": 26,
+    "migration": "20261016194516_fountain_cloud_inline_attachment_range",
+    "workerVersion": 3,
+    "maintenanceVersion": 3,
+    "ready": false,
+    "setupEnabled": false,
+    "webOrigins": [],
+    "publicWebOrigin": null,
+    "anonymousBoundaryChecks": 8,
+    "originalEntities": 153,
+    "originalMeta": 6,
+    "originalAuthMappings": 0,
+    "originalAuthenticatedDownloadVerified": false
+  },
+  "sourceTests": {
+    "nodePassed": 370,
+    "nodeFailed": 0,
+    "nodeSkipped": 0,
+    "durationMs": 46986.496916,
+    "fileDomainTests": 32,
+    "providerLoopbackTests": 9,
+    "sqlSourceContractTests": 8,
+    "sourceInventoryRows": 201,
+    "sourceInventoryProductionParityVerified": 0,
+    "strictTypeScriptTypecheck": false,
+    "actualDenoDeploymentAndExecution": true
+  },
+  "actualCloud": {
+    "qaNamespaceSHA256": "087713e29958323580b0f2eb9f73672fb2df962fdf01c3d2efe8b8e4e918855a",
+    "actualGoTrueBootstrapOwnerAndSecondAccount": true,
+    "privateSecureHttpOnlyStrictCookies": true,
+    "small": {
+      "phase": "small",
+      "workspaceSHA256": "087713e29958323580b0f2eb9f73672fb2df962fdf01c3d2efe8b8e4e918855a",
+      "actualSupabaseHTTP": true,
+      "actualStorageIO": false,
+      "checks": [
+        "real_owner_and_shared_member_byte_equal_80_byte_download",
+        "private_metadata_head_range_suffix_if_range_416",
+        "whole_invalid_source_denied_before_range",
+        "legacy_pad_bits_zero_bytes_and_unshared_member_denial"
+      ],
+      "smallSHA256": "4964ac7fe6309b6b0a718cb7620837b75ee541e1b2578ba113f2613cc817383b",
+      "passed": true
+    },
+    "maximumInline": {
+      "phase": "large",
+      "workspaceSHA256": "087713e29958323580b0f2eb9f73672fb2df962fdf01c3d2efe8b8e4e918855a",
+      "actualSupabaseHTTP": true,
+      "actualStorageIO": false,
+      "checks": [
+        "actual_five_million_byte_DB_download_full_independent_SHA",
+        "actual_unaligned_range_across_64KiB_position"
+      ],
+      "bytes": 5000000,
+      "sha256": "2c3e57d05f00a0835d1ad6eabc5410dd56595afe42417ddc69cb8bf60804c3b2",
+      "passed": true
+    },
+    "actualStorageObjectIO": false,
+    "sqlProofGroups": 19,
+    "sqlTemporaryChangesRolledBack": true,
+    "sqlProofScriptSHA256": "b7d48da3179d8c5cba810a55ef51f4883815ef741c867faca5492d737a821ce9",
+    "sourceAndMetadataDigestUnchanged": true,
+    "revisionBeforeAndAfter": 3,
+    "receiptsBeforeAndAfter": 0,
+    "attachmentDigestBeforeAndAfter": "51996bb7caeadb60ee723b48b2df6f8562a21635cb47ffe8804721c6e1578944",
+    "metaDigestBeforeAndAfter": "fb2a7fff046c374bc4f979ea8e274e7bc9dd80f6c62438fed1ffbd76adee08dd",
+    "httpMidstreamAuthorizationRaceVerified": false,
+    "qaBundleSHA256": "5c1e9ac50f0c7c6b9c5be200752c796005cba4da2879c4269dd238a14c310834",
+    "qaProductSourcesUnchangedBeforeProductionDeploy": true
+  },
+  "privileges": {
+    "privateOwner": "postgres",
+    "privateDefiner": true,
+    "publicInvoker": true,
+    "searchPath": "pg_catalog",
+    "anonExecute": false,
+    "authenticatedExecute": false,
+    "serviceRoleExecute": true,
+    "existingTableGrantsChanged": false,
+    "ordinarySnapshotAttachmentBytesRedacted": true
+  },
+  "preservation": {
+    "originalAttachmentsEqualPortableSnapshot": true,
+    "originalAttachmentCount": 1,
+    "originalAttachmentBytes": 80,
+    "originalExternalChunkRows": 0,
+    "sixOriginalBusinessAndSessionFingerprintsUnchanged": true,
+    "originalPreviewRestarted": false,
+    "physicalFilesMoved": 0
+  },
+  "cleanup": {
+    "actualLogout": {
+      "phase": "logout",
+      "workspaceSHA256": "087713e29958323580b0f2eb9f73672fb2df962fdf01c3d2efe8b8e4e918855a",
+      "actualSupabaseHTTP": true,
+      "actualStorageIO": false,
+      "checks": [
+        "both_actual_sessions_logged_out"
+      ],
+      "passed": true
+    },
+    "protectedAuthCleanup": [
+      {
+        "action": "cleanup-check",
+        "status": 200,
+        "protectedMarkersVerified": true,
+        "present": 2,
+        "deleted": 0
+      },
+      {
+        "action": "cleanup",
+        "status": 200,
+        "protectedMarkersVerified": true,
+        "present": 2,
+        "deleted": 2
+      }
+    ],
+    "ownedAuthUsersRemaining": 0,
+    "ownedAuthSessionsRemaining": 0,
+    "qaTableCount": 29,
+    "qaRowsRemaining": 0,
+    "storageObjectsRemaining": 0,
+    "cronJobsRemaining": 0,
+    "verifierVersion": 52,
+    "verifierBundleSHA256": "62c828db02fbaf80b09720fec8c54ab5de18e195b2da494d9fa4483d8f85df17",
+    "oldNoncePathsRejected": 3,
+    "retirement": {
+      "phase": "retired",
+      "workspaceSHA256": "087713e29958323580b0f2eb9f73672fb2df962fdf01c3d2efe8b8e4e918855a",
+      "actualSupabaseHTTP": true,
+      "actualStorageIO": false,
+      "checks": [
+        "retired_wire_and_both_cleanup_paths_reject_old_nonce"
+      ],
+      "passed": true
+    },
+    "privateNoncePasswordsCookiesInputRemoved": true
+  },
+  "securityAdvisor": {
+    "errorCount": 0,
+    "warningNames": [
+      "extension_in_public"
+    ],
+    "infoNames": [
+      "rls_enabled_no_policy"
+    ]
+  },
+  "review": {
+    "sqlAndHTTPBoundary": "APPROVE",
+    "evidence": "APPROVE"
+  },
+  "sourceSHA256AtReport": {
+    "supabase/migrations/20261016194516_fountain_cloud_inline_attachment_range.sql": "83636e26165153b48b06b9ad11a6329bcb00f90dd74f6bf1993c8f6085124b50",
+    "supabase/functions/_shared/inline-attachments.ts": "06e1be1b44bb83e9b58fbc8584fb0694c5a17a34c074eb7b6546e02587cc268d",
+    "supabase/functions/_shared/files.ts": "ecc8a1ff91e30af51c854b0bbcfd5f4c79d5d382abc815f47984f66bc6e07b82",
+    "supabase/functions/_shared/application.ts": "21648cbfef5d9a9e566c381459b5c3a3bb2fa006d722bb0e5728c35934e7c2fb",
+    "supabase/tests/inline-attachments.mjs": "6e15b6dbd7ebda46cecf602f4dc19117b51351935fa2811947a0bdaf955e63b4",
+    "supabase/tests/files.mjs": "c3a01a64fc09d3c99ecf7fb39ae99ddddad261bb87206d7f019982aed1b5b1a8",
+    "supabase/tests/inline-attachment-range-contract.mjs": "6632e767a617a979657f0e487c1584003dbfc1576e558a22df7db0a2425efe7b",
+    "supabase/tests/live-inline-attachment-proofs.sql": "b7d48da3179d8c5cba810a55ef51f4883815ef741c867faca5492d737a821ce9",
+    "supabase/tests/drivers/inline-http.mjs": "078d0ab9dae80e3daa6090424e23e94d06610097f5f29d75e2c66f1f8d1ce089",
+    "supabase/tests/live-desktop-entry.template.ts": "970494853053e92b5a75cbfa66b7ca189e97c45654e2102fff67db8ced3eabf3",
+    "supabase/tests/desktop-entry.mjs": "b316e97957277bc78eba0c4693fdae60b2fef05fdcfbe1986ad91e210d633e65",
+    "supabase/tests/route-inventory.json": "56d69ce92f9285ba6861ac5c99e81f4cdc1feecb1d2b4c6868bce1772720f34e"
+  },
+  "limits": [
+    "QA HTTP uses sealed fixed namespace, not original owner login",
+    "HTTP driver write-loop/retirement-only hardening followed ordinary read phases; reported driver SHA is at report time",
+    "Midstream ACL/source/abort timing is deterministic domain-model proof; actual SQL separately verifies revoked and changed states",
+    "No new native app or Windows execution in this milestone",
+    "No 5GB or unlimited free capacity claim",
+    "Public frontend hosting, owner onboarding, five-platform simultaneous propagation and remaining full paid-feature parity still pending"
+  ]
+}

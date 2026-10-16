@@ -1,0 +1,437 @@
+{
+  "schema_version": 1,
+  "investigated_at": "2026-10-16",
+  "scope": "Read-only installed application bundle; no application execution or account data access.",
+  "app": {
+    "path": "/Applications/Notion.app",
+    "bundle_identifier": "notion.id",
+    "version": "7.39.0",
+    "build": "7.39.0",
+    "info_plist_sha256": "87b53c6399b3765a2b9e07316858fe177d9d76a82e00d643c03d186f33f1f30a",
+    "executable": {
+      "bytes": 119280,
+      "sha256": "4e9eabbe1a1cf59c7346b7b03577b78e6203bfe0661cc82b9a2e7fbcd91e80ed"
+    }
+  },
+  "asar": {
+    "path": "Contents/Resources/app.asar",
+    "bytes": 13494814,
+    "sha256": "889137431e69a9e8795b88cb071d451f5592797dcfe4ca13499dcb23ddc8d8ac",
+    "header_json_sha256": "40a7925026db8fbf7f11af44736987d0482d728bf242b6876decaae5a48a4c54",
+    "header_integrity_matches": true,
+    "entries": 207,
+    "unpacked_entries": 4,
+    "extensions": {
+      ".js": 98,
+      ".txt": 18,
+      ".gif": 2,
+      ".html": 9,
+      ".json": 49,
+      ".provisionprofile": 3,
+      ".node": 4,
+      "(no extension)": 4,
+      ".cpp": 1,
+      ".jsonc": 1,
+      ".mm": 1,
+      ".md": 3,
+      ".gypi": 3,
+      ".h": 3,
+      ".gyp": 2,
+      ".c": 1,
+      ".patch": 3,
+      ".yaml": 1,
+      ".toml": 1
+    },
+    "top_level_resource_entries": 65
+  },
+  "targets": [
+    {
+      "path": ".webpack/main/SqliteServer.js",
+      "bytes": 100970,
+      "sha256": "a3b132cc70150cda3b54e28e860ce48c4cb769aba9ccf2f078ff94b0e0e43f3c"
+    },
+    {
+      "path": ".webpack/renderer/migration/preload.js",
+      "bytes": 3048,
+      "sha256": "8336f53af5723482424f92627b728531a2671698217d8e174a74c588fc604210"
+    },
+    {
+      "path": ".webpack/renderer/windows_and_tabs/preload.js",
+      "bytes": 2074,
+      "sha256": "1f6b4dd95a254809abc2ecd956253c0a655a54faff9eda866591f2934ee69b4b"
+    }
+  ],
+  "inspection_only": [
+    {
+      "path": ".webpack/renderer/tab_browser_view/preload.js",
+      "bytes": 399524,
+      "sha256": "ff41790f66ff2acd539eda859104e6fd8940d76839185835aea9f9c677c86d28"
+    },
+    {
+      "path": "package.json",
+      "bytes": 3712,
+      "sha256": "c43e1a2e17deeb525d0e20cd7be1c835e78d5bf31842c47910a94d2456b080bf"
+    }
+  ],
+  "evidence": {
+    "tool": "rea-agents",
+    "version": "4.1.0",
+    "exit_code": 0,
+    "path": "/tmp/fountain-notion-desktop-7.39.0/application-evidence-4.1.0.json",
+    "bytes": 107140636,
+    "sha256": "4c106424e879ae6891fe83ce793453ed1f8e58682f5e2e678defead5f0a17adb",
+    "evidence_id": "ev_d13882d624cba033fd1147da1a78a774d6697470fcc669efa560db564dfc7887",
+    "root_artifact_sha256": "84e7857c4d8b7576fb2db4e18fa5dd99d790c762f83341c21be29c07cfdc4be6",
+    "statistics": {
+      "relevant_files": 3,
+      "nested_asar_containers": 0,
+      "text_bytes_read": 106092,
+      "invalid_utf8_files": 0,
+      "parsed_javascript_files": 3,
+      "visited_ast_nodes": 32200,
+      "findings": 33,
+      "modules": 0,
+      "parse_failures": 0,
+      "truncated_scopes": 0
+    },
+    "graph_nodes": 40,
+    "graph_edges": 42
+  },
+  "rea_observations": [
+    {
+      "node_id": "jag_node_00cc45fc9bfd6dacb4ccfb45c53dac6c5c25c76e30e16d6241bd038288b2b291",
+      "observation_id": "jag_observation_deb51689dda79e7e24882ea6d24781a6a755355b614341158d97e90036eb3d99",
+      "kind": "ipc-channel",
+      "properties": {
+        "side": "renderer",
+        "operation": "once",
+        "mode": "listen",
+        "channel": "migration-restore",
+        "channel_expression": null,
+        "resolution": "literal"
+      },
+      "source_range": {
+        "kind": "source-range",
+        "source": ".webpack/renderer/migration/preload.js",
+        "start": {
+          "line": 1,
+          "column": 1767
+        },
+        "end": {
+          "line": 1,
+          "column": 3039
+        }
+      }
+    },
+    {
+      "node_id": "jag_node_43ba9d59e9cf7d291ebb7540e5f5d193d2ab3f0067752877d1e3c6f08185fd6f",
+      "observation_id": "jag_observation_8cc10a462ebf3181d73ed9ed848089df113563cc7309ca134c7dec5deadf35fd",
+      "kind": "storage",
+      "properties": {
+        "storage_kind": "local-storage",
+        "name": null,
+        "mechanism": "call:localStorage.setItem"
+      },
+      "source_range": {
+        "kind": "source-range",
+        "source": ".webpack/renderer/migration/preload.js",
+        "start": {
+          "line": 1,
+          "column": 1886
+        },
+        "end": {
+          "line": 1,
+          "column": 1911
+        }
+      }
+    },
+    {
+      "node_id": "jag_node_509a7fa65ff660dff07a6d5009b50aaec44af08726d3eb2f6b63abffafc65be1",
+      "observation_id": "jag_observation_78b94589801d98a3e5dfa0a17a6b4e52623e8b2c211d3bce8ce3230f9a6093b5",
+      "kind": "storage",
+      "properties": {
+        "storage_kind": "indexed-db",
+        "name": null,
+        "mechanism": "call:indexedDB.open"
+      },
+      "source_range": {
+        "kind": "source-range",
+        "source": ".webpack/renderer/migration/preload.js",
+        "start": {
+          "line": 1,
+          "column": 577
+        },
+        "end": {
+          "line": 1,
+          "column": 596
+        }
+      }
+    },
+    {
+      "node_id": "jag_node_509a7fa65ff660dff07a6d5009b50aaec44af08726d3eb2f6b63abffafc65be1",
+      "observation_id": "jag_observation_7bfedfcdf70450d4fadbd8a3b350ea33b0074cda33a57ca2c1a6e7c0689306f1",
+      "kind": "storage",
+      "properties": {
+        "storage_kind": "indexed-db",
+        "name": null,
+        "mechanism": "call:indexedDB.open"
+      },
+      "source_range": {
+        "kind": "source-range",
+        "source": ".webpack/renderer/migration/preload.js",
+        "start": {
+          "line": 1,
+          "column": 2185
+        },
+        "end": {
+          "line": 1,
+          "column": 2204
+        }
+      }
+    },
+    {
+      "node_id": "jag_node_8e02d2d7651819e6d1e1b207da8221842430dbef52370abdabe3a076e58e72ca",
+      "observation_id": "jag_observation_317f33650c2eda552337fa782da2b111b48d6fa01ab041caffab76a9e23bbca2",
+      "kind": "storage",
+      "properties": {
+        "storage_kind": "local-storage",
+        "name": null,
+        "mechanism": "call:localStorage.getItem"
+      },
+      "source_range": {
+        "kind": "source-range",
+        "source": ".webpack/renderer/migration/preload.js",
+        "start": {
+          "line": 1,
+          "column": 370
+        },
+        "end": {
+          "line": 1,
+          "column": 393
+        }
+      }
+    },
+    {
+      "node_id": "jag_node_906b1abcb7a792738ac738e3f6e9a8bbf7ca3666b4dfdd3b199c8a0057f8f6e3",
+      "observation_id": "jag_observation_d613d1c78678672d852c4fbbe2f2e27c73c7337966ddba1581b8e8d991770acd",
+      "kind": "storage",
+      "properties": {
+        "storage_kind": "local-storage",
+        "name": null,
+        "mechanism": "call:localStorage.key"
+      },
+      "source_range": {
+        "kind": "source-range",
+        "source": ".webpack/renderer/migration/preload.js",
+        "start": {
+          "line": 1,
+          "column": 329
+        },
+        "end": {
+          "line": 1,
+          "column": 348
+        }
+      }
+    },
+    {
+      "node_id": "jag_node_9a0366482761f70e74f961294d4899e995a74edfd17caf33cc9e6fc71d3729ab",
+      "observation_id": "jag_observation_5af3bdf74ed827c61f4d9ccae2728016949a67f7ce51515378509e83f8025faa",
+      "kind": "ipc-channel",
+      "properties": {
+        "side": "renderer",
+        "operation": "send",
+        "mode": "send",
+        "channel": "migration-restore-done",
+        "channel_expression": null,
+        "resolution": "literal"
+      },
+      "source_range": {
+        "kind": "source-range",
+        "source": ".webpack/renderer/migration/preload.js",
+        "start": {
+          "line": 1,
+          "column": 2868
+        },
+        "end": {
+          "line": 1,
+          "column": 2935
+        }
+      }
+    },
+    {
+      "node_id": "jag_node_9a0366482761f70e74f961294d4899e995a74edfd17caf33cc9e6fc71d3729ab",
+      "observation_id": "jag_observation_9f1641a48cbcdecb5b48d61fb347a66f309632387badeb70fc08080356344b09",
+      "kind": "ipc-channel",
+      "properties": {
+        "side": "renderer",
+        "operation": "send",
+        "mode": "send",
+        "channel": "migration-restore-done",
+        "channel_expression": null,
+        "resolution": "literal"
+      },
+      "source_range": {
+        "kind": "source-range",
+        "source": ".webpack/renderer/migration/preload.js",
+        "start": {
+          "line": 1,
+          "column": 2945
+        },
+        "end": {
+          "line": 1,
+          "column": 3036
+        }
+      }
+    },
+    {
+      "node_id": "jag_node_a722a2f2c91f261c62d54cbf7cacec12eb9154dfda8eee3fe0c0fe5f76428c41",
+      "observation_id": "jag_observation_e9b3e506a6b84c1579b8dfcdd7f5b37361c7fad65f2facef0db3f29583fee229",
+      "kind": "ipc-channel",
+      "properties": {
+        "side": "renderer",
+        "operation": "once",
+        "mode": "listen",
+        "channel": "migration-dump",
+        "channel_expression": null,
+        "resolution": "literal"
+      },
+      "source_range": {
+        "kind": "source-range",
+        "source": ".webpack/renderer/migration/preload.js",
+        "start": {
+          "line": 1,
+          "column": 1185
+        },
+        "end": {
+          "line": 1,
+          "column": 1766
+        }
+      }
+    },
+    {
+      "node_id": "jag_node_f851fa6e4a3cbc909c361ce7fa62099a7462a7694f772575b5501f72c828759c",
+      "observation_id": "jag_observation_c13a0dea184a3f54e2dd70d1391e1c8714492afdf7d38e4754e2c92c4096c7af",
+      "kind": "ipc-channel",
+      "properties": {
+        "side": "renderer",
+        "operation": "send",
+        "mode": "send",
+        "channel": "migration-dump-done",
+        "channel_expression": null,
+        "resolution": "literal"
+      },
+      "source_range": {
+        "kind": "source-range",
+        "source": ".webpack/renderer/migration/preload.js",
+        "start": {
+          "line": 1,
+          "column": 1675
+        },
+        "end": {
+          "line": 1,
+          "column": 1763
+        }
+      }
+    },
+    {
+      "node_id": "jag_node_f851fa6e4a3cbc909c361ce7fa62099a7462a7694f772575b5501f72c828759c",
+      "observation_id": "jag_observation_dea0f8b82dc6e3f36ae88dcfc87a86bee446ea281449c718afeeb9946f56fb39",
+      "kind": "ipc-channel",
+      "properties": {
+        "side": "renderer",
+        "operation": "send",
+        "mode": "send",
+        "channel": "migration-dump-done",
+        "channel_expression": null,
+        "resolution": "literal"
+      },
+      "source_range": {
+        "kind": "source-range",
+        "source": ".webpack/renderer/migration/preload.js",
+        "start": {
+          "line": 1,
+          "column": 1548
+        },
+        "end": {
+          "line": 1,
+          "column": 1665
+        }
+      }
+    }
+  ],
+  "direct_static_markers": [
+    {
+      "source": ".webpack/main/SqliteServer.js",
+      "marker": "offline_page",
+      "byte_offset": 39437,
+      "line": 1,
+      "column_utf16": 39435,
+      "authority": "direct-static-text-inspection",
+      "runtime_verified": false
+    },
+    {
+      "source": ".webpack/main/SqliteServer.js",
+      "marker": "offline_action",
+      "byte_offset": 39483,
+      "line": 1,
+      "column_utf16": 39481,
+      "authority": "direct-static-text-inspection",
+      "runtime_verified": false
+    },
+    {
+      "source": ".webpack/main/SqliteServer.js",
+      "marker": "attemptToBackupAndResetDatabase",
+      "byte_offset": 38802,
+      "line": 1,
+      "column_utf16": 38800,
+      "authority": "direct-static-text-inspection",
+      "runtime_verified": false
+    },
+    {
+      "source": ".webpack/renderer/tab_browser_view/preload.js",
+      "marker": "navigator.clipboard.writeText",
+      "byte_offset": 369120,
+      "line": 2,
+      "column_utf16": 368924,
+      "authority": "direct-static-text-inspection",
+      "runtime_verified": false
+    },
+    {
+      "source": ".webpack/renderer/tab_browser_view/preload.js",
+      "marker": "new ClipboardItem",
+      "byte_offset": 369418,
+      "line": 2,
+      "column_utf16": 369222,
+      "authority": "direct-static-text-inspection",
+      "runtime_verified": false
+    },
+    {
+      "source": ".webpack/renderer/tab_browser_view/preload.js",
+      "marker": "notion:get-sqlite-meta",
+      "byte_offset": 387837,
+      "line": 2,
+      "column_utf16": 387641,
+      "authority": "direct-static-text-inspection",
+      "runtime_verified": false
+    },
+    {
+      "source": ".webpack/renderer/windows_and_tabs/preload.js",
+      "marker": "__windowListApi",
+      "byte_offset": 2046,
+      "line": 1,
+      "column_utf16": 2046,
+      "authority": "direct-static-text-inspection",
+      "runtime_verified": false
+    }
+  ],
+  "limitations": [
+    "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
+    "Dynamic IPC channel expressions remain unresolved and are never paired by textual similarity.",
+    "Electron relationships are derived from inert syntax; runtime registration, reachability, defaults, and enforcement remain unproven.",
+    "Graph coverage is incomplete; unavailable facts remain explicit and must not be read as absence.",
+    "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
+    "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
+    "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
+    "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code."
+  ]
+}

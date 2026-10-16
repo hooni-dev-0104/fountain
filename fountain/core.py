@@ -61,6 +61,9 @@ class Store:
                 created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                 PRIMARY KEY(kind,id));
             CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, data TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS attachment_chunks (
+                attachment_id TEXT NOT NULL, offset INTEGER NOT NULL, data BLOB NOT NULL,
+                PRIMARY KEY(attachment_id,offset));
         """)
         self.db.commit()
 

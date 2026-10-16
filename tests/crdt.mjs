@@ -51,6 +51,7 @@ function memoryStore(){
     pendingOperations:async()=>[...operations.values()].map(value=>structuredClone(value)),
     putOperations:async(key,values)=>{if(store.failOperations){store.failOperations=false;throw new Error('temporary storage fault');}for(const value of values)if(!operations.has(value.id))operations.set(value.id,structuredClone(value));},
     acknowledge:async(key,ids)=>ids.forEach(id=>operations.delete(id)),
+    commitOperationsAck:async(key,snapshot,ids)=>{snapshots.set(key,structuredClone(snapshot));const acknowledged=ids.filter(id=>Object.hasOwn(snapshot.state.seen,id)&&(!operations.has(id)||(operations.get(id)._epoch??snapshot.epoch)===snapshot.epoch));acknowledged.forEach(id=>operations.delete(id));return {snapshot:structuredClone(snapshot),acknowledged};},
     saveDraft:async(key,id,value)=>{if(value?.reason==='pending'&&store.failPending){store.failPending=false;throw new Error('crash after operations committed');}if(value===null)drafts.delete(id);else drafts.set(id,{clientId:id,draft:structuredClone(value),updatedAt:Date.now()});},
     getDrafts:async()=>[...drafts.values()].map(value=>structuredClone(value)),getProfile:async()=>({id:'profile'})};
   return store;

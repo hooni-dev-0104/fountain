@@ -10,6 +10,7 @@ function memory(){
     pendingOperations:async()=>[...operations.values()].map(value=>structuredClone(value)),
     putOperations:async function(key,entries){if(this.fail){this.fail=false;throw Error('disk unavailable');}for(const entry of entries)operations.set(entry.id,structuredClone(entry));},
     acknowledge:async(key,ids)=>ids.forEach(id=>operations.delete(id)),
+    commitOperationsAck:async(key,snapshot,ids)=>{snapshots.set(key,structuredClone(snapshot));const acknowledged=ids.filter(id=>Object.hasOwn(snapshot.state.seen,id)&&(!operations.has(id)||(operations.get(id)._epoch??snapshot.epoch)===snapshot.epoch));acknowledged.forEach(id=>operations.delete(id));return {snapshot:structuredClone(snapshot),acknowledged};},
     saveDraft:async(key,id,draft)=>{if(draft===null)drafts.delete(id);else drafts.set(id,{clientId:id,draft:structuredClone(draft)});},getDrafts:async()=>[...drafts.values()],getProfile:async()=>({id:'profile'})};
 }
 const profile={id:'profile',session:{cache_binding:'binding'}};

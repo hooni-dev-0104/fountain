@@ -383,8 +383,8 @@
       if(!entries.length)return;
       this.clearHistory();
       check(this.offline&&this.key,'복구 내용을 기기에 저장할 수 없습니다.');
-      const scopeEpoch=this.base.epoch,generation=this.historyGeneration,current=()=>!this.closed&&this.base?.epoch===scopeEpoch&&this.historyGeneration===generation;
-      const epoch=entries[0]._epoch||this.base.epoch,records=await this.offline.getDrafts(this.key);
+      const scope=this.receiveScope(),scopeEpoch=this.base.epoch,generation=this.historyGeneration,current=()=>this.currentReceiveScope(scope)&&this.base?.epoch===scopeEpoch&&this.historyGeneration===generation;
+      const epoch=entries[0]._epoch||this.base.epoch,records=await this.offline.getDrafts(scope.key);
       if(!current())return;
       const bases=records.filter(record=>record.draft.reason==='basis'&&record.draft.epoch===epoch&&record.draft.state).map(record=>record.draft);
       if(this.previousCached?.epoch===epoch)bases.push(this.previousCached);
@@ -396,21 +396,24 @@
       }
       if(blocks===null){
         const previous=records.filter(record=>record.draft.epoch===epoch&&record.draft.reason==='pending');
-        for(const record of previous){if(!current())return;await this.offline.saveDraft(this.key,record.clientId+':recovery:'+epoch+':'+randomClient(),{...record.draft,reason});}
+        for(const record of previous){if(!current())return;await this.offline.saveDraft(scope.key,record.clientId+':recovery:'+epoch+':'+randomClient(),{...record.draft,reason});}
         if(previous.length)blocks=previous.at(-1).draft.blocks;
       }
       const recoveryId=this.clientId+':recovery:'+epoch+':'+randomClient();
       if(!current())return;
-      await this.offline.saveDraft(this.key,recoveryId,{epoch,ops:entries.map(stripEpoch),blocks:blocks||[],...(historyPending?{history_pending:true}:{}),reason:blocks?reason:reason+'_ops_only',createdAt:new Date().toISOString()});
+      await this.offline.saveDraft(scope.key,recoveryId,{epoch,ops:entries.map(stripEpoch),blocks:blocks||[],...(historyPending?{history_pending:true}:{}),reason:blocks?reason:reason+'_ops_only',createdAt:new Date().toISOString()});
       if(!current())return;
-      await this.offline.acknowledge(this.key,entries.map(entry=>entry.id));entries.forEach(entry=>this.pending.delete(entry.id));
+      await this.offline.acknowledge(scope.key,entries.map(entry=>entry.id));
       if(!current())return;
-      const drafts=await this.offline.getDrafts(this.key);if(current())this.onDraft(drafts.filter(record=>!['pending','basis'].includes(record.draft.reason)));
+      entries.forEach(entry=>this.pending.delete(entry.id));
+      const drafts=await this.offline.getDrafts(scope.key);if(current())this.onDraft(drafts.filter(record=>!['pending','basis'].includes(record.draft.reason)));
     }
-    async cleanPendingDrafts(){
-      if(!this.offline||!this.key)return;
-      for(const record of await this.offline.getDrafts(this.key)){
-        if(record.draft.reason==='pending'&&record.draft.epoch===this.base.epoch&&(record.draft.ops||[]).every(op=>own(this.base.state.seen,op.id)))await this.offline.saveDraft(this.key,record.clientId,null);
+    async cleanPendingDrafts(canonical){
+      if(!this.offline||!this.key||!canonical?.state?.seen)return;
+      const scope=this.receiveScope();
+      for(const record of await this.offline.getDrafts(scope.key)){
+        if(!this.currentReceiveScope(scope))return;
+        if(record.draft.reason==='pending'&&record.draft.epoch===canonical.epoch&&(record.draft.ops||[]).every(op=>own(canonical.state.seen,op.id)))await this.offline.saveDraft(scope.key,record.clientId,null);
       }
     }
     async rebuild(source){
@@ -423,31 +426,64 @@
       this.state=next;this.clock=Math.max(this.clock,next.max_clock||0);
       this.publishState(source);
     }
-    receive(snapshot,source='remote'){
-      this.receiving=(this.receiving||Promise.resolve()).catch(()=>{}).then(()=>this.receiveOrdered(snapshot,source));return this.receiving;
+    receiveScope(){return {key:this.key,pageId:this.pageId,profile:this.profile,binding:this.profile.session?.cache_binding,profileId:this.profile.id,workspaceId:this.profile.workspaceId,memberId:this.profile.memberId};}
+    currentReceiveScope(scope){return !this.closed&&this.key===scope.key&&this.pageId===scope.pageId&&this.profile===scope.profile&&this.profile.id===scope.profileId&&this.profile.session?.cache_binding===scope.binding&&this.profile.workspaceId===scope.workspaceId&&this.profile.memberId===scope.memberId;}
+    receive(snapshot,source='remote',acknowledged=[],scope=this.receiveScope()){
+      this.receiving=(this.receiving||Promise.resolve()).catch(()=>{}).then(()=>this.receiveOrdered(snapshot,source,acknowledged,scope));return this.receiving;
     }
-    async receiveOrdered(snapshot,source){
-      if(this.closed)return;
+    async receiveOrdered(snapshot,source,acknowledged,scope){
+      if(!this.currentReceiveScope(scope))return [];
       if(snapshot.session_binding&&snapshot.session_binding!==this.profile.session.cache_binding){this.close();this.onDenied({status:401,message:'로그인 계정이 변경되었습니다.',switched:true});return;}
-      if(this.retiredEpochs.has(snapshot.epoch)||(snapshot.access_revision||0)<(this.base?.access_revision||0))return;
-      if(this.base&&snapshot.epoch!==this.base.epoch&&(snapshot.page?.revision||0)<(this.base.page?.revision||0))return;
-      if(this.base&&snapshot.epoch===this.base.epoch&&(snapshot.seq<this.base.seq||snapshot.seq===this.base.seq&&(snapshot.page?.revision||0)<(this.base.page?.revision||0)))return;
+      // A known retired epoch or newer in-memory ACL/reset is an independent
+      // fence, even when saving that newer snapshot previously failed.
+      if(this.retiredEpochs.has(snapshot.epoch)||(snapshot.access_revision||0)<(this.base?.access_revision||0)
+        ||this.base&&snapshot.epoch!==this.base.epoch&&(snapshot.page?.revision||0)<(this.base.page?.revision||0))return [];
+      let canonical,confirmed=[];
+      const committing=source==='ack'&&acknowledged.length>0;
+      if(committing){
+        try{
+          check(this.offline&&scope.key&&typeof this.offline.commitOperationsAck==='function','기기에 동기화 결과를 안전하게 저장할 수 없습니다.');
+          const persistence=this.persistence;await persistence;
+          if(!this.currentReceiveScope(scope))return [];
+          const committed=await this.offline.commitOperationsAck(scope.key,snapshot,acknowledged);
+          if(!this.currentReceiveScope(scope))return [];
+          canonical=committed.snapshot;
+          confirmed=committed.acknowledged.filter(id=>!this.pending.has(id)||(this.pending.get(id)._epoch??snapshot.epoch)===canonical.epoch);
+          confirmed.forEach(id=>this.pending.delete(id));
+          if(this.persistence===persistence)this.durable=true;
+          snapshot=canonical;
+        }catch(error){if(this.currentReceiveScope(scope)){this.durable=false;this.setStatus('error');}throw error;}
+      }
+      const stale=this.retiredEpochs.has(snapshot.epoch)||(snapshot.access_revision||0)<(this.base?.access_revision||0)
+        ||this.base&&snapshot.epoch!==this.base.epoch&&(snapshot.page?.revision||0)<(this.base.page?.revision||0)
+        ||this.base&&snapshot.epoch===this.base.epoch&&(snapshot.seq<this.base.seq||snapshot.seq===this.base.seq&&(snapshot.page?.revision||0)<(this.base.page?.revision||0));
+      if(stale){
+        if(confirmed.length){await this.rebuild(source);if(this.currentReceiveScope(scope))await this.cleanPendingDrafts(canonical);}
+        return confirmed;
+      }
       if(this.base&&(snapshot.epoch!==this.base.epoch||snapshot.access_level<3||snapshot.page?.locked||snapshot.page?.archived))this.clearHistory();
       else if(this.base&&Object.keys(snapshot.state.seen).some(id=>!own(this.base.state.seen,id)&&!id.startsWith(this.clientId+':')))this.breakHistory();
       // Preserve the old optimistic view before switching epochs, so recovery includes local text.
       if(this.base&&snapshot.epoch!==this.base.epoch&&this.pending.size)await this.recover([...this.pending.values()],'epoch_changed');
-      if(this.closed)return;
+      if(!this.currentReceiveScope(scope))return [];
       if(this.base&&snapshot.epoch!==this.base.epoch){
         this.retiredEpochs.add(this.base.epoch);this.presenceRevision=-1;
         this.onPresence({epoch:snapshot.epoch,workspace_id:this.profile.workspaceId,current_member_id:this.profile.memberId,
           session_binding:this.profile.session.cache_binding,participants:[],reset:true});
       }
       this.base=clone(snapshot);await this.rebuild(source);
-      if(this.closed)return;
-      if(this.offline&&this.key)await this.offline.saveSnapshot(this.key,this.base);
-      await this.cleanPendingDrafts();
+      if(!this.currentReceiveScope(scope))return [];
+      if(!committing&&this.offline&&scope.key){
+        try{canonical=await this.offline.saveSnapshot(scope.key,this.base);}
+        catch(error){if(this.currentReceiveScope(scope)){this.durable=false;this.setStatus('error');}throw error;}
+      }
+      if(!this.currentReceiveScope(scope))return [];
+      await this.cleanPendingDrafts(canonical);
+      if(!this.currentReceiveScope(scope))return [];
       if((snapshot.access_level<3||snapshot.page?.locked)&&this.pending.size){await this.recover([...this.pending.values()],'read_only');await this.rebuild('read_only');}
+      if(!this.currentReceiveScope(scope))return [];
       this.delay=500;this.setStatus(this.pending.size?'pending':'synced');
+      return confirmed;
     }
     operation(type,blockId,fields={}){this.clock=Math.max(this.clock,this.state?.max_clock||0)+1;check(Number.isSafeInteger(this.clock),'작업 시계가 한도를 초과했습니다.');return {id:this.clientId+':'+this.clock,client:this.clientId,clock:this.clock,type,...(type==='history.cancel'?{}:{block_id:blockId}),...clone(fields)};}
     submit(specifications){
@@ -533,17 +569,20 @@
         if(!navigator.onLine){this.setStatus('offline');return;}
         while(this.pending.size&&!this.closed){
           const entries=[...this.pending.values()].filter(entry=>!entry._epoch||entry._epoch===this.base.epoch).slice(0,300);if(!entries.length)break;
+          const scope=this.receiveScope();
           let snapshot;try{snapshot=await this.fetch('/pages/'+encodeURIComponent(this.pageId)+'/operations',{epoch:this.base.epoch,ops:entries.map(stripEpoch)});}catch(error){
+            if(!this.currentReceiveScope(scope))return;
             if([401,403,404].includes(error.status)){await this.deny(error.status,error.message);return;}
             if(error.status===409){const latest=await this.fetch('/pages/'+encodeURIComponent(this.pageId)+'/collaboration');if(latest.epoch===this.base.epoch)await this.recover(entries,'rejected');await this.receive(latest,'reset');continue;}
             if(error.status===423||error.status===400){await this.recover(entries,error.status===423?'locked':'rejected');await this.rebuild('recovery');this.onError(error);return;}
             if(error.status){this.onError(error);this.setStatus('error');return;}
             this.setStatus('offline');this.retry();return;
           }
+          if(!this.currentReceiveScope(scope))return;
           const acknowledged=Array.isArray(snapshot.ack)?snapshot.ack:[];
-          if(this.offline&&this.key)await this.offline.acknowledge(this.key,acknowledged);acknowledged.forEach(id=>this.pending.delete(id));
-          await this.receive(snapshot,'ack');
-          if(!acknowledged.length){this.setStatus('error');break;}
+          const confirmed=await this.receive(snapshot,'ack',acknowledged,scope);
+          if(!this.currentReceiveScope(scope))return;
+          if(!confirmed.length&&this.pending.size){this.setStatus('error');break;}
         }
         if(!this.closed)this.setStatus(this.pending.size?'pending':'synced');
       })().catch(error=>{if(!this.closed){this.onError(error);this.setStatus('error');}}).finally(()=>{this.flushing=null;});return this.flushing;

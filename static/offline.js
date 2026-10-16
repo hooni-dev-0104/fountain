@@ -151,26 +151,73 @@
   function getProfile() {
     return transaction(['profiles', 'meta'], 'readonly', active);
   }
+  async function selectSnapshot(store, profile, resourceKey, value) {
+    if (value && (value.workspace_id !== undefined && value.workspace_id !== profile.workspaceId
+        || value.current_member_id !== undefined && value.current_member_id !== profile.memberId
+        || value.session_binding !== undefined && value.session_binding !== profile.cacheBinding
+        || value.page?.id !== undefined && value.page.id !== decodeURIComponent(resourceKey.split('|')[4]))) {
+      throw new DOMException('Page snapshot identity does not match', 'SecurityError');
+    }
+    const previous = (await request(store.get(resourceKey)))?.snapshot;
+    if (previous && value) {
+      const previousAccess = Number.isSafeInteger(previous.access_revision) ? previous.access_revision : 0;
+      const nextAccess = Number.isSafeInteger(value.access_revision) ? value.access_revision : 0;
+      if (nextAccess < previousAccess) return previous;
+      if (previous.epoch === value.epoch && Number.isSafeInteger(previous.seq)
+          && Number.isSafeInteger(value.seq) && value.seq < previous.seq) return previous;
+      if (Number.isSafeInteger(previous.page?.revision) && Number.isSafeInteger(value.page?.revision)
+          && value.page.revision < previous.page.revision) return previous;
+    }
+    await request(store.put({ key: resourceKey, profileId: profile.id, snapshot: value, updatedAt: Date.now() }));
+    return value;
+  }
   function saveSnapshot(resourceKey, snapshot) {
     const value = copy(snapshot);
-    return scoped(resourceKey, 'snapshots', 'readwrite', async (store, profile) => {
-      if (value && (value.workspace_id !== undefined && value.workspace_id !== profile.workspaceId
-          || value.current_member_id !== undefined && value.current_member_id !== profile.memberId
-          || value.session_binding !== undefined && value.session_binding !== profile.cacheBinding
-          || value.page?.id !== undefined && value.page.id !== decodeURIComponent(resourceKey.split('|')[4]))) {
-        throw new DOMException('Page snapshot identity does not match', 'SecurityError');
+    return scoped(resourceKey, 'snapshots', 'readwrite', (store, profile) => selectSnapshot(store, profile, resourceKey, value));
+  }
+  function requireAckSnapshot(profile, resourceKey, value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.epoch !== 'string' || !value.epoch
+        || !Number.isSafeInteger(value.seq) || value.seq < 0 || !Array.isArray(value.blocks)
+        || !value.page || typeof value.page !== 'object' || Array.isArray(value.page)
+        || !value.state || typeof value.state !== 'object' || Array.isArray(value.state) || value.state.version !== 1
+        || !value.state.blocks || typeof value.state.blocks !== 'object'
+        || Array.isArray(value.state.blocks) || !value.state.seen || typeof value.state.seen !== 'object' || Array.isArray(value.state.seen)) {
+      throw new TypeError('Canonical collaboration snapshot required');
+    }
+    if (typeof value.workspace_id !== 'string' || value.workspace_id !== profile.workspaceId
+        || typeof value.current_member_id !== 'string' || value.current_member_id !== profile.memberId
+        || typeof value.session_binding !== 'string' || value.session_binding !== profile.cacheBinding
+        || value.page.id !== decodeURIComponent(resourceKey.split('|')[4])) {
+      throw new DOMException('Page snapshot identity does not match', 'SecurityError');
+    }
+  }
+  function commitOperationsAck(resourceKey, snapshot, ids) {
+    if (!Array.isArray(ids) || !ids.every(id => typeof id === 'string' && id && id.length <= 1000)) {
+      return Promise.reject(new TypeError('Operation IDs required'));
+    }
+    const value = copy(snapshot), candidates = [...new Set(ids)];
+    if (!value || typeof value.epoch !== 'string' || !value.state?.seen || typeof value.state.seen !== 'object') {
+      return Promise.reject(new TypeError('Canonical collaboration snapshot required'));
+    }
+    return transaction(['profiles', 'meta', 'snapshots', 'operations'], 'readwrite', async tx => {
+      const profile = await active(tx);
+      if (!matches(profile, resourceKey) || await request(tx.objectStore('meta').get('revoked-resource:' + resourceKey))) {
+        throw new DOMException('Offline profile or resource does not match or was revoked', 'SecurityError');
       }
-      const previous = (await request(store.get(resourceKey)))?.snapshot;
-      if (previous && value) {
-        const previousAccess = Number.isSafeInteger(previous.access_revision) ? previous.access_revision : 0;
-        const nextAccess = Number.isSafeInteger(value.access_revision) ? value.access_revision : 0;
-        if (nextAccess < previousAccess) return;
-        if (previous.epoch === value.epoch && Number.isSafeInteger(previous.seq)
-            && Number.isSafeInteger(value.seq) && value.seq < previous.seq) return;
-        if (Number.isSafeInteger(previous.page?.revision) && Number.isSafeInteger(value.page?.revision)
-            && value.page.revision < previous.page.revision) return;
+      requireAckSnapshot(profile, resourceKey, value);
+      const selected = await selectSnapshot(tx.objectStore('snapshots'), profile, resourceKey, value);
+      requireAckSnapshot(profile, resourceKey, selected);
+      const acknowledged = [], operations = tx.objectStore('operations');
+      // A stale ACK may use the newer persisted canonical, never a newer RAM
+      // view. Crossing epochs cannot prove that the submitted operation lives.
+      if (selected?.epoch === value.epoch && selected.state?.seen) for (const id of candidates) {
+        if (!Object.hasOwn(selected.state.seen, id)) continue;
+        const row = await request(operations.get([resourceKey, id]));
+        if (row && (row.operation?._epoch ?? value.epoch) !== selected.epoch) continue;
+        if (row) await request(operations.delete([resourceKey, id]));
+        acknowledged.push(id);
       }
-      store.put({ key: resourceKey, profileId: profile.id, snapshot: value, updatedAt: Date.now() });
+      return { snapshot: selected, acknowledged };
     });
   }
   function getSnapshot(resourceKey) {
@@ -648,6 +695,6 @@
     saveDatabase, getDatabase, listDatabases, putMutation, putMutations, listMutations, pendingMutations,
     updateMutation, acknowledgeMutations, removeMutation, replaceMutations, discardMutations, stageLocalPage,
     saveLocalPage, getLocalPage, listLocalPages, deleteLocalPage,
-    putOperations, pendingOperations, acknowledge, saveDraft, getDrafts,
+    putOperations, pendingOperations, acknowledge, commitOperationsAck, saveDraft, getDrafts,
     clearProfile, clearActiveProfile, purgeResource, serviceWorkerReady });
 })();

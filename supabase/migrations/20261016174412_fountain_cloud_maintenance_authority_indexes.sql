@@ -1,0 +1,3 @@
+CREATE INDEX maintenance_attempts_lease_lookup ON fountain_cloud.maintenance_attempts(workspace_id,grant_id,lease_id);
+CREATE INDEX maintenance_registry_upload_grant_lookup ON fountain_cloud.maintenance_registry(workspace_id,upload_grant_id);
+CREATE INDEX maintenance_registry_backup_grant_lookup ON fountain_cloud.maintenance_registry(workspace_id,backup_grant_id);

@@ -9,6 +9,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import quote
 
 from fountain.auth import Auth
 from fountain.authorization import Authorization
@@ -253,6 +254,66 @@ class SyncHTTPTests(unittest.TestCase):
             started.set()
             thread.join(5)
             other.close()
+
+    def test_unicode_custom_resource_ids_roundtrip_through_json_sync_and_encoded_cache_reads(self):
+        page_id, database_id, row_id = "가족 문서?#%", "가족 DB?#%", "가족 행 %2F?#"
+        self.assertEqual(self.request("POST", "/api/pages", {"id": page_id, "title": "기존 문서"})[0], 201)
+        page_patch = {"id": "ascii-page-patch", "kind": "page.patch", "target_id": page_id,
+            "body": {"title": "동기화 문서"}, "base": {"fields": {"title": "기존 문서"}}}
+        status, applied, _ = self.sync([page_patch])
+        self.assertEqual(status, 200)
+        self.assertEqual(applied["results"][0]["status"], "applied")
+        self.assertEqual(self.sync([page_patch], self.cookie_b, self.info_b)[1]["results"], applied["results"])
+        status, detail, _ = self.request("GET", "/api/pages/" + quote(page_id, safe=""), cookie=self.cookie_b)
+        self.assertEqual(status, 200)
+        self.assertEqual((detail["page"]["id"], detail["page"]["title"]), (page_id, "동기화 문서"))
+        workspace = self.request("GET", "/api/workspace", cookie=self.cookie_b)[1]
+        self.assertEqual(next(page for page in workspace["pages"] if page["id"] == page_id)["title"], "동기화 문서")
+        properties = [{"id": "name", "name": "이름", "type": "title"}]
+        self.assertEqual(self.request("POST", "/api/databases", {"id": database_id, "name": "가족 데이터", "properties": properties})[0], 201)
+        encoded_database = "/api/databases/" + quote(database_id, safe="")
+        self.assertEqual(self.request("POST", encoded_database + "/rows", {"id": row_id, "properties": {"name": "기존 행"}})[0], 201)
+        patch = {"id": "ascii-row-patch", "kind": "row.patch", "target_id": row_id, "database_id": database_id,
+            "body": {"properties": {"name": "동기화 행"}}, "base": {"schema": {"name": properties[0]}, "properties": {"name": "기존 행"}}}
+        status, patched, _ = self.sync([patch])
+        self.assertEqual((status, patched["results"][0]["status"]), (200, "applied"))
+        self.assertEqual(self.sync([patch], self.cookie_b, self.info_b)[1]["results"], patched["results"])
+        status, snapshot, _ = self.request("GET", encoded_database, cookie=self.cookie_b)
+        self.assertEqual(status, 200)
+        self.assertEqual(snapshot["database"]["id"], database_id)
+        self.assertEqual(next(row for row in snapshot["rows"] if row["id"] == row_id)["properties"]["name"], "동기화 행")
+        self.assertEqual(snapshot["session_binding"], self.info_b["cache_binding"])
+        self.assertGreaterEqual(snapshot["data_revision"], patched["results"][0]["data_revision"])
+        deletion = {"id": "ascii-row-delete", "kind": "row.delete", "target_id": row_id, "database_id": database_id,
+            "depends_on": [patch["id"]], "body": {}, "base_rows": {row_id: {"updated_at": patched["results"][0]["updated_at"], "after_operation": patch["id"]}}}
+        status, deleted, _ = self.sync([deletion], self.cookie_b, self.info_b)
+        self.assertEqual((status, deleted["results"][0]["status"]), (200, "applied"))
+        self.assertEqual(self.sync([deletion])[1]["results"], deleted["results"])
+        self.assertEqual(self.request("GET", encoded_database)[1]["rows"], [])
+        row_create = {"id": "ascii-row-create", "kind": "row.create", "target_id": "새 행?#%", "database_id": database_id,
+            "body": {"id": "새 행?#%", "properties": {"name": "새 행"}}, "base": {"schema": {"name": properties[0]}}}
+        self.assertEqual(self.sync([row_create])[1]["results"][0]["status"], "applied")
+        self.assertEqual(self.request("GET", encoded_database)[1]["rows"][0]["id"], "새 행?#%")
+        page_create = self.page_operation("새 문서?#%")
+        page_create["body"]["id"] = page_create["target_id"]
+        self.assertEqual(self.sync([page_create])[1]["results"][0]["status"], "applied")
+        document = self.request("GET", "/api/pages/" + quote(page_create["target_id"], safe="") + "/collaboration")[1]
+        collision = self.page_operation(page_create["target_id"])
+        self.assertEqual(self.sync([collision])[1]["results"][0]["http_status"], 409)
+        self.assertEqual(self.request("GET", "/api/pages/" + quote(page_create["target_id"], safe="") + "/collaboration")[1]["epoch"], document["epoch"])
+
+    def test_sync_json_rejects_unsafe_resource_ids_and_non_ascii_operation_ids(self):
+        for identity in ["../escape", "a/b", "a\\b", "a\n", "a\x7f", "a\x85", ".", "..", "", " "]:
+            with self.subTest(identity=repr(identity)):
+                operation = self.page_operation()
+                operation["target_id"] = identity
+                status, result, _ = self.sync([operation])
+                self.assertEqual(status, 200)
+                self.assertEqual((result["results"][0]["status"], result["results"][0]["http_status"]), ("invalid", 400))
+        operation = self.page_operation()
+        operation["id"] = "한글 작업"
+        self.assertEqual(self.sync([operation])[1]["results"][0]["http_status"], 400)
+        self.assertEqual(self.store.list("sync_receipt"), [])
 
     def test_trusted_direct_dispatch_and_partial_batch_have_no_outer_transaction(self):
         principal = {"id": "maintenance", "role": "owner", "active": True, "_service": True}

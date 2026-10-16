@@ -34,6 +34,17 @@ class SyncService:
         return value
 
     @staticmethod
+    def _resource_id(value):
+        # Entity IDs are opaque data, unlike ASCII operation identifiers. Paths
+        # below are passed directly to dispatch and are never URI-parsed again.
+        require(isinstance(value, str) and 0 < len(value) <= 160 and bool(value.strip())
+                and value not in {".", ".."} and not any(char in "/\\" or ord(char) < 32
+                    or 127 <= ord(char) <= 159 for char in value), "Invalid sync resource identifier")
+        try: value.encode("utf-8")
+        except UnicodeEncodeError: raise APIError(400, "Invalid Unicode resource identifier")
+        return value
+
+    @staticmethod
     def receipt_id(actor_id, operation_id):
         return hashlib.sha256(json.dumps([actor_id, operation_id], ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
 
@@ -58,10 +69,10 @@ class SyncService:
         require(isinstance(operation, dict), "Sync operation must be an object")
         require(set(operation) <= {"id", "kind", "target_id", "database_id", "depends_on", "body", "base", "document_epoch", "base_rows"}, "Unsupported sync operation fields")
         self._id(operation.get("id"))
-        self._id(operation.get("target_id"))
+        self._resource_id(operation.get("target_id"))
         kind = operation.get("kind")
         require(isinstance(kind, str) and kind in KINDS, "Unsupported sync operation kind")
-        if kind.startswith("row."): self._id(operation.get("database_id"))
+        if kind.startswith("row."): self._resource_id(operation.get("database_id"))
         dependencies = operation.get("depends_on", [])
         require(isinstance(dependencies, list) and len(dependencies) <= 50, "Invalid sync dependencies")
         for identity in dependencies:
@@ -172,7 +183,7 @@ class SyncService:
         require(all(access.can("row", row, 3) for row in rows), "Cannot delete unreadable or uneditable subitems", 403)
         bases = operation.get("base_rows")
         require(isinstance(bases, dict) and bases, "Offline deletion requires the complete subtree base")
-        for identity in bases: self._id(identity)
+        for identity in bases: self._resource_id(identity)
         require(set(bases) == {row["id"] for row in rows}, "Task subtree changed while offline", 409)
         for row in rows:
             base = bases[row["id"]]

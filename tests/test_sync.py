@@ -266,6 +266,64 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(result["status"], "conflict")
         self.assertIsNotNone(self.store.get("row", "same-id"))
 
+    def test_existing_unicode_resource_ids_support_sync_metadata_row_crud_and_receipts(self):
+        page_id, database_id, row_id = "가족 문서?#%", "가족 DB?#%", "가족 행 %2F?#"
+        self.assertEqual(self.app.dispatch("POST", "/api/pages", {"id": page_id, "title": "기존 문서"}, {})[0], 201)
+        patch_page = {"id": "custom-page-patch", "kind": "page.patch", "target_id": page_id,
+            "body": {"title": "동기화 문서"}, "base": {"fields": {"title": "기존 문서"}}}
+        result = self.apply([patch_page])["results"][0]
+        self.assertEqual(result["status"], "applied")
+        self.assertEqual(self.apply([patch_page])["results"][0], result)
+        self.assertEqual(self.store.get("page", page_id)["title"], "동기화 문서")
+        properties = [{"id": "name", "name": "이름", "type": "title"}]
+        self.assertEqual(self.app.dispatch("POST", "/api/databases", {"id": database_id, "name": "가족", "properties": properties}, {})[0], 201)
+        self.assertEqual(self.app.dispatch("POST", f"/api/databases/{database_id}/rows", {"id": row_id, "properties": {"name": "기존 행"}}, {})[0], 201)
+        patch_row = {"id": "custom-row-patch", "kind": "row.patch", "target_id": row_id, "database_id": database_id,
+            "body": {"properties": {"name": "동기화 행"}}, "base": {"schema": {"name": properties[0]}, "properties": {"name": "기존 행"}}}
+        result = self.apply([patch_row])["results"][0]
+        self.assertEqual(result["status"], "applied")
+        self.assertEqual(self.apply([patch_row])["results"][0], result)
+        deletion = {"id": "custom-row-delete", "kind": "row.delete", "target_id": row_id, "database_id": database_id,
+            "depends_on": [patch_row["id"]], "body": {}, "base_rows": {row_id: {"updated_at": result["updated_at"], "after_operation": patch_row["id"]}}}
+        deleted = self.apply([deletion])["results"][0]
+        self.assertEqual(deleted["status"], "applied")
+        self.assertEqual(self.apply([deletion])["results"][0], deleted)
+        self.assertIsNone(self.store.get("row", row_id))
+        create_row = {"id": "custom-row-create", "kind": "row.create", "target_id": "새 행?#%", "database_id": database_id,
+            "body": {"id": "새 행?#%", "properties": {"name": "새 행"}}, "base": {"schema": {"name": properties[0]}}}
+        self.assertEqual(self.apply([create_row])["results"][0]["status"], "applied")
+        self.assertIsNotNone(self.store.get("row", "새 행?#%"))
+        create_page = self.page("custom-page-create", "새 문서?#%")
+        create_page["body"]["id"] = create_page["target_id"]
+        self.assertEqual(self.apply([create_page])["results"][0]["status"], "applied")
+        document = self.store.get("collaboration", create_page["target_id"])
+        collision = self.page("custom-page-collision", create_page["target_id"])
+        self.assertEqual(self.apply([collision])["results"][0]["http_status"], 409)
+        self.assertEqual(self.store.get("collaboration", create_page["target_id"]), document)
+
+    def test_resource_id_validation_keeps_operation_ids_ascii_and_blocks_path_controls(self):
+        unsafe = ["", " ", ".", "..", "a/b", "a\\b", "line\nfeed", "delete\x7f", "control\x85", "x" * 161, "\ud800"]
+        for index, identity in enumerate(unsafe):
+            with self.subTest(identity=repr(identity)):
+                operation = self.page(f"unsafe-{index}", identity)
+                operation["target_id"] = identity
+                result = self.apply([operation])["results"][0]
+                self.assertEqual((result["status"], result["http_status"]), ("invalid", 400))
+                row = self.row(f"unsafe-db-{index}", f"row-{index}")
+                row["database_id"] = identity
+                self.assertEqual(self.apply([row])["results"][0]["http_status"], 400)
+        for field in ("id", "depends_on"):
+            operation = self.page("ascii-only", "valid-target")
+            operation[field] = "한글 작업" if field == "id" else ["한글 작업"]
+            self.assertEqual(self.apply([operation])["results"][0]["http_status"], 400)
+        row = self.store.put("row", {"id": "delete-target", "database_id": "projects", "properties": {"name": "row"}, "depends_on": [], "parent_row_id": None})
+        deletion = {"id": "unsafe-base", "kind": "row.delete", "target_id": row["id"], "database_id": "projects", "body": {},
+            "base_rows": {"bad/id": {"updated_at": row["updated_at"]}}}
+        self.assertEqual(self.apply([deletion])["results"][0]["http_status"], 400)
+        deletion["base_rows"] = {row["id"]: {"updated_at": row["updated_at"], "after_operation": "한글 작업"}}
+        self.assertEqual(self.apply([deletion])["results"][0]["http_status"], 400)
+        self.assertEqual(self.store.list("sync_receipt"), [])
+
     def test_two_independent_sqlite_connections_apply_same_operation_once(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "workspace.db"

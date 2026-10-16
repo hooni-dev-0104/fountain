@@ -102,9 +102,16 @@
     const profile = { id, origin: location.origin, workspaceId: input.workspaceId, memberId: input.memberId,
       cacheBinding: session.cache_binding,
       session: copy(safeSession), workspace: copy(input.workspace), validUntil, updatedAt: Date.now() };
-    return transaction(['profiles', 'meta'], 'readwrite', async tx => {
+    let changed = false;
+    const saved = await transaction(STORES, 'readwrite', async tx => {
       if (await request(tx.objectStore('meta').get('revoked:' + id))) {
         throw new DOMException('Offline session was logged out', 'SecurityError');
+      }
+      const previous = await request(tx.objectStore('meta').get('active'));
+      changed = previous?.profileId !== id;
+      if (previous && previous.profileId !== id) {
+        tx.objectStore('meta').put({ id: 'revoked:' + previous.profileId, revokedAt: Date.now() });
+        await purge(tx, previous.profileId);
       }
       if (Array.isArray(profile.workspace?.pages)) {
         const pages = [];
@@ -117,6 +124,8 @@
       tx.objectStore('meta').put({ id: 'active', profileId: id });
       return copy(profile);
     });
+    if (changed) profileChanged(id);
+    return saved;
   }
   function getProfile() {
     return transaction(['profiles', 'meta'], 'readonly', active);
@@ -126,6 +135,9 @@
     return scoped(resourceKey, 'snapshots', 'readwrite', async (store, profile) => {
       const previous = (await request(store.get(resourceKey)))?.snapshot;
       if (previous && value) {
+        const previousAccess = Number.isSafeInteger(previous.access_revision) ? previous.access_revision : 0;
+        const nextAccess = Number.isSafeInteger(value.access_revision) ? value.access_revision : 0;
+        if (nextAccess < previousAccess) return;
         if (previous.epoch === value.epoch && Number.isSafeInteger(previous.seq)
             && Number.isSafeInteger(value.seq) && value.seq < previous.seq) return;
         if (Number.isSafeInteger(previous.page?.revision) && Number.isSafeInteger(value.page?.revision)
@@ -213,6 +225,10 @@
     globalThis.dispatchEvent(new CustomEvent('fountain-offline-profile-cleared', { detail: { profileId } }));
     if (broadcast) logoutChannel?.postMessage({ type: 'profile-cleared', profileId });
   }
+  function profileChanged(profileId, broadcast = true) {
+    globalThis.dispatchEvent(new CustomEvent('fountain-offline-profile-changed', { detail: { profileId } }));
+    if (broadcast) logoutChannel?.postMessage({ type: 'profile-changed', profileId });
+  }
   function resourcePurged(resourceKey, broadcast = true) {
     globalThis.dispatchEvent(new CustomEvent('fountain-offline-resource-purged', { detail: { key: resourceKey } }));
     if (broadcast) logoutChannel?.postMessage({ type: 'resource-purged', key: resourceKey });
@@ -220,6 +236,7 @@
   if (logoutChannel) logoutChannel.onmessage = event => {
     if (event.data?.type === 'profile-cleared' && typeof event.data.profileId === 'string') announce(event.data.profileId, false);
     if (event.data?.type === 'resource-purged' && typeof event.data.key === 'string') resourcePurged(event.data.key, false);
+    if (event.data?.type === 'profile-changed' && typeof event.data.profileId === 'string') profileChanged(event.data.profileId, false);
   };
   async function purgeResource(resourceKey) {
     await transaction(STORES, 'readwrite', async tx => {
@@ -259,7 +276,10 @@
   }
   async function clearProfile(profile) {
     const id = namespace(profile);
-    await transaction(STORES, 'readwrite', tx => purgeActor(tx, id));
+    await transaction(STORES, 'readwrite', async tx => {
+      tx.objectStore('meta').put({ id: 'revoked:' + id, revokedAt: Date.now() });
+      await purge(tx, id);
+    });
     announce(id);
   }
   async function clearActiveProfile() {

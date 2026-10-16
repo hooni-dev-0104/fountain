@@ -20,7 +20,7 @@ class Authorization:
     def manage_database(self, identity):
         return self.access.require_resource('database', identity, 4)
 
-    def relation_values(self, database, body):
+    def relation_values(self, database, body, existing=None):
         values = body.get('properties', body.get('values', {}))
         if not isinstance(values, dict):
             return
@@ -32,6 +32,18 @@ class Authorization:
                     prop = next(p for p in database['properties'] if p['id'] == key)
                     if prop['type'] == 'files': self.attachment(identity)
                     else: self.access.require_resource('row', identity)
+        # Validate newly supplied references first, then retain only existing
+        # hidden links. A projected edit must not erase links the caller cannot see.
+        if existing:
+            for prop in database.get('properties', []):
+                key = prop['id']
+                if prop.get('type') != 'relation' or key not in values: continue
+                previous = existing.get('properties', {}).get(key)
+                if not isinstance(previous, list) or values[key] is not None and not isinstance(values[key], list): continue
+                hidden = [identity for identity in previous if isinstance(identity, str)
+                          and self.store.get('row', identity) and not self.access.can('row', self.store.get('row', identity))]
+                if hidden:
+                    values[key] = list(dict.fromkeys([*(values[key] or []), *hidden]))
 
     def member_change(self, method, identity, body):
         a = self.access
@@ -198,7 +210,7 @@ class Authorization:
                     if old_row:
                         hidden = [identity for identity in old_row.get('depends_on', []) if not a.can('row', self.store.get('row', identity))]
                         body['depends_on'] = list(dict.fromkeys([*body['depends_on'], *hidden]))
-                self.relation_values(database, body)
+                self.relation_values(database, body, old_row)
             return
         if path == '/api/attachments' and method == 'POST':
             require(a.regular or any(a.can('page', page, 3) for page in self.store.list('page')), 'No document upload permission', 403)

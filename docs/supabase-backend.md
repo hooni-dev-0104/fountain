@@ -4,11 +4,13 @@
 
 ## 현재 범위와 완료 기준
 
-2026-10-17 확인 시점의 Supabase 프로젝트는 `ehnovtfadpkwtubmwltl`이다. `fountain-api` version 10에 문서·DB·공동 편집·동기화·첨부·presence/SSE·AI·계정·백업·연동 권한 관리·SCIM bearer handler가 연결됐다. 서비스 객체는 actor를 공유하지 않고 사람의 요청은 각 쿠키, SCIM은 별도 위임 토큰으로 인증한다. 운영 원본은 entities 153개·meta 6개, 실사용 Auth 사용자·identity mapping은 0개다. `fountain-files`는 비공개 bucket이며 QA 정리 후 객체는 0개다. `/health`의 `ready:false`는 전체 전환이 아직 끝나지 않았다는 뜻이다.
+2026-10-17 확인 시점의 Supabase 프로젝트는 `ehnovtfadpkwtubmwltl`이다. `fountain-api` version 11에 문서·DB·통합 검색·공동 편집·동기화·첨부·presence/SSE·AI·계정·백업·연동 권한 관리·SCIM bearer handler가 연결됐다. 서비스 객체는 actor를 공유하지 않고 사람의 요청은 각 쿠키, SCIM은 별도 위임 토큰으로 인증한다. 운영 원본은 entities 153개·meta 6개, 실사용 Auth 사용자·identity mapping은 0개다. `fountain-files`는 비공개 bucket이며 QA 정리 후 객체는 0개다. `/health`의 `ready:false`는 전체 전환이 아직 끝나지 않았다는 뜻이다.
 
 Auth/Vault·Store부터 계정 생성·관리·백업·분할 백업·연동 권한 관리·예약 실행·SCIM·파일 물리 정리·기존 inline 첨부 읽기까지 migration 26개를 적용했다. 적용된 SQL은 `supabase/migrations`의 실제 버전 파일로만 보관하고 중복 초안은 제거했다. 공개 RPC는 service_role 전용이며, private 테이블은 강제 RLS와 직접 접근 거절을 유지한다. 익명·일반 로그인 역할의 실행 권한 거절, 연결되지 않은 세션의 백업/정리 거절 등 실제 PostgreSQL 검사 10개가 통과했다. 이 구조는 서버의 신뢰된 권한 검사이며 최종 사용자별 RLS를 사용한다는 뜻이 아니다.
 
 원본 첨부 1개·80바이트는 이미 PostgreSQL의 inline base64 형식으로 저장돼 있으며 외부 chunk 행은 0개다. 일반 Store snapshot에서 이 바이트를 숨기는 계약은 유지하면서 전용 인증 RPC와 64KiB 다운로드 경로를 추가했다. 별도 계정 두 개로 최대 5,000,000바이트 전체 SHA·공유 권한·HEAD·Range·오류를 확인했고 실제 SQL의 인증 철회·원본 변경 거절 19개도 통과했다. 읽기는 원본·revision·receipt·쿼터를 바꾸지 않으며 Storage 객체를 만들지 않는다. 원본 첨부는 portable 백업과 동일하고, 원본 소유자 계정으로의 최종 접근 검증은 아직 남아 있다. [실행 결과·범위](research/inline-attachment-verification.md).
+
+API 11은 권한 검사 뒤 페이지·DB·행의 작은 검색 DTO를 만들고 필터·정렬·페이지 나눔을 제공한다. 실제 계정의 멤버/관리자/게스트 역할과 권한 철회·행 삭제, 31개 감사 기록의 검색어 비저장, QA 계정·29개 테이블 정리를 확인했다. 최종 Node 383개, Python/SQLite 결과 대조 360건과 실제 Python/Chrome UI 검증이 통과했다. 의미 검색과 외부 앱 색인은 연결하지 않았으며 운영 소유자/호스팅 연결도 아직 남아 있다. [통합 검색 실행 결과·범위](research/advanced-search-verification.md).
 
 기초 실제 클라우드 QA에서는 비밀번호 로그인·신뢰된 기존 역할 연결·동시 CAS·정확한 receipt 재시도·refresh lease·폐기된 세션 거절을 확인했다. 후속 문서·버전·typed row/수식·ACL·공동 편집/Undo·sync 10개 그룹, presence 6개, SSE 2개가 통과했다. 실제 비공개 Storage의 9MiB+123바이트 업로드·전체 SHA-256·청크 경계 Range·HEAD·416·다른 멤버 거절·물리 삭제, Realtime WebSocket 구독과 변경 알림도 확인했다. Realtime은 본문 없이 재조회를 깨운다.
 

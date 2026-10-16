@@ -2,7 +2,7 @@
 
 2026-10-16에 승인받은 무료 조직 `hooni-dev-0104's Org`에 서울 리전의 **Fountain** 프로젝트를 생성했다. 프로젝트 참조는 `ehnovtfadpkwtubmwltl`이며 기존 다른 프로젝트는 변경하지 않았다. **현재 `localhost:8787` 미리보기는 Supabase PostgreSQL을 원본으로 사용하는 Python 호환 실행 상태다.** 기존 페이지·DB·첨부·계정·작업공간 ID·로그인 binding을 검증해 이관했으며 `.data/fountain.db` 원본과 전환 전후 백업도 보존했다.
 
-이 문서의 실행 명령·디스크 파일 설명은 보존된 Python 호환 모드에 해당한다. 최종 운영용 Supabase Edge Functions·Auth·Storage 백엔드는 별도로 구현·검증하고 있으며 현재 API version 10, migration 26개다. 실제 소유자 계정 연결과 공개 웹 호스팅을 마치기 전에는 운영 전환 완료를 선언하지 않는다. [현재 백엔드 구조·검증 상태](supabase-backend.md), [기존 inline 첨부 읽기](research/inline-attachment-verification.md).
+이 문서의 실행 명령·디스크 파일 설명은 보존된 Python 호환 모드에 해당한다. 최종 운영용 Supabase Edge Functions·Auth·Storage 백엔드는 별도로 구현·검증하고 있으며 현재 API version 11, migration 26개다. 실제 소유자 계정 연결과 공개 웹 호스팅을 마치기 전에는 운영 전환 완료를 선언하지 않는다. [현재 백엔드 구조·검증 상태](supabase-backend.md), [기존 inline 첨부 읽기](research/inline-attachment-verification.md), [통합 검색](research/advanced-search-verification.md).
 
 ## 저장소와 권한
 

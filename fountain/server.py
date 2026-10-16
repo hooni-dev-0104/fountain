@@ -331,10 +331,16 @@ class Application:
             directory = tempfile.mkdtemp(prefix='fountain-download-')
             target = Path(directory) / 'fountain-backup.db'
             try:
-                create_backup(s.db, target)
-            except (BackupError, OSError) as error:
+                if getattr(s, 'backend', 'sqlite') == 'postgres':
+                    from .postgres_backup import create_postgres_backup
+                    create_postgres_backup(s, target)
+                else:
+                    create_backup(s.db, target)
+            except BaseException as error:
                 shutil.rmtree(directory)
-                raise APIError(503, '전체 백업을 생성하지 못했습니다') from error
+                if isinstance(error, (BackupError, OSError, APIError)):
+                    raise APIError(503, '전체 백업을 생성하지 못했습니다') from error
+                raise
             s.audit('workspace.backup.created', {})
             return 200, Download('fountain-backup.db', target, directory)
         if path == "/api/import" and method == "POST":
@@ -521,7 +527,9 @@ def handler_for(application):
             previous, previous_presence, heartbeat = None, None, 0
             try:
                 while not self.server.stream_stop.is_set():
-                    encoded = json.dumps(current, ensure_ascii=False, separators=(',', ':'))
+                    # PostgreSQL JSONB may reorder keys after the initial write.
+                    # Compare canonical JSON so a cursor does not resend a body.
+                    encoded = json.dumps(current, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
                     presence_key = json.dumps({'epoch': presence['epoch'], 'participants': presence['participants']},
                                               ensure_ascii=False, sort_keys=True, separators=(',', ':'))
                     changed = False
@@ -716,8 +724,11 @@ class FountainServer(ThreadingHTTPServer):
 
 
 def create_server(host="127.0.0.1", port=8787, db_path=".data/fountain.db", static=STATIC, allowed_hosts=None,
-                  tls_cert=None, tls_key=None):
+                  tls_cert=None, tls_key=None, database_url=None, workspace_id=None):
     require((tls_cert is None) == (tls_key is None), 'TLS requires both a certificate and a private key')
+    require(database_url is None or isinstance(database_url, str) and bool(database_url.strip()),
+            'PostgreSQL requires a database connection', 503)
+    require(database_url is not None or workspace_id is None, 'Workspace namespace requires PostgreSQL mode')
     tls_context = None
     if tls_cert is not None:
         # Validate TLS before creating the user's database or data directory.
@@ -733,7 +744,7 @@ def create_server(host="127.0.0.1", port=8787, db_path=".data/fountain.db", stat
     if host not in {'127.0.0.1', 'localhost'}:
         require(host == '0.0.0.0', 'Use 0.0.0.0 for family network access')
         require(allowed_hosts, 'Family network access requires --allowed-host')
-    if str(db_path) != ':memory:':
+    if database_url is None and str(db_path) != ':memory:':
         database_path = Path(db_path)
         database_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         try:
@@ -742,9 +753,16 @@ def create_server(host="127.0.0.1", port=8787, db_path=".data/fountain.db", stat
             pass
         else:
             os.close(descriptor)
-    store, server = Store(db_path), None
+    if database_url is not None:
+        from .postgres import PostgresStore
+        store = PostgresStore(database_url, workspace_id=workspace_id)
+    else:
+        store = Store(db_path)
+    server = None
     try:
-        application = Application(store, static)
+        # Two server processes must not interleave first-run seed or cleanup.
+        with store.transaction():
+            application = Application(store, static)
         if host not in {'127.0.0.1', 'localhost'}:
             require(application.auth.enabled, 'Family network access requires FOUNTAIN_ACCESS_TOKEN or individual accounts')
         server = FountainServer((host, port), handler_for(application), tls_context=tls_context)
@@ -763,14 +781,39 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--allowed-host", action="append", default=[], help="LAN hostname or IP allowed by Host validation")
     parser.add_argument("--data", default=".data/fountain.db")
+    parser.add_argument("--database", choices=('sqlite', 'postgres'), default='sqlite')
+    parser.add_argument("--database-config", help="Private JSON file containing database_dsn (PostgreSQL only)")
+    parser.add_argument("--workspace-id", help="Stable PostgreSQL workspace namespace")
     parser.add_argument("--tls-cert", help="PEM certificate chain for direct HTTPS")
     parser.add_argument("--tls-key", help="Matching unencrypted PEM private key")
     args = parser.parse_args()
     if bool(args.tls_cert) != bool(args.tls_key): parser.error('--tls-cert and --tls-key must be supplied together')
+    database_url = None
+    if args.database == 'postgres':
+        if not args.workspace_id: parser.error('--workspace-id is required for PostgreSQL')
+        if args.data != '.data/fountain.db': parser.error('--data is for SQLite mode')
+        database_url = os.environ.get('FOUNTAIN_DATABASE_URL', '')
+        if args.database_config:
+            try:
+                with open(args.database_config, 'rb') as source:
+                    require(os.fstat(source.fileno()).st_mode & 0o077 == 0,
+                            'Database configuration must be readable only by its owner')
+                    content = source.read(65537)
+                    require(len(content) <= 65536, 'Database configuration is too large')
+                    config = json.loads(content)
+                    require(isinstance(config, dict), 'Database configuration must be an object')
+                    database_url = config.get('database_dsn')
+            except (OSError, ValueError, APIError) as error:
+                parser.error('Unable to read the private database configuration')
+        if not isinstance(database_url, str) or not database_url.strip():
+            parser.error('Set FOUNTAIN_DATABASE_URL or --database-config for PostgreSQL')
+    elif args.database_config or args.workspace_id:
+        parser.error('--database-config and --workspace-id require --database postgres')
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     try:
         server = create_server(args.host, args.port, args.data, allowed_hosts=args.allowed_host,
-                               tls_cert=args.tls_cert, tls_key=args.tls_key)
+                               tls_cert=args.tls_cert, tls_key=args.tls_key,
+                               database_url=database_url, workspace_id=args.workspace_id)
     except (APIError, OSError) as error:
         parser.error(str(error))
     print(f"Fountain: {server.scheme}://localhost:{server.server_port}", flush=True)

@@ -12,9 +12,9 @@ const source=await readFile(new URL('./live-desktop-entry.template.ts',import.me
 const sha=s=>createHash('sha256').update(s).digest('hex'),nonce=Buffer.alloc(32,7).toString('base64url');
 const scope={workspaceId:'fountain-qa-cloud-desktop-0123456789abcdef',challengeHash:sha(nonce),nonceHash:'a'.repeat(64),emails:['owner@example.invalid','child@example.invalid']};
 const project='https://ehnovtfadpkwtubmwltl.supabase.co',endpoint=project+'/functions/v1/fountain-verify/wire',cookie='fountain_session='+'A'.repeat(43),cf='__cf_bm=fixture_cf.private-value-123';
-const script=stripTypeScriptTypes(source.replace(/^import [^\n]+;\n/gm,'').replace('QA_SCOPE',JSON.stringify(scope)));
 const fixtureEnv={SUPABASE_URL:project,SUPABASE_PUBLISHABLE_KEYS:JSON.stringify({default:'sb_publishable_fixture12345'}),SUPABASE_SECRET_KEYS:JSON.stringify({default:'sb_secret_fixture123456789012345678901234567890'})};
-async function entry({action=async()=>new Response('application-response',{status:201}),provider=async()=>new Response('{}'),real=false,fast=false,env={}}={}){
+async function entry({action=async()=>new Response('application-response',{status:201}),provider=async()=>new Response('{}'),real=false,fast=false,env={},workspaceId=scope.workspaceId}={}){
+ const script=stripTypeScriptTypes(source.replace(/^import [^\n]+;\n/gm,'').replace('QA_SCOPE',JSON.stringify({...scope,workspaceId})));
  const calls=[],configs=[],requests=[],reads=[];let serve;
  await vm.runInNewContext('(async()=>{'+script+'})()',{
   crypto,TextEncoder,TextDecoder,Uint8Array,Request,Response,Headers,URL,AbortController,AbortSignal,ReadableStream,atob,btoa,
@@ -94,4 +94,9 @@ test('pending incoming body and response stream cancel at the sealed deadline',a
 test('real application anonymous session remains anonymous, with Cloudflare-only cookie and no I/O',async()=>{
  const f=await entry({real:true,provider:async()=>{throw Error('Unexpected real I/O');}});const response=await f.request('/api/session',{headers:{Cookie:cf}});assert.equal(response.status,200);const value=await response.json();assert.equal(value.authenticated,false);assert.equal(value.setup_supported,true);assert.equal(f.calls.length,0);
  const publicText=JSON.stringify(value);for(const secret of ['private-value','sb_secret_',nonce,scope.nonceHash])assert(!publicText.includes(secret));
+});
+
+test('only the two explicit disposable client namespace families may construct the gate',async()=>{
+ const workspaceId='fountain-qa-cloud-native-0123456789abcdef';const f=await entry({workspaceId});assert.equal(await status(await f.request()),201);assert.equal(f.configs[0].workspaceId,workspaceId);assert.equal(f.calls.length,0);
+ for(const invalid of ['original','fountain-qa-cloud-any-0123456789abcdef','fountain-qa-cloud-native-0123456789abcde','fountain-qa-cloud-native-0123456789abcdef-extra'])await assert.rejects(entry({workspaceId:invalid}),/QA_SCOPE_REJECTED/);
 });

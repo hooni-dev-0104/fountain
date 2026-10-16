@@ -10,7 +10,7 @@ function require(value:unknown):asserts value {if(!value)throw Error('QA_SCOPE_R
 function canonicalNonce(s:string){try{return /^[A-Za-z0-9_-]{43}$/.test(s)&&btoa(atob(s.replace(/-/g,'+').replace(/_/g,'/')+'=')).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'')===s;}catch{return false;}}
 function envKeys(name:string,legacy:string){try{const raw=Deno.env.get(name);if(raw){const value=JSON.parse(raw);require(object(value));const result=[value.default,...Object.values(value)].filter(v=>typeof v==='string'&&v);require(result.length>0);return [...new Set(result)] as string[];}const value=Deno.env.get(legacy);require(typeof value==='string'&&!!value);return [value];}catch{throw Error('QA_CONFIGURATION_UNAVAILABLE');}}
 function role(key:string){try{const p=key.split('.');require(p.length===3&&p.every(v=>/^[A-Za-z0-9_-]+$/.test(v)));return JSON.parse(atob(p[1].replace(/-/g,'+').replace(/_/g,'/')+'='.repeat((4-p[1].length%4)%4))).role;}catch{return null;}}
-require(/^fountain-qa-cloud-desktop-[a-f0-9]{16}$/.test(scope.workspaceId)&&HASH.test(scope.challengeHash)&&HASH.test(scope.nonceHash));
+require(/^fountain-qa-cloud-(?:desktop|native)-[a-f0-9]{16}$/.test(scope.workspaceId)&&HASH.test(scope.challengeHash)&&HASH.test(scope.nonceHash));
 require(Array.isArray(scope.emails)&&scope.emails.length===2&&new Set(scope.emails).size===2&&scope.emails.every((e:unknown)=>typeof e==='string'&&/^[a-z0-9][a-z0-9._+-]{0,63}@[a-z0-9][a-z0-9.-]{0,190}\.invalid$/.test(e)));
 require(Deno.env.get('SUPABASE_URL')===project);
 const publishableKey=envKeys('SUPABASE_PUBLISHABLE_KEYS','SUPABASE_ANON_KEY')[0],secrets=envKeys('SUPABASE_SECRET_KEYS','SUPABASE_SERVICE_ROLE_KEY'),serviceKey=secrets[0];

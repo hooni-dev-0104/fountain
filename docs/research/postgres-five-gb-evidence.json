@@ -1,0 +1,37 @@
+{
+  "size": 5000000000,
+  "storage_upload": true,
+  "full_storage_read": true,
+  "http_upload": false,
+  "http_range": true,
+  "http_full_download": false,
+  "backup_restore": true,
+  "chunk_size": 4194304,
+  "storage_read_size": 4194304,
+  "http_read_size": 65536,
+  "chunks": 1193,
+  "bytea_rows": 0,
+  "manifest_count": 1193,
+  "sha256": "71417e4e9e31f649a810892a7d99c48bee962483fec9c074a692017cd58a4200",
+  "http_range_details": {
+    "start": 4194191,
+    "end": 4194704,
+    "crossed_chunk_boundary": true
+  },
+  "backup_bytes": 5005598720,
+  "seconds": 368.92,
+  "peak_rss_bytes": 76087296,
+  "peak_rss_growth_bytes": 47235072,
+  "cleanup": true,
+  "source_sha256": {
+    "fountain/file_chunks.py": "009c554bb3fac28707066dc3ab159f26d41f36582ea8d06bb9aa71ff9a410f58",
+    "fountain/postgres.py": "961020f1b9357032ac8f03eadbd69f4156c64df8c9ec7f74ad2f3d4e532e831a",
+    "fountain/attachments.py": "e3d02c45c0c42e9d80346cb0f9bd0ee4727b414523bde389bab351e625742efd",
+    "fountain/postgres_backup.py": "b8bc38f158b447f29cbd6deb2e1da69db188e111c41bc30365e3a9d7f92ffc88",
+    "fountain/backup.py": "098421226a3f7e0ce551dd6ac0185600f70bf65672fab399a953f2237e572231",
+    "fountain/server.py": "9fa552bfcb2a46420b4fbce99f11de327631a01cb4c49c0020a375acde53b7cd",
+    "scripts/verify-postgres-large-files.py": "722cc1fd57a49c73d02461197b4e7576e01df2ac297373a83137a9f2d063feb1"
+  },
+  "source_commit": "19c6a25a47b0e62c0708fe6a3fb5638e544484f8",
+  "recorded_at": "2026-10-16T02:59:55.902527+00:00"
+}

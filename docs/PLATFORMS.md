@@ -6,11 +6,11 @@
 
 | 항목 | 확인한 구현 | 아직 필요한 작업 |
 | --- | --- | --- |
-| 웹 | Python HTTP/선택 HTTPS 서버, SQLite 원본 DB, 웹 편집기, 개별 계정·권한, 문서 공동 편집·오프라인 보관 | 인증서 운영·상시 접속 가능한 서버 배포 |
+| 웹 | Python HTTP/선택 HTTPS 서버, SQLite 또는 선택 PostgreSQL 원본 DB, 웹 편집기, 개별 계정·권한, 문서 공동 편집·오프라인 보관 | 인증서 운영·상시 접속 가능한 서버 배포 |
 | macOS·Windows | 공통 웹 화면과 재사용할 도메인 API | Electron 프로젝트·설치 파일·서명·업데이트·실제 OS 검증 |
 | iOS·Android | 작은 화면 대응 웹 UI | 모바일 프로젝트·네이티브 저장소/인증/파일 연결·키보드/실기기 검증 |
 | 기기 간 동기화 | 같은 서버를 사용하는 브라우저들은 같은 원본 DB를 읽고 문서 편집을 병합 | 네이티브 전송·인증 연결과 다섯 플랫폼 간 검증 |
-| Supabase | 공식 문서·한도 및 도입 경계 검토 | 프로젝트 선택·Auth 연결·Postgres 어댑터·RLS·이관·운영 검증 |
+| Supabase | 서울 프로젝트 생성, 비공개 스키마·강제 RLS·최소 권한 역할, 실제 TLS 연결·PostgreSQL 저장소·SQLite 백업 복원 검증 | 기존 데이터 이관·대용량 파일 저장소·공통 서버 운영·Supabase Auth 연결 |
 
 현재 저장소에는 Electron/Capacitor 패키지나 iOS/Android 빌드 프로젝트가 없다. 모바일 크기의 Chrome 테스트는 네이티브 앱 검증을 대신하지 않는다. `localhost:8787`은 접속하는 기기 자신을 가리키므로 휴대폰에서 같은 주소를 여는 것만으로 PC 데이터에 연결되지는 않는다.
 
@@ -35,7 +35,7 @@ flowchart TD
   D --- DC[기기별 캐시 · 미전송 변경]
   M --- MC[네이티브 영구 캐시 · 미전송 변경]
   API --> AUTH[공통 계정 / Supabase Auth 후보]
-  API --> DB[공통 원본 DB / Supabase Postgres 후보]
+  API --> DB[공통 원본 DB / SQLite 또는 Supabase Postgres]
   API --> FILES[첨부 저장소]
 ```
 
@@ -49,7 +49,7 @@ Electron과 Capacitor는 구현 후보로 선정한 방향이다. 설치하거�
 
 ## Supabase 도입 경계
 
-Supabase는 공통 Auth와 Postgres의 후보로 검토한다. 현재 SQLite 연결 설정을 Supabase URL로 바꾸는 것만으로 전환되지는 않는다.
+승인받은 무료 조직에 Fountain 프로젝트를 서울 리전으로 생성하고 PostgreSQL 저장소와 비공개 스키마를 연결했다. 현재 로컬 미리보기는 SQLite를 유지하며 Supabase Auth는 아직 후보 단계다. 선택 설치·실행·권한·검증과 운영 전환 조건은 [Supabase 안내](SUPABASE.md)에 기록했다.
 
 | 구성 | 도입 시 역할 | 보존해야 할 동작 |
 | --- | --- | --- |
@@ -65,7 +65,7 @@ Auth 연결에는 검증된 토큰의 사용자 ID를 사용하고, 사용자가
 
 Supabase의 [로그아웃 기본 scope는 global](https://supabase.com/docs/guides/auth/signout)이므로 기기별 로그아웃에는 `local`을 명시한다. 이미 발행한 access JWT는 만료 전까지 유효할 수 있다. 즉시 철회가 필요한 API는 서명·만료 검증에 더해 현재 세션의 유효성을 확인해야 한다. 공식 [세션 검증 안내](https://supabase.com/docs/guides/auth/sessions#how-to-ensure-an-access-token-jwt-cannot-be-used-after-a-user-signs-out)를 따른다. 로컬 cache binding은 주기적으로 갱신되는 access JWT 문자열 대신 안정적인 세션 식별자에 연결한다.
 
-현재 Store는 SQLite 트랜잭션·SQL·BLOB 읽기와 백업에 직접 의존한다. Postgres 어댑터와 첨부 저장소 경계를 먼저 분리한 후 같은 계약 검증을 실행해야 한다. 여러 REST 요청을 보내는 것만으로 기존 작업의 원자성이 유지된다고 간주하지 않는다. 이관은 기존 SQLite를 보존한 상태에서 임시 대상에 복원·개수·해시·권한·작업 재전송을 검증한 뒤 전환한다.
+Postgres 어댑터는 실제 트랜잭션·SAVEPOINT·작업공간 잠금으로 작업의 원자성을 보존한다. 첨부 조각과 presence의 저장소 경계를 공통 연산으로 분리했다. 여러 REST 요청으로 트랜잭션을 대신하지 않는다. 이관은 기존 SQLite를 보존한 상태에서 임시 대상의 개수·해시·권한·작업 재전송을 검증한 뒤 전환한다.
 
 [Supabase DB 백업은 Storage 객체 바이트를 포함하지 않는다](https://supabase.com/docs/guides/platform/backups). 기존 SQLite 전체 백업과 동등한 복구를 제공하려면 DB dump와 객체 파일·해시 manifest를 함께 보관하고 참조가 일치하는 시점으로 복원해야 한다. Free에서 관리형 자동 DB 백업까지 제공된다고 가정하지 않으며, 직접 내보내기와 실제 복원 검증이 필요하다.
 

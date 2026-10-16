@@ -37,7 +37,7 @@ def text(value, name, limit=10000):
 FEATURES = [
     ('pages', '블록 문서와 중첩 페이지', 'Plus', 'implemented', '페이지·문자 서식·중첩 블록·검색·휴지통·파일'),
     ('attachments', '대용량 첨부', 'Plus', 'implemented', '파일당 5GB 청크 업로드·이어 올리기·구간 다운로드·전체 백업'),
-    ('collaboration', '문서 실시간 공동 편집', 'Plus', 'implemented', '문자·서식 병합, 접속자·원격 커서·선택 표시와 권한 검사'),
+    ('collaboration', '문서 실시간 공동 편집', 'Plus', 'implemented', '문자·서식 병합, 원격 커서·선택, 내 작업 실행 취소·다시 실행과 권한 검사'),
     ('history', '페이지 버전 복원', 'Plus', 'implemented', '저장한 문서 버전 복원; 보존 기한 제한 없음'),
     ('databases', '데이터베이스와 보기', 'Plus', 'implemented', '속성·테이블·보드·달력·차트·목록·타임라인·하위 작업·의존관계'),
     ('forms', '사용자 지정 양식과 조건부 질문', 'Business', 'implemented', '조건에 맞는 질문 검증 후 데이터베이스 행 생성'),

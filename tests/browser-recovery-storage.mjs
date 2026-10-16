@@ -26,9 +26,9 @@ async function boot(page) {
     window.bundle = (tag, { page = true, digest = null } = {}) => {
       const target = 'import-page-' + tag, epoch = crypto.randomUUID(), resourceKey = FountainOffline.key(profile, target);
       const operation = { id: 'create-' + tag, kind: 'page.create', target_id: target, document_epoch: epoch,
-        body: { id: target, title: '가족 복구 ' + tag, parent_id: null }, depends_on: [] };
+        body: { id: target, title: '가족 복구 ' + tag, parent_id: null, permissions: { default: 'private', inherit: false, members: {}, groups: {} } }, depends_on: [] };
       const model = { id: target, title: operation.body.title, parent_id: null, owner_id: profile.memberId,
-        access_level: 4, revision: 0, locked: false, archived: false, blocks: [] };
+        permissions: structuredClone(operation.body.permissions), access_level: 4, revision: 0, locked: false, archived: false, blocks: [] };
       const snapshot = { epoch, seq: 0, state: FountainCollaboration.seedState([]), page: structuredClone(model), blocks: [], access_level: 4,
         workspace_id: profile.workspaceId, current_member_id: profile.memberId, session_binding: profile.cacheBinding };
       return { digest: digest || FountainCollaboration.sha256(tag),
@@ -77,6 +77,9 @@ try {
   assert.equal(first.result.duplicate, false); assert.equal(first.result.operationIds.length, 2); assert.deepEqual(first.result.pageIds, ['import-page-first']);
   assert.ok(first.records.every(record => record.status === 'paused')); assert.equal(first.pending.length, 0);
   assert.equal(first.all.operations.length, 1); assert.equal(first.all.snapshots[0].snapshot.blocks.length, 0);
+  assert.deepEqual(first.all.snapshots[0].snapshot.page.permissions, { default: 'private', inherit: false, members: {}, groups: {} });
+  assert.deepEqual(first.all.localPages[0].metadata.page.permissions, first.all.snapshots[0].snapshot.page.permissions);
+  assert.deepEqual(first.records.find(record => record.operation.kind === 'page.create').operation.body.permissions, first.all.snapshots[0].snapshot.page.permissions);
   assert.equal(first.all.drafts[0].draft.blocks[0].text, '미전송 본문 🏠'); assert.equal(first.events.length, 1); assert.equal(first.events[0].recoveryImport, true);
   stage = 'duplicate receipt wins despite newly prepared fresh IDs';
   const duplicate = await page.evaluate(async () => FountainOffline.stageRecoveryImport(profile, bundle('new-preparation', { digest: firstBundle.digest })));
@@ -119,6 +122,24 @@ try {
     try { await FountainOffline.stageRecoveryImport(profile, bundle('cancel'), { isCurrent: () => current }); } finally { IDBObjectStore.prototype.add = add; }
   }, 'AbortError'));
   assert.deepEqual(await page.evaluate(() => readAll()), baseline);
+  stage = 'fixed private import ACL rejects sharing grants and malformed maps atomically';
+  for (const location of ['body', 'metadata', 'snapshot']) for (const acl of [
+    null, { default: 'workspace', inherit: false, members: {}, groups: {} },
+    { default: 'private', inherit: false, members: { 'other-family-member': 'view' }, groups: {} },
+    { default: 'private', inherit: false, members: {}, groups: { family: 'full' } },
+    { default: 'private', inherit: true, members: {}, groups: {} },
+    { default: 'private', inherit: false, members: [], groups: {} },
+    { default: 'private', inherit: false, members: {}, groups: {}, public: true }
+  ]) {
+    assert.ok(await page.evaluate(async ({ location, acl }) => {
+      const value = bundle('forged_acl');
+      const object = location === 'body' ? value.mutations[1].operation.body
+        : location === 'metadata' ? value.localPages[0].metadata.page : value.localPages[0].snapshot.page;
+      if (acl === null) delete object.permissions; else object.permissions = acl;
+      try { await FountainOffline.stageRecoveryImport(profile, value); return false; } catch { return true; }
+    }, { location, acl }));
+    assert.deepEqual(await page.evaluate(() => readAll()), baseline);
+  }
   stage = 'malformed seed, scope, dependency graph and forged receipt rejection';
   for (const mutation of [
     value => { value.localPages[0].snapshot.blocks = [{ id: 'old', text: 'forged canonical' }]; },

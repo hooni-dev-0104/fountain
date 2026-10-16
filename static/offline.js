@@ -616,6 +616,10 @@
     if (new TextEncoder().encode(JSON.stringify(bundle)).byteLength > 64 * 1024 * 1024) throw new RangeError('Recovery staging exceeds its byte limit');
     const value = copy(bundle), id = namespace(profile), pages = [], drafts = [];
     const opFields = new Set(['id', 'kind', 'target_id', 'database_id', 'depends_on', 'body', 'base', 'document_epoch', 'base_rows']);
+    const privatePermissions = acl => acl && typeof acl === 'object' && !Array.isArray(acl)
+      && Object.keys(acl).length === 4 && Object.keys(acl).every(field => ['default', 'inherit', 'members', 'groups'].includes(field))
+      && acl.default === 'private' && acl.inherit === false
+      && ['members', 'groups'].every(field => acl[field] && typeof acl[field] === 'object' && !Array.isArray(acl[field]) && Object.keys(acl[field]).length === 0);
     const operations = new Map(), created = new Map(), localPages = new Map(), draftIDs = new Set();
     const fail = message => { throw new DOMException(message, 'ConstraintError'); };
     const resourceID = resourceKey => {
@@ -631,11 +635,12 @@
           || typeof op.target_id !== 'string' || !op.target_id || !op.body || Array.isArray(op.body)
           || !Array.isArray(op.depends_on || []) || (op.depends_on || []).length > 50
           || operations.has(op.id)) throw new TypeError('Invalid fresh recovery mutation');
-      const bodyFields = op.kind === 'page.create' ? ['id', 'title', 'icon', 'cover', 'parent_id', 'teamspace_id']
+      const bodyFields = op.kind === 'page.create' ? ['id', 'title', 'icon', 'cover', 'parent_id', 'teamspace_id', 'permissions']
         : op.kind === 'page.patch' ? ['title', 'icon', 'cover', 'favorite']
         : op.kind === 'row.create' ? ['id', 'properties', 'parent_row_id', 'depends_on']
         : op.kind === 'row.patch' ? ['properties', 'parent_row_id', 'depends_on'] : [];
       if (Object.keys(op.body).some(field => !bodyFields.includes(field))) throw new TypeError('Recovery mutations cannot import authority or receipts');
+      if (op.kind === 'page.create' && !privatePermissions(op.body.permissions)) throw new TypeError('Recovered pages must use fixed private permissions');
       if (kind !== (op.kind.startsWith('page.') ? 'page' : 'database') || resourceID(item.resourceKey) !== (kind === 'page' ? op.target_id : op.database_id)) throw new DOMException('Recovery mutation scope does not match', 'SecurityError');
       if (op.kind.endsWith('.create')) {
         if (created.has(op.target_id) || op.body.id !== op.target_id) fail('Recovery creation IDs must be new and unique');
@@ -671,7 +676,7 @@
       if (!item || Object.keys(item).some(field => !['resourceKey', 'metadata', 'snapshot', 'operations', 'drafts'].includes(field))
           || !matches({ id }, item.resourceKey) || localPages.has(item.resourceKey)) throw new TypeError('Invalid imported local page');
       const metadata = item.metadata, snapshot = item.snapshot, target = resourceID(item.resourceKey), create = created.get(target);
-      const pageFields = new Set(['id', 'title', 'icon', 'cover', 'parent_id', 'teamspace_id', 'owner_id', 'access_level', 'revision', 'blocks', 'locked', 'archived', 'favorite', 'created_at', 'updated_at']);
+      const pageFields = new Set(['id', 'title', 'icon', 'cover', 'parent_id', 'teamspace_id', 'permissions', 'owner_id', 'access_level', 'revision', 'blocks', 'locked', 'archived', 'favorite', 'created_at', 'updated_at']);
       if (!metadata || Object.keys(metadata).some(field => !['page', 'initial_epoch', 'create_operation_id', 'localOnly'].includes(field))
           || !create || create.kind !== 'page.create' || metadata.create_operation_id !== create.id || metadata.localOnly !== true
           || typeof metadata.initial_epoch !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(metadata.initial_epoch)
@@ -687,8 +692,8 @@
           || !Array.isArray(snapshot.blocks) || snapshot.blocks.length || !Array.isArray(snapshot.page.blocks) || snapshot.page.blocks.length
           || !Array.isArray(item.operations) || item.operations.length > 10000 || !Array.isArray(item.drafts)
           || !globalThis.FountainCollaboration || canonical(snapshot.state) !== canonical(FountainCollaboration.seedState([]))) throw new TypeError('Recovery local page requires a matching empty creation seed');
-      for (const field of ['id', 'title', 'icon', 'cover', 'parent_id', 'teamspace_id']) if (Object.hasOwn(create.body, field) && canonical(create.body[field]) !== canonical(metadata.page[field])) fail('Recovery page metadata differs from creation');
-      if (Object.hasOwn(create.body, 'permissions') || Object.hasOwn(metadata.page, 'permissions') || Object.hasOwn(snapshot.page, 'permissions')) throw new TypeError('Recovery cannot import page permissions');
+      for (const field of ['id', 'title', 'icon', 'cover', 'parent_id', 'teamspace_id', 'permissions']) if (Object.hasOwn(create.body, field) && canonical(create.body[field]) !== canonical(metadata.page[field])) fail('Recovery page metadata differs from creation');
+      if (!privatePermissions(metadata.page.permissions) || !privatePermissions(snapshot.page.permissions)) throw new TypeError('Recovery page snapshots must retain fixed private permissions');
       let state = snapshot.state;
       const bodyIDs = new Set();
       for (let offset = 0; offset < item.operations.length; offset += 1000) {

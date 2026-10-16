@@ -1,4 +1,3 @@
--- DRAFT ONLY. Root applies as one reviewed migration; this file executes nothing.
 -- Trusted server authorization, not end-user RLS. Auth tables are SELECT-only:
 -- create/password changes use official GoTrue Admin HTTP outside SQL transactions.
 -- Protected app_metadata + preallocated UUID permit exact unknown-ACK recovery.

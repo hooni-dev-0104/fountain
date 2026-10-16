@@ -287,6 +287,17 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     private static let ownership = NSRecursiveLock()
     private static weak var currentOwner: FountainNative?
     private static var exportsCleaned = false
+#if DEBUG
+    // Native XCTest-only creation-time seam; never a Capacitor method or URL/
+    // credential override. Release builds contain neither storage nor setter.
+    private static var qaProtocolClass: URLProtocol.Type?
+    static func setQAProtocolClass(_ value: URLProtocol.Type?) throws {
+        guard ProcessInfo.processInfo.environment["FOUNTAIN_QA"] == "1",
+              ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] == "Fountain QA" else { throw FountainFailure.invalid }
+        ownership.lock(); defer { ownership.unlock() }
+        qaProtocolClass = value
+    }
+#endif
     let identifier = "FountainNative"
     let jsName = "FountainNative"
     let pluginMethods: [CAPPluginMethod] = ["getConfiguration", "configure", "request", "cancel", "download", "saveData", "outboxOpen", "stageDelta", "commitDelta", "readPage", "recoveryInventory", "recoveryExport"].map {
@@ -334,6 +345,13 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
 
     private func initializeSession() {
         let configuration = URLSessionConfiguration.ephemeral
+#if DEBUG
+        Self.ownership.lock()
+        if ProcessInfo.processInfo.environment["FOUNTAIN_QA"] == "1",
+           ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] == "Fountain QA",
+           let protocolClass = Self.qaProtocolClass { configuration.protocolClasses = [protocolClass] }
+        Self.ownership.unlock()
+#endif
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
         configuration.urlCredentialStorage = nil

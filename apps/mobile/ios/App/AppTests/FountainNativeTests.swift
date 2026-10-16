@@ -2,7 +2,125 @@ import XCTest
 import UIKit
 import WebKit
 import SQLite3
+import Darwin
+import Security
 @testable import App
+
+#if DEBUG
+// No global URLProtocol registration, TLS exception, shared cookie storage or
+// renderer-accessible nonce. Only the opted-in native session installs this.
+private final class FountainCloudQAProtocol: URLProtocol, URLSessionDataDelegate, @unchecked Sendable {
+    private static let lock = NSLock()
+    private static var nonce: String?
+    private static var intercepted = 0
+    private static var credentialRequests = 0
+    private static var candidates = 0
+    private static var fixedMatches = 0
+    private enum Delivery { case response(HTTPURLResponse), bytes(Data), finished, failed(Int) }
+    private let state = NSRecursiveLock()
+    private var clientThread: Thread?
+    private var deliveries: [Delivery] = []
+    private var drainScheduled = false
+    private var terminalQueued = false
+    private var forwarding: URLSession?
+    private var forwardingTask: URLSessionDataTask?
+    private var stopped = false
+    private var received = 0
+    private static let host = "ehnovtfadpkwtubmwltl.supabase.co"
+    private static let prefix = "/functions/v1/fountain-api"
+    static func install(_ value: String?) {
+        lock.lock(); defer { lock.unlock() }
+        nonce = value; intercepted = 0; credentialRequests = 0; candidates = 0; fixedMatches = 0
+    }
+    static func counts() -> (Int, Int) { lock.lock(); defer { lock.unlock() }; return (intercepted, credentialRequests) }
+    static func routingCounts() -> [String: Int] { lock.lock(); defer { lock.unlock() }; return ["protocolCandidates": candidates, "protocolFixedMatches": fixedMatches] }
+    override class func canInit(with request: URLRequest) -> Bool {
+        guard let url = request.url else { return false }
+        let matches = url.scheme == "https" && url.host == host && (url.port == nil || url.port == 443) && url.path.hasPrefix(prefix + "/")
+        lock.lock(); candidates += 1; if matches { fixedMatches += 1 }; lock.unlock()
+        return matches
+    }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        state.lock(); clientThread = Thread.current; state.unlock()
+        Self.lock.lock(); let nonce = Self.nonce; Self.lock.unlock()
+        guard let nonce = nonce, let url = request.url, let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              components.percentEncodedPath.hasPrefix(Self.prefix + "/"), url.user == nil, url.password == nil, url.fragment == nil,
+              request.value(forHTTPHeaderField: "Origin") == nil, request.value(forHTTPHeaderField: "Authorization") == nil else { fail(); return }
+        let path = String(components.percentEncodedPath.dropFirst(Self.prefix.count)) + (components.percentEncodedQuery.map { "?" + $0 } ?? "")
+        guard path.utf8.count <= 8192, path.unicodeScalars.allSatisfy({ $0.value >= 33 && $0.value <= 126 }),
+              path.hasPrefix("/api/") || path.hasPrefix("/sites/") || path.hasPrefix("/forms/"),
+              let destination = URL(string: "https://" + Self.host + "/functions/v1/fountain-verify/wire") else { fail(); return }
+        var wire = request; wire.url = destination; wire.timeoutInterval = min(request.timeoutInterval, 45)
+        wire.setValue(nonce, forHTTPHeaderField: "X-Fountain-Verify")
+        wire.setValue(path, forHTTPHeaderField: "X-Fountain-Test-Path")
+        wire.setValue("1", forHTTPHeaderField: "X-Fountain-Request")
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = []; configuration.httpCookieStorage = nil; configuration.httpShouldSetCookies = false
+        configuration.urlCredentialStorage = nil; configuration.urlCache = nil; configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.timeoutIntervalForRequest = 45; configuration.timeoutIntervalForResource = 45
+        state.lock(); guard !stopped else { state.unlock(); return }
+        let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+        forwarding = session; forwardingTask = session.dataTask(with: wire); let pending = forwardingTask; state.unlock()
+        Self.lock.lock(); Self.intercepted += 1
+        if path == "/api/session" && request.httpMethod == "POST" { Self.credentialRequests += 1 }
+        Self.lock.unlock(); pending?.resume()
+    }
+    override func stopLoading() {
+        state.lock(); stopped = true; deliveries.removeAll(); let session = forwarding; forwarding = nil; let pending = forwardingTask; forwardingTask = nil; state.unlock()
+        pending?.cancel(); session?.invalidateAndCancel()
+    }
+    private func enqueue(_ delivery: Delivery, terminal: Bool = false) {
+        state.lock()
+        guard !stopped, !terminalQueued, let thread = clientThread else { state.unlock(); return }
+        if terminal { terminalQueued = true }
+        deliveries.append(delivery)
+        let schedule = !drainScheduled; drainScheduled = true; state.unlock()
+        if schedule { perform(#selector(drainQAEvents), on: thread, with: nil, waitUntilDone: false, modes: [RunLoop.Mode.default.rawValue, RunLoop.Mode.common.rawValue]) }
+    }
+    @objc private func drainQAEvents() {
+        while true {
+            state.lock()
+            guard Thread.current === clientThread, !stopped, !deliveries.isEmpty else { drainScheduled = false; state.unlock(); return }
+            let delivery = deliveries.removeFirst()
+            // The recursive lock covers the final client call: a concurrent
+            // stop cannot pass the gate between checking and delivering. A
+            // terminal queued behind data does not discard earlier data.
+            switch delivery {
+            case .response(let response): client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            case .bytes(let data): client?.urlProtocol(self, didLoad: data)
+            case .finished: stopped = true; client?.urlProtocolDidFinishLoading(self)
+            case .failed(let code): stopped = true; client?.urlProtocol(self, didFailWithError: NSError(domain: "FountainCloudQA", code: code))
+            }
+            state.unlock()
+        }
+    }
+    private func fail() {
+        enqueue(.failed(1), terminal: true)
+        state.lock(); let session = forwarding; forwarding = nil; let pending = forwardingTask; forwardingTask = nil; state.unlock()
+        pending?.cancel(); session?.invalidateAndCancel()
+    }
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil); fail()
+    }
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse, completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        guard let response = response as? HTTPURLResponse, let original = request.url,
+              response.url?.scheme == "https", response.url?.host == Self.host, response.url?.path == "/functions/v1/fountain-verify/wire",
+              let mapped = HTTPURLResponse(url: original, statusCode: response.statusCode, httpVersion: "HTTP/1.1", headerFields: response.allHeaderFields.reduce(into: [String: String]()) { if let key = $1.key as? String { $0[key] = String(describing: $1.value) } }) else { completionHandler(.cancel); fail(); return }
+        state.lock(); let active = !stopped; state.unlock(); guard active else { completionHandler(.cancel); return }
+        enqueue(.response(mapped)); completionHandler(.allow)
+    }
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        state.lock(); received += data.count; let active = !stopped, bounded = received <= 16 * 1024 * 1024; state.unlock()
+        guard active else { return }; guard bounded else { fail(); return }; enqueue(.bytes(data))
+    }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        state.lock(); let active = !stopped; forwarding = nil; forwardingTask = nil; state.unlock()
+        guard active else { return }; enqueue(error == nil ? .finished : .failed(2), terminal: true)
+        session.finishTasksAndInvalidate()
+    }
+}
+#endif
 
 // Runs only on a freshly-created Fountain QA Simulator. Fixtures never share a
 // server origin, SQLite file or data container with an installed user workspace.
@@ -316,6 +434,138 @@ final class FountainNativeTests: XCTestCase {
     }
 
 #if DEBUG
+    private func cloudSessionKeychainStatus() -> OSStatus {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: (Bundle.main.bundleIdentifier ?? "dev.fountain.workspace") + ".native-session",
+            kSecAttrAccount as String: "https://ehnovtfadpkwtubmwltl.supabase.co",
+            kSecAttrSynchronizable as String: false,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecReturnData as String: false, kSecReturnAttributes as String: false,
+            kSecReturnRef as String: false, kSecReturnPersistentRef as String: false,
+            kSecUseAuthenticationUI as String: kSecUseAuthenticationUIFail
+        ]
+        return SecItemCopyMatching(query as CFDictionary, nil)
+    }
+    func testCloudKeychainEligibility() throws {
+        let status = cloudSessionKeychainStatus()
+        let documents = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let result = documents.appendingPathComponent("fountain-cloud-keychain-status.json")
+        try JSONSerialization.data(withJSONObject: ["status": Int(status)], options: [.sortedKeys]).write(to: result, options: [.atomic, .completeFileProtection])
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: result.path)
+        XCTAssertTrue(status == errSecSuccess || status == errSecItemNotFound, "Simulator Keychain eligibility failed; inspect numeric OSStatus evidence")
+    }
+    @MainActor private func freshCloudView(clearOrigin: Bool) throws {
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene, let window = scene.windows.first,
+              let controller = UIStoryboard(name: "Main", bundle: Bundle.main).instantiateInitialViewController() as? FountainBridgeViewController else { throw NSError(domain: "FountainCloudQA", code: 3) }
+        (window.rootViewController as? FountainBridgeViewController)?.shutdownNative()
+        if clearOrigin { UserDefaults.standard.removeObject(forKey: "FountainNative.origin") }
+        window.rootViewController = controller; window.makeKeyAndVisible(); controller.loadViewIfNeeded()
+    }
+    @MainActor private func waitCloud(_ body: String, arguments: [String: Any] = [:], attempts: Int = 180) async throws {
+        for _ in 0..<attempts {
+            if (try? await script(body, arguments: arguments)) as? Bool == true { return }
+            try await Task.sleep(nanoseconds: 250_000_000)
+        }
+        throw NSError(domain: "FountainCloudQA", code: 4)
+    }
+    @MainActor func testActualCloudBundledUILoginEditReloadAndLogout() async throws {
+        let manager = FileManager.default, documents = try manager.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let inputURL = documents.appendingPathComponent("fountain-cloud-client-input.json"), resultURL = documents.appendingPathComponent("fountain-cloud-client-result.json")
+        try XCTSkipUnless(manager.fileExists(atPath: inputURL.path), "Opt-in private native cloud client input required")
+        if manager.fileExists(atPath: resultURL.path) { try manager.removeItem(at: resultURL) }
+        let descriptor = Darwin.open(inputURL.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard descriptor >= 0 else { throw NSError(domain: "FountainCloudQAInput", code: 1) }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true); defer { try? handle.close() }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG), info.st_mode & 0o777 == 0o600,
+              info.st_uid == getuid(), info.st_size > 0, info.st_size <= 16384, unlink(inputURL.path) == 0 else { throw NSError(domain: "FountainCloudQAInput", code: 2) }
+        guard let inputData = try handle.read(upToCount: 16385), inputData.count == Int(info.st_size), (try handle.read(upToCount: 1))?.isEmpty != false,
+              let input = (try? JSONSerialization.jsonObject(with: inputData)) as? [String: String],
+              Set(input.keys) == Set(["origin", "workspaceId", "email", "password", "bootstrapNonce", "nonce", "phase"]),
+              input["origin"] == "https://ehnovtfadpkwtubmwltl.supabase.co", input["phase"] == "ios",
+              let workspace = input["workspaceId"], workspace.range(of: "^fountain-qa-cloud-native-[a-f0-9]{16}$", options: .regularExpression) != nil,
+              let email = input["email"], email.hasSuffix(".invalid"), email.count <= 254,
+              let password = input["password"], password.count >= 10, password.count <= 1024,
+              let nonce = input["nonce"], nonce.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil,
+              input["bootstrapNonce"]?.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else { throw NSError(domain: "FountainCloudQAInput", code: 3) }
+        let suffix = String(workspace.suffix(16)), previousText = "Android native QA " + suffix, editedText = "iOS native QA " + suffix
+        var evidence: [String: Any] = ["actualRunCompleted": false, "outboxEnabled": false], stage = "install", authMayExist = false
+        FountainCloudQAProtocol.install(nonce); try FountainNative.setQAProtocolClass(FountainCloudQAProtocol.self)
+        defer { let controller = (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.windows.first?.rootViewController as? FountainBridgeViewController; controller?.shutdownNative(); try? FountainNative.setQAProtocolClass(nil); FountainCloudQAProtocol.install(nil) }
+        func nativeRead(_ path: String, expectedText: String? = nil) async throws -> Bool {
+            (try await script("const r=await FountainTransport.request(path); if(r.status!==200||r.headers.has('set-cookie'))return false;const v=await r.json();if(expected!==null)return v.page?.id==='qa-native-shared'&&v.blocks?.some(b=>b.type==='paragraph'&&b.text===expected);return v.authenticated===true&&v.workspace_id===workspace&&v.member?.role==='owner'&&v.member?.active===true;", arguments: ["path": path, "expected": expectedText.map { $0 as Any } ?? NSNull(), "workspace": workspace])) as? Bool == true
+        }
+        func logoutUI() async throws {
+            _ = try await script("document.querySelector('[data-action=\"settings\"]')?.click();return true;")
+            try await waitCloud("const b=document.querySelector('[data-action=\"settings-tab\"][data-tab=\"security\"]');if(!b)return false;b.click();return true;")
+            try await waitCloud("const b=document.querySelector('[data-action=\"logout\"]');if(!b)return false;b.click();return true;")
+            try await waitCloud("if(!document.querySelector('#login-form'))return false;const r=await FountainTransport.request('/api/session');const v=await r.json();return r.status===200&&v.authenticated===false&&!r.headers.has('set-cookie');")
+        }
+        do {
+            try freshCloudView(clearOrigin: true)
+            try await waitCloud("return !!document.querySelector('#native-configuration-form input[name=origin]');")
+            _ = try await script("const f=document.querySelector('#native-configuration-form');f.elements.origin.value=origin;f.requestSubmit();return true;", arguments: ["origin": input["origin"]!])
+            stage = "private-gate"
+            try await waitCloud("return !!document.querySelector('#login-form input[name=email]');")
+            let before = FountainCloudQAProtocol.counts(); guard before.0 > 0, before.1 == 0 else { throw NSError(domain: "FountainCloudQA", code: 5) }
+            stage = "ui-login"
+            authMayExist = true
+            _ = try await script("const f=document.querySelector('#login-form');f.elements.email.value=email;f.elements.password.value=password;f.requestSubmit();return true;", arguments: ["email": email, "password": password])
+            try await waitCloud("return state.loaded===true&&state.session?.authenticated===true;")
+            guard try await nativeRead("/api/session") else { throw NSError(domain: "FountainCloudQA", code: 6) }; evidence["sessionVerified"] = true
+            stage = "shared-page"
+            try await waitCloud("const b=document.querySelector('[data-action=\"page\"][data-id=\"qa-native-shared\"]');if(!b)return false;b.click();return true;")
+            try await waitCloud("return state.page?.id==='qa-native-shared'&&[...document.querySelectorAll('.block-content')].some(e=>e.innerText===expected);", arguments: ["expected": previousText])
+            evidence["androidSharedTextRead"] = true; stage = "ui-edit"
+            _ = try await script("const e=[...document.querySelectorAll('.block-content')].find(e=>e.innerText===previous);if(!e||e.contentEditable!=='true')return false;e.focus();e.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,inputType:'insertText',data:text}));e.textContent=text;e.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text}));return true;", arguments: ["previous": previousText, "text": editedText])
+            for _ in 0..<180 { if (try? await nativeRead("/api/pages/qa-native-shared", expectedText: editedText)) == true { evidence["persistedEdit"] = true; break }; try await Task.sleep(nanoseconds: 250_000_000) }
+            guard evidence["persistedEdit"] as? Bool == true else { throw NSError(domain: "FountainCloudQA", code: 7) }
+            stage = "keychain-reload"; try freshCloudView(clearOrigin: false)
+            try await waitCloud("return state.loaded===true&&state.session?.authenticated===true;")
+            guard try await nativeRead("/api/session"), try await nativeRead("/api/pages/qa-native-shared", expectedText: editedText) else { throw NSError(domain: "FountainCloudQA", code: 8) }
+            evidence["newNativeOwnerKeychainSession"] = true
+            let privacy = try await script("const c=await Capacitor.registerPlugin('FountainNative').getConfiguration();return {cookieEmpty:document.cookie==='',outboxDisabled:c.outboxEnabled===false};") as? [String: Bool]
+            guard privacy?["cookieEmpty"] == true, privacy?["outboxDisabled"] == true else { throw NSError(domain: "FountainCloudQA", code: 9) }
+            evidence["rendererCookieEmpty"] = true; stage = "ui-logout"; try await logoutUI(); authMayExist = false
+            evidence["logoutVerified"] = true; evidence["actualRunCompleted"] = true
+        } catch {
+            // Exact native service/account existence/entitlement status only.
+            // Explicitly request no data, attributes, references or UI, and do
+            // not pass a result pointer: cookie material cannot reach this test.
+            evidence["keychainQueryOSStatus"] = Int(cloudSessionKeychainStatus())
+            // Only fixed booleans, bounded counts, HTTP status and an explicit
+            // native error-code allowlist leave the failed UI. No DOM text,
+            // error messages, URLs, input fields or response bodies are saved.
+            let diagnostic = try? await script("""
+            const d={transportPresent:typeof globalThis.FountainTransport==='object',transportFactoryPresent:typeof globalThis.FountainNativeTransport==='object',statePresent:false,pluginAvailable:false,scriptLoadedCount:Math.min(document.scripts.length,100),configurationForm:!!document.querySelector('#native-configuration-form'),loginForm:!!document.querySelector('#login-form'),appScriptPresent:[...document.scripts].some(s=>{try{return new URL(s.src).pathname==='/app.js';}catch{return false;}})};
+            try{d.statePresent=typeof state==='object';}catch{}
+            const text=document.querySelector('#main')?.textContent||'';
+            d.knownAssetLoadError=text.includes('앱 파일을 열지 못했습니다.');d.knownInvalidAssetList=text.includes('앱 자산 목록이 올바르지 않습니다.');d.knownNativeOnlyError=text.includes('이 번들은 Fountain 네이티브 앱에서 열어 주세요.');d.knownStorageRecoveryError=text.includes('기기 저장 기록을 아직 열지 못했습니다.');
+            const codes=new Set(['NATIVE_INVALID','NATIVE_STALE','NATIVE_CANCELLED','NATIVE_NETWORK','NATIVE_TIMEOUT','NATIVE_STORAGE','NATIVE_DURABLE_INVALIDATION_FAILED','NATIVE_REDIRECT','NATIVE_TOO_LARGE','NATIVE_INCOMPLETE','NATIVE_BUSY','NATIVE_REVOKE','NATIVE_UNAVAILABLE','NETWORK_ERROR','TIMEOUT','SESSION_CHANGED','SESSION_REVOCATION_PENDING','OUTBOX_ACCESS_REQUIRED']);
+            const safeCode=e=>codes.has(e?.code)?e.code:'UNKNOWN';
+            const bounded=p=>Promise.race([p,new Promise((_,reject)=>setTimeout(()=>reject({code:'NATIVE_TIMEOUT'}),6000))]);
+            try{d.pluginAvailable=!!globalThis.Capacitor?.isPluginAvailable('FountainNative');if(d.pluginAvailable){const c=await bounded(Capacitor.registerPlugin('FountainNative').getConfiguration());d.pluginOriginMatches=c.origin===origin;d.pluginGeneration=Number.isSafeInteger(c.generation)&&c.generation>=0?c.generation:-1;d.pluginOutboxDisabled=c.outboxEnabled===false;}}catch(e){d.configurationErrorCode=safeCode(e);}
+            if(d.transportPresent){d.transportOriginMatches=FountainTransport.origin===origin;d.transportGeneration=Number.isSafeInteger(FountainTransport.generation)?FountainTransport.generation:-1;try{const r=await bounded(FountainTransport.request('/api/session',{timeoutMs:5000}));d.probeHTTPStatus=Number.isInteger(r.status)&&r.status>=100&&r.status<=599?r.status:0;d.probeSetCookieExposed=r.headers.has('set-cookie');await r.body?.cancel();}catch(e){d.probeErrorCode=safeCode(e);}}
+            return d;
+            """, arguments: ["origin": "https://ehnovtfadpkwtubmwltl.supabase.co"])
+            if let diagnostic = diagnostic as? [String: Any] { evidence["diagnostics"] = diagnostic } else { evidence["diagnosticsUnavailable"] = true }
+            evidence["routingDiagnostics"] = FountainCloudQAProtocol.routingCounts()
+            if authMayExist {
+                do { try await logoutUI(); evidence["logoutVerified"] = true; authMayExist = false }
+                catch { evidence["logoutVerified"] = (try? await script("try{const r=await FountainTransport.request('/api/session',{method:'DELETE',headers:{'Content-Type':'application/json'},body:'{}'});return r.status===200&&(await r.json()).authenticated===false;}catch{return false;}")) as? Bool == true }
+            }
+            // Static stage only: never attach JavaScript/provider errors, input,
+            // password, nonce, Cookie or response bodies to XCTest diagnostics.
+            evidence["failedStageSHA256"] = FountainOutbox.hash(Data(stage.utf8)); XCTFail("Native cloud client verification failed; inspect boolean evidence")
+        }
+        let counts = FountainCloudQAProtocol.counts(); evidence["interceptedRequests"] = counts.0; evidence["credentialRequests"] = counts.1
+        evidence["textSHA256"] = FountainOutbox.hash(Data(editedText.utf8))
+        try JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys]).write(to: resultURL, options: [.atomic, .completeFileProtection])
+        try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: resultURL.path)
+        var excluded = URLResourceValues(); excluded.isExcludedFromBackup = true; var protectedResult = resultURL; try protectedResult.setResourceValues(excluded)
+    }
+
     func testActualAnonymousCloudDirectNativeRoute() async throws {
         let manager = FileManager.default
         let documents = try manager.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)

@@ -4,9 +4,11 @@
 
 ## 현재 범위와 완료 기준
 
-2026-10-17 확인 시점의 Supabase 프로젝트는 `ehnovtfadpkwtubmwltl`이다. `fountain-api` version 9에 문서·DB·공동 편집·동기화·첨부·presence/SSE·AI·계정·백업·연동 권한 관리·SCIM bearer handler가 연결됐다. 서비스 객체는 actor를 공유하지 않고 사람의 요청은 각 쿠키, SCIM은 별도 위임 토큰으로 인증한다. 운영 원본은 entities 153개·meta 6개, 실사용 Auth 사용자·identity mapping은 0개다. `fountain-files`는 비공개 bucket이며 QA 정리 후 객체는 0개다. `/health`의 `ready:false`는 전체 전환이 아직 끝나지 않았다는 뜻이다.
+2026-10-17 확인 시점의 Supabase 프로젝트는 `ehnovtfadpkwtubmwltl`이다. `fountain-api` version 10에 문서·DB·공동 편집·동기화·첨부·presence/SSE·AI·계정·백업·연동 권한 관리·SCIM bearer handler가 연결됐다. 서비스 객체는 actor를 공유하지 않고 사람의 요청은 각 쿠키, SCIM은 별도 위임 토큰으로 인증한다. 운영 원본은 entities 153개·meta 6개, 실사용 Auth 사용자·identity mapping은 0개다. `fountain-files`는 비공개 bucket이며 QA 정리 후 객체는 0개다. `/health`의 `ready:false`는 전체 전환이 아직 끝나지 않았다는 뜻이다.
 
-Auth/Vault·Store부터 계정 생성·관리·백업·분할 백업·연동 권한 관리·예약 실행·SCIM·파일 물리 정리까지 migration 25개를 적용했다. 적용된 SQL은 `supabase/migrations`의 실제 버전 파일로만 보관하고 중복 초안은 제거했다. 공개 RPC는 service_role 전용이며, private 테이블은 강제 RLS와 직접 접근 거절을 유지한다. 익명·일반 로그인 역할의 실행 권한 거절, 연결되지 않은 세션의 백업/정리 거절 등 실제 PostgreSQL 검사 10개가 통과했다. 이 구조는 서버의 신뢰된 권한 검사이며 최종 사용자별 RLS를 사용한다는 뜻이 아니다.
+Auth/Vault·Store부터 계정 생성·관리·백업·분할 백업·연동 권한 관리·예약 실행·SCIM·파일 물리 정리·기존 inline 첨부 읽기까지 migration 26개를 적용했다. 적용된 SQL은 `supabase/migrations`의 실제 버전 파일로만 보관하고 중복 초안은 제거했다. 공개 RPC는 service_role 전용이며, private 테이블은 강제 RLS와 직접 접근 거절을 유지한다. 익명·일반 로그인 역할의 실행 권한 거절, 연결되지 않은 세션의 백업/정리 거절 등 실제 PostgreSQL 검사 10개가 통과했다. 이 구조는 서버의 신뢰된 권한 검사이며 최종 사용자별 RLS를 사용한다는 뜻이 아니다.
+
+원본 첨부 1개·80바이트는 이미 PostgreSQL의 inline base64 형식으로 저장돼 있으며 외부 chunk 행은 0개다. 일반 Store snapshot에서 이 바이트를 숨기는 계약은 유지하면서 전용 인증 RPC와 64KiB 다운로드 경로를 추가했다. 별도 계정 두 개로 최대 5,000,000바이트 전체 SHA·공유 권한·HEAD·Range·오류를 확인했고 실제 SQL의 인증 철회·원본 변경 거절 19개도 통과했다. 읽기는 원본·revision·receipt·쿼터를 바꾸지 않으며 Storage 객체를 만들지 않는다. 원본 첨부는 portable 백업과 동일하고, 원본 소유자 계정으로의 최종 접근 검증은 아직 남아 있다. [실행 결과·범위](research/inline-attachment-verification.md).
 
 기초 실제 클라우드 QA에서는 비밀번호 로그인·신뢰된 기존 역할 연결·동시 CAS·정확한 receipt 재시도·refresh lease·폐기된 세션 거절을 확인했다. 후속 문서·버전·typed row/수식·ACL·공동 편집/Undo·sync 10개 그룹, presence 6개, SSE 2개가 통과했다. 실제 비공개 Storage의 9MiB+123바이트 업로드·전체 SHA-256·청크 경계 Range·HEAD·416·다른 멤버 거절·물리 삭제, Realtime WebSocket 구독과 변경 알림도 확인했다. Realtime은 본문 없이 재조회를 깨운다.
 
@@ -82,7 +84,9 @@ SCIM bearer 요청은 사람의 쿠키와 분리해 현재 활성·미만료 gra
 
 무료 Supabase 기본 도메인은 HTML GET 응답을 `text/plain`으로 바꾼다. 따라서 정적 웹 호스트가 HTML/CSS/JS를 제공하고, `/api/*` 등을 Supabase Edge로 전달하는 얇은 같은 출처 relay가 필요하다. 업무 로직이나 사용자 데이터는 relay에 두지 않는다. 쿠키·EventSource·XHR를 같은 출처로 유지하면 제3자 쿠키 차단에 의존하지 않는다. API·쿠키·개인 응답의 CDN 캐시는 끄고, 실제 Set-Cookie·SSE·Range 전달을 검사한다. 공개 sites/forms HTML 역시 브라우저에서 렌더링되는 최종 content type을 확인해야 한다.
 
-설치 앱은 같은 웹 HTTPS origin을 사용할 수 있다. iOS·Android는 이제 정확한 기본 Supabase 프로젝트 도메인의 기본 HTTPS 포트에서만 네이티브 내부의 고정 `/functions/v1/fountain-api` 접두사를 붙인다. 주소 입력은 순수 origin, renderer 요청은 논리 `/api/...`로 유지하며 JSON·다운로드가 같은 URL 생성부를 사용한다. 실제 두 플랫폼에서 프록시·자격증명 없이 익명 session GET의 직접 HTTPS 응답을 확인했다. 이는 로그인·편집 전파 증거가 아니다. 다른 도메인·별도 포트는 기존 root API를 유지한다. 함수 URL 전체를 주소 칸에 붙이는 방식은 허용하지 않으며 TLS·경로·헤더·쿠키 격리는 유지한다. 데스크톱은 원격 웹 화면을 여는 구조이므로 API만 제공하는 Supabase origin을 입력하는 것만으로 동작하지 않는다. [네이티브 직접 연결 증거](../apps/mobile/tests/native-direct-validation.md).
+설치 앱은 같은 웹 HTTPS origin을 사용할 수 있다. iOS·Android는 정확한 기본 Supabase 프로젝트 도메인의 기본 HTTPS 포트에서만 네이티브 내부의 고정 `/functions/v1/fountain-api` 접두사를 붙인다. 주소 입력은 순수 origin, renderer 요청은 논리 `/api/...`로 유지하며 JSON·다운로드가 같은 URL 생성부를 사용한다. 다른 도메인·별도 포트는 기존 root API를 유지한다. 함수 URL 전체를 주소 칸에 붙이는 방식은 허용하지 않으며 TLS·경로·헤더·쿠키 격리는 유지한다. 익명 직접 연결과 후속 실제 모바일 UI 로그인·Android→iOS→Android 순차 변경 읽기를 별도 QA 공간에서 확인했다. 이는 다섯 플랫폼 동시 전파나 원본 소유자 연결 증거가 아니다. [네이티브 직접 연결](../apps/mobile/tests/native-direct-validation.md), [모바일 UI 검증](../apps/mobile/tests/native-cloud-client-validation.md).
+
+데스크톱은 번들 UI와 별도의 비공개 Chromium 세션으로 Supabase에 직접 연결할 수 있다. macOS 설치 앱의 실제 로그인·문서 편집·프로필 간 동기화·첨부 전송을 확인했으며 Windows는 패키지 생성·파일 검사까지다. 문서 복사 링크에는 별도의 `publicWebOrigin`을 사용하고 데스크톱 내부 미리보기는 로컬 번들에 남는다. 기본값은 `null`이며 실제 공개 웹 호스팅은 아직 연결하지 않았다. [데스크톱 검증](research/desktop-cloud-verification.md), [공유 링크 검증](research/public-frontend-links.md).
 
 기존 `/sites/{slug}`·`/forms/{id}`는 게시 정책을 검사하지만, 현행 Python HTTP wrapper에서는 family/accounts 모드의 세션 인증도 거친다. 현재 동작과 최종 익명 공개 요구를 구분하고 의도한 변경은 별도 권한 테스트로 검증한다. SCIM은 별도 bearer 인증이다. 일반 legacy OPTIONS endpoint는 없지만 SCIM ServiceProviderConfig는 메서드 확인 전에 응답하는 기존 예외가 있다. Advanced collection은 임의의 추가 suffix를 받는 GET/PATCH/DELETE alias도 있으므로 조용히 누락하지 않는다.
 

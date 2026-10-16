@@ -1,6 +1,8 @@
 # Supabase 연결
 
-2026-10-16에 승인받은 무료 조직 `hooni-dev-0104's Org`에 서울 리전의 **Fountain** 프로젝트를 생성했다. 프로젝트 참조는 `ehnovtfadpkwtubmwltl`이며 기존 다른 프로젝트는 변경하지 않았다. **현재 `localhost:8787` 미리보기는 Supabase PostgreSQL을 원본으로 사용한다.** 기존 페이지·DB·첨부·계정·작업공간 ID·로그인 binding을 검증해 이관했으며 `.data/fountain.db` 원본과 전환 전후 백업도 보존했다. 외부에 상시 공개하는 서버 배포는 아직 하지 않았다.
+2026-10-16에 승인받은 무료 조직 `hooni-dev-0104's Org`에 서울 리전의 **Fountain** 프로젝트를 생성했다. 프로젝트 참조는 `ehnovtfadpkwtubmwltl`이며 기존 다른 프로젝트는 변경하지 않았다. **현재 `localhost:8787` 미리보기는 Supabase PostgreSQL을 원본으로 사용하는 Python 호환 실행 상태다.** 기존 페이지·DB·첨부·계정·작업공간 ID·로그인 binding을 검증해 이관했으며 `.data/fountain.db` 원본과 전환 전후 백업도 보존했다.
+
+이 문서의 실행 명령·디스크 파일 설명은 보존된 Python 호환 모드에 해당한다. 최종 운영용 Supabase Edge Functions·Auth·Storage 백엔드는 별도로 구현·검증하고 있으며 현재 API version 10, migration 26개다. 실제 소유자 계정 연결과 공개 웹 호스팅을 마치기 전에는 운영 전환 완료를 선언하지 않는다. [현재 백엔드 구조·검증 상태](supabase-backend.md), [기존 inline 첨부 읽기](research/inline-attachment-verification.md).
 
 ## 저장소와 권한
 
@@ -8,7 +10,7 @@
 
 서버는 트랜잭션마다 작업공간 ID를 설정하고 작업공간 단위 advisory lock을 얻은 뒤 세션·문서 권한을 검사한다. 작업공간 설정이 없으면 행을 읽거나 쓸 수 없다. 이 RLS는 신뢰하는 서버의 작업공간 경계다. 최종 가족 사용자별 권한은 기존 Fountain API가 검사하므로 DB 계정을 브라우저·데스크톱 renderer·모바일 앱에 넣으면 안 된다.
 
-현재 계정·비밀번호·로그아웃은 기존 Fountain 개별 계정 방식을 사용한다. Supabase Auth·OAuth·Realtime·Storage 연동은 구현하지 않았다. 문서와 접속자 갱신은 Fountain API의 SSE를 사용한다. Supabase DB 생성으로 Python 서버까지 호스팅되는 것은 아니며 공통 HTTPS 서버 운영은 별도로 필요하다.
+이 Python 호환 모드의 계정·비밀번호·로그아웃은 기존 Fountain 개별 계정 방식을 사용하며 문서와 접속자 갱신은 Fountain API의 SSE를 사용한다. 별도 Supabase 백엔드의 Auth·Realtime·Storage 구현과 구분한다. 아래 명령으로 실행한 Python 서버에는 직접 상시 운영이 필요하지만, 최종 Supabase 백엔드는 Python 프로세스나 상시 켜진 Mac을 요구하지 않는 구성이다.
 
 ## 선택 설치와 실행
 

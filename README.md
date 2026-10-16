@@ -32,6 +32,16 @@ python3 -m fountain.server --host 0.0.0.0 --allowed-host 192.168.0.10
 
 `--allowed-host`에는 서버 PC의 실제 LAN 주소를 사용합니다. 다른 기기는 `http://서버주소:8787`에 접속합니다. LAN 모드는 비밀번호와 허용 호스트가 모두 있어야 실행됩니다. 외부 인터넷 공유는 배포하지 않았습니다. 신뢰하는 사설망에서 사용하고 원격 공유에는 HTTPS/VPN 구성이 필요합니다. PC가 켜져 있어야 가족이 접속할 수 있습니다.
 
+직접 HTTPS로 제공하려면 기기에서 신뢰하는 서버 이름의 인증서 체인과 일치하는 PEM 개인 키를 지정합니다. 두 옵션은 함께 사용하며, HTTPS 로그인 쿠키에는 `Secure`가 붙습니다. 서버는 TLS 1.2 이상을 사용하고 실제 접속 방식에 맞는 Origin만 허용합니다.
+
+```sh
+python3 -m fountain.server --host 0.0.0.0 --port 8787 \
+  --allowed-host family.example.com \
+  --tls-cert /secure/path/fullchain.pem --tls-key /secure/path/privkey.pem
+```
+
+위 예시는 DNS·인증서·가족 로그인을 먼저 구성한 뒤 `https://family.example.com:8787`로 접속하는 명령입니다. 인증서 발급·갱신과 상시 서버 배포는 별도 작업입니다. `X-Forwarded-Proto`로 HTTPS를 가장할 수 없으며, HTTP로 TLS를 종료하는 프록시 연결도 별도 지원 없이 동작한다고 가정하지 않습니다. 인증서 검증을 앱에서 끄지 않습니다. HTTPS에서는 서비스 워커를 이용한 오프라인 새로고침을 사용할 수 있습니다.
+
 AI는 기본 비활성 상태이며 무료 로컬 모델 또는 호환 API를 명시적으로 설정할 수 있습니다. Gemini Pro 구독 연동 검토와 API 과금 구분은 [AI 안내](docs/AI.md)에 있습니다. `.env.example`은 설정 설명이며 서버가 자동으로 읽지는 않습니다.
 
 전체 백업은 설정 → 가져오기 / 내보내기 → 전체 백업 다운로드에서 받을 수 있습니다. 댓글·문서 이력·첨부·설정이 포함되고 로그인 세션·임시 클립보드는 제외됩니다. JSON은 문서와 데이터베이스의 이동용 내보내기입니다.

@@ -41,6 +41,9 @@ type Config = {
   supabaseUrl: string; publishableKey: string;
   cryptoKeys: Array<{ id: string; secret: string | Uint8Array }>;
   vault: SessionVault; fetch?: typeof globalThis.fetch; clock?: () => number;
+  /** Explicit setup only. SQL independently proves the live Auth session and fixed legacy target. */
+  setupClaim?: (input: { nonceHash: string; userId: string; authSessionId: string }) => Promise<unknown>;
+  confirmSetupEnabled?: boolean;
 };
 const encoder = new TextEncoder(), decoder = new TextDecoder("utf-8", { fatal: true });
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -255,12 +258,14 @@ export function createAuth(config: Config) {
     if (row) await remoteLogout(row);
     return { ...anonymous(), setCookie: clearCookie };
   }
-  async function login(body: unknown, cookie?: string | null): Promise<AuthResult> {
-    parseSessionCookie(cookie);
-    if (!object(body) || Object.keys(body).some((key) => !["email", "password"].includes(key)) || !string(body.email, 320) || !string(body.password, 4096) || /[\r\n\0]/.test(body.email)) throw error(400, "INVALID_LOGIN", "이메일과 비밀번호를 입력해주세요.");
-    if (parseSessionCookie(cookie)) await logout(cookie);
-    const value = tokenResponse(await provider("/token?grant_type=password", "POST", { email: body.email, password: body.password }));
+  async function finishLogin(value: ReturnType<typeof tokenResponse>, nonceHash?: string): Promise<AuthResult> {
     try {
+      if (nonceHash !== undefined) {
+        const user = await provider("/user", "GET", undefined, value.tokens.accessToken);
+        if (user.id !== value.userId || user.is_anonymous === true) throw error(401, "AUTH_REJECTED", "인증 정보를 확인해주세요.");
+        try { await config.setupClaim!({ nonceHash, userId: value.userId, authSessionId: value.authSessionId }); }
+        catch (cause) { if (cause instanceof AuthError) throw cause; throw error(503, "SETUP_UNAVAILABLE", "계정 연결을 완료할 수 없습니다. 다시 시도해주세요."); }
+      }
       const profile = await verify(value.tokens, value.userId, value.authSessionId);
       const opaque = random(32), createdAt = now();
       const row: VaultSession = { hash: await hash(opaque), userId: value.userId, authSessionId: value.authSessionId, cacheBinding: Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join(""), createdAt, expiresAt: createdAt + OPAQUE_TTL, version: 0, tokens: null, revokedAt: null, logoutPending: false };
@@ -268,11 +273,38 @@ export function createAuth(config: Config) {
       await store(() => vault.create(row));
       return { ...publicResult(row, profile), setCookie: "fountain_session=" + opaque + "; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=604800" };
     } catch (cause) {
-      // Failed setup/storage must not deliberately leave an unlinked provider
-      // session active. This best-effort cleanup never exposes its credentials.
       await provider("/logout?scope=local", "POST", undefined, value.tokens.accessToken).catch(() => {});
       throw cause;
     }
   }
-  return Object.freeze({ login, session, authorize, logout });
+  async function login(body: unknown, cookie?: string | null): Promise<AuthResult> {
+    parseSessionCookie(cookie);
+    if (!object(body) || Object.keys(body).some((key) => !["email", "password"].includes(key)) || !string(body.email, 320) || !string(body.password, 4096) || /[\r\n\0]/.test(body.email)) throw error(400, "INVALID_LOGIN", "이메일과 비밀번호를 입력해주세요.");
+    if (parseSessionCookie(cookie)) await logout(cookie);
+    const value = tokenResponse(await provider("/token?grant_type=password", "POST", { email: body.email, password: body.password }));
+    return finishLogin(value);
+  }
+  async function setupNonce(body: unknown, fields: string[]): Promise<string> {
+    if (!config.setupClaim) throw error(503, "SETUP_UNAVAILABLE", "계정 연결 설정이 아직 준비되지 않았습니다.");
+    if (!object(body) || Object.keys(body).some(key => !fields.includes(key)) || typeof body.nonce !== 'string') throw error(400, "INVALID_SETUP", "유효한 초대 값이 필요합니다.");
+    try { parseSessionCookie('fountain_session=' + body.nonce); }
+    catch { throw error(400, "INVALID_SETUP", "유효한 초대 값이 필요합니다."); }
+    return hash(body.nonce);
+  }
+  async function setup(body: unknown, cookie?: string | null): Promise<AuthResult> {
+    const nonceHash = await setupNonce(body, ['email', 'password', 'nonce']);
+    if (!object(body) || !string(body.email, 320) || !string(body.password, 4096) || /[\r\n\0]/.test(body.email)) throw error(400, "INVALID_LOGIN", "이메일과 비밀번호를 입력해주세요.");
+    if (parseSessionCookie(cookie)) await logout(cookie);
+    const value = tokenResponse(await provider('/token?grant_type=password', 'POST', { email: body.email, password: body.password }));
+    return finishLogin(value, nonceHash);
+  }
+  async function confirmSetup(body: unknown, cookie?: string | null): Promise<AuthResult> {
+    if (config.confirmSetupEnabled !== true) throw error(503, "CONFIRMATION_UNAVAILABLE", "이메일 확인 설정이 아직 준비되지 않았습니다.");
+    const nonceHash = await setupNonce(body, ['token_hash', 'type', 'nonce']);
+    if (!object(body) || body.type !== 'signup' || !string(body.token_hash, 2048) || !/^[A-Za-z0-9_-]+$/.test(body.token_hash)) throw error(400, "INVALID_CONFIRMATION", "이메일 확인 정보를 확인해주세요.");
+    if (parseSessionCookie(cookie)) await logout(cookie);
+    const value = tokenResponse(await provider('/verify', 'POST', { token_hash: body.token_hash, type: 'signup' }));
+    return finishLogin(value, nonceHash);
+  }
+  return Object.freeze({ login, setup, confirmSetup, session, authorize, logout });
 }

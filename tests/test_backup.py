@@ -30,6 +30,7 @@ class BackupTests(unittest.TestCase):
         self.store.put("session", {"id": "secret-session", "expires_at": "future"})
         self.store.put("clipboard", {"id": "temporary-clipboard", "html": "private clipboard"})
         self.store.put("upload", {"id": "temporary-upload", "name": "unfinished upload"})
+        self.store.put("presence", {"id": "temporary-presence", "selection": "ephemeral cursor", "session_digest": "private-presence-binding"})
         self.store.set_meta("family", {"name": "우리집", "settings": [1, 2, 3]})
         self.store.set_meta('local_cache_binding', 'old-browser-cache-binding')
         backup, restored = self.root / "snapshot.db", self.root / "restored.db"
@@ -37,9 +38,12 @@ class BackupTests(unittest.TestCase):
         self.assertNotIn("session", counts)
         self.assertNotIn("clipboard", counts)
         self.assertNotIn("upload", counts)
+        self.assertNotIn("presence", counts)
         self.assertNotIn(b"secret-session", backup.read_bytes())
         self.assertNotIn(b"private clipboard", backup.read_bytes())
         self.assertNotIn(b"unfinished upload", backup.read_bytes())
+        self.assertNotIn(b"ephemeral cursor", backup.read_bytes())
+        self.assertNotIn(b"private-presence-binding", backup.read_bytes())
         self.assertNotIn(b'old-browser-cache-binding', backup.read_bytes())
         self.assertIsNotNone(self.store.get("session", "secret-session"))
         self.assertEqual(restore_backup(backup, restored), counts)
@@ -51,6 +55,7 @@ class BackupTests(unittest.TestCase):
             self.assertEqual(restored_store.list("session"), [])
             self.assertEqual(restored_store.list("clipboard"), [])
             self.assertEqual(restored_store.list("upload"), [])
+            self.assertEqual(restored_store.list("presence"), [])
             self.assertIsNone(restored_store.meta('local_cache_binding'))
             self.assertEqual(restored_store.meta('workspace_id'), self.store.meta('workspace_id'))
         finally:

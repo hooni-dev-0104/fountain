@@ -28,7 +28,7 @@ DEFINITIONS = {
     "meta": "CREATE TABLE meta (key TEXT PRIMARY KEY, data TEXT NOT NULL)",
     "attachment_chunks": "CREATE TABLE attachment_chunks (attachment_id TEXT NOT NULL, offset INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(attachment_id,offset))",
 }
-PRIVATE_KINDS = ("session", "clipboard", "upload")
+PRIVATE_KINDS = ("session", "clipboard", "upload", "presence")
 CHUNK_SIZE = 4 * 1024 * 1024
 HASH_READ_SIZE = 64 * 1024
 MAX_ATTACHMENT_SIZE = 5_000_000_000

@@ -17,6 +17,7 @@ class Collaboration:
             document = self.store.put('collaboration', {
                 'id': page['id'], 'epoch': uid(), 'seq': 0,
                 'state': crdt.seed_state(page.get('blocks', [])),
+                'op_owners': {},
             })
         return document
 
@@ -45,6 +46,7 @@ class Collaboration:
                     'Document was replaced. Keep your draft and reload before applying it.', 409)
             operations = body.get('ops')
             state = crdt.apply_operations(document['state'], operations)
+            owners = self._operation_owners(document, operations, access.member_id)
             # Only ACK the precise IDs validated by the reducer. A retry is a
             # read: it does not grow history, revision or the audit log.
             ack = [operation['id'] for operation in operations]
@@ -64,8 +66,32 @@ class Collaboration:
                     document['history_at'] = timestamp
                 page.update(blocks=blocks, revision=page['revision'] + 1)
                 page = self.store.put('page', page)
-                document.update(state=state, seq=document['seq'] + 1)
+                document.update(state=state, op_owners=owners, seq=document['seq'] + 1)
                 document = self.store.put('collaboration', document)
                 self.store.audit('page.collaborated', {'page_id': page_id, 'revision': page['revision'],
                                                      'operations': len(operations)})
             return {**self._snapshot(page, document, access), 'ack': ack}
+
+    @staticmethod
+    def _operation_owners(document, operations, member_id):
+        # The pure reducer has already validated every payload/digest. Only IDs
+        # absent before this request can establish ownership or a client binding;
+        # replaying an old seen ID must never claim an untracked legacy action.
+        previous = document['state']
+        owners = dict(document.get('op_owners', {}))
+        ledger = previous.get('history', {}).get('ops', {})
+        new = {operation['id']: operation for operation in operations if operation['id'] not in previous['seen']}
+        clients = {operation['client'] for operation in new.values()}
+        for identity, operation in ledger.items():
+            if operation['client'] in clients:
+                require(owners.get(identity) == member_id,
+                        'Operation client belongs to another member or has no tracked owner', 403)
+        prospective = {**owners, **{identity: member_id for identity in new}}
+        for operation in new.values():
+            if operation['type'] == 'history.cancel':
+                for target in operation['targets']:
+                    require(target in ledger or target in new,
+                            'History target is not a tracked operation in this document', 409)
+                    require(prospective.get(target) == member_id,
+                            'History target belongs to another member', 403)
+        return prospective

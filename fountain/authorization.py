@@ -20,6 +20,33 @@ class Authorization:
     def manage_database(self, identity):
         return self.access.require_resource('database', identity, 4)
 
+    def schema_references(self, database, properties):
+        previous = {prop['id']: prop for prop in database.get('properties', [])}
+        promoted = [prop for prop in properties if prop['type'] in {'files', 'relation'}
+                    and (previous.get(prop['id'], {}).get('type') != prop['type']
+                         or prop['type'] == 'relation' and previous.get(prop['id'], {}).get('database_id') != prop.get('database_id'))]
+        if not promoted:
+            return
+        # Check against the ORIGINAL stored schema. Saving the new files field
+        # first would let an arbitrary old string manufacture its own read grant.
+        for row in self.store.list('row'):
+            if row.get('database_id') != database['id']:
+                continue
+            for prop in promoted:
+                values = row.get('properties', {}).get(prop['id'])
+                if values is None:
+                    continue
+                require(isinstance(values, list) and len(values) <= 1000
+                        and all(isinstance(identity, str) and 0 < len(identity) <= 160 for identity in values),
+                        'Promoted reference properties must contain resource ID lists')
+                for identity in values:
+                    if prop['type'] == 'files':
+                        self.attachment(identity)
+                    else:
+                        target = self.access.require_resource('row', identity)
+                        require(not prop.get('database_id') or target.get('database_id') == prop['database_id'],
+                                'Relation target row not found in target database')
+
     def relation_values(self, database, body, existing=None):
         values = body.get('properties', body.get('values', {}))
         if not isinstance(values, dict):

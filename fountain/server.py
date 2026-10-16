@@ -329,7 +329,9 @@ class Application:
                     from .core import text
                     database["name"] = text(body["name"], "name", 500, False)
                 if "properties" in body:
-                    database["properties"] = w.validate_properties(body["properties"])
+                    properties = w.validate_properties(body["properties"])
+                    Authorization(access).schema_references(database, properties)
+                    database["properties"] = properties
                 if "task_settings" in body or "properties" in body:
                     from .tasks import validate_settings
                     database["task_settings"] = validate_settings(body.get("task_settings", {}), database)

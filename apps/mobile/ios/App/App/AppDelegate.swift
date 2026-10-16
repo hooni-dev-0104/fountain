@@ -574,7 +574,8 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     }
 
     private func observeOutboxResource(_ job: FountainJob, response: HTTPURLResponse, data: Data) throws {
-        guard OUTBOX_ENABLED, !recoveryMode, FountainOutbox.canonicalResource(path: job.path, method: job.method) != nil else { return }
+        guard OUTBOX_ENABLED, !recoveryMode,
+              FountainOutbox.observedResource(path: job.path, method: job.method, status: response.statusCode) != nil else { return }
         guard current(job), try cookies().active == job.sentCookie else { throw FountainOutboxError.stale }
         try outboxStore().observeResource(path: job.path, method: job.method, status: response.statusCode,
                                          data: data, sessionRef: outboxReference(job.sentCookie))

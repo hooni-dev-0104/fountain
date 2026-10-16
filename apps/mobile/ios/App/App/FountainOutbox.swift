@@ -52,11 +52,25 @@ final class FountainOutbox {
     private let recordLimit = 16 * 1024 * 1024
     private let transactionLimit = 64 * 1024 * 1024
 
-    init(origin: String) throws {
+    convenience init(origin: String) throws {
+        try self.init(origin: origin, isolatedDirectory: nil)
+    }
+    #if DEBUG
+    // Native test callers may supply only their own isolated private directory.
+    // This initializer is absent from release builds and has no bridge method.
+    convenience init(origin: String, testingDirectory: URL) throws {
+        try self.init(origin: origin, isolatedDirectory: testingDirectory)
+    }
+    #endif
+    private init(origin: String, isolatedDirectory: URL?) throws {
         self.origin = origin
         let manager = FileManager.default
-        let support = try manager.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).resolvingSymlinksInPath()
-        var directory = support.appendingPathComponent("FountainOutbox", isDirectory: true)
+        var directory: URL
+        if let isolatedDirectory = isolatedDirectory { directory = isolatedDirectory }
+        else {
+            let support = try manager.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).resolvingSymlinksInPath()
+            directory = support.appendingPathComponent("FountainOutbox", isDirectory: true)
+        }
         if !manager.fileExists(atPath: directory.path) {
             try manager.createDirectory(at: directory, withIntermediateDirectories: false,
                 attributes: [.posixPermissions: 0o700, .protectionKey: FileProtectionType.complete])
@@ -402,17 +416,34 @@ final class FountainOutbox {
 
     // Only this native HTTP observer can write evidence. Renderer deltas cannot.
     static func canonicalResource(path: String, method: String) -> (String, String)? {
-        guard method == "GET", !path.contains("?"), !path.contains("#") else { return nil }
-        if path == "/api/workspace" { return ("workspace", "workspace") }
+        guard method == "GET" || method == "POST", !path.contains("?"), !path.contains("#") else { return nil }
+        if method == "GET", path == "/api/workspace" { return ("workspace", "workspace") }
         let parts = path.components(separatedBy: "/")
         let kind: String
-        if parts.count == 4 && parts[1] == "api" && parts[2] == "databases" { kind = "database" }
-        else if parts.count == 5 && parts[1] == "api" && parts[2] == "pages" && parts[4] == "collaboration" { kind = "page" }
+        if method == "GET", parts.count == 4 && parts[1] == "api" && parts[2] == "databases" { kind = "database" }
+        else if parts.count == 5 && parts[1] == "api" && parts[2] == "pages" &&
+            ((method == "GET" && parts[4] == "collaboration") || (method == "POST" && parts[4] == "operations")) { kind = "page" }
         else { return nil }
         guard let id = parts[3].removingPercentEncoding, !id.isEmpty, id.utf8.count <= 1000,
               ![".", ".."].contains(id), !id.contains("/"), !id.contains("\\"),
               !id.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }) else { return nil }
+        if method == "POST", !parts[0].isEmpty || Self.encodeURIComponent(id) != parts[3] { return nil }
         return (kind, id)
+    }
+    static func observedResource(path: String, method: String, status: Int) -> (String, String)? {
+        guard (method == "GET" && [200, 403, 404].contains(status)) || (method == "POST" && status == 200) else { return nil }
+        return canonicalResource(path: path, method: method)
+    }
+    private func validateAcknowledgements(_ value: Any?) throws {
+        guard let values = value as? [String], values.count <= 1000 else { throw FountainOutboxError.invalid }
+        for value in values {
+            let parts = value.split(separator: ":", omittingEmptySubsequences: false)
+            guard parts.count == 2, (1...80).contains(parts[0].utf8.count),
+                  parts[0].utf8.allSatisfy({ (65...90).contains($0) || (97...122).contains($0) || (48...57).contains($0) || $0 == 95 || $0 == 45 }),
+                  (1...16).contains(parts[1].utf8.count), parts[1].utf8.allSatisfy({ (48...57).contains($0) }),
+                  let clock = Int(parts[1]), clock > 0, clock <= 9_007_199_254_740_991,
+                  String(clock) == parts[1] else { throw FountainOutboxError.invalid }
+        }
     }
     private func proofs(_ profile: String) throws -> [String: [String: Any]] {
         guard try integer("SELECT coalesce(length(value),0) FROM control WHERE id=?", ["proofs:" + profile]) <= recordLimit else { throw FountainOutboxError.access }
@@ -438,7 +469,7 @@ final class FountainOutbox {
         return result
     }
     func observeResource(path: String, method: String, status: Int, data: Data, sessionRef: String?) throws {
-        guard let (kind, id) = Self.canonicalResource(path: path, method: method) else { return }
+        guard let (kind, id) = Self.observedResource(path: path, method: method, status: status) else { return }
         let profile = try verifiedProfile(), grant = try identity(), parts = try profileParts(profile)
         guard grant["sessionRef"] as? String == (sessionRef ?? "local-no-cookie") else { throw FountainOutboxError.stale }
         guard status == 200 || status == 403 || status == 404 else { return }
@@ -461,10 +492,12 @@ final class FountainOutbox {
         if ledger[proofKey("workspace", "workspace")]?["denied"] as? Bool == true || ledger[key]?["denied"] as? Bool == true { throw FountainOutboxError.access }
         if kind != "workspace", try integer("SELECT count(*) FROM tombstones WHERE scope=?", [profile + (kind == "database" ? "|database|" : "|") + Self.encodeURIComponent(id)]) > 0 { throw FountainOutboxError.access }
         do {
+            if method == "POST", data.count > recordLimit { throw FountainOutboxError.invalid }
             guard let body = try decode(data) as? [String: Any],
                   body["workspace_id"] as? String == parts[1].removingPercentEncoding,
                   body["current_member_id"] as? String == parts[2].removingPercentEncoding,
                   body["session_binding"] as? String == parts[3].removingPercentEncoding else { throw FountainOutboxError.invalid }
+            if method == "POST" { try validateAcknowledgements(body["ack"]) }
             let access = try checkedInteger(body["access_revision"]), revision = try checkedInteger(body["data_revision"])
             // A late canonical response cannot restore a projection observed before a newer one.
             let knownFloor = try floor(profile)
@@ -485,6 +518,10 @@ final class FountainOutbox {
                 let item = try descriptor(page, page: true), accessLevel = try level(body["access_level"])
                 guard item["accessLevel"] as? Int == accessLevel else { throw FountainOutboxError.invalid }
                 proof.merge(item) { _, new in new }; proof["epoch"] = try text(body["epoch"], limit: 1000); proof["seq"] = try checkedInteger(body["seq"])
+                if method == "POST", let old = ledger[key], old["epoch"] as? String == proof["epoch"] as? String,
+                   let oldSeq = old["seq"] as? Int, let nextSeq = proof["seq"] as? Int, nextSeq < oldSeq {
+                    throw FountainOutboxError.stale
+                }
             } else {
                 guard let database = body["database"] as? [String: Any], database["id"] as? String == id,
                       let rows = body["rows"] as? [[String: Any]], rows.count <= 100000,

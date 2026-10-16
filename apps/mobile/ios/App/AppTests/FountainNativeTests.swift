@@ -205,6 +205,95 @@ final class FountainNativeTests: XCTestCase {
         _ = try sql(file, "INSERT INTO tx_receipts(tx_id,digest,head) VALUES(?, 'fixture-digest',0)", [tx])
         for kind in ["stagedOwner:", "receiptOwner:"] { _ = try sql(file, "INSERT INTO control(id,value) VALUES(?,CAST(? AS BLOB))", [kind + tx, try json(profile)]) }
     }
+    private func operationObserverFixture() throws -> (store: FountainOutbox, file: URL, profile: String, snapshot: [String: Any]) {
+        let origin = "https://observer-" + UUID().uuidString.lowercased() + ".invalid"
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Fountain-observer-" + UUID().uuidString, isDirectory: true)
+        cleanup.append(directory)
+        let store = try FountainOutbox(origin: origin, testingDirectory: directory)
+        let profile = origin + "|qa-workspace|qa-member|qa-binding"
+        let file = directory.appendingPathComponent(FountainOutbox.hash(Data(origin.utf8)) + ".sqlite")
+        try store.grant(session("qa-member", "qa-binding"), sessionRef: "private-observer-cookie")
+        let page: [String: Any] = ["id": "welcome", "access_level": 3, "locked": false, "archived": false, "revision": 1]
+        var workspace: [String: Any] = ["workspace_id": "qa-workspace", "current_member_id": "qa-member", "session_binding": "qa-binding", "access_revision": 4, "data_revision": 7]
+        var snapshot = workspace
+        workspace["pages"] = [page]; workspace["databases"] = []
+        snapshot["page"] = page; snapshot["access_level"] = 3; snapshot["blocks"] = []; snapshot["state"] = [String: Any](); snapshot["epoch"] = "first-epoch"; snapshot["seq"] = 0
+        try store.observeResource(path: "/api/workspace", method: "GET", status: 200, data: encoded(workspace), sessionRef: "private-observer-cookie")
+        try store.observeResource(path: "/api/pages/welcome/collaboration", method: "GET", status: 200, data: encoded(snapshot), sessionRef: "private-observer-cookie")
+        let resource = profile + "|welcome", draft: [String: Any] = ["key": profile + "|welcome", "profileId": profile, "clientId": "test-client", "draft": ["blocks": [["id": "block", "type": "paragraph", "text": "미전송 원본🙂"]]]]
+        _ = try sql(file, "INSERT INTO records(bucket,key,profile_id,resource_key,value) VALUES('drafts',?,?,?,CAST(? AS BLOB))", [try json([resource, "test-client"]), profile, resource, try json(draft)])
+        return (store, file, profile, snapshot)
+    }
+    private func observedPageProof(_ file: URL, profile: String) throws -> [String: Any] {
+        let rows = try sql(file, "SELECT CAST(value AS TEXT) FROM control WHERE id=?", ["proofs:" + profile])
+        let ledger = try JSONSerialization.jsonObject(with: Data(XCTUnwrap(rows.first?.first).utf8)) as! [String: Any]
+        return try XCTUnwrap(ledger["page:welcome"] as? [String: Any])
+    }
+    func testOutboxOperationsPOSTAdvancesProofAndRejectsSequenceRegression() throws {
+        let fixture = try operationObserverFixture(); defer { fixture.store.close() }
+        let store = fixture.store, before = try retainedBytes(fixture.file), head = try store.open()["head"] as! Int, epoch = try store.proofEpoch()
+        var body = fixture.snapshot; body["ack"] = ["client:1", "client:1", "other_2:9007199254740991"]; body["seq"] = 1; body["data_revision"] = 8
+        try store.observeResource(path: "/api/pages/welcome/operations", method: "POST", status: 200, data: encoded(body), sessionRef: "private-observer-cookie")
+        XCTAssertEqual(try observedPageProof(fixture.file, profile: fixture.profile)["seq"] as? Int, 1)
+        XCTAssertGreaterThan(try store.proofEpoch(), epoch)
+        XCTAssertEqual(try store.open()["head"] as? Int, head)
+        let currentEpoch = try store.proofEpoch()
+        try store.observeResource(path: "/api/pages/welcome/operations", method: "POST", status: 200, data: encoded(body), sessionRef: "private-observer-cookie")
+        XCTAssertEqual(try store.proofEpoch(), currentEpoch)
+        body["seq"] = 0; body["data_revision"] = 9
+        XCTAssertThrowsError(try store.observeResource(path: "/api/pages/welcome/operations", method: "POST", status: 200, data: encoded(body), sessionRef: "private-observer-cookie")) { XCTAssertEqual($0 as? FountainOutboxError, .stale) }
+        XCTAssertEqual(try store.proofEpoch(), currentEpoch)
+        body["epoch"] = "replacement-epoch"; body["ack"] = []
+        try store.observeResource(path: "/api/pages/welcome/operations", method: "POST", status: 200, data: encoded(body), sessionRef: "private-observer-cookie")
+        let replacement = try observedPageProof(fixture.file, profile: fixture.profile)
+        XCTAssertEqual(replacement["epoch"] as? String, "replacement-epoch"); XCTAssertEqual(replacement["seq"] as? Int, 0)
+        XCTAssertEqual(try retainedBytes(fixture.file), before)
+    }
+    func testOutboxDeniedWritesPreserveReadProofAndInput() throws {
+        let fixture = try operationObserverFixture(); defer { fixture.store.close() }
+        let before = try retainedBytes(fixture.file), proof = try json(observedPageProof(fixture.file, profile: fixture.profile)), epoch = try fixture.store.proofEpoch()
+        for status in [201, 204, 400, 401, 403, 404, 409, 423, 500] {
+            XCTAssertNil(FountainOutbox.observedResource(path: "/api/pages/welcome/operations", method: "POST", status: status))
+            try fixture.store.observeResource(path: "/api/pages/welcome/operations", method: "POST", status: status, data: Data(), sessionRef: "unrelated-cookie")
+        }
+        XCTAssertEqual(try json(observedPageProof(fixture.file, profile: fixture.profile)), proof)
+        XCTAssertEqual(try fixture.store.proofEpoch(), epoch); XCTAssertEqual(try retainedBytes(fixture.file), before)
+        XCTAssertEqual(try sql(fixture.file, "SELECT count(*) FROM tombstones")[0][0], "0")
+        XCTAssertEqual(try fixture.store.open()["identityState"] as? String, "verified")
+    }
+    func testOutboxMalformedOperationACKIsRepairableWithoutPurgingInput() throws {
+        let fixture = try operationObserverFixture(); defer { fixture.store.close() }
+        let before = try retainedBytes(fixture.file)
+        let invalid: [Any] = [NSNull(), true, "client:1", [1], ["client:01"], ["client:9007199254740992"], Array(repeating: "client:1", count: 1001)]
+        for ack in invalid {
+            var body = fixture.snapshot; body["ack"] = ack
+            XCTAssertThrowsError(try fixture.store.observeResource(path: "/api/pages/welcome/operations", method: "POST", status: 200, data: encoded(body), sessionRef: "private-observer-cookie")) { XCTAssertEqual($0 as? FountainOutboxError, .access) }
+            let marker = try observedPageProof(fixture.file, profile: fixture.profile)
+            XCTAssertEqual(marker["invalid"] as? Bool, true); XCTAssertNil(marker["denied"])
+            XCTAssertEqual(try retainedBytes(fixture.file), before)
+            XCTAssertEqual(try sql(fixture.file, "SELECT count(*) FROM tombstones")[0][0], "0")
+            try fixture.store.observeResource(path: "/api/pages/welcome/collaboration", method: "GET", status: 200, data: encoded(fixture.snapshot), sessionRef: "private-observer-cookie")
+            XCTAssertEqual(try observedPageProof(fixture.file, profile: fixture.profile)["seq"] as? Int, 0)
+        }
+    }
+    func testOutboxOperationPOSTRequiresPrivateCookieAndExactScope() throws {
+        let fixture = try operationObserverFixture(); defer { fixture.store.close() }
+        let before = try retainedBytes(fixture.file), epoch = try fixture.store.proofEpoch()
+        var body = fixture.snapshot; body["ack"] = ["client:1"]; body["seq"] = 1; body["data_revision"] = 8
+        XCTAssertThrowsError(try fixture.store.observeResource(path: "/api/pages/welcome/operations", method: "POST", status: 200, data: encoded(body), sessionRef: "unrelated-cookie")) { XCTAssertEqual($0 as? FountainOutboxError, .stale) }
+        XCTAssertEqual(try fixture.store.proofEpoch(), epoch)
+        for path in ["x/api/pages/welcome/operations", "/api/pages/%77elcome/operations", "/api/pages/welcome/operations?q=1"] {
+            XCTAssertNil(FountainOutbox.canonicalResource(path: path, method: "POST"))
+            try fixture.store.observeResource(path: path, method: "POST", status: 200, data: encoded(body), sessionRef: "private-observer-cookie")
+        }
+        XCTAssertEqual(try fixture.store.proofEpoch(), epoch)
+        for field in ["workspace_id", "current_member_id", "session_binding"] {
+            var foreign = body; foreign[field] = "another-scope"
+            XCTAssertThrowsError(try fixture.store.observeResource(path: "/api/pages/welcome/operations", method: "POST", status: 200, data: encoded(foreign), sessionRef: "private-observer-cookie")) { XCTAssertEqual($0 as? FountainOutboxError, .access) }
+            try fixture.store.observeResource(path: "/api/pages/welcome/collaboration", method: "GET", status: 200, data: encoded(fixture.snapshot), sessionRef: "private-observer-cookie")
+        }
+        XCTAssertEqual(try retainedBytes(fixture.file), before)
+    }
     func testPassiveAuthRetentionFreshBindingFloorAndActorOnlyLogout() throws {
         let authority = try context(), origin = authority.origin
         let a1 = origin + "|qa-workspace|A|first", a2 = origin + "|qa-workspace|A|second", b = origin + "|qa-workspace|B|first"

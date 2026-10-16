@@ -1,0 +1,882 @@
+{
+  "format": "fountain-mutation-recovery-v1",
+  "workspace_id": "48c208b5e55545759bff49ec8075307b",
+  "member_id": "local",
+  "exported_at": "2026-10-16T06:37:22.836Z",
+  "records": [
+    {
+      "profileId": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115",
+      "id": "bc530f05-a989-48ad-8ef8-249f98d92b06",
+      "resourceKey": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115|database|v1-golden-database",
+      "operation": {
+        "id": "bc530f05-a989-48ad-8ef8-249f98d92b06",
+        "kind": "row.create",
+        "target_id": "오프라인 상위 행?#%",
+        "database_id": "v1-golden-database",
+        "body": {
+          "id": "오프라인 상위 행?#%",
+          "properties": {
+            "name": "가족 상위😀",
+            "n": 4,
+            "done": false,
+            "due": "2026-10-20"
+          }
+        },
+        "base": {
+          "schema": {
+            "name": {
+              "id": "name",
+              "name": "이름",
+              "type": "title"
+            },
+            "n": {
+              "id": "n",
+              "name": "수량",
+              "type": "number"
+            },
+            "done": {
+              "id": "done",
+              "name": "확인",
+              "type": "checkbox"
+            },
+            "due": {
+              "id": "due",
+              "name": "일정",
+              "type": "date"
+            }
+          }
+        },
+        "depends_on": []
+      },
+      "status": "pending",
+      "sequence": 1,
+      "createdAt": 1792132642789,
+      "updatedAt": 1792132642789
+    },
+    {
+      "profileId": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115",
+      "id": "19a61dea-e7e8-4c99-b771-a36af313b5b2",
+      "resourceKey": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115|database|v1-golden-database",
+      "operation": {
+        "id": "19a61dea-e7e8-4c99-b771-a36af313b5b2",
+        "kind": "row.create",
+        "target_id": "오프라인 하위 행",
+        "database_id": "v1-golden-database",
+        "body": {
+          "id": "오프라인 하위 행",
+          "properties": {
+            "name": "가족 하위",
+            "n": 1
+          },
+          "parent_row_id": "오프라인 상위 행?#%",
+          "depends_on": [
+            "오프라인 상위 행?#%"
+          ]
+        },
+        "base": {
+          "schema": {
+            "name": {
+              "id": "name",
+              "name": "이름",
+              "type": "title"
+            },
+            "n": {
+              "id": "n",
+              "name": "수량",
+              "type": "number"
+            }
+          }
+        },
+        "depends_on": [
+          "bc530f05-a989-48ad-8ef8-249f98d92b06"
+        ]
+      },
+      "status": "pending",
+      "sequence": 2,
+      "createdAt": 1792132642792,
+      "updatedAt": 1792132642792
+    },
+    {
+      "profileId": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115",
+      "id": "e75dc0cf-7def-4f22-b5fb-3482c6a0f440",
+      "resourceKey": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115|database|v1-golden-database",
+      "operation": {
+        "id": "e75dc0cf-7def-4f22-b5fb-3482c6a0f440",
+        "kind": "row.patch",
+        "target_id": "오프라인 상위 행?#%",
+        "database_id": "v1-golden-database",
+        "body": {
+          "properties": {
+            "n": 9
+          }
+        },
+        "base": {
+          "schema": {
+            "n": {
+              "id": "n",
+              "name": "수량",
+              "type": "number"
+            }
+          },
+          "properties": {
+            "n": 4
+          },
+          "fields": {}
+        },
+        "depends_on": [
+          "bc530f05-a989-48ad-8ef8-249f98d92b06"
+        ]
+      },
+      "status": "pending",
+      "sequence": 3,
+      "createdAt": 1792132642797,
+      "updatedAt": 1792132642797
+    },
+    {
+      "profileId": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115",
+      "id": "6d01b9f4-fed5-4fea-a78f-91955b09c31c",
+      "resourceKey": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115|database|v1-golden-database",
+      "operation": {
+        "id": "6d01b9f4-fed5-4fea-a78f-91955b09c31c",
+        "kind": "row.patch",
+        "target_id": "오프라인 하위 행",
+        "database_id": "v1-golden-database",
+        "body": {
+          "properties": {
+            "name": "패치된 하위😀"
+          }
+        },
+        "base": {
+          "schema": {
+            "name": {
+              "id": "name",
+              "name": "이름",
+              "type": "title"
+            }
+          },
+          "properties": {
+            "name": "가족 하위"
+          },
+          "fields": {}
+        },
+        "depends_on": [
+          "19a61dea-e7e8-4c99-b771-a36af313b5b2"
+        ]
+      },
+      "status": "pending",
+      "sequence": 4,
+      "createdAt": 1792132642800,
+      "updatedAt": 1792132642800
+    },
+    {
+      "profileId": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115",
+      "id": "dd5259df-106d-4075-a25d-e52b4dbc5fda",
+      "resourceKey": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115|database|v1-golden-database",
+      "operation": {
+        "id": "dd5259df-106d-4075-a25d-e52b4dbc5fda",
+        "kind": "row.patch",
+        "target_id": "b8897a153bbe4a068d1a7e33af1e2583",
+        "database_id": "v1-golden-database",
+        "body": {
+          "properties": {
+            "name": "서버 항목 오프라인 변경",
+            "n": 7
+          }
+        },
+        "base": {
+          "schema": {
+            "name": {
+              "id": "name",
+              "name": "이름",
+              "type": "title"
+            },
+            "n": {
+              "id": "n",
+              "name": "수량",
+              "type": "number"
+            }
+          },
+          "properties": {
+            "name": "서버 기존 수정 대상",
+            "n": 2
+          },
+          "fields": {}
+        },
+        "depends_on": []
+      },
+      "status": "pending",
+      "sequence": 5,
+      "createdAt": 1792132642803,
+      "updatedAt": 1792132642803
+    },
+    {
+      "profileId": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115",
+      "id": "a8a6f46b-7a42-425d-a367-89fb8ed137dc",
+      "resourceKey": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115|database|v1-golden-database",
+      "operation": {
+        "id": "a8a6f46b-7a42-425d-a367-89fb8ed137dc",
+        "kind": "row.delete",
+        "target_id": "83f4a91e22f145689e4a1ff989363c6b",
+        "database_id": "v1-golden-database",
+        "body": {},
+        "base_rows": {
+          "83f4a91e22f145689e4a1ff989363c6b": {
+            "updated_at": "2026-10-16T06:37:22.600522+00:00"
+          }
+        },
+        "depends_on": []
+      },
+      "status": "pending",
+      "sequence": 6,
+      "createdAt": 1792132642806,
+      "updatedAt": 1792132642806
+    },
+    {
+      "profileId": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115",
+      "id": "d788621e-2dea-4347-8aea-c46dbb7ee472",
+      "resourceKey": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115|%EA%B8%B0%EA%B8%B0%20%EC%83%81%EC%9C%84%20%EB%AC%B8%EC%84%9C%3F%23%25",
+      "operation": {
+        "id": "d788621e-2dea-4347-8aea-c46dbb7ee472",
+        "kind": "page.create",
+        "target_id": "기기 상위 문서?#%",
+        "document_epoch": "c64cc9ce-f919-42e4-a996-fba0fb3d3448",
+        "body": {
+          "id": "기기 상위 문서?#%",
+          "title": "기기 상위 한글😀",
+          "icon": "🌙",
+          "cover": "",
+          "parent_id": null,
+          "teamspace_id": "general"
+        },
+        "depends_on": []
+      },
+      "status": "pending",
+      "sequence": 7,
+      "createdAt": 1792132642809,
+      "updatedAt": 1792132642809
+    },
+    {
+      "profileId": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115",
+      "id": "194776ff-81d8-4c7c-ac30-e7c65b371c51",
+      "resourceKey": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115|%EA%B8%B0%EA%B8%B0%20%ED%95%98%EC%9C%84%20%EB%AC%B8%EC%84%9C%F0%9F%98%80",
+      "operation": {
+        "id": "194776ff-81d8-4c7c-ac30-e7c65b371c51",
+        "kind": "page.create",
+        "target_id": "기기 하위 문서😀",
+        "document_epoch": "0d3cc964-a874-438b-a3e0-61ccf22c0c97",
+        "body": {
+          "id": "기기 하위 문서😀",
+          "title": "하위 원래 제목",
+          "parent_id": "기기 상위 문서?#%",
+          "icon": "📄",
+          "cover": "",
+          "teamspace_id": "general"
+        },
+        "depends_on": [
+          "d788621e-2dea-4347-8aea-c46dbb7ee472"
+        ]
+      },
+      "status": "pending",
+      "sequence": 8,
+      "createdAt": 1792132642812,
+      "updatedAt": 1792132642812
+    },
+    {
+      "profileId": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115",
+      "id": "f7c51bc9-c7ca-445d-a6d3-3c811f1a255a",
+      "resourceKey": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115|%EA%B8%B0%EA%B8%B0%20%EC%83%81%EC%9C%84%20%EB%AC%B8%EC%84%9C%3F%23%25",
+      "operation": {
+        "id": "f7c51bc9-c7ca-445d-a6d3-3c811f1a255a",
+        "kind": "page.patch",
+        "target_id": "기기 상위 문서?#%",
+        "body": {
+          "title": "기기 상위 변경 제목😀"
+        },
+        "base": {
+          "fields": {
+            "title": "기기 상위 한글😀"
+          }
+        },
+        "depends_on": [
+          "d788621e-2dea-4347-8aea-c46dbb7ee472"
+        ]
+      },
+      "status": "pending",
+      "sequence": 9,
+      "createdAt": 1792132642814,
+      "updatedAt": 1792132642814
+    },
+    {
+      "profileId": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115",
+      "id": "4ff93c81-b3d2-45ef-b2e5-f5fbab221917",
+      "resourceKey": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115|%EA%B8%B0%EA%B8%B0%20%ED%95%98%EC%9C%84%20%EB%AC%B8%EC%84%9C%F0%9F%98%80",
+      "operation": {
+        "id": "4ff93c81-b3d2-45ef-b2e5-f5fbab221917",
+        "kind": "page.patch",
+        "target_id": "기기 하위 문서😀",
+        "body": {
+          "title": "기기 하위 새 제목",
+          "favorite": true
+        },
+        "base": {
+          "fields": {
+            "title": "하위 원래 제목",
+            "favorite": false
+          }
+        },
+        "depends_on": [
+          "194776ff-81d8-4c7c-ac30-e7c65b371c51"
+        ]
+      },
+      "status": "pending",
+      "sequence": 10,
+      "createdAt": 1792132642816,
+      "updatedAt": 1792132642816
+    },
+    {
+      "profileId": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115",
+      "id": "bcf99509-fdfe-4aaf-a572-5f1ea1c2d3da",
+      "resourceKey": "http://127.0.0.1:57445|48c208b5e55545759bff49ec8075307b|local|3248c9ec0a7592e6289ce79076b72115|%EC%84%9C%EB%B2%84%20%EB%AC%B8%EC%84%9C%3F%23%25",
+      "operation": {
+        "id": "bcf99509-fdfe-4aaf-a572-5f1ea1c2d3da",
+        "kind": "page.patch",
+        "target_id": "서버 문서?#%",
+        "body": {
+          "title": "기존 서버 문서 제목 오프라인 변경",
+          "icon": "📚"
+        },
+        "base": {
+          "fields": {
+            "title": "서버 원래 제목",
+            "icon": "📄"
+          }
+        },
+        "depends_on": []
+      },
+      "status": "pending",
+      "sequence": 11,
+      "createdAt": 1792132642818,
+      "updatedAt": 1792132642818
+    }
+  ],
+  "localPages": [
+    {
+      "metadata": {
+        "page": {
+          "id": "기기 상위 문서?#%",
+          "title": "기기 상위 한글😀",
+          "icon": "🌙",
+          "cover": "",
+          "parent_id": null,
+          "teamspace_id": "general",
+          "owner_id": "local",
+          "access_level": 4,
+          "revision": 0,
+          "blocks": [],
+          "locked": false,
+          "archived": false,
+          "favorite": false,
+          "created_at": "2026-10-16T06:37:22.808Z",
+          "updated_at": "2026-10-16T06:37:22.808Z"
+        },
+        "initial_epoch": "c64cc9ce-f919-42e4-a996-fba0fb3d3448",
+        "create_operation_id": "d788621e-2dea-4347-8aea-c46dbb7ee472",
+        "localOnly": true
+      },
+      "snapshot": {
+        "epoch": "c64cc9ce-f919-42e4-a996-fba0fb3d3448",
+        "seq": 0,
+        "state": {
+          "version": 1,
+          "max_clock": 0,
+          "blocks": {},
+          "seen": {}
+        },
+        "page": {
+          "id": "기기 상위 문서?#%",
+          "title": "기기 상위 한글😀",
+          "icon": "🌙",
+          "cover": "",
+          "parent_id": null,
+          "teamspace_id": "general",
+          "owner_id": "local",
+          "access_level": 4,
+          "revision": 0,
+          "blocks": [],
+          "locked": false,
+          "archived": false,
+          "favorite": false,
+          "created_at": "2026-10-16T06:37:22.808Z",
+          "updated_at": "2026-10-16T06:37:22.808Z"
+        },
+        "blocks": [],
+        "access_level": 4,
+        "access_revision": 0,
+        "data_revision": 0,
+        "workspace_id": "48c208b5e55545759bff49ec8075307b",
+        "current_member_id": "local",
+        "session_binding": "3248c9ec0a7592e6289ce79076b72115"
+      },
+      "operations": [
+        {
+          "id": "tab_2dd6779edd3a3a7c04f450075e2d8bb1:1",
+          "client": "tab_2dd6779edd3a3a7c04f450075e2d8bb1",
+          "clock": 1,
+          "type": "block.insert",
+          "block_id": "heading-0",
+          "block_type": "heading1",
+          "group_id": "tab_da3df509b5c6777814c47be5a1b54ba1",
+          "_epoch": "c64cc9ce-f919-42e4-a996-fba0fb3d3448"
+        },
+        {
+          "id": "tab_2dd6779edd3a3a7c04f450075e2d8bb1:2",
+          "client": "tab_2dd6779edd3a3a7c04f450075e2d8bb1",
+          "clock": 2,
+          "type": "block.insert",
+          "block_id": "paragraph-0",
+          "block_type": "paragraph",
+          "after_id": "heading-0",
+          "group_id": "tab_da3df509b5c6777814c47be5a1b54ba1",
+          "_epoch": "c64cc9ce-f919-42e4-a996-fba0fb3d3448"
+        },
+        {
+          "id": "tab_2dd6779edd3a3a7c04f450075e2d8bb1:3",
+          "client": "tab_2dd6779edd3a3a7c04f450075e2d8bb1",
+          "clock": 3,
+          "type": "text.insert",
+          "block_id": "heading-0",
+          "after_id": null,
+          "text": "상위 한글😀 제목",
+          "marks": {
+            "bold": true,
+            "color": "blue"
+          },
+          "group_id": "tab_dfa49a4fc5a66b9e9a608af5649980dd",
+          "_epoch": "c64cc9ce-f919-42e4-a996-fba0fb3d3448"
+        },
+        {
+          "id": "tab_2dd6779edd3a3a7c04f450075e2d8bb1:4",
+          "client": "tab_2dd6779edd3a3a7c04f450075e2d8bb1",
+          "clock": 4,
+          "type": "text.insert",
+          "block_id": "paragraph-0",
+          "after_id": null,
+          "text": "복구할 본문 한글과 emoji 👨‍👩‍👧\n둘째 줄 & <plain text>",
+          "marks": {
+            "italic": true
+          },
+          "group_id": "tab_5d7fca1d5bc964adb141568740544e40",
+          "_epoch": "c64cc9ce-f919-42e4-a996-fba0fb3d3448"
+        },
+        {
+          "id": "tab_2dd6779edd3a3a7c04f450075e2d8bb1:5",
+          "client": "tab_2dd6779edd3a3a7c04f450075e2d8bb1",
+          "clock": 5,
+          "type": "text.format",
+          "block_id": "paragraph-0",
+          "char_ids": [
+            "tab_2dd6779edd3a3a7c04f450075e2d8bb1:4:0",
+            "tab_2dd6779edd3a3a7c04f450075e2d8bb1:4:1",
+            "tab_2dd6779edd3a3a7c04f450075e2d8bb1:4:2"
+          ],
+          "marks": {
+            "underline": true,
+            "link": "https://example.invalid/가족"
+          },
+          "group_id": "tab_55355a9ce74e2d2ce111dcbf31d679c4",
+          "_epoch": "c64cc9ce-f919-42e4-a996-fba0fb3d3448"
+        }
+      ],
+      "drafts": [
+        {
+          "clientId": "tab_2dd6779edd3a3a7c04f450075e2d8bb1",
+          "draft": {
+            "epoch": "c64cc9ce-f919-42e4-a996-fba0fb3d3448",
+            "ops": [
+              {
+                "id": "tab_2dd6779edd3a3a7c04f450075e2d8bb1:1",
+                "client": "tab_2dd6779edd3a3a7c04f450075e2d8bb1",
+                "clock": 1,
+                "type": "block.insert",
+                "block_id": "heading-0",
+                "block_type": "heading1",
+                "group_id": "tab_da3df509b5c6777814c47be5a1b54ba1"
+              },
+              {
+                "id": "tab_2dd6779edd3a3a7c04f450075e2d8bb1:2",
+                "client": "tab_2dd6779edd3a3a7c04f450075e2d8bb1",
+                "clock": 2,
+                "type": "block.insert",
+                "block_id": "paragraph-0",
+                "block_type": "paragraph",
+                "after_id": "heading-0",
+                "group_id": "tab_da3df509b5c6777814c47be5a1b54ba1"
+              },
+              {
+                "id": "tab_2dd6779edd3a3a7c04f450075e2d8bb1:3",
+                "client": "tab_2dd6779edd3a3a7c04f450075e2d8bb1",
+                "clock": 3,
+                "type": "text.insert",
+                "block_id": "heading-0",
+                "after_id": null,
+                "text": "상위 한글😀 제목",
+                "marks": {
+                  "bold": true,
+                  "color": "blue"
+                },
+                "group_id": "tab_dfa49a4fc5a66b9e9a608af5649980dd"
+              },
+              {
+                "id": "tab_2dd6779edd3a3a7c04f450075e2d8bb1:4",
+                "client": "tab_2dd6779edd3a3a7c04f450075e2d8bb1",
+                "clock": 4,
+                "type": "text.insert",
+                "block_id": "paragraph-0",
+                "after_id": null,
+                "text": "복구할 본문 한글과 emoji 👨‍👩‍👧\n둘째 줄 & <plain text>",
+                "marks": {
+                  "italic": true
+                },
+                "group_id": "tab_5d7fca1d5bc964adb141568740544e40"
+              },
+              {
+                "id": "tab_2dd6779edd3a3a7c04f450075e2d8bb1:5",
+                "client": "tab_2dd6779edd3a3a7c04f450075e2d8bb1",
+                "clock": 5,
+                "type": "text.format",
+                "block_id": "paragraph-0",
+                "char_ids": [
+                  "tab_2dd6779edd3a3a7c04f450075e2d8bb1:4:0",
+                  "tab_2dd6779edd3a3a7c04f450075e2d8bb1:4:1",
+                  "tab_2dd6779edd3a3a7c04f450075e2d8bb1:4:2"
+                ],
+                "marks": {
+                  "underline": true,
+                  "link": "https://example.invalid/가족"
+                },
+                "group_id": "tab_55355a9ce74e2d2ce111dcbf31d679c4"
+              }
+            ],
+            "blocks": [
+              {
+                "id": "heading-0",
+                "type": "heading1",
+                "parent_id": null,
+                "text": "상위 한글😀 제목",
+                "rich_text": [
+                  {
+                    "text": "상위 한글😀 제목",
+                    "marks": {
+                      "bold": true,
+                      "color": "blue"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "paragraph-0",
+                "type": "paragraph",
+                "parent_id": null,
+                "text": "복구할 본문 한글과 emoji 👨‍👩‍👧\n둘째 줄 & <plain text>",
+                "rich_text": [
+                  {
+                    "text": "복구할",
+                    "marks": {
+                      "italic": true,
+                      "underline": true,
+                      "link": "https://example.invalid/가족"
+                    }
+                  },
+                  {
+                    "text": " 본문 한글과 emoji 👨‍👩‍👧\n둘째 줄 & <plain text>",
+                    "marks": {
+                      "italic": true
+                    }
+                  }
+                ]
+              }
+            ],
+            "reason": "pending",
+            "createdAt": "2026-10-16T06:37:22.824Z"
+          },
+          "updatedAt": 1792132642828
+        },
+        {
+          "clientId": "tab_2dd6779edd3a3a7c04f450075e2d8bb1:basis:c64cc9ce-f919-42e4-a996-fba0fb3d3448",
+          "draft": {
+            "reason": "basis",
+            "epoch": "c64cc9ce-f919-42e4-a996-fba0fb3d3448",
+            "seq": 0,
+            "state": {
+              "version": 1,
+              "max_clock": 0,
+              "blocks": {},
+              "seen": {}
+            },
+            "blocks": []
+          },
+          "updatedAt": 1792132642827
+        }
+      ]
+    },
+    {
+      "metadata": {
+        "page": {
+          "id": "기기 하위 문서😀",
+          "title": "하위 원래 제목",
+          "parent_id": "기기 상위 문서?#%",
+          "icon": "📄",
+          "cover": "",
+          "teamspace_id": "general",
+          "owner_id": "local",
+          "access_level": 4,
+          "revision": 0,
+          "blocks": [],
+          "locked": false,
+          "archived": false,
+          "favorite": false,
+          "created_at": "2026-10-16T06:37:22.812Z",
+          "updated_at": "2026-10-16T06:37:22.812Z"
+        },
+        "initial_epoch": "0d3cc964-a874-438b-a3e0-61ccf22c0c97",
+        "create_operation_id": "194776ff-81d8-4c7c-ac30-e7c65b371c51",
+        "localOnly": true
+      },
+      "snapshot": {
+        "epoch": "0d3cc964-a874-438b-a3e0-61ccf22c0c97",
+        "seq": 0,
+        "state": {
+          "version": 1,
+          "max_clock": 0,
+          "blocks": {},
+          "seen": {}
+        },
+        "page": {
+          "id": "기기 하위 문서😀",
+          "title": "하위 원래 제목",
+          "parent_id": "기기 상위 문서?#%",
+          "icon": "📄",
+          "cover": "",
+          "teamspace_id": "general",
+          "owner_id": "local",
+          "access_level": 4,
+          "revision": 0,
+          "blocks": [],
+          "locked": false,
+          "archived": false,
+          "favorite": false,
+          "created_at": "2026-10-16T06:37:22.812Z",
+          "updated_at": "2026-10-16T06:37:22.812Z"
+        },
+        "blocks": [],
+        "access_level": 4,
+        "access_revision": 0,
+        "data_revision": 0,
+        "workspace_id": "48c208b5e55545759bff49ec8075307b",
+        "current_member_id": "local",
+        "session_binding": "3248c9ec0a7592e6289ce79076b72115"
+      },
+      "operations": [
+        {
+          "id": "tab_880f3362ab3fdadc461ba7e73b060db3:1",
+          "client": "tab_880f3362ab3fdadc461ba7e73b060db3",
+          "clock": 1,
+          "type": "block.insert",
+          "block_id": "heading-1",
+          "block_type": "heading1",
+          "group_id": "tab_076b65b75942e407117663b531a759f6",
+          "_epoch": "0d3cc964-a874-438b-a3e0-61ccf22c0c97"
+        },
+        {
+          "id": "tab_880f3362ab3fdadc461ba7e73b060db3:2",
+          "client": "tab_880f3362ab3fdadc461ba7e73b060db3",
+          "clock": 2,
+          "type": "block.insert",
+          "block_id": "paragraph-1",
+          "block_type": "paragraph",
+          "after_id": "heading-1",
+          "group_id": "tab_076b65b75942e407117663b531a759f6",
+          "_epoch": "0d3cc964-a874-438b-a3e0-61ccf22c0c97"
+        },
+        {
+          "id": "tab_880f3362ab3fdadc461ba7e73b060db3:3",
+          "client": "tab_880f3362ab3fdadc461ba7e73b060db3",
+          "clock": 3,
+          "type": "text.insert",
+          "block_id": "heading-1",
+          "after_id": null,
+          "text": "하위 😀 제목",
+          "marks": {
+            "bold": true,
+            "color": "blue"
+          },
+          "group_id": "tab_aeaa68c8bb58593e7c3597e3e7a4076e",
+          "_epoch": "0d3cc964-a874-438b-a3e0-61ccf22c0c97"
+        },
+        {
+          "id": "tab_880f3362ab3fdadc461ba7e73b060db3:4",
+          "client": "tab_880f3362ab3fdadc461ba7e73b060db3",
+          "clock": 4,
+          "type": "text.insert",
+          "block_id": "paragraph-1",
+          "after_id": null,
+          "text": "복구할 본문 한글과 emoji 👨‍👩‍👧\n둘째 줄 & <plain text>",
+          "marks": {
+            "italic": true
+          },
+          "group_id": "tab_579e6ca2eb5216c14ea56f781579d40a",
+          "_epoch": "0d3cc964-a874-438b-a3e0-61ccf22c0c97"
+        },
+        {
+          "id": "tab_880f3362ab3fdadc461ba7e73b060db3:5",
+          "client": "tab_880f3362ab3fdadc461ba7e73b060db3",
+          "clock": 5,
+          "type": "text.format",
+          "block_id": "paragraph-1",
+          "char_ids": [
+            "tab_880f3362ab3fdadc461ba7e73b060db3:4:0",
+            "tab_880f3362ab3fdadc461ba7e73b060db3:4:1",
+            "tab_880f3362ab3fdadc461ba7e73b060db3:4:2"
+          ],
+          "marks": {
+            "underline": true,
+            "link": "https://example.invalid/가족"
+          },
+          "group_id": "tab_ad56a53c92084407e38ff53f742607d0",
+          "_epoch": "0d3cc964-a874-438b-a3e0-61ccf22c0c97"
+        }
+      ],
+      "drafts": [
+        {
+          "clientId": "tab_880f3362ab3fdadc461ba7e73b060db3",
+          "draft": {
+            "epoch": "0d3cc964-a874-438b-a3e0-61ccf22c0c97",
+            "ops": [
+              {
+                "id": "tab_880f3362ab3fdadc461ba7e73b060db3:1",
+                "client": "tab_880f3362ab3fdadc461ba7e73b060db3",
+                "clock": 1,
+                "type": "block.insert",
+                "block_id": "heading-1",
+                "block_type": "heading1",
+                "group_id": "tab_076b65b75942e407117663b531a759f6"
+              },
+              {
+                "id": "tab_880f3362ab3fdadc461ba7e73b060db3:2",
+                "client": "tab_880f3362ab3fdadc461ba7e73b060db3",
+                "clock": 2,
+                "type": "block.insert",
+                "block_id": "paragraph-1",
+                "block_type": "paragraph",
+                "after_id": "heading-1",
+                "group_id": "tab_076b65b75942e407117663b531a759f6"
+              },
+              {
+                "id": "tab_880f3362ab3fdadc461ba7e73b060db3:3",
+                "client": "tab_880f3362ab3fdadc461ba7e73b060db3",
+                "clock": 3,
+                "type": "text.insert",
+                "block_id": "heading-1",
+                "after_id": null,
+                "text": "하위 😀 제목",
+                "marks": {
+                  "bold": true,
+                  "color": "blue"
+                },
+                "group_id": "tab_aeaa68c8bb58593e7c3597e3e7a4076e"
+              },
+              {
+                "id": "tab_880f3362ab3fdadc461ba7e73b060db3:4",
+                "client": "tab_880f3362ab3fdadc461ba7e73b060db3",
+                "clock": 4,
+                "type": "text.insert",
+                "block_id": "paragraph-1",
+                "after_id": null,
+                "text": "복구할 본문 한글과 emoji 👨‍👩‍👧\n둘째 줄 & <plain text>",
+                "marks": {
+                  "italic": true
+                },
+                "group_id": "tab_579e6ca2eb5216c14ea56f781579d40a"
+              },
+              {
+                "id": "tab_880f3362ab3fdadc461ba7e73b060db3:5",
+                "client": "tab_880f3362ab3fdadc461ba7e73b060db3",
+                "clock": 5,
+                "type": "text.format",
+                "block_id": "paragraph-1",
+                "char_ids": [
+                  "tab_880f3362ab3fdadc461ba7e73b060db3:4:0",
+                  "tab_880f3362ab3fdadc461ba7e73b060db3:4:1",
+                  "tab_880f3362ab3fdadc461ba7e73b060db3:4:2"
+                ],
+                "marks": {
+                  "underline": true,
+                  "link": "https://example.invalid/가족"
+                },
+                "group_id": "tab_ad56a53c92084407e38ff53f742607d0"
+              }
+            ],
+            "blocks": [
+              {
+                "id": "heading-1",
+                "type": "heading1",
+                "parent_id": null,
+                "text": "하위 😀 제목",
+                "rich_text": [
+                  {
+                    "text": "하위 😀 제목",
+                    "marks": {
+                      "bold": true,
+                      "color": "blue"
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "paragraph-1",
+                "type": "paragraph",
+                "parent_id": null,
+                "text": "복구할 본문 한글과 emoji 👨‍👩‍👧\n둘째 줄 & <plain text>",
+                "rich_text": [
+                  {
+                    "text": "복구할",
+                    "marks": {
+                      "italic": true,
+                      "underline": true,
+                      "link": "https://example.invalid/가족"
+                    }
+                  },
+                  {
+                    "text": " 본문 한글과 emoji 👨‍👩‍👧\n둘째 줄 & <plain text>",
+                    "marks": {
+                      "italic": true
+                    }
+                  }
+                ]
+              }
+            ],
+            "reason": "pending",
+            "createdAt": "2026-10-16T06:37:22.831Z"
+          },
+          "updatedAt": 1792132642834
+        },
+        {
+          "clientId": "tab_880f3362ab3fdadc461ba7e73b060db3:basis:0d3cc964-a874-438b-a3e0-61ccf22c0c97",
+          "draft": {
+            "reason": "basis",
+            "epoch": "0d3cc964-a874-438b-a3e0-61ccf22c0c97",
+            "seq": 0,
+            "state": {
+              "version": 1,
+              "max_clock": 0,
+              "blocks": {},
+              "seen": {}
+            },
+            "blocks": []
+          },
+          "updatedAt": 1792132642833
+        }
+      ]
+    }
+  ]
+}

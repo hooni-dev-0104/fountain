@@ -17,7 +17,7 @@ import type {BackupEntity,BackupMeta,BackupChunk,SQLiteBackupSource} from './sql
 
 const READ=65536,PAGE_LIMIT=8*1024*1024,ROW_LIMIT=16*1024*1024,HASH=/^[a-f0-9]{64}$/;
 const PRIVATE=new Set(['session','clipboard','upload','presence','attachment_chunk','cloud_chunk','upload_gc','upload_migration']);
-const PRIVATE_META=new Set(['local_cache_binding','attachment_file_root','attachment_file_gc_cursor']);
+const PRIVATE_META=new Set(['local_cache_binding','attachment_file_root','attachment_file_gc_cursor','_backup_storage_reserved']);
 const FINGERPRINT=['id','owner_id','page_id','name','size','mime','storage','sha256','created_at','updated_at'];
 const enc=new TextEncoder();
 export class BackupError extends APIError{

@@ -12,7 +12,7 @@ export const SQLITE_DEFINITIONS={
   attachment_chunks:'CREATE TABLE attachment_chunks (attachment_id TEXT NOT NULL, offset INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(attachment_id,offset))',
 } as const;
 export const SQLITE_PRIVATE_KINDS=new Set(['session','clipboard','upload','presence']);
-const OMIT_META=new Set(['local_cache_binding','attachment_file_root','attachment_file_gc_cursor']);
+const OMIT_META=new Set(['local_cache_binding','attachment_file_root','attachment_file_gc_cursor','_backup_storage_reserved']);
 const CHUNK_SIZE=4*1024*1024,MAX_ATTACHMENT=5_000_000_000,SLICE=65536;
 type Rows<T>=()=>AsyncIterable<T>|Iterable<T>;
 export type BackupBlob={size:number;open:()=>AsyncIterable<Uint8Array>|Iterable<Uint8Array>};

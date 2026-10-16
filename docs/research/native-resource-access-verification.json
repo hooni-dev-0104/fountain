@@ -1,0 +1,125 @@
+{
+  "date": "2026-10-16",
+  "scope": "Native-observed resource access source implementation and preservation gates; full five-platform/all-paid-feature goal remains active",
+  "rollout": {
+    "outboxVersion": 1,
+    "outboxEnabled": false,
+    "ordinary_native_sqlite_io": "Default disabled path does not open, migrate or hydrate SQLite",
+    "new_external_dependencies": false,
+    "actual_sdk_build": false,
+    "device_execution": false
+  },
+  "authority": {
+    "sources": [
+      "Native current-scope exact query-free GET /api/workspace",
+      "Native current-scope exact query-free GET /api/pages/:encodedId/collaboration",
+      "Native current-scope exact query-free GET /api/databases/:encodedId"
+    ],
+    "excluded": [
+      "Renderer profile or imported JSON",
+      "POST operations",
+      "Filtered/query aliases",
+      "Old canonical cache, pending base or accepted receipt as authority"
+    ],
+    "identity": "Exact current origin/workspace/member/binding and native cookie/auth boundary; no credential or proof setter exposed to JS"
+  },
+  "freshness": {
+    "ttl_ms": 86400000,
+    "deadline": "min(native grant expiration, observedAt + TTL)",
+    "unchanged_polling": "Retains original observation/deadline/proofEpoch/head; no sliding TTL extension",
+    "global_revision_floor": "Private per-profile componentwise maximum of access and data revisions; old DB and old proof agreement cannot override a newer workspace observation",
+    "stale_response": "Rejected before payload delivery and without replacing current ledger/floor",
+    "negative_response": "Actual resource denial is terminal for the same binding, including embedded workspace copies; malformed 200 invalidates temporary evidence and preserves input"
+  },
+  "persistence": {
+    "proof_epoch": "Separate from business data head and owner lease; included in staged intent, read cursor and immutable commit receipt",
+    "fresh_commit": "Final record overlay preflight inside the SQL transaction; failure rolls back records/head/receipt",
+    "lost_ack": "Current owner/auth/lease check then immutable exact txId/digest receipt before current resource/proof gate",
+    "uncommitted_stale_intent": "Original proof epoch retained; requires explicit recovery, never retagged automatically",
+    "native_read": "Whole-profile preflight before first fragment; final callback checks original proof epoch and actually used proof deadlines",
+    "browser_read": "Native first-page gate before any IndexedDB clear; later page and post-IDB-read fences",
+    "denial_input": "Operations/drafts/mutations preserved in inaccessible recovery before active resource cache purge; explicit logout removes recovery too"
+  },
+  "coverage": [
+    "Nested profile.workspace membership, revision, flags and individual tombstone/invalid markers",
+    "Page canonical identity, revisions, epoch and sequence",
+    "Database data revision, projected row IDs/levels and create capability",
+    "Edit and previous base relation/parent/dependency references with target database proof and tombstones",
+    "Normal legacy basis requires independent matching current canonical snapshot",
+    "Local-create dependency closure remains preserved and blocked until explicit implementation"
+  ],
+  "memory": {
+    "record_bytes": 16777216,
+    "private_ledger_total_bytes": 16777216,
+    "delta_bytes": 67108864,
+    "fragment_bytes": 262144,
+    "access_issue_limit": 100,
+    "preflight": "Streams one bounded persisted record; bounded delta overlay only",
+    "capacity": "Preserves business records/input; validated newer revision floor and proof fence cannot be bypassed when aggregate proof storage exceeds capacity"
+  },
+  "verification": {
+    "android": {
+      "pure_jdk_checks": 88,
+      "existing_policy_checks": 114,
+      "portable_sql_and_source_tests": 12,
+      "java_signature_compile": "PASS against test signatures; not Android SDK or SQLiteDatabase execution",
+      "independent_review": "APPROVE after compile, late-200, embedded cache and bounded issue-set fixes"
+    },
+    "ios": {
+      "portable_sql_and_source_tests": 15,
+      "project_plist": "PASS",
+      "independent_review": "APPROVE after basis/reference, whole-cache memory, capacity/floor and fixed deadline repairs",
+      "swift_compilation": "Unverified; Xcode showsdks returned69 for unaccepted license, no acceptance or bypass"
+    },
+    "javascript": {
+      "configured_outbox_command": "npm run --prefix apps/mobile test:outbox — PASS",
+      "cases": [
+        "Actual Chrome IndexedDB plus Node SQLite bridge model",
+        "Original epoch intent and current-owner retry",
+        "Immutable receipt after proof refresh",
+        "First preflight failure preserves IDB with zero clear",
+        "Expiry, global revision floor, projected row narrowing and prior-reference gates",
+        "Malformed response versus terminal denial",
+        "Proof cursor/late callback/post-IDB-read races",
+        "Stable polling during staged commit",
+        "Private cap floor retention and SQL rollback",
+        "Default-disabled bootstrap and current session response preservation"
+      ],
+      "independent_review": "APPROVE; model mismatches independently reproduced before and after fixes"
+    },
+    "actual_http_model": {
+      "command": "node apps/mobile/tests/outbox-resource-http.mjs",
+      "result": "PASS real disposable Python SQLite HTTP -> Chrome IndexedDB -> Node SQLite proof model",
+      "synthetic_proofs": false,
+      "production_namespace_used": false,
+      "verified": [
+        "Actual canonical identity envelope",
+        "Lazy collaboration seed raises data revision",
+        "Assigned-row narrowing changes data revision without access revision",
+        "Zero delivered bytes/zero IDB clears; native records, input and head retained",
+        "Late stale/query/POST proof source rejection",
+        "Locked GET versus423 write and canonical404 denial"
+      ],
+      "limitation": "Native observer and SQLite implementations are modeled; no native SDK, device or TLS execution"
+    },
+    "mobile_regression": "npm test --prefix apps/mobile — PASS actual HTTP + Chrome native bridge mock",
+    "bundle": "17 public assets synchronized; 18 source SHA256 comparisons passed across web/Android/iOS outputs"
+  },
+  "production": {
+    "runtime_commit": "f77e91872f763adc84ff2585bd3ac7f8713b9b52",
+    "runtime_files": 37,
+    "preview": "http://localhost:8787",
+    "fresh_target_recovery_fix": "PASS actual Chrome reproduction/fix and independent review; source retained in immutable runtime",
+    "data": "Six production business/session collections unchanged; private integrity-checked backup retained",
+    "native_activation": false
+  },
+  "remaining": [
+    "Explicit quarantine inventory/export/promotion and recovery UI",
+    "Bounded current-proof fetch/reconciliation of old canonical caches and pending edits",
+    "Complete local create/dependency closure",
+    "iOS/Android SDK builds and real device storage, lifecycle, authentication, TLS and transport tests",
+    "Windows runtime verification",
+    "Common reachable HTTPS server",
+    "Other feature parity recorded in docs/FEATURES.md"
+  ]
+}

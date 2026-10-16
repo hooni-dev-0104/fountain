@@ -60,4 +60,4 @@ JVM 검사는 실제 생산 코드의 경로·헤더·쿠키 경계와 저장 �
 두 플랫폼의 SDK 타입 검사·설치·Keychain/Keystore·실제 TLS·OS 파일 저장·앱 중단과 재개·5GB 전송·영구 outbox·실기기 간 동기화는 남아 있습니다. 코드 검토나 Chrome의 mock 성공을 이 항목의 완료 증거로 사용하지 않습니다.
 
 
-`test:outbox`는 기본 비활성 부팅의 무접근 경계와 명시적 활성 fixture의 실제 IndexedDB·SQLite 모의를 검사합니다. Node 내장 SQLite를 사용하는 테스트이며 iOS/Android의 네이티브 SQLite 코드를 실행하는 시험은 아닙니다.
+`test:outbox`는 기본 비활성 부팅의 무접근 경계와 명시적 활성 fixture의 실제 IndexedDB·SQLite 모의를 검사합니다. 실제 임시 Python HTTP 응답의 신원·revision과 담당자 변경도 Chrome/IndexedDB 및 Node SQLite 접근 검증 모델에 연결합니다. 자료 확인이 필요할 때 읽기 0바이트·원문 보존·로그인 응답 유지·응답 유실 재시도를 검사합니다. iOS/Android의 네이티브 SQLite나 SDK를 실행하는 시험은 아닙니다.

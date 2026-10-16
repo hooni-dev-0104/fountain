@@ -74,5 +74,12 @@
     "Common reachable HTTPS server",
     "Large-document automatic recovery optimization",
     "Remaining feature parity in docs/FEATURES.md"
-  ]
+  ],
+  "followup_target_fix": {
+    "commit": "f77e91872f763adc84ff2585bd3ac7f8713b9b52",
+    "trigger": "Fresh editable server page absent from current device workspace/snapshots",
+    "before": "Preview succeeds, confirmation incorrectly rejects the target",
+    "after": "Confirm rechecks current server and supplies editable IDs as trusted storage options only; imported fields cannot grant this",
+    "verification": "Actual Chrome failing regression before fix; storage/core/UI/mutation/parser suites and independent review passed; locked/revoked/stale targets still rejected; six production collections unchanged after cutover"
+  }
 }

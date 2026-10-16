@@ -65,6 +65,15 @@ final class NativePolicy {
         } catch (Exception error) { throw new IllegalArgumentException("Invalid API path"); }
     }
 
+    static String apiUrl(String server, String logicalPath) {
+        String canonical = origin(server), validated = path(logicalPath, false);
+        URI uri = URI.create(canonical);
+        // The renderer still supplies an origin and a logical /api path only.
+        // This fixed transport prefix is never configurable or caller supplied.
+        boolean cloud = uri.getPort() == -1 && uri.getHost().matches("[a-z0-9]{20}\\.supabase\\.co");
+        return canonical + (cloud ? "/functions/v1/fountain-api" : "") + validated;
+    }
+
     static String decode(String value) throws Exception {
         return URLDecoder.decode(value.replaceAll("%(?![0-9A-Fa-f]{2})", "%25").replace("+", "%2B"), StandardCharsets.UTF_8.name());
     }

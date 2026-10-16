@@ -108,6 +108,19 @@ public final class NativePolicyFixture {
         rejects(() -> NativePolicy.invalidateSession(origin, "active", "revoke", new FaultStorage()));
     }
 
+    static void cloudRouting() {
+        String project="https://ehnovtfadpkwtubmwltl.supabase.co",prefix=project+"/functions/v1/fountain-api";
+        equal(NativePolicy.apiUrl(project,"/api/session"),prefix+"/api/session");
+        equal(NativePolicy.apiUrl(project+"/","/api/session"),prefix+"/api/session");
+        equal(NativePolicy.apiUrl(project+":443/","/api/session"),prefix+"/api/session");
+        equal(NativePolicy.apiUrl("HTTPS://EHNOVTFADPKWTUBMWLTL.SUPABASE.CO:443/","/api/session"),prefix+"/api/session");
+        for(String path:Arrays.asList("/api/search?q=%ED%95%9C%EA%B8%80+%25","/api/pages/가족?title=한글","/api/pages/%ED%95%9C%EA%B8%80","/api/backup?job_id=00000000-0000-0000-0000-000000000001"))equal(NativePolicy.apiUrl(project,path),prefix+path);
+        for(String path:Arrays.asList("/api/backup","/api/attachments/attachment_1/download"))equal(NativePolicy.apiUrl(project,NativePolicy.path(path,true)),prefix+path);
+        for(String server:Arrays.asList(project+":8443","https://example.com","https://example.com:443","https://10.0.2.2:61603","https://localhost:8443","https://[::1]:8443","https://ehnovtfadpkwtubmwltl.supabase.co.evil.invalid","https://ehnovtfadpkwtubmwltl.supabase.co.","https://ehnovtfadpkwtubmwlt.supabase.co","https://ehnovtfadpkwtubmwltlx.supabase.co","https://ehnovtfadpkwtubmwltl.functions.supabase.co"))equal(NativePolicy.apiUrl(server,"/api/session"),NativePolicy.origin(server)+"/api/session");
+        for(String path:Arrays.asList("/functions/v1/fountain-api/api/session","https://evil.invalid/api/session","//evil.invalid/api/session","/api/../session","/api/%252e%252e/session","/api/session#secret","/api/session?x=%250a","/api/x%255csecret"))rejects(()->NativePolicy.apiUrl(project,path));
+        for(String server:Arrays.asList(project+"/functions/v1/fountain-api",project+"?path=x",project+"#x","https://user:password@ehnovtfadpkwtubmwltl.supabase.co","http://ehnovtfadpkwtubmwltl.supabase.co"))rejects(()->NativePolicy.apiUrl(server,"/api/session"));
+    }
+
     public static void main(String[] args) throws Exception {
         equal(NativePolicy.origin("https://Example.COM:443/"), "https://example.com");
         equal(NativePolicy.origin("https://127.0.0.1:8443"), "https://127.0.0.1:8443");
@@ -145,7 +158,7 @@ public final class NativePolicyFixture {
         equal(invalidations[0], 2); NativeCookieBoundary.unregister(callback);
         CookieHandler.setDefault(new java.net.CookieManager());
         equal(NativeCookieBoundary.permits(NativeCookieBoundary.epoch()), false);
-        sessionInvalidationFaults();
+        sessionInvalidationFaults(); cloudRouting();
         System.out.println("PASS: " + checks + " independent Android policy/cookie-boundary checks (JDK only; not an Android build)");
     }
 }

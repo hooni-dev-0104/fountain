@@ -444,7 +444,7 @@ public class FountainNativePlugin extends Plugin {
     private HttpsURLConnection open(String server, String path, String method, Map<String, String> headers,
                                     byte[] body, String cookie, int timeout, long boundaryEpoch) throws Exception {
         if (!NativeCookieBoundary.permits(boundaryEpoch)) throw new IOException();
-        URL url = new URL(server + path);
+        URL url = new URL(NativePolicy.apiUrl(server, path));
         HttpsURLConnection connection = (HttpsURLConnection) url.openConnection();
         // Construction may capture the process CookieHandler. An epoch change
         // between both checks fences activity reinitialization before any I/O.

@@ -77,7 +77,7 @@ Supabase의 [로그아웃 기본 scope는 global](https://supabase.com/docs/guid
 
 ## 실제 앱으로 연결하기 전에 필요한 작업
 
-1. 공통 서버 주소, 안정적인 사용자/작업공간 식별, 재시도 가능한 동기화 계약을 확정한다. 브라우저 캐시와 큐를 이 계약에 연결한다.
+1. 공통 서버 주소, 안정적인 사용자/작업공간 식별, 재시도 가능한 동기화 계약을 사용한다. 웹 화면의 문서·DB 행·새 페이지·메타데이터 편집은 기기별 캐시와 작업 큐에 연결했다. 네이티브 저장소·전송 어댑터도 같은 계약을 유지해야 한다.
 2. `fetch`·EventSource·업로드 XHR·다운로드·공개/공유 링크를 `static/transport.js`로 모았다. 현재 구현은 같은 출처 연결이며, 교차 출처 네이티브 어댑터는 미구현이다. 로그인 쿠키는 `HttpOnly; SameSite=Strict`이고 직접 HTTPS에서는 `Secure`도 설정한다. 서버 URL만 바꾸면 네이티브 로그인·실시간 연결이 완성되지 않는다. 네이티브 인증 전송과 세션 철회를 검증해야 한다. 허용 Origin을 무조건 풀어 해결하지 않는다.
 3. `--tls-cert`·`--tls-key`로 직접 TLS 1.2 이상의 HTTPS를 제공할 수 있다. 인증서 발급·갱신과 공통 서버의 상시 운영 배포는 남아 있다. 실제 소켓의 HTTP/HTTPS에 맞는 Origin만 허용하며 forwarded 헤더로 이 검사를 바꾸지 않는다. Supabase를 선택하면 Auth·Postgres 경계와 이관을 먼저 검증하며 현재 로컬 DB를 유지한다.
 4. Electron과 Capacitor 프로젝트를 추가하고 공통 화면을 연결한다. iOS/Android는 영구 캐시·Keychain/Keystore·앱 중단·복귀·파일 선택·공유를 각각 검증한다. 브라우저 IndexedDB가 모든 모바일 상황에서 영구 보존된다고 가정하지 않는다.

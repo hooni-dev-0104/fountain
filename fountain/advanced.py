@@ -58,7 +58,7 @@ FEATURES = [
     ('retention', '데이터 보존 정책', 'Enterprise', 'implemented', '만료 휴지통·회의 대화록 수동 정리'),
     ('integrations', '연결 앱·SIEM·DLP', 'Enterprise', 'configuration', '연결 설정 저장; 공급자 OAuth·동기화 미연동'),
     ('agents', '사용자 지정 AI 에이전트', 'Business', 'provider_required', '정해진 문서 작업 실행; 자율 외부 도구 실행 미지원'),
-    ('offline', '오프라인', 'Plus', 'partial', '보관한 문서의 브라우저 편집·재접속 병합·복구 초안; DB 행·새 페이지 생성은 미지원'),
+    ('offline', '오프라인', 'Plus', 'partial', '문서·DB 행·새 페이지·메타데이터 기기 보관과 재접속 병합·충돌 복구; DB 구조·권한·첨부는 연결 필요'),
     ('zero_retention', 'AI 공급자 데이터 무보존', 'Enterprise', 'provider_required', '사용하는 공급자 계약과 배포 설정으로 보장해야 함'),
     ('support', '전담 고객 성공·프리미엄 지원', 'Enterprise', 'service_required', '소프트웨어로 제공할 수 없는 인적 서비스'),
 ]

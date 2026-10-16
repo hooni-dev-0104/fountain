@@ -1,0 +1,66 @@
+{
+  "date": "2026-10-16",
+  "versions": {
+    "electron": "44.8.0",
+    "electron_packager": "20.3.0",
+    "capacitor": "8.5.3"
+  },
+  "desktop": {
+    "macos_arm64_packaged_runtime_checks": 14,
+    "security_runtime_checks": 5,
+    "unit_checks": 8,
+    "windows_x64_packaged": true,
+    "windows_runtime_verified": false,
+    "signed": false,
+    "artifact_source_files_verified": 7,
+    "zip_crc_and_sha256_verified": true,
+    "packages": [
+      {
+        "name": "Fountain-macOS-arm64.zip",
+        "bytes": 127322089,
+        "sha256": "a1134e629dd830b5e35a1ebaa6f244a6965ad962e3201c987a63c430133daabd"
+      },
+      {
+        "name": "Fountain-win32-x64.zip",
+        "bytes": 158479740,
+        "sha256": "45c32f6e6e7c73a45fa4c40b4280af702b27a993a25eb1c275b7da3d32d555b7"
+      }
+    ]
+  },
+  "mobile": {
+    "sdk_compiled": false,
+    "physical_devices_verified": false,
+    "ios_limit": "xcodebuild -showsdks / xcrun returned license error 69; no acceptance or bypass",
+    "android_limit": "Android SDK and Android Studio absent",
+    "mock_bridge_real_http_chrome": "passed; login,document+presence polls,4MiB/16MiB exact response,4MiB+113 upload,download/backup/export,logout,backend cache isolation,native-shaped network failure offline reload/edit/replay,storage failure no cache fallback",
+    "jdk_policy_and_storage_failure_checks": 114,
+    "native_private_vault_and_tls_runtime_verified": false,
+    "native_durable_outbox": false,
+    "independent_static_review": "fixes reviewed; not a substitute for SDK/device execution",
+    "native_time_limit_seconds": 45,
+    "local_export_limit_bytes": 8388608
+  },
+  "web_regressions": [
+    "transport",
+    "offline-storage-v2",
+    "9MB uploads",
+    "offline SW reload and account fences",
+    "AI response scope",
+    "native backend namespace"
+  ],
+  "python_baseline": {
+    "tests": 436,
+    "skipped": 0,
+    "actual_supabase": true,
+    "seconds": 245.656
+  },
+  "remaining": [
+    "mobile SDK build and physical device tests",
+    "actual Windows execution",
+    "native OS vault/TLS/file export tests",
+    "mobile durable outbox and large file resume",
+    "signing/installers/update delivery",
+    "common reachable HTTPS backend deployment",
+    "five-platform same-account real device verification"
+  ]
+}

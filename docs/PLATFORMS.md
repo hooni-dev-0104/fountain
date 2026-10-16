@@ -7,12 +7,12 @@
 | 항목 | 확인한 구현 | 아직 필요한 작업 |
 | --- | --- | --- |
 | 웹 | Python HTTP/선택 HTTPS 서버, SQLite 또는 선택 PostgreSQL 원본 DB, 웹 편집기, 개별 계정·권한, 문서 공동 편집·오프라인 보관 | 인증서 운영·상시 접속 가능한 서버 배포 |
-| macOS·Windows | 공통 웹 화면과 재사용할 도메인 API | Electron 프로젝트·설치 파일·서명·업데이트·실제 OS 검증 |
-| iOS·Android | 작은 화면 대응 웹 UI | 모바일 프로젝트·네이티브 저장소/인증/파일 연결·키보드/실기기 검증 |
+| macOS·Windows | Electron 44.8.0, 서버별 저장소, macOS arm64 실제 앱 실행·로그인/문서/SSE·재시작, Windows x64 portable 생성 | Windows OS 실행, 서명·업데이트·설치 프로그램 |
+| iOS·Android | Capacitor 8.5.3 프로젝트, 제한된 native HTTP·보안 세션·파일 내보내기 코드, mock bridge+실제 HTTP/Chrome 검증 | SDK 빌드·설치·실제 TLS/보안 저장소/파일 UI·키보드·중단/복귀·영구 outbox·실기기 검증 |
 | 기기 간 동기화 | 같은 서버를 사용하는 브라우저들은 같은 원본 DB를 읽고 문서 편집을 병합 | 네이티브 전송·인증 연결과 다섯 플랫폼 간 검증 |
 | Supabase | 서울 원본 DB·강제 RLS·최소 권한·TLS, 공유 파일 저장소, 기존 자료/계정 이관, 실제 5GB 저장소·SQLite 백업 복원 검증 | 상시 HTTPS 서버 운영·Supabase Auth 연결·대용량 전체 HTTP 전송 성능 |
 
-현재 저장소에는 Electron/Capacitor 패키지나 iOS/Android 빌드 프로젝트가 없다. 모바일 크기의 Chrome 테스트는 네이티브 앱 검증을 대신하지 않는다. `localhost:8787`은 접속하는 기기 자신을 가리키므로 휴대폰에서 같은 주소를 여는 것만으로 PC 데이터에 연결되지는 않는다.
+승인한 Electron/Capacitor 버전을 고정하고 두 데스크톱 패키지와 iOS/Android 프로젝트를 생성했다. [데스크톱 실행·검증](../apps/desktop/README.md)과 [모바일 실행·한계](../apps/mobile/README.md)를 구분한다. 모바일 크기의 Chrome 테스트는 네이티브 앱 검증을 대신하지 않는다. `localhost:8787`은 접속하는 기기 자신을 가리키므로 휴대폰에서 같은 주소를 여는 것만으로 PC 데이터에 연결되지는 않는다.
 
 ## Notion 조사로 확인한 범위
 
@@ -39,7 +39,7 @@ flowchart TD
   API --> FILES[첨부 저장소]
 ```
 
-Electron과 Capacitor는 구현 후보로 선정한 방향이다. 설치하거나 패키징한 상태는 아니다. [Capacitor v8 공식 문서](https://capacitorjs.com/docs)는 웹 화면을 iOS·Android 네이티브 컨테이너에 통합하고 필요한 네이티브 API를 연결하는 방식을 제공한다. 공통 편집기를 재사용하면서 모바일에서 저장소·파일·공유·인증 기능을 단계적으로 연결하는 데 적합하다고 판단했다. 네이티브 성능과 접근성은 실제 기기에서 별도로 확인한다.
+Electron과 Capacitor를 승인받아 프로젝트 전용 의존성으로 설치했다. 데스크톱은 같은 서버의 화면을 직접 열고, 모바일은 로컬 번들과 자체 native 전송을 연결하는 방식으로 구현 중이다. [Capacitor v8 공식 문서](https://capacitorjs.com/docs)는 웹 화면을 iOS·Android 네이티브 컨테이너에 통합하고 필요한 네이티브 API를 연결하는 방식을 제공한다. 공통 편집기를 재사용하면서 모바일에서 저장소·파일·공유·인증 기능을 단계적으로 연결하는 데 적합하다고 판단했다. 네이티브 성능과 접근성은 실제 기기에서 별도로 확인한다.
 
 모든 클라이언트는 같은 서버 주소와 작업공간 ID를 사용한다. 각 앱에 독립 Python 서버와 새 원본 SQLite DB를 기본으로 넣으면 데이터가 갈라지므로 이 방식으로 기기 간 동기화를 구현하지 않는다. 로컬 서버를 운영하는 경우에도 가족이 연결하는 서버는 하나다.
 
@@ -78,10 +78,10 @@ Postgres 어댑터는 실제 트랜잭션·SAVEPOINT·작업공간 잠금으로 
 ## 실제 앱으로 연결하기 전에 필요한 작업
 
 1. 공통 서버 주소, 안정적인 사용자/작업공간 식별, 재시도 가능한 동기화 계약을 사용한다. 웹 화면의 문서·DB 행·새 페이지·메타데이터 편집은 기기별 캐시와 작업 큐에 연결했다. 네이티브 저장소·전송 어댑터도 같은 계약을 유지해야 한다.
-2. `fetch`·EventSource·업로드 XHR·다운로드·공개/공유 링크를 `static/transport.js`로 모았다. 현재 구현은 같은 출처 연결이며, 교차 출처 네이티브 어댑터는 미구현이다. 로그인 쿠키는 `HttpOnly; SameSite=Strict`이고 직접 HTTPS에서는 `Secure`도 설정한다. 서버 URL만 바꾸면 네이티브 로그인·실시간 연결이 완성되지 않는다. 네이티브 인증 전송과 세션 철회를 검증해야 한다. 허용 Origin을 무조건 풀어 해결하지 않는다.
+2. `fetch`·EventSource·업로드 XHR·다운로드·공개/공유 링크를 `static/transport.js`로 모았다. 브라우저·Electron은 같은 출처 연결을 유지한다. 모바일은 자체 plugin에서 비공개 Cookie를 주입하고 Set-Cookie를 제거하며, 기존 서버의 Origin·인증 규칙을 완화하지 않는다. 이 코드의 SDK 실행은 아직 검증하지 않았다. 로그인 쿠키는 `HttpOnly; SameSite=Strict`이고 직접 HTTPS에서는 `Secure`도 설정한다. 서버 URL만 바꾸면 네이티브 로그인·실시간 연결이 완성되지 않는다. 네이티브 인증 전송과 세션 철회를 검증해야 한다. 허용 Origin을 무조건 풀어 해결하지 않는다.
 3. `--tls-cert`·`--tls-key`로 직접 TLS 1.2 이상의 HTTPS를 제공할 수 있다. 인증서 발급·갱신과 공통 서버의 상시 운영 배포는 남아 있다. 실제 소켓의 HTTP/HTTPS에 맞는 Origin만 허용하며 forwarded 헤더로 이 검사를 바꾸지 않는다. 현재 Supabase 이관과 원본 보존을 검증했으며 로그인은 기존 Fountain 계정을 사용한다.
-4. Electron과 Capacitor 프로젝트를 추가하고 공통 화면을 연결한다. iOS/Android는 영구 캐시·Keychain/Keystore·앱 중단·복귀·파일 선택·공유를 각각 검증한다. 브라우저 IndexedDB가 모든 모바일 상황에서 영구 보존된다고 가정하지 않는다.
-5. macOS·Windows 설치 파일과 iOS·Android 패키지를 실제로 빌드하고, 서명·설치·업데이트·배포 방법을 정한다. 현재 네이티브 SDK 의존성 추가와 빌드/서명은 미진행이다.
+4. 생성한 iOS/Android 프로젝트를 SDK로 빌드하고 영구 캐시·Keychain/Keystore·앱 중단·복귀·파일 선택·공유를 각각 검증한다. 현재 native bundle의 IndexedDB 오프라인 흐름은 mock 검증이며 OS 퇴거에도 버티는 영구 outbox를 보장하지 않는다.
+5. macOS arm64·Windows x64 standalone 결과를 보존하고 Windows 실행 및 모바일 SDK 빌드를 검증한다. Xcode SDK 도구는 라이선스 미동의로 차단됐고 Android SDK는 없다. 서명·설치 프로그램·업데이트·배포는 미진행이며 사용자의 라이선스 검토나 자격증명이 필요하다.
 
 완료 기준은 다섯 플랫폼에서 같은 계정으로 로그인하고, 문서·DB·댓글·공유 설정·첨부의 생성·편집·삭제가 다른 기기에 반영되는 것이다. 이어서 동시 편집, 오프라인 재시작·재접속, 같은 필드 충돌, 권한 철회, 로그아웃 후 늦은 응답, 다른 가족의 비공개 자료 차단까지 확인한다. 설치 가능한 앱과 이 검증이 갖춰지기 전에는 전체 플랫폼 지원 완료로 표시하지 않는다.
 
@@ -92,3 +92,9 @@ Postgres 어댑터는 실제 트랜잭션·SAVEPOINT·작업공간 잠금으로 
 `node tests/browser-https.mjs`는 해당 임시 인증서의 공개 키만 허용한 Chrome으로 같은 이메일 계정의 서로 다른 로그인 세션, 실시간 문서 편집, HTTPS 서비스 워커 오프라인 재시작·재접속, 두 조각의 파일 전송과 다른 세션의 바이트 일치 다운로드를 검사한다. 인증서 예외는 이 테스트 프로세스의 임시 키에만 적용하며 앱 실행 기본값이 아니다.
 
 `node tests/browser-transport.mjs`는 실제 계정·문서·파일·양식·사이트·백업이 공통 연결 경계를 사용하는지, 외부 URL·경로 순회·리다이렉트를 거절하는지 검사한다. 두 Chrome 컨텍스트의 검증은 웹 공통 기반의 증거이며 macOS·Windows·iOS·Android 앱 빌드나 실기기 검증을 대신하지 않는다.
+
+## 이번 네이티브 검증
+
+실제 macOS packaged Electron에서 로그인·문서·독립 Chrome의 수정 수신·IDB/SW·폼/사이트 팝업·재시작·동시 서버 전환 14개를 확인했다. 보안 실행 5개와 정책/전환 단위 8개도 통과했다. Windows는 PE32+ x64·ASAR source 일치·ZIP CRC/해시까지만 검증했다.
+
+모바일은 mock native bridge와 실제 임시 HTTP/Chrome으로 유효 4MiB·16MiB 응답, 4MiB+113바이트 청크, 파일/백업/내보내기, 계정·서버 범위, 실제 Capacitor 오류 형태의 오프라인 재시작/재전송과 저장소 실패 차단을 확인했다. JVM 정책·저장 실패 분기 114개도 통과했다. 이것은 모바일 SDK·실제 TLS·Keychain/Keystore·OS 파일 UI·실기기 다섯 플랫폼 동기화의 증거가 아니다.

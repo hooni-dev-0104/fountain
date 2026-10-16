@@ -4,7 +4,7 @@
 
 | 영역 | 현재 동작 | 남은 차이 |
 | --- | --- | --- |
-| 플랫폼 | 웹 앱, 같은 서버의 공통 원본·문서 동기화, 선택 HTTPS·Secure 쿠키, 공통 API/SSE/파일 전송 모듈 | macOS·Windows·iOS·Android 설치 앱, 인증서·상시 서버 운영, 네이티브 전송 어댑터·다섯 플랫폼 간 실기기 검증 |
+| 플랫폼 | 웹·macOS arm64 Electron 실제 실행, Windows x64 portable 생성, iOS·Android 프로젝트·자체 native 연결 코드·mock 통합 검증 | Windows 실행, 모바일 SDK 빌드·보안 저장소/전송 실기기 검증·영구 outbox, 서명·배포·상시 HTTPS 서버; [플랫폼 안내](PLATFORMS.md) |
 | 클라우드 | Supabase 서울 원본 DB·강제 RLS·TLS·공유 파일 저장소·기존 자료/세션 이관·실제 5GB 저장소/백업 복원·두 서버 Chrome 동기화 검증 | 상시 HTTPS 서버 운영·Supabase Auth 연결·대용량 전체 HTTP 전송 성능; [연결 안내](SUPABASE.md) |
 | 문서 | 중첩 페이지·블록, 굵게·기울임·밑줄·취소선·코드·링크·색상, 문자 단위 공동 편집, 접속자·원격 커서·선택 영역, 내 작업 실행 취소·다시 실행, 자동 저장, 잠금·즐겨찾기·검색·휴지통 | 열·동기화 블록·모든 Notion 고급 블록 |
 | 이력 | 원본 DB의 저장 버전 복원, 기한 제한 없음 | Notion과 같은 변경 비교 UI |

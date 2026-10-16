@@ -24,7 +24,7 @@ node --check static/app.js
 
 개인·가족용으로 앱 안의 모든 기능을 무료로 사용합니다. 결제나 플랜 제한이 없습니다. 실제 구현 범위와 Notion과의 차이는 [기능 현황](docs/FEATURES.md), 역공학 근거는 [REA 조사](docs/research/notion-rea.md)에 있습니다.
 
-목표 플랫폼은 웹·macOS·Windows·iOS·Android이며 같은 계정의 기기들은 하나의 원본 서버와 동기화합니다. **현재 실행 가능한 형태는 웹 앱이고 네이티브 설치 앱은 아직 없습니다.** Electron 데스크톱·Capacitor 모바일과 Supabase 공통 계정/DB 검토, 무료 저장소의 제약은 [플랫폼 설계](docs/PLATFORMS.md)에 기록했습니다.
+목표 플랫폼은 웹·macOS·Windows·iOS·Android이며 같은 계정의 기기들은 하나의 원본 서버와 동기화합니다. **웹과 macOS arm64 데스크톱 앱의 실제 실행을 확인했습니다.** Windows x64 portable 폴더도 만들었지만 Windows 실행은 미검증이며, iOS·Android는 프로젝트와 연결 코드를 생성한 SDK 빌드 전 단계입니다. 실행·패키징은 [데스크톱 안내](apps/desktop/README.md), 남은 SDK 준비와 검증은 [모바일 안내](apps/mobile/README.md), 공통 계정/서버와 무료 저장소 제약은 [플랫폼 설계](docs/PLATFORMS.md)에 있습니다.
 
 설치된 Notion Desktop 7.39.0의 번들에서도 SQLite·저장소 마이그레이션·클립보드 연결을 정적으로 조사하고 REA로 분석했습니다. 범위·해시·재현 명령은 [Desktop 조사 기록](docs/research/notion-desktop.md)에 있으며, 계정 데이터와 개인 문서는 읽지 않았습니다.
 

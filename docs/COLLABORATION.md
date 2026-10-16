@@ -95,3 +95,6 @@ Fountain은 열린 문서를 자동 보관하고, 부팅 뒤 즐겨찾기와 최
 Notion은 앱에서 페이지를 내려받아 오프라인 편집하며, 유료 플랜은 최근·즐겨찾기 페이지를 자동 내려받는다고 안내한다. Fountain은 브라우저 IndexedDB와 서비스 워커로 별도 구현한다. [Notion 오프라인 안내](https://www.notion.com/help/use-pages-offline)
 
 Notion의 이력 열람에는 편집 이상 권한이 필요하며, 플랜에 따라 보존 기간이 다르다. Fountain은 편집 권한 검사를 적용하고 로컬 이력에 보존 기한을 두지 않는다. [Notion 삭제·복원·이력 안내](https://www.notion.com/help/duplicate-delete-and-restore-content)
+
+
+서버가 편집을 ACK해도 canonical snapshot이 저장되기 전에 대기 작업을 지우지 않습니다. snapshot 저장과 `state.seen`으로 증명된 같은 epoch의 작업 삭제는 하나의 IndexedDB 트랜잭션이며, 중간 오류는 함께 롤백합니다. RAM에만 있는 최신 문서는 디스크 저장 증거로 사용하지 않습니다. 모바일에서는 기본적으로 WebView 캐시이며 [SQLite 기반은 비활성](NATIVE_OUTBOX.md)입니다.

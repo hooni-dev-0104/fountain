@@ -98,3 +98,6 @@ Postgres 어댑터는 실제 트랜잭션·SAVEPOINT·작업공간 잠금으로 
 실제 macOS packaged Electron에서 로그인·문서·독립 Chrome의 수정 수신·IDB/SW·폼/사이트 팝업·재시작·동시 서버 전환 14개를 확인했다. 보안 실행 5개와 정책/전환 단위 8개도 통과했다. Windows는 PE32+ x64·ASAR source 일치·ZIP CRC/해시까지만 검증했다.
 
 모바일은 mock native bridge와 실제 임시 HTTP/Chrome으로 유효 4MiB·16MiB 응답, 4MiB+113바이트 청크, 파일/백업/내보내기, 계정·서버 범위, 실제 Capacitor 오류 형태의 오프라인 재시작/재전송과 저장소 실패 차단을 확인했다. JVM 정책·저장 실패 분기 114개도 통과했다. 이것은 모바일 SDK·실제 TLS·Keychain/Keystore·OS 파일 UI·실기기 다섯 플랫폼 동기화의 증거가 아니다.
+
+
+SQLite outbox의 기반 코드는 기본 비활성 상태입니다. 정상 모바일 경로는 기존 IDB를 보존하고 앱 캐시로 안내하며, 활성화를 위한 권한 증거·이관·기기 검증 조건은 [모바일 저장소 개발 상태](NATIVE_OUTBOX.md)를 따릅니다.

@@ -67,8 +67,9 @@ Native upload progress may report acknowledged chunk completion only.
 Use backend origin for offline/upload namespace and share links, not local
 capacitor origin. Skip SW in native app; bundled shell opens without network.
 IndexedDB remains an initial cache, not a guarantee of native durable outbox.
-A subsequent disk/SQLite bridge is required before claiming crash/eviction-safe
-mobile offline support. Blob exports and native background transfer are separate
+A disabled SQLite foundation now implements bounded delta staging and receipts;
+it is not activated and does not yet establish crash/eviction-safe mobile support.
+See [the rollout boundary](../../docs/NATIVE_OUTBOX.md). Blob exports and native background transfer are separate
 capabilities and must not silently navigate unauthenticated remote downloads.
 
 ## Native failures
@@ -85,3 +86,27 @@ cookie as revoke-only while the marker exists. If marker, secure-record erasure
 and key/entry deletion all fail, return a distinct durable-invalidation error
 and attempt remote DELETE using the RAM-only revoke token. Do not promise
 next-process invalidation or report successful logout under total storage failure.
+
+
+## Disabled SQLite foundation
+
+Both native configurations advertise `outboxVersion:1, outboxEnabled:false`.
+A native compile-time gate rejects `outboxOpen`, `stageDelta`, `commitDelta` and
+`readPage` with `OUTBOX_DISABLED`. Ordinary request/session/configuration paths
+must not open or mutate SQLite while disabled. Bootstrap does not initialize,
+quarantine, clear or migrate the existing IDB databases. The prototype adapter
+is exercised only by explicit capability-enabled fixtures.
+
+The planned enabled protocol is bounded: 256KiB staged/read fragments, 16MiB
+records, 64MiB logical transactions; fixed nine business buckets; SHA256 exact
+UTF8 delta bytes; current owner/auth lease, expected data head and tx receipts.
+Same txId+digest returns its receipt after lease verification and before head
+comparison. Different digests may not reuse txId. No raw SQL or session secrets
+cross the bridge. Same owner/auth epoch reopens the same lease; authentication,
+identity or native owner changes fence old callbacks.
+
+Activation requires native-observed fresh resource proofs, explicit quarantine
+promotion and recovery UI, local-page dependency validation, auth refresh
+barriers, and real SDK/device tests. No automatic promotion exists. Do not turn
+this gate on for existing users or switch a migrated DB back to the legacy
+schema without an explicit, tested migration.

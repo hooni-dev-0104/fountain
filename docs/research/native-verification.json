@@ -38,7 +38,12 @@
     "native_durable_outbox": false,
     "independent_static_review": "fixes reviewed; not a substitute for SDK/device execution",
     "native_time_limit_seconds": 45,
-    "local_export_limit_bytes": 8388608
+    "local_export_limit_bytes": 8388608,
+    "outbox_foundation": {
+      "default_enabled": false,
+      "evidence": "outbox-foundation-verification.json",
+      "status": "source and isolated tests; activation/resource recovery/SDK/device verification incomplete"
+    }
   },
   "web_regressions": [
     "transport",

@@ -26,6 +26,8 @@ node --check static/app.js
 
 목표 플랫폼은 웹·macOS·Windows·iOS·Android이며 같은 계정의 기기들은 하나의 원본 서버와 동기화합니다. **웹과 macOS arm64 데스크톱 앱의 실제 실행을 확인했습니다.** Windows x64 portable 폴더도 만들었지만 Windows 실행은 미검증이며, iOS·Android는 프로젝트와 연결 코드를 생성한 SDK 빌드 전 단계입니다. 실행·패키징은 [데스크톱 안내](apps/desktop/README.md), 남은 SDK 준비와 검증은 [모바일 안내](apps/mobile/README.md), 공통 계정/서버와 무료 저장소 제약은 [플랫폼 설계](docs/PLATFORMS.md)에 있습니다.
 
+모바일 미전송 편집은 현재 앱 캐시에 보관합니다. [SQLite 저장소 개발 상태](docs/NATIVE_OUTBOX.md)에서 기본 비활성 설정과 실기기 검증·이관 조건을 확인할 수 있습니다.
+
 설치된 Notion Desktop 7.39.0의 번들에서도 SQLite·저장소 마이그레이션·클립보드 연결을 정적으로 조사하고 REA로 분석했습니다. 범위·해시·재현 명령은 [Desktop 조사 기록](docs/research/notion-desktop.md)에 있으며, 계정 데이터와 개인 문서는 읽지 않았습니다.
 
 가족 공용 비밀번호를 설정하려면 `FOUNTAIN_ACCESS_TOKEN`에 16자 이상 값을 지정하고 실행합니다. 세션은 HttpOnly 쿠키로 관리하며, 가족은 같은 신뢰 영역을 공유합니다. 기본 접속은 이 PC로 제한됩니다.

@@ -6,6 +6,22 @@
 	objectVersion = 60;
 	objects = {
 
+        F04900000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FountainNativeTests.swift; sourceTree = "<group>"; };
+        F04900000000000000000002 = {isa = PBXBuildFile; fileRef = F04900000000000000000001; };
+        F04900000000000000000003 = {isa = PBXGroup; children = (F04900000000000000000001,); path = AppTests; sourceTree = "<group>"; };
+        F04900000000000000000004 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = FountainNativeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+        F04900000000000000000005 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (F04900000000000000000002,); runOnlyForDeploymentPostprocessing = 0; };
+        F04900000000000000000006 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        F04900000000000000000007 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+        F04900000000000000000008 = {isa = PBXContainerItemProxy; containerPortal = 504EC2FC1FED79650016851F; proxyType = 1; remoteGlobalIDString = 504EC3031FED79650016851F; remoteInfo = App; };
+        F04900000000000000000009 = {isa = PBXTargetDependency; target = 504EC3031FED79650016851F; targetProxy = F04900000000000000000008; };
+        F04900000000000000000010 = {isa = PBXNativeTarget; buildConfigurationList = F04900000000000000000011; buildPhases = (F04900000000000000000005,F04900000000000000000006,F04900000000000000000007,); buildRules = (); dependencies = (F04900000000000000000009,); name = FountainNativeTests; productName = FountainNativeTests; productReference = F04900000000000000000004; productType = "com.apple.product-type.bundle.unit-test"; };
+        F04900000000000000000011 = {isa = XCConfigurationList; buildConfigurations = (F04900000000000000000012,F04900000000000000000013,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
+
+        F04900000000000000000012 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 15.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)","@executable_path/Frameworks","@loader_path/Frameworks",); OTHER_LDFLAGS = "$(inherited) -lsqlite3"; FRAMEWORK_SEARCH_PATHS = ("$(inherited)","$(BUILT_PRODUCTS_DIR)",); PRODUCT_BUNDLE_IDENTIFIER = dev.fountain.native-tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/App.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/App"; TARGETED_DEVICE_FAMILY = "1,2";}; };
+        F04900000000000000000013 = {isa = XCBuildConfiguration; name = Release; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 15.0; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)","@executable_path/Frameworks","@loader_path/Frameworks",); OTHER_LDFLAGS = "$(inherited) -lsqlite3"; FRAMEWORK_SEARCH_PATHS = ("$(inherited)","$(BUILT_PRODUCTS_DIR)",); PRODUCT_BUNDLE_IDENTIFIER = dev.fountain.native-tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/App.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/App"; TARGETED_DEVICE_FAMILY = "1,2";}; };
+
+
 /* Begin PBXBuildFile section */
 		F04800000000000000000002 /* FountainRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04800000000000000000001 /* FountainRecovery.swift */; };
 		F04700000000000000000002 /* FountainOutbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04700000000000000000001 /* FountainOutbox.swift */; };
@@ -53,6 +69,7 @@
 			children = (
 				958DCC722DB07C7200EA8C5F /* debug.xcconfig */,
 				504EC3061FED79650016851F /* App */,
+				F04900000000000000000003 /* AppTests */,
 				504EC3051FED79650016851F /* Products */,
 			);
 			sourceTree = "<group>";
@@ -61,6 +78,7 @@
 			isa = PBXGroup;
 			children = (
 				504EC3041FED79650016851F /* App.app */,
+				F04900000000000000000004 /* FountainNativeTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -139,6 +157,7 @@
 			projectRoot = "";
 			targets = (
 				504EC3031FED79650016851F /* App */,
+				F04900000000000000000010 /* FountainNativeTests */,
 			);
 		};
 /* End PBXProject section */

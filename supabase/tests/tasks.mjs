@@ -45,4 +45,8 @@ for(let i=0;i<cases.length;i++){let result;try{result={value:run(cases[i])};}cat
 if(differences.length){console.error(JSON.stringify(differences.slice(0,12),null,2));assert.fail(`${differences.length}/${cases.length} Python task/formula differences`);}
 const sentinel=Object.assign(Error('Need more rows'),{code:'MISSING_SELECTION'});assert.throws(()=>evaluate_formula(formula_tree('a+1'),()=>{throw sentinel;}),error=>error===sentinel);assert.throws(()=>new TaskGraph({list(){throw sentinel;},get(){throw sentinel;},meta(){}}).descendants('db','a'),error=>error===sentinel);
 const source=[row('a'),row('b',null,['a'])],memory={get:()=>null,list:()=>[],meta:()=>null};assert.deepEqual(new TaskGraph(memory).prepare_row(database,'new',{depends_on:['b']},{rows:new Map(source.map(r=>[r.id,r]))}),{parent_row_id:null,depends_on:['b']});
+// Explicit remaining lexical gap: no full Unicode character-name database is
+// shipped. Its literal character works; an unmapped valid Python name is denied.
+assert.throws(()=>formula_tree("'\\N{ARABIC LETTER ALEF}'"),error=>error.status===400&&error.message.includes('Unsupported named Unicode'));
+assert.equal(evaluate_formula(formula_tree("'ا'"),()=>null),'ا');
 console.log('PASS Python tasks/formula oracle:',checked,'vectors, source immutability, Map imports, MissingSelection propagation; no live database');

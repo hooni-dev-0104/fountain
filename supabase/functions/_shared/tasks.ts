@@ -142,6 +142,8 @@ function representation(value:any,nested=false,trail=new Set<any>()):string {if(
 function typeName(value:any):string {return value===null?'NoneType':typeof value==='boolean'?'bool':numeric(value)?floating(value)?'float':'int':typeof value==='string'?'str':Array.isArray(value)?'list':'dict';}
 function order(a:any,b:any,op:string):number {const firstType=typeName(a),secondType=typeName(b);a=unbox(a);b=unbox(b);if((typeof a==='number'||typeof a==='boolean')&&(typeof b==='number'||typeof b==='boolean'))return Number(a)<Number(b)?-1:Number(a)>Number(b)?1:0;if(typeof a==='string'&&typeof b==='string')return compare(a,b);if(Array.isArray(a)&&Array.isArray(b)){for(let i=0;i<Math.min(a.length,b.length);i++)if(!equal(a[i],b[i]))return order(a[i],b[i],op);return a.length-b.length;}throw new Error(`'${op}' not supported between instances of '${firstType}' and '${secondType}'`);}
 export type FormulaNumberKind='int'|'float';
+// Computed caches may carry dtype separately while retaining JSON primitives.
+// Already-decoded persisted JSON cannot reveal whether source text was 1 or 1.0.
 export type FormulaOptions={numberKind?:(name:string)=>FormulaNumberKind|undefined;onResult?:(kind:FormulaNumberKind|undefined)=>void};
 export function evaluate_formula(node:FormulaNode,getProperty:(name:string)=>any,options:FormulaOptions={}):any {
  const property=(name:string):any=>{const value=getProperty(name);return typeof value==='number'&&options.numberKind?.(name)==='float'?new Float(value):value;};

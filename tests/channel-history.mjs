@@ -17,11 +17,11 @@ function fixture(blocks=[{id:'b',text:'A🙂B'}]){
   const store=memory();globalThis.FountainOffline=store;
   let state=C.seedState(blocks),seq=0,epoch='epoch',revision=1;
   const snapshot=()=>({epoch,seq,state:C.publicState(state),blocks:C.project(state),page:{id:'p',revision},access_level:4});
-  const changes=[],errors=[],histories=[];
+  const changes=[],errors=[],histories=[],requests=[];
   const channel=new C.DocumentChannel({pageId:'p',profile,onChange:change=>changes.push(change),onHistory:value=>histories.push(value),onError:error=>errors.push(error),fetcher:async(path,body)=>{
-    if(body){state=C.applyOperations(state,body.ops);seq++;revision++;return {...snapshot(),ack:body.ops.map(op=>op.id)};}return snapshot();
+    if(body){for(const operation of body.ops)if(operation.type==='history.cancel')for(const id of operation.targets)assert.ok(state.seen[id]||body.ops.some(value=>value.id===id),'every HTTP cancellation target is causally available');requests.push(body.ops.map(op=>op.id));state=C.applyOperations(state,body.ops);seq++;revision++;return {...snapshot(),ack:body.ops.map(op=>op.id)};}return snapshot();
   }});
-  return {channel,store,changes,errors,histories,snapshot,remote:ops=>{state=C.applyOperations(state,ops);seq++;revision++;},replace:()=>{state=C.seedState([{id:'b',text:'new'}]);epoch='replacement';revision++;},state:()=>state};
+  return {channel,store,changes,errors,histories,requests,snapshot,remote:ops=>{state=C.applyOperations(state,ops);seq++;revision++;},replace:()=>{state=C.seedState([{id:'b',text:'new'}]);epoch='replacement';revision++;},state:()=>state};
 }
 const op=(client,clock,type,fields={})=>({id:client+':'+clock,client,clock,type,...(type==='history.cancel'?{}:{block_id:'b'}),...fields});
 let f=fixture();await f.channel.open(f.snapshot(),{cached:true});
@@ -69,6 +69,13 @@ f.replace();await f.channel.receive(f.snapshot());assert.equal(f.channel.undoSta
 f=fixture([{id:'b',text:'A'}]);await f.channel.open(f.snapshot(),{cached:true});
 for(let index=0;index<110;index++)f.channel.transact({kind:'format'},()=>f.channel.format('b',['seed:b:0'],{bold:index%2===0}));
 await f.channel.persistence;assert.equal(f.channel.undoStack.length,100);assert.equal(f.channel.historyState().truncated,true);f.channel.close();
+
+f=fixture([{id:'b',text:'A'}]);await f.channel.open(f.snapshot(),{cached:true});
+f.channel.transact({kind:'format'},()=>f.channel.submit(Array.from({length:1101},(_,index)=>({type:'text.format',block_id:'b',fields:{char_ids:['seed:b:0'],marks:{bold:index%2===0}}}))));
+await f.channel.persistence;await f.channel.undo();assert.equal([...f.channel.pending.values()].filter(value=>value.type==='history.cancel').length,2,'large actions use complete bounded cancellation batches');
+assert.deepEqual(plain(f.changes.at(-1).blocks[0].rich_text),[{text:'A',marks:{}}]);globalThis.navigator.onLine=true;await f.channel.flush();
+assert.equal(f.requests.length,4);assert.ok(f.requests.every(batch=>batch.length<=300));assert.equal(f.channel.pending.size,0);
+await f.channel.redo();await f.channel.flush();assert.equal(f.changes.at(-1).blocks[0].rich_text[0].marks.bold,true);f.channel.close();globalThis.navigator.onLine=false;
 
 f=fixture();await f.channel.open(f.snapshot(),{cached:true});f.channel.replaceText('b','AX🙂B');await f.channel.persistence;
 f.channel.pending.set('stale:1',{...op('stale',1,'text.insert',{after_id:null,text:'old'}),_epoch:'retired'});

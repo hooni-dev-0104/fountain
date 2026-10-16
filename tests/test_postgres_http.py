@@ -187,6 +187,92 @@ class PostgresHTTPTests(unittest.TestCase):
         self.assertEqual(current["properties"]["name"], "첫 번째 수정")
         self.ok("DELETE", "/api/databases/projects/rows/" + current["id"], server=1)
 
+    def test_targeted_history_across_same_account_sessions_preserves_remote_writes_and_anchors(self):
+        path = "/api/pages/" + self.page()["id"]
+        base = self.ok("GET", path + "/collaboration")
+        local = [
+            {"id": "owner-a:3", "client": "owner-a", "clock": 3, "type": "block.set",
+             "block_id": "text", "field": "type", "value": "heading1", "group_id": "local-action"},
+            {"id": "owner-a:4", "client": "owner-a", "clock": 4, "type": "text.insert",
+             "block_id": "text", "after_id": None, "text": "로컬", "group_id": "local-action"},
+        ]
+        remote = [
+            {"id": "owner-b:2", "client": "owner-b", "clock": 2, "type": "block.set",
+             "block_id": "text", "field": "type", "value": "quote", "group_id": "remote-action"},
+            {"id": "owner-b:3", "client": "owner-b", "clock": 3, "type": "text.insert",
+             "block_id": "text", "after_id": "owner-a:4:0", "text": "원격", "group_id": "remote-action"},
+        ]
+        self.ok("POST", path + "/operations", {"epoch": base["epoch"], "ops": local})
+        edited = self.ok("POST", path + "/operations", {"epoch": base["epoch"], "ops": remote},
+                         server=1, cookie=self.owner_b)
+        self.assertEqual(edited["blocks"][0]["type"], "heading1")
+        self.assertEqual(edited["blocks"][0]["text"], "로컬원격원본")
+        undo = {"id": "owner-a:5", "client": "owner-a", "clock": 5,
+                "type": "history.cancel", "targets": [item["id"] for item in local]}
+        body = {"epoch": base["epoch"], "ops": [undo]}
+        # A different login/server of the same member may retry the immutable
+        # action. Its scope is still the original client action, not all member edits.
+        undone = self.ok("POST", path + "/operations", body, server=1, cookie=self.owner_b)
+        self.assertEqual(undone["seq"], edited["seq"] + 1)
+        self.assertEqual(undone["blocks"][0]["type"], "quote")
+        self.assertEqual(undone["blocks"][0]["text"], "원격원본")
+        self.assertNotIn("로컬", json.dumps(undone, ensure_ascii=False))
+        document = self.store.get("collaboration", base["page"]["id"])
+        audit = self.store.list("audit")
+        repeated = self.ok("POST", path + "/operations", body)
+        self.assertEqual(repeated["seq"], undone["seq"])
+        self.assertEqual(repeated["page"]["revision"], undone["page"]["revision"])
+        self.assertEqual(repeated["ack"], [undo["id"]])
+        self.assertEqual(self.store.get("collaboration", base["page"]["id"]), document)
+        self.assertEqual(self.store.list("audit"), audit)
+        redo = {"id": "owner-a:6", "client": "owner-a", "clock": 6,
+                "type": "history.cancel", "targets": [undo["id"]]}
+        redone = self.ok("POST", path + "/operations", {"epoch": base["epoch"], "ops": [redo]})
+        self.assertEqual(redone["seq"], undone["seq"] + 1)
+        self.assertEqual(redone["blocks"], edited["blocks"])
+        observed = self.ok("GET", path + "/collaboration", server=1, cookie=self.owner_b)
+        self.assertEqual((observed["blocks"], observed["state"], observed["seq"]),
+                         (redone["blocks"], redone["state"], redone["seq"]))
+        self.assertEqual(document["op_owners"], {item["id"]: "local" for item in [*local, *remote, undo]})
+        self.assertNotIn("op_owners", json.dumps(observed))
+
+    def test_cross_member_history_forgery_and_nonce_hijack_roll_back_on_both_servers(self):
+        page = self.page()
+        path = "/api/pages/" + page["id"]
+        base = self.ok("GET", path + "/collaboration")
+        owner = {"id": "owner:1", "client": "owner", "clock": 1, "type": "text.insert",
+                 "block_id": "text", "after_id": None, "text": "소유자"}
+        family = {"id": "family:1", "client": "family", "clock": 1, "type": "text.insert",
+                  "block_id": "text", "after_id": "owner:1:0", "text": "가족"}
+        self.ok("POST", path + "/operations", {"epoch": base["epoch"], "ops": [owner]})
+        accepted = self.ok("POST", path + "/operations", {"epoch": base["epoch"], "ops": [family]},
+                           server=1, cookie=self.family)
+        before, audit = self.store.get("collaboration", page["id"]), self.store.list("audit")
+        forged = {"id": "owner:2", "client": "owner", "clock": 2,
+                  "type": "history.cancel", "targets": [owner["id"]]}
+        # Valid same-client/lower-clock wire data cannot substitute for member ownership.
+        self.assertEqual(self.request("POST", path + "/operations", {"epoch": base["epoch"], "ops": [forged]},
+                                      server=1, cookie=self.family)[0], 403)
+        hijack = {"id": "owner:2", "client": "owner", "clock": 2, "type": "text.insert",
+                  "block_id": "text", "after_id": None, "text": "탈취"}
+        self.assertEqual(self.request("POST", path + "/operations", {"epoch": base["epoch"], "ops": [hijack]},
+                                      server=1, cookie=self.family)[0], 403)
+        # Workspace owners have no exception for canceling another member's work.
+        reverse = {"id": "family:2", "client": "family", "clock": 2,
+                   "type": "history.cancel", "targets": [family["id"]]}
+        self.assertEqual(self.request("POST", path + "/operations", {"epoch": base["epoch"], "ops": [reverse]})[0], 403)
+        self.assertEqual(self.store.get("collaboration", page["id"]), before)
+        self.assertEqual(self.store.list("audit"), audit)
+        # Exact foreign replay ACKs but neither transfers ownership nor grows sequence.
+        replay = self.ok("POST", path + "/operations", {"epoch": base["epoch"], "ops": [owner]},
+                         server=1, cookie=self.family)
+        self.assertEqual(replay["seq"], accepted["seq"])
+        self.assertEqual(self.store.get("collaboration", page["id"]), before)
+        undone = self.ok("POST", path + "/operations", {"epoch": base["epoch"], "ops": [forged]})
+        self.assertEqual(undone["seq"], accepted["seq"] + 1)
+        self.assertEqual(undone["blocks"][0]["text"], "가족원본")
+        self.assertEqual(self.ok("GET", path + "/collaboration", server=1, cookie=self.family)["blocks"], undone["blocks"])
+
     def test_get_authorization_and_body_are_fenced_against_other_server_acl_writer(self):
         page = self.page()
         path = "/api/pages/" + page["id"]

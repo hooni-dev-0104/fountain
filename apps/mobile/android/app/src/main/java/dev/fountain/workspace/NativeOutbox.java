@@ -200,6 +200,34 @@ final class NativeOutbox implements AutoCloseable {
                 if (!whole && owner.endsWith("|database")) owner = owner.substring(0, owner.length() - 9);
                 NativePolicy.require((!mode.equals("active") || knownProfile(owner)) && (whole || OutboxPolicy.resource(owner, identity)));
                 if (mode.equals("active")) purge(whole ? "profile" : "resource", identity); profile = owner;
+            } else if (id.startsWith("recovery-import:")) {
+                NativePolicy.require(mode.equals("active"));
+                int separator = id.lastIndexOf(':');
+                NativePolicy.require(separator >= "recovery-import:".length());
+                profile = id.substring("recovery-import:".length(), separator);
+                String digest = id.substring(separator + 1);
+                NativePolicy.require(digest.matches("[0-9a-f]{64}") && profile.startsWith(origin + "|") && profile.split("\\|", -1).length == 4);
+                if (op.equals("delete")) {
+                    NativePolicy.require(tombstone("profile", profile));
+                    db.execSQL("DELETE FROM records WHERE mode='active' AND bucket='meta' AND key=?", new Object[]{key}); return;
+                }
+                NativePolicy.require(op.equals("put") && value.length() == 7 && id.equals(value.getString("id")) && profile.equals(value.getString("profileId")) && digest.equals(value.getString("digest")));
+                Set<String> fields = new HashSet<>(Arrays.asList("id", "profileId", "digest", "operationIds", "pageIds", "draftKeys", "createdAt"));
+                java.util.Iterator<String> names = value.keys(); while (names.hasNext()) NativePolicy.require(fields.contains(names.next()));
+                OutboxPolicy.integer(value.get("createdAt"), 0, OutboxPolicy.SAFE);
+                for (String name : Arrays.asList("operationIds", "pageIds")) {
+                    JSONArray ids = value.getJSONArray(name); NativePolicy.require(ids.length() <= 1000);
+                    Set<String> seen = new HashSet<>();
+                    for (int i = 0; i < ids.length(); i++) NativePolicy.require(seen.add(OutboxPolicy.text(ids.get(i), 1000)));
+                }
+                JSONArray drafts = value.getJSONArray("draftKeys"); NativePolicy.require(drafts.length() <= 2000);
+                for (int i = 0; i < drafts.length(); i++) {
+                    JSONArray pair = drafts.getJSONArray(i); NativePolicy.require(pair.length() == 2 && pair.getString(0).split("\\|", -1).length == 5 && OutboxPolicy.resource(profile, pair.getString(0)));
+                    OutboxPolicy.text(pair.get(1), 1000);
+                }
+                try (Cursor previous = db.rawQuery("SELECT payload FROM records WHERE mode='active' AND bucket='meta' AND key=?", new String[]{key})) {
+                    if (previous.moveToFirst()) NativePolicy.require(Arrays.equals(previous.getBlob(0), value.toString().getBytes(StandardCharsets.UTF_8)));
+                }
             } else {
                 NativePolicy.require(id.equals("active") || id.startsWith("mutation-sequence:"));
                 if (op.equals("delete")) { db.execSQL("DELETE FROM records WHERE mode=? AND bucket='meta' AND key=?", new Object[]{mode, key}); return; }

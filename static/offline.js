@@ -591,6 +591,193 @@
     mutationsChanged(namespace(profile));
     localPagesChanged(resourceKey);
   }
+  async function stageRecoveryImport(profile, bundle, { isCurrent = () => true } = {}) {
+    const check = () => {
+      if (typeof isCurrent !== 'function' || isCurrent() !== true) throw new DOMException('Recovery preview is no longer current', 'AbortError');
+    };
+    check();
+    let nodes = 0;
+    const inspect = (value, depth = 0, ancestors = new Set()) => {
+      if (++nodes > 500000 || depth > 64) throw new RangeError('Recovery staging is too large or deeply nested');
+      if (value === null || typeof value === 'string' || typeof value === 'boolean') return;
+      if (typeof value === 'number' && Number.isFinite(value)) return;
+      if (!value || typeof value !== 'object' || ancestors.has(value)
+          || !Array.isArray(value) && ![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw new TypeError('Recovery staging must contain JSON values');
+      const next = new Set(ancestors); next.add(value);
+      for (const field of Object.keys(value)) {
+        if (['__proto__', 'constructor', 'prototype'].includes(field)) throw new TypeError('Unsafe recovery field');
+        inspect(value[field], depth + 1, next);
+      }
+    };
+    inspect(bundle);
+    if (!bundle || Array.isArray(bundle) || Object.keys(bundle).some(field => !['digest', 'mutations', 'localPages', 'drafts'].includes(field))
+        || typeof bundle.digest !== 'string' || !/^[a-f0-9]{64}$/.test(bundle.digest)
+        || !['mutations', 'localPages', 'drafts'].every(field => Array.isArray(bundle[field]) && bundle[field].length <= 1000)) throw new TypeError('Invalid recovery staging bundle');
+    if (new TextEncoder().encode(JSON.stringify(bundle)).byteLength > 64 * 1024 * 1024) throw new RangeError('Recovery staging exceeds its byte limit');
+    const value = copy(bundle), id = namespace(profile), pages = [], drafts = [];
+    const opFields = new Set(['id', 'kind', 'target_id', 'database_id', 'depends_on', 'body', 'base', 'document_epoch', 'base_rows']);
+    const operations = new Map(), created = new Map(), localPages = new Map(), draftIDs = new Set();
+    const fail = message => { throw new DOMException(message, 'ConstraintError'); };
+    const resourceID = resourceKey => {
+      const parts = resourceKey.split('|'), encoded = parts.at(-1), decoded = decodeURIComponent(encoded);
+      if (!decoded || encodeURIComponent(decoded) !== encoded) throw new TypeError('Noncanonical recovery resource key');
+      return decoded;
+    };
+    for (const item of value.mutations) {
+      if (!item || Object.keys(item).some(field => !['resourceKey', 'operation'].includes(field))) throw new TypeError('Invalid imported mutation');
+      const op = item.operation, kind = resourceType({ id }, item.resourceKey);
+      if (!op || Object.keys(op).some(field => !opFields.has(field)) || typeof op.id !== 'string' || !/^[A-Za-z0-9_.:-]{1,160}$/.test(op.id)
+          || !['page.create', 'page.patch', 'row.create', 'row.patch', 'row.delete'].includes(op.kind)
+          || typeof op.target_id !== 'string' || !op.target_id || !op.body || Array.isArray(op.body)
+          || !Array.isArray(op.depends_on || []) || (op.depends_on || []).length > 50
+          || operations.has(op.id)) throw new TypeError('Invalid fresh recovery mutation');
+      const bodyFields = op.kind === 'page.create' ? ['id', 'title', 'icon', 'cover', 'parent_id', 'teamspace_id']
+        : op.kind === 'page.patch' ? ['title', 'icon', 'cover', 'favorite']
+        : op.kind === 'row.create' ? ['id', 'properties', 'parent_row_id', 'depends_on']
+        : op.kind === 'row.patch' ? ['properties', 'parent_row_id', 'depends_on'] : [];
+      if (Object.keys(op.body).some(field => !bodyFields.includes(field))) throw new TypeError('Recovery mutations cannot import authority or receipts');
+      if (kind !== (op.kind.startsWith('page.') ? 'page' : 'database') || resourceID(item.resourceKey) !== (kind === 'page' ? op.target_id : op.database_id)) throw new DOMException('Recovery mutation scope does not match', 'SecurityError');
+      if (op.kind.endsWith('.create')) {
+        if (created.has(op.target_id) || op.body.id !== op.target_id) fail('Recovery creation IDs must be new and unique');
+        created.set(op.target_id, op);
+      }
+      operations.set(op.id, item);
+    }
+    const dependencies = op => [...(op.depends_on || []), ...Object.values(op.base_rows || {}).map(base => base?.after_operation).filter(Boolean)];
+    const visited = new Set(), visiting = new Set();
+    const visit = identity => {
+      if (visiting.has(identity)) fail('Recovery dependencies contain a cycle');
+      if (visited.has(identity)) return;
+      const item = operations.get(identity); if (!item) fail('Recovery dependencies must be complete and fresh');
+      visiting.add(identity);
+      for (const dependency of dependencies(item.operation)) visit(dependency);
+      visiting.delete(identity); visited.add(identity);
+    };
+    for (const identity of operations.keys()) visit(identity);
+    const ancestors = op => {
+      const result = new Set(), pending = [...dependencies(op)];
+      while (pending.length) { const identity = pending.pop(); if (result.has(identity)) continue; result.add(identity); pending.push(...dependencies(operations.get(identity).operation)); }
+      return result;
+    };
+    for (const { operation: op } of value.mutations) {
+      const references = [op.body.parent_id, op.body.parent_row_id, ...(op.body.depends_on || [])];
+      for (const [field, property] of Object.entries(op.base?.schema || {})) {
+        if (property?.type === 'relation') references.push(...(Array.isArray(op.body.properties?.[field]) ? op.body.properties[field] : [op.body.properties?.[field]]));
+      }
+      const previous = ancestors(op);
+      for (const target of references) if (created.has(target) && !previous.has(created.get(target).id)) fail('Imported references require their complete creation dependencies');
+    }
+    for (const item of value.localPages) {
+      if (!item || Object.keys(item).some(field => !['resourceKey', 'metadata', 'snapshot', 'operations', 'drafts'].includes(field))
+          || !matches({ id }, item.resourceKey) || localPages.has(item.resourceKey)) throw new TypeError('Invalid imported local page');
+      const metadata = item.metadata, snapshot = item.snapshot, target = resourceID(item.resourceKey), create = created.get(target);
+      const pageFields = new Set(['id', 'title', 'icon', 'cover', 'parent_id', 'teamspace_id', 'owner_id', 'access_level', 'revision', 'blocks', 'locked', 'archived', 'favorite', 'created_at', 'updated_at']);
+      if (!metadata || Object.keys(metadata).some(field => !['page', 'initial_epoch', 'create_operation_id', 'localOnly'].includes(field))
+          || !create || create.kind !== 'page.create' || metadata.create_operation_id !== create.id || metadata.localOnly !== true
+          || typeof metadata.initial_epoch !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(metadata.initial_epoch)
+          || create.document_epoch !== metadata.initial_epoch || snapshot?.epoch !== metadata.initial_epoch || snapshot.seq !== 0
+          || snapshot.workspace_id !== profile.workspaceId || snapshot.current_member_id !== profile.memberId
+          || snapshot.session_binding !== (profile.session?.cache_binding || profile.cacheBinding)
+          || snapshot.page?.id !== target || metadata.page?.id !== target || metadata.page.owner_id !== profile.memberId
+          || Object.keys(metadata.page).some(field => !pageFields.has(field)) || Object.keys(snapshot.page).some(field => !pageFields.has(field))
+          || metadata.page.revision !== 0 || !Array.isArray(metadata.page.blocks) || metadata.page.blocks.length
+          || metadata.page.access_level !== 4 || metadata.page.locked !== false || metadata.page.archived !== false
+          || snapshot.access_level !== 4 || snapshot.page.owner_id !== profile.memberId || snapshot.page.access_level !== 4
+          || snapshot.page.locked !== false || snapshot.page.archived !== false || snapshot.page.revision !== 0
+          || !Array.isArray(snapshot.blocks) || snapshot.blocks.length || !Array.isArray(snapshot.page.blocks) || snapshot.page.blocks.length
+          || !Array.isArray(item.operations) || item.operations.length > 10000 || !Array.isArray(item.drafts)
+          || !globalThis.FountainCollaboration || canonical(snapshot.state) !== canonical(FountainCollaboration.seedState([]))) throw new TypeError('Recovery local page requires a matching empty creation seed');
+      for (const field of ['id', 'title', 'icon', 'cover', 'parent_id', 'teamspace_id']) if (Object.hasOwn(create.body, field) && canonical(create.body[field]) !== canonical(metadata.page[field])) fail('Recovery page metadata differs from creation');
+      if (Object.hasOwn(create.body, 'permissions') || Object.hasOwn(metadata.page, 'permissions') || Object.hasOwn(snapshot.page, 'permissions')) throw new TypeError('Recovery cannot import page permissions');
+      let state = snapshot.state;
+      const bodyIDs = new Set();
+      for (let offset = 0; offset < item.operations.length; offset += 1000) {
+        const batch = item.operations.slice(offset, offset + 1000).map(operation => {
+          if (operation._epoch !== metadata.initial_epoch || bodyIDs.has(operation.id)) fail('Recovery body operations require fresh identities in the new epoch');
+          bodyIDs.add(operation.id); const wire = { ...operation }; delete wire._epoch; return wire;
+        });
+        state = FountainCollaboration.applyOperations(state, batch);
+      }
+      if (FountainCollaboration.project(state).length > 2000) throw new RangeError('Recovery page contains too many blocks');
+      localPages.set(item.resourceKey, item); pages.push(target);
+      for (const draft of item.drafts) drafts.push({ resourceKey: item.resourceKey, ...draft });
+    }
+    for (const item of value.mutations) if (item.operation.kind === 'page.create' && !localPages.has(item.resourceKey)) fail('Every imported page creation requires its matching local document');
+    drafts.push(...value.drafts);
+    if (drafts.length > 2000 || !operations.size && !drafts.length) throw new TypeError('Recovery bundle has no staged work or too many drafts');
+    for (const draft of drafts) {
+      if (!draft || Object.keys(draft).some(field => !['resourceKey', 'clientId', 'draft'].includes(field)) || !matches({ id }, draft.resourceKey)
+          || typeof draft.clientId !== 'string' || !draft.clientId || draft.clientId.length > 1000 || !draft.draft || Array.isArray(draft.draft)) throw new TypeError('Invalid imported recovery draft');
+      const identity = canonical([draft.resourceKey, draft.clientId]);
+      if (draftIDs.has(identity)) fail('Recovery draft IDs must be unique');
+      draftIDs.add(identity);
+    }
+    let imported = false;
+    const result = await profileScoped(profile, 'readwrite', async (tx, current) => {
+      const currentCheck = () => {
+        check();
+        if (current.validUntil <= Date.now() || current.session.authenticated !== true || current.session.member?.id !== current.memberId
+            || current.session.member?.active === false || pages.length && current.session.member?.role === 'guest') throw new DOMException('A current recovery login is required', 'SecurityError');
+      };
+      currentCheck();
+      const read = async operation => { const result = await request(operation); currentCheck(); return result; };
+      if (await read(tx.objectStore('meta').get('revoked:' + id))) throw new DOMException('Recovery login was revoked', 'SecurityError');
+      const receiptID = 'recovery-import:' + id + ':' + value.digest;
+      const receipt = await read(tx.objectStore('meta').get(receiptID));
+      if (receipt) {
+        if (receipt.profileId !== id || receipt.digest !== value.digest || !['operationIds', 'pageIds', 'draftKeys'].every(field => Array.isArray(receipt[field]))) fail('Recovery import receipt is malformed');
+        return { duplicate: true, operationIds: copy(receipt.operationIds), pageIds: copy(receipt.pageIds), draftKeys: copy(receipt.draftKeys) };
+      }
+      for (const resourceKey of new Set([...value.mutations.map(item => item.resourceKey), ...localPages.keys(), ...drafts.map(item => item.resourceKey)])) {
+        await permittedResource(tx, current, resourceKey); check();
+      }
+      const existing = await read(tx.objectStore('mutations').index('profileId').getAll(id));
+      const snapshots = await read(tx.objectStore('snapshots').index('profileId').getAll(id));
+      const databases = await read(tx.objectStore('databaseSnapshots').index('profileId').getAll(id));
+      const existingEpochs = new Set(snapshots.map(row => row.snapshot?.epoch));
+      for (const draft of drafts) if (!localPages.has(draft.resourceKey)
+          && !current.workspace?.pages?.some(page => page.id === resourceID(draft.resourceKey))
+          && !snapshots.some(row => row.key === draft.resourceKey)) throw new DOMException('Recovery draft requires a current target page', 'SecurityError');
+      for (const item of value.mutations) {
+        const op = item.operation;
+        if (existing.some(row => row.id === op.id)) fail('Recovery operation ID already exists');
+        if (op.kind.endsWith('.create') && (existing.some(row => row.operation?.target_id === op.target_id)
+            || current.workspace?.pages?.some(page => page.id === op.target_id)
+            || snapshots.some(row => row.snapshot?.page?.id === op.target_id)
+            || databases.some(row => row.snapshot?.rows?.some(candidate => candidate.id === op.target_id)))) fail('Recovery target already exists');
+      }
+      for (const [resourceKey, item] of localPages) {
+        if (existingEpochs.has(item.metadata.initial_epoch)) fail('Recovery document epoch already exists');
+        existingEpochs.add(item.metadata.initial_epoch);
+        for (const name of ['snapshots', 'localPages']) if (await read(tx.objectStore(name).get(resourceKey))) fail('Recovery document already exists');
+        for (const name of ['operations', 'drafts']) if ((await read(tx.objectStore(name).index('key').getAllKeys(resourceKey))).length) fail('Recovery document already has local edits');
+      }
+      for (const draft of drafts) if (await read(tx.objectStore('drafts').get([draft.resourceKey, draft.clientId]))) fail('Recovery draft already exists');
+      const counterID = 'mutation-sequence:' + id;
+      let sequence = (await read(tx.objectStore('meta').get(counterID)))?.value || 0;
+      const now = Date.now();
+      for (const item of value.mutations) {
+        currentCheck(); if (!Number.isSafeInteger(++sequence)) throw new RangeError('Mutation sequence exhausted');
+        await read(tx.objectStore('mutations').add({ profileId: id, id: item.operation.id, resourceKey: item.resourceKey,
+          operation: item.operation, status: 'paused', sequence, createdAt: now, updatedAt: now }));
+      }
+      for (const [resourceKey, item] of localPages) {
+        currentCheck(); await read(tx.objectStore('localPages').add({ key: resourceKey, resourceKey, profileId: id, metadata: item.metadata, updatedAt: now }));
+        await read(tx.objectStore('snapshots').add({ key: resourceKey, profileId: id, snapshot: item.snapshot, updatedAt: now }));
+        for (const operation of item.operations) await read(tx.objectStore('operations').add({ key: resourceKey, id: operation.id, profileId: id, operation }));
+      }
+      for (const draft of drafts) { currentCheck(); await read(tx.objectStore('drafts').add({ key: draft.resourceKey, clientId: draft.clientId, profileId: id, draft: draft.draft, updatedAt: now })); }
+      const result = { operationIds: [...operations.keys()], pageIds: pages, draftKeys: drafts.map(draft => [draft.resourceKey, draft.clientId]) };
+      currentCheck(); await read(tx.objectStore('meta').put({ id: counterID, value: sequence }));
+      await read(tx.objectStore('meta').add({ id: receiptID, profileId: id, digest: value.digest, ...result, createdAt: now }));
+      currentCheck(); imported = true; return { duplicate: false, ...result };
+    });
+    if (imported) {
+      mutationsChanged(id, true, true);
+      for (const resourceKey of localPages.keys()) localPagesChanged(resourceKey);
+    }
+    return result;
+  }
   function removeIndexed(store, value, index = 'profileId') {
     return new Promise((resolve, reject) => {
       const cursor = store.index(index).openCursor(IDBKeyRange.only(value));
@@ -605,6 +792,15 @@
   async function purge(tx, profileId) {
     for (const name of STORES.filter(name => !['profiles', 'meta'].includes(name))) await removeIndexed(tx.objectStore(name), profileId);
     tx.objectStore('profiles').delete(profileId);
+    await new Promise((resolve, reject) => {
+      const cursor = tx.objectStore('meta').openCursor();
+      cursor.onerror = () => reject(cursor.error);
+      cursor.onsuccess = () => {
+        if (!cursor.result) { resolve(); return; }
+        if (cursor.result.value.id.startsWith('recovery-import:' + profileId + ':')) tx.objectStore('meta').delete(cursor.result.primaryKey);
+        cursor.result.continue();
+      };
+    });
     const pointer = await request(tx.objectStore('meta').get('active'));
     if (pointer?.profileId === profileId) tx.objectStore('meta').delete('active');
   }
@@ -622,9 +818,9 @@
     globalThis.dispatchEvent(new CustomEvent('fountain-offline-resource-purged', { detail: { key: resourceKey, kind } }));
     if (broadcast) logoutChannel?.postMessage({ type: 'resource-purged', key: resourceKey });
   }
-  function mutationsChanged(profileId, broadcast = true) {
-    globalThis.dispatchEvent(new CustomEvent('fountain-offline-mutations-changed', { detail: { profileId } }));
-    if (broadcast) logoutChannel?.postMessage({ type: 'mutations-changed', profileId });
+  function mutationsChanged(profileId, broadcast = true, recoveryImport = false) {
+    globalThis.dispatchEvent(new CustomEvent('fountain-offline-mutations-changed', { detail: { profileId, ...(recoveryImport ? { recoveryImport: true } : {}) } }));
+    if (broadcast) logoutChannel?.postMessage({ type: 'mutations-changed', profileId, ...(recoveryImport ? { recoveryImport: true } : {}) });
   }
   function localPagesChanged(resourceKey, broadcast = true) {
     globalThis.dispatchEvent(new CustomEvent('fountain-offline-local-pages-changed', { detail: { key: resourceKey } }));
@@ -634,7 +830,7 @@
     if (event.data?.type === 'profile-cleared' && typeof event.data.profileId === 'string') announce(event.data.profileId, false);
     if (event.data?.type === 'resource-purged' && typeof event.data.key === 'string') resourcePurged(event.data.key, false);
     if (event.data?.type === 'profile-changed' && typeof event.data.profileId === 'string') profileChanged(event.data.profileId, false);
-    if (event.data?.type === 'mutations-changed' && typeof event.data.profileId === 'string') mutationsChanged(event.data.profileId, false);
+    if (event.data?.type === 'mutations-changed' && typeof event.data.profileId === 'string') mutationsChanged(event.data.profileId, false, event.data.recoveryImport === true);
     if (event.data?.type === 'local-pages-changed' && typeof event.data.key === 'string') localPagesChanged(event.data.key, false);
   };
   async function purgeResource(resourceKey) {
@@ -710,7 +906,7 @@
   globalThis.FountainOffline = Object.freeze({ available: !!globalThis.indexedDB,
     key, databaseKey, saveProfile, getProfile, saveSnapshot, getSnapshot, listSnapshots,
     saveDatabase, getDatabase, listDatabases, putMutation, putMutations, listMutations, pendingMutations,
-    updateMutation, acknowledgeMutations, removeMutation, replaceMutations, discardMutations, stageLocalPage,
+    updateMutation, acknowledgeMutations, removeMutation, replaceMutations, discardMutations, stageLocalPage, stageRecoveryImport,
     saveLocalPage, getLocalPage, listLocalPages, deleteLocalPage,
     putOperations, pendingOperations, acknowledge, commitOperationsAck, saveDraft, getDrafts,
     clearProfile, clearActiveProfile, purgeResource, serviceWorkerReady });

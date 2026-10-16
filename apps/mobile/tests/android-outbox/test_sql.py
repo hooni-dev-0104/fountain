@@ -113,6 +113,26 @@ os._exit(9)
         self.assertNotIn('java.time', source)
         self.assertNotIn('java.util.Base64', source)
 
+    def test_recovery_import_receipt_is_private_immutable_and_purged(self):
+        source = (SOURCE / 'NativeOutbox.java').read_text()
+        profile = 'https://fixture.invalid:8443|workspace|member|binding'
+        digest = 'a' * 64
+        receipt = {'id': 'recovery-import:' + profile + ':' + digest, 'profileId': profile,
+                   'digest': digest, 'operationIds': ['fresh-op'], 'pageIds': [], 'draftKeys': [], 'createdAt': 1}
+        key = json.dumps(receipt['id'], separators=(',', ':'))
+        payload = json.dumps(receipt, separators=(',', ':')).encode()
+        self.db.execute('INSERT INTO records VALUES(?,?,?,?,?,?)', ('active', 'meta', key, profile, None, payload))
+        query = re.search(r'"(SELECT payload FROM records WHERE mode=\'active\' AND bucket=\'meta\' AND key=\?)"', source)[1]
+        self.assertEqual(self.db.execute(query, (key,)).fetchone()[0], payload)
+        self.db.execute('DELETE FROM records WHERE profile_id=?', (profile,))
+        self.assertEqual(self.db.execute('SELECT count(*) FROM records').fetchone()[0], 0)
+        parser = source.split('id.startsWith("recovery-import:")', 1)[1].split('} else {', 1)[0]
+        self.assertIn("id.lastIndexOf(':')", parser)
+        self.assertIn('mode.equals("active")', parser)
+        self.assertIn('profile.equals(value.getString("profileId"))', parser)
+        self.assertIn('Arrays.equals(previous.getBlob(0)', parser)
+        self.assertIn('NativePolicy.require(tombstone("profile", profile))', parser)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

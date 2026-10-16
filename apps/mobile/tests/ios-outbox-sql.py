@@ -161,6 +161,29 @@ os._exit(9)
         self.assertIn('let current = try availableProfile()', SOURCE)
         self.assertIn('let active = try self.availableProfile()', SOURCE)
 
+    def test_recovery_import_receipt_is_private_immutable_and_purged(self):
+        profile = 'https://fixture.invalid:8443|workspace|member|binding'
+        digest = 'a' * 64
+        receipt = {'id': 'recovery-import:' + profile + ':' + digest, 'profileId': profile,
+                   'digest': digest, 'operationIds': ['fresh-op'], 'pageIds': [], 'draftKeys': [], 'createdAt': 1}
+        encoded_key = json.dumps(receipt['id'], separators=(',', ':'))
+        payload = json.dumps(receipt, sort_keys=True, separators=(',', ':')).encode()
+        self.db.execute(RECORD, ('meta', encoded_key, profile, None, payload))
+        found = self.db.execute(sql("SELECT value FROM records WHERE bucket='meta' AND key="), (encoded_key,)).fetchone()[0]
+        self.assertEqual(found, payload)
+        self.assertNotEqual(found, json.dumps({**receipt, 'operationIds': ['forged']}).encode())
+        self.assertEqual(self.db.execute(sql('SELECT rowid,bucket,key,length(value) FROM records'), ('other-profile', 0)).fetchall(), [])
+        self.db.execute(sql('DELETE FROM records WHERE profile_id='), (profile,))
+        self.assertEqual(self.db.execute('SELECT count(*) FROM records').fetchone()[0], 0)
+        parser = SOURCE.split('private func importReceiptProfile(', 1)[1].split('private func purgeProfile(', 1)[0]
+        self.assertIn('key.lastIndex(of: ":")', parser)
+        self.assertIn('value["profileId"] as? String == profile', parser)
+        self.assertIn('value["digest"] as? String == digest', parser)
+        self.assertIn('guard mode == "active" else', SOURCE)
+        self.assertIn('previous != item.payload', SOURCE)
+        self.assertIn('if op == "delete" { return profile }', parser)
+        self.assertIn('SELECT count(*) FROM tombstones WHERE scope=?", [item.profile]', SOURCE)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

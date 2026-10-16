@@ -20,12 +20,12 @@ STUBS = {
  public long optLong(String k,long d){return d;} public boolean has(String k){return false;}
  public boolean isNull(String k){return true;} public JSONObject getJSONObject(String k)throws JSONException{return null;}
  public JSONObject optJSONObject(String k){return null;} public JSONArray getJSONArray(String k)throws JSONException{return null;}
- public Iterator<String> keys(){return Collections.emptyIterator();} public static String quote(String s){return s;}
+ public Iterator<String> keys(){return Collections.emptyIterator();} public int length(){return 0;} public static String quote(String s){return s;}
 }''',
 'org/json/JSONArray.java': '''package org.json; public class JSONArray {
  public JSONArray(){} public JSONArray(String s)throws JSONException{} public int length(){return 0;}
  public JSONArray put(Object o){return this;} public Object get(int i)throws JSONException{return null;}
- public String getString(int i)throws JSONException{return null;} public JSONObject getJSONObject(int i)throws JSONException{return null;}
+ public String getString(int i)throws JSONException{return null;} public JSONObject getJSONObject(int i)throws JSONException{return null;} public JSONArray getJSONArray(int i)throws JSONException{return null;}
 }''',
 'android/database/Cursor.java': '''package android.database; public interface Cursor extends AutoCloseable {
  boolean moveToFirst(); boolean moveToNext(); String getString(int n); int getInt(int n); long getLong(int n); byte[] getBlob(int n); void close();

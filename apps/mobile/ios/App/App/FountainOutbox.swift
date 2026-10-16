@@ -387,6 +387,7 @@ final class FountainOutbox {
                 if key.hasPrefix("revoked-resource:") { resource = String(key.dropFirst(17)); profile = try resourceProfile(resource!) }
                 else if key.hasPrefix("revoked:") { profile = String(key.dropFirst(8)) }
                 else if key.hasPrefix("mutation-sequence:") { profile = String(key.dropFirst(18)) }
+                else if key.hasPrefix("recovery-import:") { profile = try importReceiptProfile(key, op: op, value: value) }
                 else if key == "active" {
                     if let supplied = value?["profileId"] as? String { profile = supplied }
                     else if let stored = try rows("SELECT profile_id FROM records WHERE bucket='meta' AND key=?", [String(data: try json("active"), encoding: .utf8)!]).first?.first as? String { profile = stored }
@@ -432,6 +433,29 @@ final class FountainOutbox {
         guard change.bucket == "meta", change.op == "put", let key = change.value?["id"] as? String else { return false }
         return key.hasPrefix("revoked:") || key.hasPrefix("revoked-resource:")
     }
+    private func importReceiptProfile(_ key: String, op: String, value: [String: Any]?) throws -> String {
+        guard let separator = key.lastIndex(of: ":"),
+              separator >= key.index(key.startIndex, offsetBy: "recovery-import:".count) else { throw FountainOutboxError.invalid }
+        let digest = String(key[key.index(after: separator)...])
+        let profile = String(key[key.index(key.startIndex, offsetBy: "recovery-import:".count)..<separator])
+        _ = try profileParts(profile)
+        guard digest.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else { throw FountainOutboxError.invalid }
+        if op == "delete" { return profile }
+        guard op == "put", let value = value,
+              Set(value.keys) == Set(["id", "profileId", "digest", "operationIds", "pageIds", "draftKeys", "createdAt"]),
+              value["id"] as? String == key, value["profileId"] as? String == profile, value["digest"] as? String == digest,
+              let operations = value["operationIds"] as? [String], operations.count <= 1000, Set(operations).count == operations.count,
+              let pages = value["pageIds"] as? [String], pages.count <= 1000, Set(pages).count == pages.count,
+              let drafts = value["draftKeys"] as? [[String]], drafts.count <= 2000 else { throw FountainOutboxError.invalid }
+        _ = try checkedInteger(value["createdAt"])
+        for identity in operations + pages { _ = try text(identity, limit: 1000) }
+        for draft in drafts {
+            guard draft.count == 2, draft[0].components(separatedBy: "|").count == 5,
+                  try resourceProfile(draft[0]) == profile else { throw FountainOutboxError.invalid }
+            _ = try text(draft[1], limit: 1000)
+        }
+        return profile
+    }
     private func purgeProfile(_ profile: String) throws {
         try execute("INSERT OR IGNORE INTO tombstones(scope,kind,profile_id) VALUES(?,'profile',?)", [profile, profile])
         try execute("DELETE FROM records WHERE profile_id=?", [profile])
@@ -476,6 +500,13 @@ final class FountainOutbox {
             guard baseHead == (try self.head()) else { throw FountainOutboxError.head }
             let active = try self.availableProfile()
             for (position, item) in changes.enumerated() {
+                if item.bucket == "meta", let key = try self.decode(Data(item.encodedKey.utf8)) as? String, key.hasPrefix("recovery-import:") {
+                    guard mode == "active" else { throw FountainOutboxError.blocked }
+                    if item.op == "delete" {
+                        guard try self.integer("SELECT count(*) FROM tombstones WHERE scope=?", [item.profile]) > 0 else { throw FountainOutboxError.blocked }
+                    } else if let previous = try self.rows("SELECT value FROM records WHERE bucket='meta' AND key=?", [item.encodedKey]).first?.first as? Data,
+                       previous != item.payload { throw FountainOutboxError.conflict }
+                }
                 if mode == "quarantine" {
                     let quarantined = try self.json(input[position])
                     try self.execute("INSERT INTO recovery(tx_id,position,bucket,key,profile_id,value) VALUES(?,?,?,?,?,?)", [txID, position, item.bucket, item.encodedKey, item.profile, quarantined])

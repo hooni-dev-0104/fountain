@@ -130,13 +130,14 @@ class Application:
                 return self.dispatch(verb, target, payload, {}, principal=context['access'].principal,
                                      session_cookie=session_cookie)
             return 200, SyncService(self.store).apply(body, context_factory, dispatch_callback)
+        if method == 'POST' and path == '/api/ai':
+            return self._ai(body, principal, session_cookie)
         canonical_snapshot = method == 'GET' and (path == '/api/workspace'
             or re.fullmatch(r'/api/databases/[^/]+', path) is not None)
         with self.store.lock:
-            inference = method == 'POST' and path == '/api/ai'
             # Claim the workspace writer before authentication and ACL reads. A
             # process-local lock alone cannot fence logout in another server.
-            claiming = (method in {'POST', 'PATCH', 'PUT', 'DELETE'} and not inference
+            claiming = (method in {'POST', 'PATCH', 'PUT', 'DELETE'}
                         or method == 'GET' and path != '/api/backup')
             # SQLite's backup API cannot copy its own open write transaction.
             # Backup downloads recheck owner/session before headers and each
@@ -149,35 +150,59 @@ class Application:
                     from .advanced import Advanced
                     self.advanced = Advanced(self.store, self.workspace)
                 authority.prepare(method, path, body)
-                if not inference:
-                    token = AUDIT_ACTOR.set(access.member_id)
-                    access_token = CURRENT_ACCESS.set(access)
-                    try:
-                        status, payload = self._dispatch(method, path, body, query, access)
-                        if method in {'POST', 'PATCH', 'PUT', 'DELETE'} and (path.startswith('/api/members') or path.startswith('/scim/v2/Users') or path.startswith('/api/accounts')):
-                            require(not self.auth.accounts_required or self.auth._owners(), 'Cannot remove the last active owner account', 409)
-                        if method in {'POST', 'PATCH', 'PUT', 'DELETE'} and (
-                                path.endswith('/permissions') or path.startswith(('/api/members', '/api/groups', '/api/teamspaces', '/api/accounts', '/scim/v2/'))
-                                or method == 'PATCH' and path.startswith('/api/pages/')):
-                            self.store.set_meta('access_revision', self.store.meta('access_revision', 0) + 1)
-                        payload = authority.project(path, payload)
-                        if isinstance(payload, dict) and (canonical_snapshot or path.endswith(('/collaboration', '/operations'))):
-                            payload.update(workspace_id=context['workspace_id'], current_member_id=access.member_id,
-                                session_binding=context['session_binding'], access_revision=self.store.meta('access_revision', 0),
-                                data_revision=self.store.meta('_entity_revision', 0))
-                        return status, payload
-                    finally:
-                        AUDIT_ACTOR.reset(token)
-                        CURRENT_ACCESS.reset(access_token)
-        # Inference has no write transaction or workspace-wide lock across the network.
-        token = AUDIT_ACTOR.set(access.member_id)
-        access_token = CURRENT_ACCESS.set(access)
-        try:
-            status, payload = self.advanced.dispatch(method, path, body, query)
-            return status, authority.project(path, payload)
-        finally:
-            AUDIT_ACTOR.reset(token)
-            CURRENT_ACCESS.reset(access_token)
+                token = AUDIT_ACTOR.set(access.member_id)
+                access_token = CURRENT_ACCESS.set(access)
+                try:
+                    status, payload = self._dispatch(method, path, body, query, access)
+                    if method in {'POST', 'PATCH', 'PUT', 'DELETE'} and (path.startswith('/api/members') or path.startswith('/scim/v2/Users') or path.startswith('/api/accounts')):
+                        require(not self.auth.accounts_required or self.auth._owners(), 'Cannot remove the last active owner account', 409)
+                    if method in {'POST', 'PATCH', 'PUT', 'DELETE'} and (
+                            path.endswith('/permissions') or path.startswith(('/api/members', '/api/groups', '/api/teamspaces', '/api/accounts', '/scim/v2/'))
+                            or method == 'PATCH' and path.startswith('/api/pages/')):
+                        self.store.set_meta('access_revision', self.store.meta('access_revision', 0) + 1)
+                    payload = authority.project(path, payload)
+                    if isinstance(payload, dict) and (canonical_snapshot or path.endswith(('/collaboration', '/operations'))):
+                        payload.update(workspace_id=context['workspace_id'], current_member_id=access.member_id,
+                            session_binding=context['session_binding'], access_revision=self.store.meta('access_revision', 0),
+                            data_revision=self.store.meta('_entity_revision', 0))
+                    return status, payload
+                finally:
+                    AUDIT_ACTOR.reset(token)
+                    CURRENT_ACCESS.reset(access_token)
+
+    def _ai(self, body, principal, session_cookie):
+        with self.store.transaction():
+            context = self._request_context(principal, session_cookie)
+            access = context['access']
+            Authorization(access).prepare('POST', '/api/ai', body)
+            if self.advanced is None:
+                from .advanced import Advanced
+                self.advanced = Advanced(self.store, self.workspace)
+            token = AUDIT_ACTOR.set(access.member_id)
+            access_token = CURRENT_ACCESS.set(access)
+            try:
+                prepared = self.advanced.prepare_ai(body)
+            finally:
+                AUDIT_ACTOR.reset(token)
+                CURRENT_ACCESS.reset(access_token)
+            scope = (context['workspace_id'], access.member_id, context['session_binding'])
+        # Neither a workspace lock, writer nor stale request access survives the
+        # provider wait. Inference consumes only the already-authorized snapshot.
+        result = self.advanced.infer_ai(prepared)
+        with self.store.transaction():
+            current = self._request_context(principal, session_cookie)
+            access = current['access']
+            require((current['workspace_id'], access.member_id, current['session_binding']) == scope,
+                    'AI request session changed; start a new request', 401)
+            authority = Authorization(access)
+            authority.prepare('POST', '/api/ai', {'page_id': prepared['page_id']})
+            token = AUDIT_ACTOR.set(access.member_id)
+            access_token = CURRENT_ACCESS.set(access)
+            try:
+                return 200, authority.project('/api/ai', self.advanced.finish_ai(prepared, result))
+            finally:
+                AUDIT_ACTOR.reset(token)
+                CURRENT_ACCESS.reset(access_token)
 
     def remove_access_references(self, kind, identity):
         field = 'members' if kind == 'member' else 'groups'

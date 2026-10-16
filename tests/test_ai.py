@@ -50,5 +50,26 @@ class AIAdapterTests(unittest.TestCase):
         self.assertEqual(caught.exception.status, 503)
         self.assertEqual(self.requests, [])
 
+    def test_inference_uses_only_captured_document_and_provider_configuration(self):
+        with patch.dict(os.environ, {'FOUNTAIN_AI_KEY': 'initial-fixture-key', 'FOUNTAIN_AI_MODEL': 'initial-model',
+                                     'FOUNTAIN_AI_URL': f'http://127.0.0.1:{self.server.server_port}/v1/chat/completions'}):
+            with self.store.transaction():
+                prepared = self.advanced.prepare_ai({'action': 'summarize', 'prompt': '원래 요청', 'page_id': 'welcome'})
+        page = self.store.get('page', 'welcome')
+        self.store.put('page', {**page, 'title': 'LATER PRIVATE TITLE', 'blocks': [{'id': 'new', 'text': 'LATER PRIVATE BODY'}]})
+        with patch.dict(os.environ, {'FOUNTAIN_AI_KEY': 'changed-key', 'FOUNTAIN_AI_MODEL': 'changed-model',
+                                     'FOUNTAIN_AI_URL': 'http://must-not-contact.example'}), \
+                patch.object(self.store, 'get', side_effect=AssertionError('Inference read the database')), \
+                patch.object(self.store, 'audit', side_effect=AssertionError('Inference wrote an audit')):
+            result = self.advanced.infer_ai(prepared)
+        self.assertEqual(result['model'], 'initial-model')
+        self.assertEqual(self.requests[0]['auth'], 'Bearer initial-fixture-key')
+        self.assertEqual(self.requests[0]['body']['model'], 'initial-model')
+        sent = self.requests[0]['body']['messages'][1]['content']
+        self.assertIn('시작하기', sent)
+        self.assertIn('원래 요청', sent)
+        self.assertNotIn('LATER PRIVATE', sent)
+        self.assertEqual([item for item in self.store.list('audit') if item['action'] == 'ai.executed'], [])
+
 
 if __name__ == '__main__': unittest.main()

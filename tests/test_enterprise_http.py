@@ -74,8 +74,10 @@ class EnterpriseHTTPTests(unittest.TestCase):
             entered.set()
             if not release.wait(5):
                 raise AssertionError('test provider was not released')
-            return {'text': 'TEST FIXTURE'}
-        with patch.object(self.server.application.advanced, 'ai', slow_provider):
+            return {'text': 'TEST FIXTURE', 'provider': 'fixture', 'model': body['model'], 'citations': []}
+        with patch.dict(os.environ, {'FOUNTAIN_AI_MODEL': 'fixture', 'FOUNTAIN_AI_KEY': '',
+                                     'FOUNTAIN_AI_URL': 'http://127.0.0.1:1/v1/chat/completions'}), \
+                patch.object(self.server.application.advanced, 'infer_ai', slow_provider):
             with ThreadPoolExecutor(max_workers=1) as pool:
                 pending = pool.submit(self.request, 'POST', '/api/ai', {'prompt': '검증'}, {'X-Fountain-Request': '1'})
                 try:

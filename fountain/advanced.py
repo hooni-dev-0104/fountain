@@ -364,9 +364,14 @@ class Advanced:
         endpoint = urllib.parse.urlparse(os.environ.get('FOUNTAIN_AI_URL', ''))
         return endpoint.scheme == 'http' and endpoint.hostname in {'localhost', '127.0.0.1', '::1'}
 
-    def ai(self, body):
+    def prepare_ai(self, body):
+        """Capture the exact authorized source while the caller owns the writer."""
+        require(isinstance(body, dict), 'JSON 객체가 필요합니다')
         key = os.environ.get('FOUNTAIN_AI_KEY')
-        require(key or self.local_ai(), 'AI가 설정되지 않았습니다. 무료 로컬 모델의 FOUNTAIN_AI_URL과 FOUNTAIN_AI_MODEL을 설정해 주세요.', 503)
+        endpoint = os.environ.get('FOUNTAIN_AI_URL', 'https://api.openai.com/v1/chat/completions')
+        parsed = urllib.parse.urlparse(endpoint)
+        local = parsed.scheme == 'http' and parsed.hostname in {'localhost', '127.0.0.1', '::1'}
+        require(key or local, 'AI가 설정되지 않았습니다. 무료 로컬 모델의 FOUNTAIN_AI_URL과 FOUNTAIN_AI_MODEL을 설정해 주세요.', 503)
         model = os.environ.get('FOUNTAIN_AI_MODEL')
         require(model, 'FOUNTAIN_AI_MODEL에 사용할 모델 이름을 설정해 주세요.', 503)
         action = body.get('action', 'answer')
@@ -376,19 +381,27 @@ class Advanced:
         require(action in instructions, '지원하지 않는 AI 작업입니다')
         prompt = text(body.get('prompt', ''), '프롬프트', 50000)
         context = ''
-        if body.get('page_id'):
-            page = self.item('page', body['page_id'])
+        page_id = body.get('page_id')
+        access = CURRENT_ACCESS.get()
+        if access is not None:
+            require(access.active and access.regular, 'AI access requires a workspace member', 403)
+        if page_id:
+            page = access.require_resource('page', page_id) if access is not None else self.item('page', page_id)
             require(not page.get('archived'), '삭제된 페이지입니다', 404)
             blocks = page.get('blocks', [])
             context = page.get('title', '') + '\n' + '\n'.join(b.get('text', '') for b in blocks)
-        endpoint = os.environ.get('FOUNTAIN_AI_URL', 'https://api.openai.com/v1/chat/completions')
-        parsed = urllib.parse.urlparse(endpoint)
-        require(parsed.scheme == 'https' or (parsed.scheme == 'http' and parsed.hostname in {'localhost', '127.0.0.1', '::1'}), 'AI 공급자 연결에는 HTTPS가 필요합니다', 503)
-        payload = {'model': model,
-                   'messages': [{'role': 'system', 'content': instructions[action]}, {'role': 'user', 'content': f'{prompt}\n\n문서:\n{context}'}]}
+        require(parsed.scheme == 'https' or local, 'AI 공급자 연결에는 HTTPS가 필요합니다', 503)
+        return {'action': action, 'prompt': prompt, 'context': context, 'page_id': page_id,
+                'model': model, 'instructions': instructions[action], 'endpoint': endpoint, 'key': key}
+
+    def infer_ai(self, prepared):
+        """External inference only: never fetch newer pages or write audit data."""
+        payload = {'model': prepared['model'],
+                   'messages': [{'role': 'system', 'content': prepared['instructions']},
+                                {'role': 'user', 'content': f"{prepared['prompt']}\n\n문서:\n{prepared['context']}"}]}
         headers = {'Content-Type': 'application/json'}
-        if key: headers['Authorization'] = f'Bearer {key}'
-        request = urllib.request.Request(endpoint, data=json.dumps(payload).encode(), headers=headers)
+        if prepared['key']: headers['Authorization'] = f"Bearer {prepared['key']}"
+        request = urllib.request.Request(prepared['endpoint'], data=json.dumps(payload).encode(), headers=headers)
         try:
             with urllib.request.build_opener(NoRedirect()).open(request, timeout=45) as response:
                 result = json.loads(response.read(2_000_000))
@@ -396,8 +409,23 @@ class Advanced:
             require(isinstance(output, str), 'AI 응답 형식이 잘못되었습니다', 502)
         except (urllib.error.URLError, KeyError, IndexError, json.JSONDecodeError, TimeoutError) as error:
             raise AdvancedError('AI 공급자가 응답하지 않았거나 올바르지 않은 응답을 반환했습니다', 502) from error
-        self.store.audit('ai.executed', {'action': action, 'page_id': body.get('page_id')})
-        return {'text': output, 'provider': parsed.hostname, 'model': payload['model'], 'citations': ([{'page_id': body['page_id']}] if context else [])}
+        return {'text': output, 'provider': urllib.parse.urlparse(prepared['endpoint']).hostname, 'model': prepared['model'],
+                'citations': ([{'page_id': prepared['page_id']}] if prepared['context'] else [])}
+
+    def finish_ai(self, prepared, result):
+        """Publish only after the caller revalidates the original request scope."""
+        if prepared['page_id']:
+            require(not self.item('page', prepared['page_id']).get('archived'), '삭제된 페이지입니다', 404)
+        self.store.audit('ai.executed', {'action': prepared['action'], 'page_id': prepared['page_id']})
+        return result
+
+    def ai(self, body):
+        """Trusted direct-call compatibility; HTTP uses fresh-cookie finalization."""
+        with self.store.transaction():
+            prepared = self.prepare_ai(body)
+        result = self.infer_ai(prepared)
+        with self.store.transaction():
+            return self.finish_ai(prepared, result)
 
     def clipboard(self, body):
         blocks = body.get('blocks', [])

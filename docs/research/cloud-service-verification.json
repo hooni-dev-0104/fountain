@@ -1,0 +1,260 @@
+{
+  "observedAt": "2026-10-16T14:57:17.588539+00:00",
+  "sourceCommit": "b49ea36fe568ab0898d72c6ead2ac0a0ae364abf",
+  "sourceSHA256": {
+    "supabase/functions/_shared/store.ts": "d1a9a35f6627afd188a56042f0abbab8543d508fbae25146e76f99164083dc14",
+    "supabase/functions/_shared/scheduler.ts": "781ff2da50a8bdd623ce34f1dfb6974588c2127735c2ae64c5041f39ba14aad1",
+    "supabase/functions/fountain-api/index.ts": "cfefe3a32cfc1ddaae009df30618d33915f263ac044dd3c272dc39142cd92d2a",
+    "supabase/functions/_shared/advanced.ts": "1be34f9c40886a29858c5f01b44c372c0a8c02bc3de8c4055bdd3f204b7bbf88",
+    "supabase/migrations/20261016143508_fountain_cloud_service_authority.sql": "88f03887cb04f859aad29f851a7e2532cc1ac2ab5204982b52d69125ab140a3f",
+    "supabase/tests/live-services.ts": "b23bf8c417fd5fb669865b953539d34c646a50c8e0ba6b21c660965f35c58eb0",
+    "supabase/tests/cloud-service-denials.sql": "1495db4b4c39f22acfc7ed366d43eb125792034b638e6c9770eb85dd5254ab01"
+  },
+  "scope": "real Supabase service authority and shared Store; no scheduled worker or SCIM HTTP activation",
+  "productionCutover": false,
+  "mainFunction": {
+    "version": 5,
+    "bundleSHA256": "af9ce34d9cc96df2dbfb2bc26c8ffee5b1379ca0f21a446702192293a1b0831a",
+    "actualAnonymousBoundaryChecks": 8,
+    "ready": false,
+    "setupEnabled": false,
+    "webOrigins": []
+  },
+  "migration": "20261016143508_fountain_cloud_service_authority",
+  "actualPhases": {
+    "automation": [
+      {
+        "stage": null,
+        "phase": "automation",
+        "checks": [
+          "automation_real_current_principal_and_access_4_0",
+          "automation_operator_discarded_one_real_sql_ack_then_identical_uncertain_retry",
+          "automation_two_fresh_provider_rpc_exact_receipt_replays",
+          "automation_actual_page_create_read_sha_update_delete_and_original_title_restored"
+        ],
+        "rpcCalls": 18,
+        "principal": {
+          "memberId": "child",
+          "role": "member"
+        }
+      }
+    ],
+    "scim": [
+      {
+        "stage": null,
+        "phase": "scim",
+        "checks": [
+          "scim_real_current_principal_and_access_4_4",
+          "scim_operator_discarded_one_real_sql_ack_then_identical_uncertain_retry",
+          "scim_two_fresh_provider_rpc_exact_receipt_replays",
+          "scim_actual_page_create_read_sha_update_delete_and_original_title_restored"
+        ],
+        "rpcCalls": 18,
+        "principal": {
+          "memberId": "local",
+          "role": "owner"
+        }
+      }
+    ],
+    "maintenance-denied": [
+      {
+        "stage": null,
+        "phase": "maintenance-denied",
+        "checks": [
+          "maintenance_domain_store_snapshot_commit_rejected_before_provider_zero_io"
+        ],
+        "rpcCalls": 0,
+        "principal": null
+      }
+    ],
+    "human-regression": [
+      {
+        "stage": null,
+        "phase": "human-regression",
+        "checks": [
+          "human_real_current_principal_and_access_4_4",
+          "human_operator_discarded_one_real_sql_ack_then_identical_uncertain_retry",
+          "human_two_fresh_provider_rpc_exact_receipt_replays",
+          "human_actual_page_create_read_sha_update_delete_and_original_title_restored"
+        ],
+        "rpcCalls": 18,
+        "principal": {
+          "memberId": "local",
+          "role": "owner"
+        }
+      }
+    ],
+    "automation-denied": [
+      {
+        "stage": null,
+        "phase": "automation-denied",
+        "checks": [
+          "automation_actual_snapshot_rechecks_changed_grant_member_or_lease_and_denies"
+        ],
+        "rpcCalls": 1,
+        "principal": null
+      }
+    ],
+    "automation-self-disable": [
+      {
+        "stage": null,
+        "phase": "automation-self-disable",
+        "checks": [
+          "automation_self_disable_actual_commit_and_operator_dropped_ack_exact_retry",
+          "automation_two_fresh_provider_rpc_exact_receipt_replays",
+          "disabled_automation_new_snapshot_denied_after_two_actual_receipt_replays"
+        ],
+        "rpcCalls": 8,
+        "principal": {
+          "memberId": "child",
+          "role": "member"
+        }
+      }
+    ],
+    "automation-revocation-race": [
+      {
+        "stage": "ready",
+        "phase": null,
+        "checks": [
+          "automation_real_current_principal_and_access_4_0",
+          "automation_operator_discarded_one_real_sql_ack_then_identical_uncertain_retry",
+          "automation_two_fresh_provider_rpc_exact_receipt_replays",
+          "automation_actual_page_create_read_sha_update_delete_and_original_title_restored"
+        ],
+        "rpcCalls": null,
+        "principal": null
+      },
+      {
+        "stage": "complete",
+        "phase": "automation-replay-denied",
+        "checks": [
+          "automation_actual_accepted_receipt_rechecked_current_authority_and_denied"
+        ],
+        "rpcCalls": 1,
+        "principal": null
+      }
+    ],
+    "scim-role-denied": [
+      {
+        "stage": null,
+        "phase": "scim-denied",
+        "checks": [
+          "scim_actual_snapshot_rechecks_changed_grant_member_or_lease_and_denies"
+        ],
+        "rpcCalls": 1,
+        "principal": null
+      }
+    ],
+    "scim-revocation-race": [
+      {
+        "stage": "ready",
+        "phase": null,
+        "checks": [
+          "scim_real_current_principal_and_access_4_4",
+          "scim_operator_discarded_one_real_sql_ack_then_identical_uncertain_retry",
+          "scim_two_fresh_provider_rpc_exact_receipt_replays",
+          "scim_actual_page_create_read_sha_update_delete_and_original_title_restored"
+        ],
+        "rpcCalls": null,
+        "principal": null
+      },
+      {
+        "stage": "complete",
+        "phase": "scim-replay-denied",
+        "checks": [
+          "scim_actual_accepted_receipt_rechecked_current_authority_and_denied"
+        ],
+        "rpcCalls": 1,
+        "principal": null
+      }
+    ],
+    "last-owner-denied": [
+      {
+        "stage": null,
+        "phase": "last-owner-denied",
+        "checks": [
+          "scim_actual_last_mapped_owner_rejected_despite_unlinked_logical_owner",
+          "actual_last_owner_409_preserves_global_revision_prior_page_title_and_active_owner"
+        ],
+        "rpcCalls": 5,
+        "principal": {
+          "memberId": "local",
+          "role": "owner"
+        }
+      }
+    ],
+    "scim-expiry-denied": [
+      {
+        "stage": null,
+        "phase": "scim-denied",
+        "checks": [
+          "scim_actual_snapshot_rechecks_changed_grant_member_or_lease_and_denies"
+        ],
+        "rpcCalls": 1,
+        "principal": null
+      }
+    ]
+  },
+  "actualSQL": {
+    "standaloneServiceDenialChecks": 8,
+    "existingAccountBackupDenialChecks": 10,
+    "validMaintenanceSnapshotAndCommitDenied": true,
+    "expiredMaintenanceLeaseDenied": true,
+    "unlinkedLogicalOwnerMappings": 0
+  },
+  "faultInjection": {
+    "acceptedAckDrop": "operator discards a real accepted SQL response; no network-loss claim",
+    "revocationBarrier": "single Edge invocation emits ready; separate MCP changes live lease generation or grant enabled; same captured accepted request must be denied",
+    "roleChange": "operator changes trusted QA member rows; no user-facing provisioning claim",
+    "originalUserNamespacesChanged": false
+  },
+  "noHumanSessionDependency": {
+    "qaAuthSessionsAfterLogout": 0,
+    "scimAuthorityStillWorkedBeforeExplicitRevocation": true
+  },
+  "sourceRegression": {
+    "fullRunnerPassedBeforeSchedulerExtraction": 151,
+    "fullRunnerFailed": 0,
+    "fullRunnerSkipped": 0,
+    "serviceModelChecks": 18,
+    "existingHumanStoreModelChecks": 26,
+    "boundedSchedulerChecks": 26,
+    "calendarDSTPythonOracleCases": 5632,
+    "advancedChecks": 109,
+    "actualTypeScriptTypecheck": false
+  },
+  "cleanup": {
+    "protectedMarkerChecks": true,
+    "deletedQAAuthUsers": 2,
+    "qaEntities": 0,
+    "qaVault": 0,
+    "qaGrants": 0,
+    "qaLeases": 0,
+    "qaReceipts": 0,
+    "storageObjects": 0,
+    "verifierVersion": 24,
+    "verifierRetired404": true,
+    "formerNonceRejected404": true,
+    "privateCredentialConfigRemoved": true
+  },
+  "originalData": {
+    "entities": 153,
+    "meta": 6,
+    "userMappings": 0,
+    "sixCollectionFingerprintsUnchanged": true
+  },
+  "advisors": {
+    "warnings": 0,
+    "errors": 0,
+    "privateDenyAllRLSInfo": 13,
+    "unusedIndexInfo": 2
+  },
+  "remaining": [
+    "Durable scheduler due/run/ticket queue and Supabase Cron pg_net worker",
+    "Service grant issuance/revocation and SCIM bearer HTTP entry",
+    "Control-only scheduled failure/expiry/upload-backup GC without human login",
+    "Actual public HTTPS frontend and real owner setup",
+    "Five-platform full product parity and remaining paid-plan feature gaps",
+    "AI provider/key configuration and actual inference"
+  ]
+}

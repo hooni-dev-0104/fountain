@@ -23,6 +23,7 @@ enum FountainOutboxError: Error, Equatable {
 }
 
 final class FountainOutbox {
+    struct LogoutActor { fileprivate let prefix: String }
     // Kept as one literal so portable SQLite tests exercise this actual schema.
     static let schema = """
     CREATE TABLE IF NOT EXISTS control (id TEXT PRIMARY KEY NOT NULL,value BLOB NOT NULL);
@@ -233,7 +234,8 @@ final class FountainOutbox {
         let value = try identity()
         guard value["state"] as? String == "verified", let profile = value["profileId"] as? String,
               let expiry = value["validUntil"] as? Double, expiry > Date().timeIntervalSince1970 * 1000,
-              try integer("SELECT count(*) FROM tombstones WHERE scope=?", [profile]) == 0 else { throw FountainOutboxError.blocked }
+              try integer("SELECT count(*) FROM tombstones WHERE scope=?", [profile]) == 0,
+              try control("suspended:" + profile) == nil else { throw FountainOutboxError.blocked }
         return profile
     }
     private func availableProfile() throws -> String? {
@@ -248,7 +250,7 @@ final class FountainOutbox {
         let next = UUID().uuidString
         try transaction {
             try self.setControl("lease", next)
-            try self.execute("DELETE FROM staging")
+            // Old batches retain their original lease; never rebind or erase input.
         }
         self.owner = owner; authEpoch = epoch; lease = next
         boundary = UUID().uuidString
@@ -282,82 +284,115 @@ final class FountainOutbox {
                 "accessIssues": Array(issues.prefix(100)), "accessIssuesTruncated": issues.count > 100]
     }
 
-    // Native caller supplies the hash of its current active cookie, never JS.
+    // Native caller supplies only its private current/pending cookie hash.
     func validateSession(_ reference: String?, eligible: Bool) throws {
         let value = try identity()
         if value["state"] as? String == "verified" {
-            if !eligible || reference == nil || value["sessionRef"] as? String != reference { try revoke() }
-            else if (value["validUntil"] as? Double ?? 0) <= Date().timeIntervalSince1970 * 1000 {
-                // Expiry blocks hydration, but is not logout. A new actual local
-                // session response may renew the same no-cookie binding.
-                try transaction {
-                    var expired = value; expired["state"] = "blocked"
-                    try self.setControl("identity", expired); _ = try self.advance(); try self.advanceProof()
-                    try self.execute("DELETE FROM staging")
-                }
-                owner = nil; authEpoch = nil; lease = nil
-                boundary = UUID().uuidString
-            }
+            let suspended = try (value["profileId"] as? String).map { try control("suspended:" + $0) != nil } ?? false
+            if !eligible || reference == nil || value["sessionRef"] as? String != reference ||
+               (value["validUntil"] as? Double ?? 0) <= Date().timeIntervalSince1970 * 1000 ||
+               suspended { try suspend() }
         }
+    }
+    private func markSuspended(_ profile: String) throws {
+        _ = try profileParts(profile)
+        try setControl("suspended:" + profile, true)
+        try setControl("proofs:" + profile, [:])
+        var value = try identity()
+        if value["profileId"] as? String == profile {
+            value["state"] = "blocked"; value["needsFloor"] = true
+            try setControl("identity", value)
+        }
+    }
+    func suspend() throws {
+        var changed = false
+        try transaction {
+            var value = try self.identity()
+            if let profile = value["profileId"] as? String {
+                let marker = try self.control("suspended:" + profile)
+                changed = value["state"] as? String == "verified" || marker == nil
+                try self.markSuspended(profile)
+            } else if value["state"] as? String != "unknown" { value["state"] = "blocked"; try self.setControl("identity", value) }
+            if changed { _ = try self.advance(); try self.advanceProof() }
+        }
+        owner = nil; authEpoch = nil; lease = nil; readDeadline = nil
+        boundary = UUID().uuidString
     }
     func grant(_ body: [String: Any], sessionRef: String?) throws {
         guard Self.boolean(body["authenticated"]) == true, let member = body["member"] as? [String: Any],
-              Self.boolean(member["active"]) == true, ["owner", "admin", "member", "guest"].contains(member["role"] as? String ?? "") else { try revoke(); throw FountainOutboxError.blocked }
+              Self.boolean(member["active"]) == true, ["owner", "admin", "member", "guest"].contains(member["role"] as? String ?? "") else { try suspend(); throw FountainOutboxError.blocked }
         let workspace = try text(body["workspace_id"], limit: 1000), actor = try text(member["id"], limit: 1000), binding = try text(body["cache_binding"], limit: 1000)
         let local = body["mode"] as? String == "local" && Self.boolean(body["required"]) == false && sessionRef == nil
+        let now = Date().timeIntervalSince1970 * 1000
         var expiry: Double
-        if local { expiry = Date().timeIntervalSince1970 * 1000 + 24 * 60 * 60 * 1000 }
+        if local { expiry = now + 86_400_000 }
         else {
             guard let raw = body["expires_at"] as? String, sessionRef != nil,
-                  ["accounts", "family"].contains(body["mode"] as? String ?? "") else { try revoke(); throw FountainOutboxError.blocked }
+                  ["accounts", "family"].contains(body["mode"] as? String ?? "") else { try suspend(); throw FountainOutboxError.blocked }
             let parser = ISO8601DateFormatter(); parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            let alternative = ISO8601DateFormatter()
-            guard let date = parser.date(from: raw) ?? alternative.date(from: raw) else { throw FountainOutboxError.invalid }
+            guard let date = parser.date(from: raw) ?? ISO8601DateFormatter().date(from: raw) else { try suspend(); throw FountainOutboxError.blocked }
             expiry = date.timeIntervalSince1970 * 1000
         }
-        guard expiry > Date().timeIntervalSince1970 * 1000 else { try revoke(); throw FountainOutboxError.blocked }
+        guard expiry > now else { try suspend(); throw FountainOutboxError.access }
         let profile = origin + "|" + [workspace, actor, binding].map(Self.encodeURIComponent).joined(separator: "|")
-        let reference = sessionRef ?? "local-no-cookie"
-        let previous = try identity()
-        let sameIdentity = previous["profileId"] as? String == profile && previous["sessionRef"] as? String == reference && previous["state"] as? String == "verified"
-        let shortened = sameIdentity && expiry < (previous["validUntil"] as? Double ?? 0)
-        if previous["profileId"] as? String == profile && previous["sessionRef"] as? String == reference,
-           previous["state"] as? String == "verified", let oldExpiry = previous["validUntil"] as? Double {
-            // A local grant never extends without another actual native response;
-            // retaining an earlier valid limit avoids invalidating read cursors.
-            if local && oldExpiry > Date().timeIntervalSince1970 * 1000 { expiry = min(expiry, oldExpiry) }
-            if oldExpiry == expiry { return }
-        }
-        try transaction {
-            if let old = previous["profileId"] as? String, old != profile { try self.purgeProfile(old) }
-            guard try self.integer("SELECT count(*) FROM tombstones WHERE scope=?", [profile]) == 0 else { throw FountainOutboxError.blocked }
-            try self.setControl("identity", ["state": "verified", "profileId": profile, "validUntil": expiry, "sessionRef": reference])
-            try self.setControl("lastProfile", profile)
-            try self.setControl("known:" + profile, true)
-            if !sameIdentity { _ = try self.advance(); try self.setControl("proofs:" + profile, [:]); try self.advanceProof() }
-            else if shortened { try self.advanceProof() }
-        }
-        if !sameIdentity {
-            owner = nil; authEpoch = nil; lease = nil
+        let reference = sessionRef ?? "local-no-cookie", previous = try identity()
+        let suspendedMarker = try control("suspended:" + profile)
+        let revoked = try integer("SELECT count(*) FROM tombstones WHERE scope=?", [profile])
+        if suspendedMarker != nil || revoked > 0 { throw FountainOutboxError.access }
+        let same = previous["profileId"] as? String == profile
+        if same {
+            guard previous["state"] as? String == "verified", previous["sessionRef"] as? String == reference,
+                  let oldExpiry = previous["validUntil"] as? Double, oldExpiry > now else { try suspend(); throw FountainOutboxError.access }
+            expiry = min(expiry, oldExpiry)
+            if expiry == oldExpiry { return }
+            try transaction {
+                var value = previous; value["validUntil"] = expiry
+                try self.setControl("identity", value); try self.advanceProof()
+            }
             boundary = UUID().uuidString
-        } else if shortened { boundary = UUID().uuidString }
-    }
-    func revoke() throws {
-        try transaction {
-            let previous = try self.identity()
-            var changed = previous["state"] as? String != "blocked"
-            if let profile = previous["profileId"] as? String {
-                if try self.integer("SELECT count(*) FROM tombstones WHERE scope=?", [profile]) == 0 { changed = true }
-                try self.purgeProfile(profile)
-            }
-            if changed {
-                try self.setControl("identity", ["state": "blocked"])
-                _ = try self.advance(); try self.advanceProof()
-            }
-            try self.execute("DELETE FROM staging")
+            return
         }
-        owner = nil; authEpoch = nil; lease = nil
+        try transaction {
+            if let old = previous["profileId"] as? String { try self.markSuspended(old) }
+            try self.setControl("identity", ["state": "verified", "profileId": profile, "validUntil": expiry, "sessionRef": reference, "needsFloor": true])
+            try self.setControl("lastProfile", profile); try self.setControl("known:" + profile, true)
+            try self.setControl("proofs:" + profile, [:])
+            _ = try self.advance(); try self.advanceProof()
+        }
+        owner = nil; authEpoch = nil; lease = nil; readDeadline = nil
         boundary = UUID().uuidString
+    }
+    // This opaque actor prefix originates only in a private native grant. Never
+    // accept an actor/profile supplied by the renderer as deletion authority.
+    func actorForLogout(reference: String) throws -> LogoutActor? {
+        let value = try identity()
+        guard ["verified", "blocked"].contains(value["state"] as? String ?? ""), value["sessionRef"] as? String == reference,
+              let profile = value["profileId"] as? String, try control("known:" + profile) != nil else { return nil }
+        return LogoutActor(prefix: try profileParts(profile).prefix(3).joined(separator: "|"))
+    }
+    func eraseActor(_ captured: LogoutActor) throws {
+        let actor = captured.prefix
+        let parts = actor.components(separatedBy: "|")
+        guard parts.count == 3, parts[0] == origin, parts.dropFirst().allSatisfy({ !$0.isEmpty && $0.removingPercentEncoding.map(Self.encodeURIComponent) == $0 }) else { throw FountainOutboxError.blocked }
+        let prefix = actor + "|", quotedPrefix = "\"" + prefix
+        try transaction {
+            try self.execute("INSERT OR IGNORE INTO tombstones(scope,kind,profile_id) SELECT profile_id,'profile',profile_id FROM records WHERE substr(profile_id,1,length(?))=?", [prefix, prefix])
+            try self.execute("INSERT OR IGNORE INTO tombstones(scope,kind,profile_id) SELECT profile_id,'profile',profile_id FROM recovery WHERE substr(profile_id,1,length(?))=?", [prefix, prefix])
+            let knownPrefix = "known:" + prefix
+            try self.execute("INSERT OR IGNORE INTO tombstones(scope,kind,profile_id) SELECT substr(id,7),'profile',substr(id,7) FROM control WHERE substr(id,1,length(?))=?", [knownPrefix, knownPrefix])
+            try self.execute("DELETE FROM records WHERE substr(profile_id,1,length(?))=?", [prefix, prefix])
+            try self.execute("DELETE FROM recovery WHERE substr(profile_id,1,length(?))=?", [prefix, prefix])
+            try self.execute("DELETE FROM staging WHERE tx_id IN (SELECT substr(id,13) FROM control WHERE substr(id,1,12)='stagedOwner:' AND substr(CAST(value AS TEXT),1,length(?))=?)", [quotedPrefix, quotedPrefix])
+            try self.execute("DELETE FROM tx_receipts WHERE tx_id IN (SELECT substr(id,14) FROM control WHERE substr(id,1,13)='receiptOwner:' AND substr(CAST(value AS TEXT),1,length(?))=?)", [quotedPrefix, quotedPrefix])
+            for kind in ["proofs:", "proofFloor:"] {
+                let controlPrefix = kind + prefix
+                try self.execute("DELETE FROM control WHERE substr(id,1,length(?))=?", [controlPrefix, controlPrefix])
+            }
+            let identity = try self.identity()
+            if let profile = identity["profileId"] as? String, profile.hasPrefix(prefix) { try self.markSuspended(profile) }
+            _ = try self.advance(); try self.advanceProof()
+        }
+        owner = nil; authEpoch = nil; lease = nil; readDeadline = nil; boundary = UUID().uuidString
     }
     func revocationConfirmed() throws -> Bool { try identity()["state"] as? String != "verified" }
     private static func boolean(_ value: Any?) -> Bool? {
@@ -475,13 +510,18 @@ final class FountainOutbox {
                 var semantic = proof
                 for field in ["observedAt", "validUntil"] { old.removeValue(forKey: field); semantic.removeValue(forKey: field) }
                 // Polling the same unexpired evidence must not invalidate a long staged transfer.
-                if try json(old) == json(semantic), access == knownFloor["access"], revision == knownFloor["data"] { return }
+                if try json(old) == json(semantic), access == knownFloor["access"], revision == knownFloor["data"],
+                   !(kind == "workspace" && grant["needsFloor"] as? Bool == true) { return }
             }
             var proposed = ledger; proposed[key] = proof
             let fits = try json(proposed).count <= recordLimit
             try transaction {
                 if fits { try self.setControl("proofs:" + profile, proposed) }
                 try self.setControl("proofFloor:" + profile, ["access": max(access, knownFloor["access"] ?? 0), "data": max(revision, knownFloor["data"] ?? 0)])
+                if fits && kind == "workspace" {
+                    var anchored = grant; anchored["needsFloor"] = false
+                    try self.setControl("identity", anchored)
+                }
                 try self.advanceProof()
             }
             boundary = UUID().uuidString
@@ -505,7 +545,20 @@ final class FountainOutbox {
         try checkLease(lease)
         _ = try text(txID, limit: 160)
         guard part >= 0 && part < 256, bytes.count > 0, bytes.count <= partLimit else { throw FountainOutboxError.limit }
+        let current = try availableProfile(), state = try identity()
+        if current == nil && state["profileId"] != nil { throw FountainOutboxError.access }
+        // Accepted receipts are durable facts; a restage never overwrites or
+        // deletes a retained old batch while waiting for the immutable receipt.
+        if try integer("SELECT count(*) FROM tx_receipts WHERE tx_id=?", [txID]) > 0 {
+            try requireReceiptOwner(txID, current: current)
+            return
+        }
         try transaction {
+            if let owner = try self.control("stagedOwner:" + txID) as? String {
+                guard owner == current, try self.control("suspended:" + owner) == nil else { throw FountainOutboxError.access }
+            }
+            let priorProof = try self.control("stagedProof:" + txID)
+            if priorProof == nil, let current = current { try self.setControl("stagedOwner:" + txID, current) }
             if let original = try self.control("stagedProof:" + txID) as? Int {
                 guard original == proofEpoch else { throw FountainOutboxError.access }
             } else { try self.setControl("stagedProof:" + txID, proofEpoch) }
@@ -634,12 +687,6 @@ final class FountainOutbox {
         }
         return profile
     }
-    private func purgeProfile(_ profile: String) throws {
-        try execute("INSERT OR IGNORE INTO tombstones(scope,kind,profile_id) VALUES(?,'profile',?)", [profile, profile])
-        try execute("DELETE FROM records WHERE profile_id=?", [profile])
-        try execute("DELETE FROM recovery WHERE profile_id=?", [profile])
-        try setControl("proofs:" + profile, [:])
-    }
     private func purgeResource(_ resource: String, profile: String) throws {
         try execute("INSERT OR IGNORE INTO tombstones(scope,kind,profile_id) VALUES(?,'resource',?)", [resource, profile])
         let recoveryID = "native-resource-revocation:" + UUID().uuidString
@@ -667,6 +714,7 @@ final class FountainOutbox {
         func issue(_ kind: String, _ id: String, _ reason: String) {
             if issues.count <= 100 && seen.insert(kind + "|" + id + "|" + reason).inserted { issues.append(["kind": kind, "id": id, "reason": reason]) }
         }
+        if try identity()["needsFloor"] as? Bool == true { issue("workspace", "workspace", "missing") }
         func proof(_ kind: String, _ id: String) -> [String: Any]? {
             if kind != "workspace", tombstones.contains(profile + (kind == "database" ? "|database|" : "|") + Self.encodeURIComponent(id)) { issue(kind, id, "denied"); return nil }
             guard let value = ledger[proofKey(kind, id)] else { issue(kind, id, "missing"); return nil }
@@ -844,15 +892,21 @@ final class FountainOutbox {
         return result.deadline
     }
 
+    private func requireReceiptOwner(_ txID: String, current: String?) throws {
+        // Legacy unattributed receipts remain metadata-only. A native-owned
+        // receipt cannot acknowledge another login's journal, even for the same actor.
+        if let owner = try control("receiptOwner:" + txID) as? String {
+            guard owner == current, try control("suspended:" + owner) == nil else { throw FountainOutboxError.access }
+        }
+    }
     func commit(lease: String, txID: String, baseHead: Int, proofEpoch: Int, digest: String) throws -> [String: Any] {
         try checkLease(lease)
+        let currentProfile = try availableProfile(), currentIdentity = try identity()
+        if currentProfile == nil && currentIdentity["profileId"] != nil { throw FountainOutboxError.access }
         guard digest.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else { throw FountainOutboxError.invalid }
         if let receipt = try rows("SELECT digest,head FROM tx_receipts WHERE tx_id=?", [txID]).first {
+            try requireReceiptOwner(txID, current: currentProfile)
             guard receipt[0] as? String == digest, let head = receipt[1] as? Int else { throw FountainOutboxError.conflict }
-            try transaction {
-                try self.checkLease(lease)
-                try self.execute("DELETE FROM staging WHERE tx_id=?", [txID])
-            }
             guard let acceptedEpoch = try control("receiptProof:" + txID) as? Int else { throw FountainOutboxError.access }
             return ["head": head, "txId": txID, "proofEpoch": acceptedEpoch]
         }
@@ -872,10 +926,28 @@ final class FountainOutbox {
             guard baseHead == (try self.head()) else { throw FountainOutboxError.head }
             guard try self.control("stagedProof:" + txID) as? Int == proofEpoch else { throw FountainOutboxError.access }
             let active = try self.availableProfile()
+            let identity = try self.identity()
+            if active == nil && identity["profileId"] != nil { throw FountainOutboxError.access }
+            if mode == "active" && identity["needsFloor"] as? Bool == true { throw FountainOutboxError.access }
+            if let stagedOwner = try self.control("stagedOwner:" + txID) as? String {
+                guard active == stagedOwner, try self.control("suspended:" + stagedOwner) == nil else { throw FountainOutboxError.access }
+            }
+            let fencedProfiles = Set(changes.filter {
+                if $0.bucket == "profiles" && $0.op == "delete" { return true }
+                guard $0.bucket == "meta", let key = try? self.decode(Data($0.encodedKey.utf8)) as? String else { return false }
+                return key.hasPrefix("revoked:")
+            }.map { $0.profile })
             let cleanupOnly = changes.allSatisfy { $0.op == "delete" || self.isRevocation($0) }
             if mode == "active" && !cleanupOnly {
                 guard proofEpoch == (try self.proofEpoch()), let profile = active else { throw FountainOutboxError.access }
                 try self.requireAccess(profile, overlay: changes)
+            }
+            if mode == "active" && !fencedProfiles.isEmpty {
+                for profile in fencedProfiles {
+                    guard active == profile else { throw FountainOutboxError.access }
+                    try self.markSuspended(profile)
+                }
+                try self.advanceProof()
             }
             for (position, item) in changes.enumerated() {
                 if item.bucket == "meta", let key = try self.decode(Data(item.encodedKey.utf8)) as? String, key.hasPrefix("recovery-import:") {
@@ -887,10 +959,19 @@ final class FountainOutbox {
                 }
                 if mode == "quarantine" {
                     let quarantined = try self.json(input[position])
+                    // A later migration may replay this exact intent. It must
+                    // never replace/delete the only retained same-key source.
+                    if let prior = try self.rows("SELECT value FROM recovery WHERE bucket=? AND key=? ORDER BY rowid DESC LIMIT 1", [item.bucket, item.encodedKey]).first?.first as? Data,
+                       prior != quarantined { throw FountainOutboxError.conflict }
                     try self.execute("INSERT INTO recovery(tx_id,position,bucket,key,profile_id,value) VALUES(?,?,?,?,?,?)", [txID, position, item.bucket, item.encodedKey, item.profile, quarantined])
                     continue
                 }
+                if fencedProfiles.contains(item.profile) { continue }
                 let revocation = self.isRevocation(item)
+                if revocation, let resource = item.resource {
+                    guard active == item.profile else { throw FountainOutboxError.access }
+                    try self.purgeResource(resource, profile: item.profile)
+                }
                 if item.op == "delete" || revocation {
                     let knownProfile = try self.known(item.profile)
                     guard active == item.profile || knownProfile else { throw FountainOutboxError.blocked }
@@ -901,13 +982,9 @@ final class FountainOutbox {
                 if item.op == "delete" {
                     if item.bucket == "meta", let key = try self.decode(Data(item.encodedKey.utf8)) as? String,
                        key.hasPrefix("revoked:") || key.hasPrefix("revoked-resource:") { throw FountainOutboxError.blocked }
-                    if item.bucket == "profiles" { try self.purgeProfile(item.profile) }
-                    else { try self.execute("DELETE FROM records WHERE bucket=? AND key=?", [item.bucket, item.encodedKey]) }
+                    guard active == item.profile else { throw FountainOutboxError.access }
+                    try self.execute("DELETE FROM records WHERE bucket=? AND key=?", [item.bucket, item.encodedKey])
                     continue
-                }
-                if revocation, let key = item.value?["id"] as? String {
-                    if key.hasPrefix("revoked-resource:"), let resource = item.resource { try self.purgeResource(resource, profile: item.profile) }
-                    else { try self.purgeProfile(item.profile) }
                 }
                 if let resource = item.resource,
                    try self.integer("SELECT count(*) FROM tombstones WHERE scope=?", [resource]) > 0, !revocation {
@@ -923,6 +1000,7 @@ final class FountainOutbox {
             let head = try self.advance()
             try self.execute("INSERT INTO tx_receipts(tx_id,digest,head) VALUES(?,?,?)", [txID, digest, head])
             try self.setControl("receiptProof:" + txID, proofEpoch)
+            if let owner = active { try self.setControl("receiptOwner:" + txID, owner) }
             try self.execute("DELETE FROM staging WHERE tx_id=?", [txID])
             return head
         }

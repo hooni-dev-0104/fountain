@@ -221,6 +221,7 @@ private final class FountainJob {
     let mode: String
     let startedAt = Date().timeIntervalSince1970 * 1000
     var sentCookie: String?
+    var logoutActor: FountainOutbox.LogoutActor?
     var task: URLSessionDataTask?
     var file: URL?
     var revoking = false
@@ -504,15 +505,19 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     private func observeOutboxSession(_ job: FountainJob, response: HTTPURLResponse, data: Data) throws {
         guard OUTBOX_ENABLED, !recoveryMode else { return }
         let store = try outboxStore()
-        if response.statusCode == 401 { try store.revoke(); return }
+        if response.statusCode == 401 { try store.suspend(); return }
         guard ["login", "check"].contains(job.mode), response.statusCode == 200 else { return }
         guard let body = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            try store.revoke(); throw FountainOutboxError.invalid
+            try store.suspend(); return
         }
         let value = try cookies()
-        guard value.revoke == nil, !(try hasInvalidation(origin!)) else { try store.revoke(); throw FountainOutboxError.blocked }
-        if body["authenticated"] as? Bool != true { try store.revoke(); return }
-        try store.grant(body, sessionRef: outboxReference(value.active))
+        guard value.revoke == nil, !(try hasInvalidation(origin!)) else { try store.suspend(); return }
+        if body["authenticated"] as? Bool != true { try store.suspend(); return }
+        // Outbox recovery gates do not turn an actual successful session HTTP
+        // response into a transport error. outboxOpen exposes the blocked state.
+        do { try store.grant(body, sessionRef: outboxReference(value.active)) }
+        catch FountainOutboxError.access { return }
+        catch FountainOutboxError.blocked { return }
     }
 
     private func observeOutboxResource(_ job: FountainJob, response: HTTPURLResponse, data: Data) throws {
@@ -657,7 +662,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
             catch { /* A confirmed Keychain update/delete remains a durable path. */ }
         }
         do {
-            if OUTBOX_ENABLED, !recoveryMode, value.active == nil { try outboxStore().revoke() }
+            if OUTBOX_ENABLED, !recoveryMode, value.active == nil { try outboxStore().suspend() }
             let data = try JSONEncoder().encode(value)
             let query = cookieQuery(backend)
             let update = [kSecValueData as String: data]
@@ -707,7 +712,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         timer.resume()
     }
 
-    private func authCookies() throws -> FountainCookies {
+    private func authCookies(logoutActor: FountainOutbox.LogoutActor?) throws -> FountainCookies {
         Self.ownership.lock(); defer { Self.ownership.unlock() }
         guard Self.currentOwner === self, let backend = origin else { throw FountainFailure.stale }
         // Fence before reading: even a locked/unavailable Keychain cannot leave
@@ -718,7 +723,11 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         do {
             let value = try cookies()
             if OUTBOX_ENABLED, !recoveryMode {
-                do { try outboxStore().revoke() }
+                do {
+                    let store = try outboxStore()
+                    if let actor = logoutActor { try store.eraseActor(actor) }
+                    else { try store.suspend() }
+                }
                 catch {
                     // Keep the native invalidation marker; database failure
                     // cannot prevent a RAM-only best-effort anonymous DELETE.
@@ -750,7 +759,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                 let current = try self.cookies()
                 guard current.active == nil, current.revoke == nil else { throw FountainFailure.revoke }
             }
-            if OUTBOX_ENABLED, !self.recoveryMode { try self.outbox?.revoke() }
+            if OUTBOX_ENABLED, !self.recoveryMode { try self.outbox?.suspend() }
             self.recovery?.close(); self.recovery = nil
             self.outbox?.close(); self.outbox = nil
             self.generation += 1; self.auth += 1
@@ -809,6 +818,11 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     @objc func request(_ call: CAPPluginCall) {
         fromMainFrame(call) {
             let job = try self.newJob(call, mode: "request")
+            if job.mode == "logout", OUTBOX_ENABLED, !self.recoveryMode {
+                let value = try self.cookies()
+                let reference = self.outboxReference(value.active ?? value.revoke) ?? "local-no-cookie"
+                job.logoutActor = try self.outboxStore().actorForLogout(reference: reference)
+            }
             if self.recoveryMode, job.method != "GET", !["login", "logout"].contains(job.mode) {
                 self.failRecovery(job, FountainRecoveryError.access); return
             }
@@ -858,7 +872,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                 job.auth = auth
                 var value: FountainCookies
                 if job.mode == "check" { value = try cookies() }
-                else { value = try authCookies() }
+                else { value = try authCookies(logoutActor: job.mode == "logout" ? job.logoutActor : nil) }
                 if job.mode != "check" {
                     if let active = value.active { value.active = nil; value.revoke = active }
                     try saveCookies(value)

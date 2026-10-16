@@ -31,13 +31,14 @@ test('explicit setup uses the existing session boundary and never changes ordina
   const calls=[];
   const success={status:200,body:{authenticated:true},setCookie:'fountain_session=opaque; HttpOnly; Secure; SameSite=Strict'};
   const auth={session:async()=>({status:200,body:{authenticated:false,mode:'accounts'}}),login:async(body,cookie)=>{calls.push({action:'login',body,cookie});return success;},setup:async(body,cookie)=>{calls.push({action:'setup',body,cookie});return success;}};
-  const app=createBackend({origins:[origin],auth:async()=>auth,setupEnabled:true,setupCreate:async(body,cookie)=>{calls.push({action:'create',body,cookie});return success;}});
+  const app=createBackend({origins:[origin],publicWebOrigin:origin,auth:async()=>auth,setupEnabled:true,setupCreate:async(body,cookie)=>{calls.push({action:'create',body,cookie});return success;}});
   const post=body=>app(new Request(origin+'/api/session',{method:'POST',headers:{Origin:origin,'X-Fountain-Request':'1',Cookie:'fountain_session=captured'},body:JSON.stringify(body)}));
   assert.equal((await (await app(new Request(origin+'/api/session'))).json()).setup_supported,true);
   const credentials={email:'fixture@example.invalid',password:'not-a-real-password'};
-  assert.equal((await post(credentials)).status,200);
-  assert.equal((await post({...credentials,setup_nonce:'private-code'})).status,200);
-  assert.equal((await post({...credentials,setup_nonce:'private-code',create_account:true})).status,200);
+  for(const body of [credentials,{...credentials,setup_nonce:'private-code'},{...credentials,setup_nonce:'private-code',create_account:true}]){
+    const response=await post(body);assert.equal(response.status,200);assert.equal(response.headers.get('Set-Cookie'),success.setCookie);
+    const value=await response.json();assert.equal(value.public_web_origin,origin);assert.equal(value.authenticated,true);assert.equal(Object.hasOwn(value,'setCookie'),false);
+  }
   assert.deepEqual(calls,[{action:'login',body:credentials,cookie:'fountain_session=captured'},{action:'setup',body:{...credentials,nonce:'private-code'},cookie:'fountain_session=captured'},{action:'create',body:{...credentials,nonce:'private-code'},cookie:'fountain_session=captured'}]);
   for(const body of [{...credentials,setup_nonce:'private-code',extra:true},{...credentials,create_account:'yes'}])assert.equal((await post(body)).status,400);
   assert.equal(calls.length,3);

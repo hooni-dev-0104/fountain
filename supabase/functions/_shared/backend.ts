@@ -2,9 +2,11 @@
 import {HttpError,canonicalOrigin,checkRequest,errorResponse,jsonResponse,preflight,readJSON,requestPath} from './http.ts';
 import type {AuthResult,AuthContext} from './auth.ts';
 export type AuthBoundary={login(body:unknown,cookie?:string|null):Promise<AuthResult>;setup?:(body:unknown,cookie?:string|null)=>Promise<AuthResult>;session(cookie?:string|null):Promise<AuthResult>;logout(cookie?:string|null,options?:{expectedBinding?:string}):Promise<AuthResult>;authorize?:(cookie?:string|null)=>Promise<AuthContext>};
-type Config={origins:string[];auth:()=>Promise<AuthBoundary>;domain?:(request:Request,path:string,context:AuthContext)=>Promise<Response>;scim?:(request:Request)=>Promise<Response>;setupEnabled?:boolean;setupCreate?:(body:Record<string,unknown>,cookie?:string|null)=>Promise<AuthResult>};
+type Config={origins:string[];publicWebOrigin?:string|null;auth:()=>Promise<AuthBoundary>;domain?:(request:Request,path:string,context:AuthContext)=>Promise<Response>;scim?:(request:Request)=>Promise<Response>;setupEnabled?:boolean;setupCreate?:(body:Record<string,unknown>,cookie?:string|null)=>Promise<AuthResult>};
 export function createBackend(config:Config):(request:Request)=>Promise<Response> {
   const origins=new Set(config.origins.map(canonicalOrigin));
+  const publicWebOrigin=config.publicWebOrigin;
+  if(publicWebOrigin!=null&&(typeof publicWebOrigin!=='string'||!publicWebOrigin.startsWith('https://')||canonicalOrigin(publicWebOrigin)!==publicWebOrigin||!origins.has(publicWebOrigin)))throw new HttpError(500,'Invalid public frontend origin','CONFIGURATION_ERROR');
   async function serve(request:Request):Promise<Response>{
     // SCIM authenticates its own bearer and rejects browser cookies/origins.
     // Its handler also validates malformed paths and returns SCIM errors.
@@ -32,7 +34,8 @@ export function createBackend(config:Config):(request:Request)=>Promise<Response
         if(Object.keys(body).some(key=>key!=='cache_binding')||Object.hasOwn(body,'cache_binding')&&(typeof body.cache_binding!=='string'||!body.cache_binding||body.cache_binding.length>1000))throw new HttpError(400,'Invalid logout binding');
         result=await auth.logout(cookie,body.cache_binding?{expectedBinding:body.cache_binding as string}:undefined);
       }else throw new HttpError(405,'Unsupported session method');
-      return jsonResponse({...result.body,...config.setupEnabled&&auth.setup?{setup_supported:true}:{}},result.status,result.setCookie?{'Set-Cookie':result.setCookie}:{});
+      const publicMetadata=publicWebOrigin&&result.status===200&&['GET','HEAD','POST'].includes(request.method)?{public_web_origin:publicWebOrigin}:{};
+      return jsonResponse({...result.body,...config.setupEnabled&&auth.setup?{setup_supported:true}:{},...publicMetadata},result.status,result.setCookie?{'Set-Cookie':result.setCookie}:{});
     }
     // Keep the unlinked, unauthenticated candidate closed during migration.
     // A health/auth deployment does not mean that the legacy domain is migrated.

@@ -17,7 +17,7 @@ async function application(){
     for(const name of ['FOUNTAIN_AI_PROVIDER','FOUNTAIN_AI_URL','FOUNTAIN_AI_MODEL','FOUNTAIN_AI_KEY']){
       const value=Deno.env.get(name);if(value!==undefined)env[name]=value;
     }
-    return createApplication({supabaseUrl,publishableKey,serviceKey:secretKeys[0],cryptoKeys,workspaceId:deployment.workspaceId,origins:deployment.webOrigins,setupEnabled:deployment.setupEnabled,env});
+    return createApplication({supabaseUrl,publishableKey,serviceKey:secretKeys[0],cryptoKeys,workspaceId:deployment.workspaceId,origins:deployment.webOrigins,...(deployment.publicWebOrigin==null?{}:{publicWebOrigin:deployment.publicWebOrigin}),setupEnabled:deployment.setupEnabled,env});
   })().catch(error=>{loading=undefined;throw error;});
   return loading;
 }

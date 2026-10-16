@@ -21,7 +21,7 @@ import {createScimHTTP} from './scim-http.ts';
 import {createBackup,createBackupProvider} from './backup.ts';
 import {createBackupJobs,createBackupJobProvider,createBackupSourceRangeReader,collectBackupJobGarbage} from './backup-jobs.ts';
 import {HttpError,jsonResponse,readJSON} from './http.ts';
-type Config={supabaseUrl:string;publishableKey:string;serviceKey:string;cryptoKeys:Array<{id:string;secret:string|Uint8Array}>;workspaceId:string;origins:string[];fetch?:typeof fetch;env?:Record<string,string|undefined>;setupEnabled?:boolean};
+type Config={supabaseUrl:string;publishableKey:string;serviceKey:string;cryptoKeys:Array<{id:string;secret:string|Uint8Array}>;workspaceId:string;origins:string[];publicWebOrigin?:string|null;fetch?:typeof fetch;env?:Record<string,string|undefined>;setupEnabled?:boolean};
 export function createApplication(config:Config):(request:Request)=>Promise<Response>{
   const connection={supabaseUrl:config.supabaseUrl,serviceKey:config.serviceKey,workspaceId:config.workspaceId,fetch:config.fetch};
   const onboarding=createOnboarding({...connection,publishableKey:config.publishableKey});
@@ -34,7 +34,7 @@ export function createApplication(config:Config):(request:Request)=>Promise<Resp
   delete env.FOUNTAIN_SCIM_TOKEN;
   const scim=createScimHTTP(connection);
   return async request=>createBackend({
-    origins:config.origins,auth:async()=>auth,setupEnabled:config.setupEnabled,scim,
+    origins:config.origins,publicWebOrigin:config.publicWebOrigin,auth:async()=>auth,setupEnabled:config.setupEnabled,scim,
     setupCreate:(body,cookie)=>onboarding.bootstrapCreate(body,input=>auth.setup(input,cookie)),
     domain:async(current,path,context)=>{
       const authorize=()=>auth.authorize(current.headers.get('Cookie'));

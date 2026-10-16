@@ -287,9 +287,10 @@
   function randomClient(){const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);return 'tab_'+[...bytes].map(value=>value.toString(16).padStart(2,'0')).join('');}
   const stripEpoch=entry=>{const value=clone(entry);delete value._epoch;return value;};
   class DocumentChannel {
-    constructor({pageId,profile,fetcher,deferRemote=false,onChange=()=>{},onStatus=()=>{},onDenied=()=>{},onDraft=()=>{},onPresence=()=>{},onError=()=>{}}){
+    constructor({pageId,profile,fetcher,deferRemote=false,onChange=()=>{},onStatus=()=>{},onDenied=()=>{},onDraft=()=>{},onPresence=()=>{},onHistory=()=>{},onError=()=>{}}){
       this.pageId=pageId;this.profile=profile;this.clientId=randomClient();this.fetcher=fetcher;this.onChange=onChange;this.onStatus=onStatus;this.onDenied=onDenied;this.onDraft=onDraft;this.onPresence=onPresence;this.onError=onError;this.offline=globalThis.FountainOffline;this.presenceRevision=-1;
       this.key=this.offline?.key(profile,pageId);this.pending=new Map();this.base=null;this.state=null;this.clock=0;this.closed=false;this.persistence=Promise.resolve();this.delay=500;this.recovering=false;this.retiredEpochs=new Set();this.remoteDeferred=deferRemote===true;
+      this.onHistory=onHistory;this.undoStack=[];this.redoStack=[];this.historyHints=new Map();this.historyHintSizes=new Map();this.historyHintBytes=0;this.historyGeneration=0;this.historyBusy=false;this.historyPending=false;
       this.onlineHandler=()=>this.reconnect();this.offlineHandler=()=>{this.source?.close();this.setStatus('offline');};
       globalThis.addEventListener('online',this.onlineHandler);globalThis.addEventListener('offline',this.offlineHandler);
       this.profileCleared=event=>{if(!this.closed&&event.detail?.profileId===this.profile.id){this.close();this.onDenied({status:401,message:'로그인이 종료되었습니다.'});}};
@@ -301,6 +302,65 @@
       const expires=profile.validUntil||Date.parse(profile.session?.expires_at);if(Number.isFinite(expires))this.expiryTimer=setTimeout(()=>this.deny(401,'오프라인 저장 기한이 만료되었습니다. 다시 로그인해 주세요.'),Math.max(0,Math.min(2147483647,expires-Date.now())));
     }
     setStatus(status){this.status=status;if(!this.closed)this.onStatus({status,pending:this.pending.size,durable:this.durable!==false,deferred:this.remoteDeferred});}
+    historyState(){const busy=this.historyBusy||this.historyPending,editable=!this.closed&&this.base?.access_level>=3&&!this.base.page?.locked&&!this.base.page?.archived;return {canUndo:!!(editable&&!busy&&this.undoStack.length),canRedo:!!(editable&&!busy&&this.redoStack.length),busy:!!busy,historyPending:this.historyPending,truncated:!!this.historyTruncated};}
+    emitHistory(){if(!this.closed)this.onHistory(this.historyState());}
+    breakHistory(){this.typingMerge=null;}
+    clearHistory(){this.undoStack=[];this.redoStack=[];this.historyHints.clear();this.historyHintSizes.clear();this.historyHintBytes=0;this.historyGeneration++;this.historyTruncated=false;this.pendingHistorySelection=null;this.breakHistory();this.emitHistory();}
+    rememberHistoryHints(state){
+      if(this.closed||!state)return;for(const [key,value] of capturePublicHints(state)){
+        if(this.historyHints.has(key)){this.historyHints.delete(key);this.historyHintBytes-=this.historyHintSizes.get(key)||0;}
+        const size=new TextEncoder().encode(key+canonical(value)).length;this.historyHints.set(key,clone(value));this.historyHintSizes.set(key,size);this.historyHintBytes+=size;
+      }
+      this.trimHistory();
+    }
+    trimHistory(){
+      const limit=2*1024*1024,entryBytes=()=>new TextEncoder().encode(canonical([...this.undoStack,...this.redoStack])).length;
+      while(this.undoStack.length+this.redoStack.length>100||entryBytes()>limit){if(this.undoStack.length)this.undoStack.shift();else this.redoStack.shift();this.historyTruncated=true;this.breakHistory();}
+      const available=Math.max(0,limit-entryBytes());while(this.historyHintBytes>available&&this.historyHints.size){const key=this.historyHints.keys().next().value;this.historyHints.delete(key);this.historyHintBytes-=this.historyHintSizes.get(key)||0;this.historyHintSizes.delete(key);}
+    }
+    transact(meta,fn){
+      if(this.historyTransaction)return fn();
+      const context={meta:meta||{},ops:[],group:randomClient(),epoch:this.base?.epoch,generation:this.historyGeneration};this.historyTransaction=context;
+      try{return fn();}finally{
+        this.historyTransaction=null;
+        if(context.ops.length&&context.meta.kind!=='typing')this.breakHistory();
+        if(context.ops.length&&context.meta.record!==false&&!this.closed&&context.epoch===this.base?.epoch&&context.generation===this.historyGeneration){
+          const after=typeof context.meta.afterSelection==='function'?context.meta.afterSelection():context.meta.afterSelection;
+          const action={targets:context.ops.map(op=>op.id),beforeSelection:clone(context.meta.beforeSelection||null),afterSelection:clone(after||null),kind:context.meta.kind||'structure',blockId:context.meta.blockId||null,at:Date.now()};
+          const style=canonical(context.ops.filter(op=>op.type==='text.insert').map(op=>op.marks||{})),previous=this.undoStack.at(-1);
+          const merge=action.kind==='typing'&&this.typingMerge===previous&&previous?.blockId===action.blockId&&action.at-previous.at<=750&&previous.style===style&&canonical(previous.afterSelection)===canonical(action.beforeSelection);
+          if(merge){previous.targets.push(...action.targets);previous.afterSelection=action.afterSelection;previous.at=action.at;}
+          else{action.style=style;this.undoStack.push(action);}
+          this.redoStack=[];this.typingMerge=action.kind==='typing'?this.undoStack.at(-1):null;this.trimHistory();this.emitHistory();
+        }
+      }
+    }
+    undo(){return this.runHistory(false);}
+    redo(){return this.runHistory(true);}
+    async runHistory(redo){
+      const source=redo?this.redoStack:this.undoStack,target=redo?this.undoStack:this.redoStack;
+      if(!(redo?this.historyState().canRedo:this.historyState().canUndo))return {changed:false};
+      const action=source.at(-1),generation=this.historyGeneration,epoch=this.base.epoch;this.historyBusy=true;this.breakHistory();this.emitHistory();
+      let queued=false;
+      try{
+        await this.persistence.catch(()=>this.persistPending());
+        if(this.closed||generation!==this.historyGeneration||epoch!==this.base?.epoch||source.at(-1)!==action)return {changed:false};
+        const ops=[];for(let index=0;index<action.targets.length;index+=1000)ops.push(this.operation('history.cancel',null,{targets:action.targets.slice(index,index+1000)}));
+        const selection=clone(redo?action.afterSelection:action.beforeSelection);this.pendingHistorySelection=selection;
+        this.transact({kind:'history',record:false},()=>this.queue(ops));queued=true;
+        source.pop();target.push({...action,targets:ops.map(op=>op.id)});this.trimHistory();
+        await this.persistence.catch(()=>{});
+        if(!this.closed&&generation===this.historyGeneration&&epoch===this.base?.epoch){if(navigator.onLine)this.flush().catch(error=>this.onError(error));return {changed:true,selection,historyPending:this.historyPending};}
+        return {changed:false};
+      }catch(error){if(!this.closed)this.onError(error);return {changed:queued,historyPending:this.historyPending};}
+      finally{this.historyBusy=false;this.emitHistory();}
+    }
+    publishState(source){
+      if(this.closed)return;
+      this.historyPending=!!this.state.unresolved_slots?.length;
+      if(!this.historyPending){this.renderedBlocks=project(this.state);this.rememberHistoryHints(this.state);}
+      if(!this.closed){const selection=!this.historyPending?this.pendingHistorySelection:null;this.onChange({snapshot:this.base,state:this.state,blocks:clone(this.renderedBlocks||this.base.blocks||[]),source,pending:this.pending.size,historyPending:this.historyPending,...(selection?{selection:clone(selection)}:{})});if(selection)this.pendingHistorySelection=null;this.emitHistory();}
+    }
     async fetch(path,body){check(!this.remoteDeferred,'새 페이지가 서버에 생성될 때까지 기기에 보관합니다.',425);if(this.fetcher)return this.fetcher(path,body);const response=await FountainTransport.request('/api'+path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});const data=await response.json();if(!response.ok){const error=new Error(data.error||'문서를 동기화하지 못했습니다.');error.status=response.status;throw error;}return data;}
     async open(snapshot,{cached=false}={}){
       if(this.offline&&this.key)this.previousCached=await this.offline.getSnapshot(this.key);
@@ -321,25 +381,31 @@
     }
     async recover(entries,reason){
       if(!entries.length)return;
+      this.clearHistory();
       check(this.offline&&this.key,'복구 내용을 기기에 저장할 수 없습니다.');
+      const scopeEpoch=this.base.epoch,generation=this.historyGeneration,current=()=>!this.closed&&this.base?.epoch===scopeEpoch&&this.historyGeneration===generation;
       const epoch=entries[0]._epoch||this.base.epoch,records=await this.offline.getDrafts(this.key);
+      if(!current())return;
       const bases=records.filter(record=>record.draft.reason==='basis'&&record.draft.epoch===epoch&&record.draft.state).map(record=>record.draft);
       if(this.previousCached?.epoch===epoch)bases.push(this.previousCached);
-      let blocks=null;
-      if(this.base.epoch===epoch)blocks=project(this.state);
+      let blocks=null,historyPending=false;
+      if(this.base.epoch===epoch){historyPending=this.historyPending;blocks=clone(this.renderedBlocks||this.base.blocks||project(this.state));}
       else if(bases.length){
         bases.sort((a,b)=>(b.seq||0)-(a.seq||0));let recovered=clone(bases[0].state);
-        const operations=entries.map(stripEpoch);for(let index=0;index<operations.length;index+=1000)recovered=applyOperations(recovered,operations.slice(index,index+1000));blocks=project(recovered);
+        const operations=entries.map(stripEpoch);for(let index=0;index<operations.length;index+=1000)recovered=applyOperations(recovered,operations.slice(index,index+1000));historyPending=!!recovered.unresolved_slots?.length;blocks=historyPending?clone(bases[0].blocks||[]):project(recovered);
       }
       if(blocks===null){
         const previous=records.filter(record=>record.draft.epoch===epoch&&record.draft.reason==='pending');
-        for(const record of previous)await this.offline.saveDraft(this.key,record.clientId+':recovery:'+epoch+':'+randomClient(),{...record.draft,reason});
+        for(const record of previous){if(!current())return;await this.offline.saveDraft(this.key,record.clientId+':recovery:'+epoch+':'+randomClient(),{...record.draft,reason});}
         if(previous.length)blocks=previous.at(-1).draft.blocks;
       }
       const recoveryId=this.clientId+':recovery:'+epoch+':'+randomClient();
-      await this.offline.saveDraft(this.key,recoveryId,{epoch,ops:entries.map(stripEpoch),blocks:blocks||[],reason:blocks?reason:reason+'_ops_only',createdAt:new Date().toISOString()});
+      if(!current())return;
+      await this.offline.saveDraft(this.key,recoveryId,{epoch,ops:entries.map(stripEpoch),blocks:blocks||[],...(historyPending?{history_pending:true}:{}),reason:blocks?reason:reason+'_ops_only',createdAt:new Date().toISOString()});
+      if(!current())return;
       await this.offline.acknowledge(this.key,entries.map(entry=>entry.id));entries.forEach(entry=>this.pending.delete(entry.id));
-      if(!this.closed)this.onDraft((await this.offline.getDrafts(this.key)).filter(record=>!['pending','basis'].includes(record.draft.reason)));
+      if(!current())return;
+      const drafts=await this.offline.getDrafts(this.key);if(current())this.onDraft(drafts.filter(record=>!['pending','basis'].includes(record.draft.reason)));
     }
     async cleanPendingDrafts(){
       if(!this.offline||!this.key)return;
@@ -348,12 +414,14 @@
       }
     }
     async rebuild(source){
+      if(this.closed)return;const basis=this.base;
       const old=[...this.pending.values()].filter(entry=>entry._epoch&&entry._epoch!==this.base.epoch);
       if(old.length)await this.recover(old,'epoch_changed');
+      if(this.closed||this.base!==basis)return;
       let next=clone(this.base.state);const operations=[...this.pending.values()].map(stripEpoch);
-      for(let index=0;index<operations.length;index+=1000)next=applyOperations(next,operations.slice(index,index+1000));
+      for(let index=0;index<operations.length;index+=1000)next=applyOperations(next,operations.slice(index,index+1000),this.historyHints);
       this.state=next;this.clock=Math.max(this.clock,next.max_clock||0);
-      if(!this.closed)this.onChange({snapshot:this.base,state:this.state,blocks:project(this.state),source,pending:this.pending.size});
+      this.publishState(source);
     }
     receive(snapshot,source='remote'){
       this.receiving=(this.receiving||Promise.resolve()).catch(()=>{}).then(()=>this.receiveOrdered(snapshot,source));return this.receiving;
@@ -364,6 +432,8 @@
       if(this.retiredEpochs.has(snapshot.epoch)||(snapshot.access_revision||0)<(this.base?.access_revision||0))return;
       if(this.base&&snapshot.epoch!==this.base.epoch&&(snapshot.page?.revision||0)<(this.base.page?.revision||0))return;
       if(this.base&&snapshot.epoch===this.base.epoch&&(snapshot.seq<this.base.seq||snapshot.seq===this.base.seq&&(snapshot.page?.revision||0)<(this.base.page?.revision||0)))return;
+      if(this.base&&(snapshot.epoch!==this.base.epoch||snapshot.access_level<3||snapshot.page?.locked||snapshot.page?.archived))this.clearHistory();
+      else if(this.base&&Object.keys(snapshot.state.seen).some(id=>!own(this.base.state.seen,id)&&!id.startsWith(this.clientId+':')))this.breakHistory();
       // Preserve the old optimistic view before switching epochs, so recovery includes local text.
       if(this.base&&snapshot.epoch!==this.base.epoch&&this.pending.size)await this.recover([...this.pending.values()],'epoch_changed');
       if(this.closed)return;
@@ -379,18 +449,25 @@
       if((snapshot.access_level<3||snapshot.page?.locked)&&this.pending.size){await this.recover([...this.pending.values()],'read_only');await this.rebuild('read_only');}
       this.delay=500;this.setStatus(this.pending.size?'pending':'synced');
     }
-    operation(type,blockId,fields={}){this.clock=Math.max(this.clock,this.state?.max_clock||0)+1;check(Number.isSafeInteger(this.clock),'작업 시계가 한도를 초과했습니다.');return {id:this.clientId+':'+this.clock,client:this.clientId,clock:this.clock,type,block_id:blockId,...clone(fields)};}
+    operation(type,blockId,fields={}){this.clock=Math.max(this.clock,this.state?.max_clock||0)+1;check(Number.isSafeInteger(this.clock),'작업 시계가 한도를 초과했습니다.');return {id:this.clientId+':'+this.clock,client:this.clientId,clock:this.clock,type,...(type==='history.cancel'?{}:{block_id:blockId}),...clone(fields)};}
     submit(specifications){
       check(!this.closed&&this.base&&this.base.access_level>=3&&!this.base.page?.locked,'페이지 편집 권한이 없습니다.',403);
       return this.queue(specifications.map(spec=>this.operation(spec.type,spec.block_id,spec.fields||{})));
     }
     queue(operations){
+      if(!this.historyTransaction)return this.transact({kind:'structure'},()=>this.queue(operations));
       check(!this.closed&&this.base?.access_level>=3&&!this.base.page?.locked,'페이지 편집 권한이 없습니다.',403);
       if(!operations.length)return [];
-      let next=this.state;for(let index=0;index<operations.length;index+=1000)next=applyOperations(next,operations.slice(index,index+1000));
+      check(!this.historyPending,'실행 취소 결과를 확인하려면 연결이 필요합니다.',425);
+      this.rememberHistoryHints(this.state);
+      operations=operations.map(op=>op.type==='history.cancel'?op:{...op,group_id:op.group_id||this.historyTransaction.group});
+      const historyOperations=operations.filter(op=>op.client===this.clientId&&op.type!=='history.cancel'&&!own(this.state.seen,op.id));
+      let next=this.state;for(let index=0;index<operations.length;index+=1000)next=applyOperations(next,operations.slice(index,index+1000),this.historyHints);
       const entries=operations.map(op=>({...op,_epoch:this.base.epoch}));entries.forEach(entry=>this.pending.set(entry.id,entry));this.state=next;this.durable=false;
-      const draft={epoch:this.base.epoch,ops:[...this.pending.values()].map(stripEpoch),blocks:project(this.state),reason:'pending',createdAt:new Date().toISOString()};
-      this.onChange({snapshot:this.base,state:this.state,blocks:project(this.state),source:'local',pending:this.pending.size});this.setStatus(this.status==='offline'||!navigator.onLine?'offline':'pending');
+      this.historyTransaction.ops.push(...historyOperations);
+      this.publishState('local');
+      const draft={epoch:this.base.epoch,ops:[...this.pending.values()].map(stripEpoch),blocks:clone(this.renderedBlocks||[]),...(this.historyPending?{history_pending:true}:{}),reason:'pending',createdAt:new Date().toISOString()};
+      this.setStatus(this.status==='offline'||!navigator.onLine?'offline':'pending');
       this.latestDraft=draft;this.persistPending();
       clearTimeout(this.flushTimer);this.flushTimer=setTimeout(()=>this.flush().catch(error=>this.onError(error)),180);return operations;
     }
@@ -411,6 +488,7 @@
     }
     chars(id){return visibleChars(this.state,id);}
     replaceText(id,text,baseline=this.chars(id),marks){
+      if(!this.historyTransaction)return this.transact({kind:'typing',blockId:id},()=>this.replaceText(id,text,baseline,marks));
       const after=Array.from(text),before=baseline.map(value=>value.text);let start=0,end=0;
       while(start<before.length&&start<after.length&&before[start]===after[start])start++;
       while(end<before.length-start&&end<after.length-start&&before[before.length-1-end]===after[after.length-1-end])end++;
@@ -421,6 +499,7 @@
     }
     format(id,charIds,marks){return this.submit([{type:'text.format',block_id:id,fields:{char_ids:charIds,marks:validateMarks(marks)}}]);}
     reconcile(blocks){
+      if(!this.historyTransaction)return this.transact({kind:'structure'},()=>this.reconcile(blocks));
       const current=project(this.state),currentIds=new Set(current.map(value=>value.id)),desired=new Set(blocks.map(value=>value.id)),specs=[],previous=new Map();
       for(const value of current)if(!desired.has(value.id))specs.push({type:'block.delete',block_id:value.id});
       const currentPredecessor=new Map(),currentPrevious=new Map();for(const value of current){if(!desired.has(value.id))continue;currentPredecessor.set(value.id,currentPrevious.get(value.parent_id)||null);currentPrevious.set(value.parent_id,value.id);}
@@ -442,8 +521,8 @@
       }
       // Preallocated text insert IDs anchor rich tokens; keep their operation clocks intact.
       const operations=[];for(const spec of specs){if(spec.operation)operations.push(spec.operation);else operations.push(this.operation(spec.type,spec.block_id,spec.fields||{}));}
-      if(!operations.length)return;
-      this.submitPrepared(operations);
+      if(!operations.length)return [];
+      return this.submitPrepared(operations);
     }
     submitPrepared(operations){return this.queue(operations);}
     async flush(){
@@ -500,7 +579,7 @@
       try{await this.persistence.catch(()=>this.persistPending());const snapshot=await this.fetch('/pages/'+encodeURIComponent(this.pageId)+'/collaboration');await this.importPending(false);await this.receive(snapshot,'reconnect');this.connectEvents();await this.flush();}catch(error){if([401,403,404].includes(error.status))await this.deny(error.status,error.message);else{this.setStatus('offline');this.retry();}}
     }
     async deny(status,message){if(this.closed)return;this.close();this.onDenied({status,message});if(this.offline){if(status===401)await this.offline.clearProfile(this.profile).catch(()=>{});else if(this.key)await this.offline.purgeResource(this.key).catch(()=>{});}}
-    close(){this.closed=true;this.source?.close();this.broadcast?.close();clearTimeout(this.flushTimer);clearTimeout(this.retryTimer);clearTimeout(this.expiryTimer);globalThis.removeEventListener('online',this.onlineHandler);globalThis.removeEventListener('offline',this.offlineHandler);globalThis.removeEventListener('fountain-offline-profile-cleared',this.profileCleared);globalThis.removeEventListener('fountain-offline-resource-purged',this.resourcePurged);globalThis.removeEventListener('fountain-offline-profile-changed',this.profileChanged);}
+    close(){this.closed=true;this.clearHistory();this.source?.close();this.broadcast?.close();clearTimeout(this.flushTimer);clearTimeout(this.retryTimer);clearTimeout(this.expiryTimer);globalThis.removeEventListener('online',this.onlineHandler);globalThis.removeEventListener('offline',this.offlineHandler);globalThis.removeEventListener('fountain-offline-profile-cleared',this.profileCleared);globalThis.removeEventListener('fountain-offline-resource-purged',this.resourcePurged);globalThis.removeEventListener('fountain-offline-profile-changed',this.profileChanged);}
   }
   const exported={seedState,applyOperations,project,publicState,capturePublicHints,hydratePublicState,visibleChars,normalizeBlocks,validateMarks,canonical,sha256,compareText,DocumentChannel,PALETTE,BOOL_MARKS};
   globalThis.FountainCollaboration=exported;if(typeof module!=='undefined'&&module.exports)module.exports=exported;

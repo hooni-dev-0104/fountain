@@ -94,4 +94,30 @@ final class OutboxPolicy {
         String rest = key.substring(profile.length() + 1);
         return !rest.isEmpty() && (!rest.contains("|") || rest.startsWith("database|") && rest.length() > 9 && rest.indexOf('|', 9) < 0);
     }
+    static String[] canonicalResource(String method, String path) throws Exception {
+        if (!"GET".equals(method) || path == null || path.contains("?") || path.contains("#")) return null;
+        if (path.equals("/api/workspace")) return new String[]{"workspace", "workspace"};
+        String kind, encoded;
+        if (path.startsWith("/api/pages/") && path.endsWith("/collaboration")) {
+            if (path.length() <= 25) return null;
+            kind = "page"; encoded = path.substring(11, path.length() - 14);
+        } else if (path.startsWith("/api/databases/")) { kind = "database"; encoded = path.substring(15); }
+        else return null;
+        if (encoded.isEmpty() || encoded.contains("/")) return null;
+        // Exactly one decode. Percent-containing resource IDs stay literal.
+        String identity = java.net.URLDecoder.decode(encoded.replace("+", "%2B"), "UTF-8");
+        text(identity, 1000);
+        if (identity.contains("/") || identity.contains("\\") || identity.equals(".") || identity.equals("..") || !encode(identity).equals(encoded)) return null;
+        return new String[]{kind, identity};
+    }
+    static boolean freshRevisions(long access, long data, long previousAccess, long previousData) {
+        return access >= previousAccess && data >= previousData;
+    }
+    static boolean capability(long level, int needed, boolean locked, boolean archived) {
+        return level >= needed && (needed < 3 || !locked && !archived);
+    }
+    static boolean live(long now, long validUntil, long grantUntil) { return now < validUntil && now < grantUntil; }
+    static boolean stableObservation(boolean same, long now, long previousUntil, long grantUntil) {
+        return same && previousUntil > now && grantUntil >= previousUntil;
+    }
 }

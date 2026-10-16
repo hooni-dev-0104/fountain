@@ -32,6 +32,28 @@ public final class OutboxPolicyFixture {
         equal(OutboxPolicy.resource("o|w|m|b", "o|w|m|b|p"),true);
         equal(OutboxPolicy.resource("o|w|m|b", "o|w|m|b|database|d"),true);
         for (String key : new String[]{"o|w|m|b|", "o|w|m|b|database|", "o|w|m|b|p|x", "o|w|m|other|p"}) equal(OutboxPolicy.resource("o|w|m|b",key),false);
+        equal(Arrays.equals(OutboxPolicy.canonicalResource("GET", "/api/workspace"), new String[]{"workspace", "workspace"}), true);
+        equal(Arrays.equals(OutboxPolicy.canonicalResource("GET", "/api/pages/%EA%B0%80%EC%A1%B1%20%7C%20%25/collaboration"), new String[]{"page", "가족 | %"}), true);
+        equal(Arrays.equals(OutboxPolicy.canonicalResource("GET", "/api/databases/%252F"), new String[]{"database", "%2F"}), true);
+        for (String path : new String[]{"/api/workspace?filter=x", "/api/workspace?", "/api/databases/db?filter=assigned", "/api/pages/p/operations",
+            "/api/pages/p/collaboration/", "/api/pages/collaboration", "/api/pages//collaboration", "/api/databases/", "/api/databases/a/b", "/api/databases/a%2Fb", "/api/databases/..", "/api/databases/%2e%2e"}) {
+            equal(OutboxPolicy.canonicalResource("GET", path), null);
+        }
+        equal(OutboxPolicy.canonicalResource("POST", "/api/pages/p/collaboration"), null);
+        equal(OutboxPolicy.freshRevisions(100,100,100,100), true);
+        equal(OutboxPolicy.freshRevisions(99,101,100,100), false);
+        equal(OutboxPolicy.freshRevisions(101,99,100,100), false);
+        equal(OutboxPolicy.capability(1,1,true,true), true);
+        equal(OutboxPolicy.capability(1,3,false,false), false);
+        equal(OutboxPolicy.capability(4,3,true,false), false);
+        equal(OutboxPolicy.capability(4,3,false,true), false);
+        equal(OutboxPolicy.capability(3,3,false,false), true);
+        equal(OutboxPolicy.live(10,11,12), true); equal(OutboxPolicy.live(10,10,12), false); equal(OutboxPolicy.live(10,11,10), false);
+        equal(OutboxPolicy.stableObservation(true,10,20,30), true);
+        equal(OutboxPolicy.stableObservation(true,10,20,20), true);
+        equal(OutboxPolicy.stableObservation(true,10,20,19), false);
+        equal(OutboxPolicy.stableObservation(true,20,20,30), false);
+        equal(OutboxPolicy.stableObservation(false,10,20,30), false);
         System.out.println("Android outbox pure JDK checks passed: " + checks + " (no Android SDK/device claim)");
     }
 }

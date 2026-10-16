@@ -411,6 +411,21 @@ class Application:
             attachment = s.get("attachment", parts[2])
             require(attachment, "Attachment not found", 404)
             return 200, attachment
+        if len(parts) == 4 and parts[:2] == ['api', 'attachments'] and parts[3] == 'metadata' and method == 'GET':
+            from .attachments import MAX_FILE_SIZE
+            attachment = s.get('attachment', parts[2])
+            require(attachment, 'Attachment not found', 404)
+            name, size = attachment.get('name'), attachment.get('size')
+            mime, storage = attachment.get('mime', 'application/octet-stream'), attachment.get('storage', 'inline')
+            require(isinstance(name, str) and 0 < len(name) <= 255 and type(size) is int and 0 <= size <= MAX_FILE_SIZE
+                    and isinstance(mime, str) and 0 < len(mime) <= 255 and isinstance(storage, str) and storage in {'inline', 'chunks'},
+                    'Attachment metadata is invalid', 409)
+            metadata = {'id': attachment['id'], 'name': name, 'size': size, 'mime': mime, 'storage': storage, 'status': 'complete'}
+            if 'sha256' in attachment:
+                require(isinstance(attachment['sha256'], str) and re.fullmatch(r'[0-9a-f]{64}', attachment['sha256']) is not None,
+                        'Attachment metadata is invalid', 409)
+                metadata['sha256'] = attachment['sha256']
+            return 200, metadata
         if len(parts) == 4 and parts[:2] == ['api', 'attachments'] and parts[3] == 'download' and method == 'GET':
             attachment = s.get('attachment', parts[2])
             require(attachment, 'Attachment not found', 404)

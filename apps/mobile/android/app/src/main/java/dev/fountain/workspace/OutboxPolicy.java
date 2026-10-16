@@ -120,4 +120,19 @@ final class OutboxPolicy {
     static boolean stableObservation(boolean same, long now, long previousUntil, long grantUntil) {
         return same && previousUntil > now && grantUntil >= previousUntil;
     }
+    static String[] recoveryProfile(String origin, String source, String workspace, String member) throws Exception {
+        if (source == null) return null; String[] parts = source.split("\\|", -1);
+        if (parts.length != 4 || !origin.equals(parts[0])) return null;
+        String[] decoded = new String[3];
+        try { for (int i = 1; i < parts.length; i++) {
+            decoded[i - 1] = java.net.URLDecoder.decode(parts[i].replace("+", "%2B"), "UTF-8");
+            if (!encode(decoded[i - 1]).equals(parts[i])) return null;
+        } } catch (IllegalArgumentException malformed) { return null; }
+        return workspace.equals(decoded[0]) && member.equals(decoded[1]) ? decoded : null;
+    }
+    static int recoverySlice(String text, int offset, int maximum) {
+        int end = Math.min(text.length(), offset + maximum);
+        if (end < text.length() && end > offset && Character.isHighSurrogate(text.charAt(end - 1))) end--;
+        return end;
+    }
 }

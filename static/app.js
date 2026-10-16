@@ -711,7 +711,8 @@ function openModal(title,content,cls='') {
   $('#overlay-root').innerHTML=`<div class="modal-backdrop"><section class="modal ${cls}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="modal-head"><h2>${esc(title)}</h2><button class="modal-close" data-action="close-modal" aria-label="닫기">×</button></header><div class="modal-body">${content}</div></section></div>`;
   if(state.route==='page'&&resourceLevel(state.page)<4)$$('[data-action="delete-page"],[data-action="move-page"]',$('.modal')).forEach(el=>el.remove());
   if(state.route==='page'&&resourceLevel(state.page)<3){for(const action of ['lock-page','delete-page','verify-page','move-page','change-block-type','move-block','delete-block','restore-version'])$$(`[data-action="${action}"]`,$('.modal')).forEach(el=>el.remove());}
-  requestAnimationFrame(()=>$('input:not([type=checkbox]),textarea,select,button', $('.modal-body'))?.focus());
+  const body=$('.modal-body');
+  requestAnimationFrame(()=>{if(body?.isConnected)$('input:not([type=checkbox]),textarea,select,button',body)?.focus();});
 }
 function closeModal() {
   $('#overlay-root').innerHTML='';

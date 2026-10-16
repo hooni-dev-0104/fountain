@@ -17,7 +17,7 @@ from .core import APIError, AUDIT_ACTOR, now, require, text, uid
 class PostgresStore:
     backend = "postgres"
 
-    def __init__(self, dsn, *, workspace_id):
+    def __init__(self, dsn, *, workspace_id, attachment_root=None):
         text(workspace_id, "workspace namespace", 160, False)
         require(isinstance(dsn, str) and bool(dsn.strip()), "PostgreSQL connection configuration is required", 503)
         try:
@@ -35,6 +35,8 @@ class PostgresStore:
         require(bool(options.get("host")) and not options["host"].startswith("/"),
                 "PostgreSQL requires a TLS hostname", 503)
         self.workspace_id = workspace_id
+        self._files = None
+        self._initializing = True
         self.lock = threading.RLock()
         self.transaction_depth = 0
         self._driver, self._jsonb = psycopg, Jsonb
@@ -52,8 +54,19 @@ class PostgresStore:
             self._execute("SELECT workspace_id,kind,id,data,created_at,updated_at FROM fountain_private.entities WHERE false")
             self._execute("SELECT workspace_id,key,data FROM fountain_private.meta WHERE false")
             self._execute('SELECT workspace_id,attachment_id,"offset",data FROM fountain_private.attachment_chunks WHERE false')
+            if attachment_root is not None:
+                from .file_chunks import FileChunkStorage
+                self._files = FileChunkStorage(self, attachment_root)
+            else:
+                absent = object()
+                require(self.meta("attachment_file_root", absent) is absent,
+                        "This workspace requires its configured attachment directory", 503)
+            self._initializing = False
         except BaseException:
-            self._connection.close()
+            try:
+                if self._files is not None: self._files.close()
+            finally:
+                self._connection.close()
             raise
 
     def _execute(self, statement, parameters=(), *, fetch=None):
@@ -77,6 +90,8 @@ class PostgresStore:
                     if outer:
                         self._execute("SELECT set_config('fountain.workspace_id',%s,true)", (self.workspace_id,))
                         self._execute("SELECT pg_advisory_xact_lock(%s)", (self._lock_key,))
+                        if not self._initializing:
+                            self._check_attachment_mode()
                     self.transaction_depth += 1
                     try:
                         yield self
@@ -84,6 +99,19 @@ class PostgresStore:
                         self.transaction_depth -= 1
             except self._driver.Error:
                 raise APIError(503, "PostgreSQL transaction could not complete") from None
+
+    def _check_attachment_mode(self):
+        # This query runs exactly once per outer transaction, with the workspace
+        # lock held. Calling meta() here would recursively start another read.
+        row = self._execute("SELECT data FROM fountain_private.meta WHERE workspace_id=%s AND key='attachment_file_root'",
+                            (self.workspace_id,), fetch="one")
+        if self._files is None:
+            require(row is None, "This workspace requires its configured attachment directory", 503)
+        else:
+            binding = row[0] if row is not None else None
+            require(isinstance(binding, dict) and type(binding.get("version")) is int
+                    and binding == {"version": 1, "id": self._files.root_id},
+                    "Attachment directory no longer matches this workspace", 503)
 
     @contextmanager
     def _read(self):
@@ -170,6 +198,9 @@ class PostgresStore:
 
     def chunk_info(self, identity, offset):
         with self._read():
+            if self._files is not None:
+                info = self._files.info(identity, offset)
+                if info is not None: return info
             row = self._execute('SELECT octet_length(data) FROM fountain_private.attachment_chunks '
                                 'WHERE workspace_id=%s AND attachment_id=%s AND "offset"=%s',
                                 (self.workspace_id, identity, offset), fetch="one")
@@ -179,15 +210,38 @@ class PostgresStore:
         require(type(start) is int and start >= 0 and type(length) is int and 0 <= length <= 4 * 1024 * 1024,
                 "Invalid attachment read range")
         with self._read():
+            if self._files is not None and self._files.info(identity, offset) is not None:
+                return self._files.read_range(identity, offset, start, length)
             row = self._execute('SELECT substring(data FROM %s FOR %s) FROM fountain_private.attachment_chunks '
                                 'WHERE workspace_id=%s AND attachment_id=%s AND "offset"=%s',
                                 (start + 1, length, self.workspace_id, identity, offset), fetch="one")
             return bytes(row[0]) if row else None
 
+    def chunk_hash_into(self, identity, offset, length, digest):
+        require(type(length) is int and 0 <= length <= 4 * 1024 * 1024,
+                "Invalid attachment chunk length")
+        with self._read():
+            if self._files is not None and self._files.hash_into(identity, offset, length, digest):
+                return
+            row = self._execute('SELECT octet_length(data),pg_typeof(data)::text FROM fountain_private.attachment_chunks '
+                                'WHERE workspace_id=%s AND attachment_id=%s AND "offset"=%s',
+                                (self.workspace_id, identity, offset), fetch="one")
+            require(row is not None and row[0] == length and row[1] == "bytea",
+                    "Attachment chunk is missing or has an invalid length", 409)
+            position = 0
+            while position < length:
+                size = min(65536, length - position)
+                piece = self.chunk_read_range(identity, offset, position, size)
+                require(piece is not None and len(piece) == size, "Attachment chunk is incomplete", 409)
+                digest.update(piece)
+                position += size
+
     def chunk_write(self, identity, offset, data):
         require(type(offset) is int and offset >= 0 and isinstance(data, (bytes, bytearray))
                 and len(data) <= 4 * 1024 * 1024, "Invalid attachment chunk")
         with self.transaction():
+            if self._files is not None:
+                return self._files.write(identity, offset, bytes(data))
             self._execute('INSERT INTO fountain_private.attachment_chunks(workspace_id,attachment_id,"offset",data) '
                           'VALUES (%s,%s,%s,%s)', (self.workspace_id, identity, offset, bytes(data)))
 
@@ -196,12 +250,20 @@ class PostgresStore:
             rows = self._execute('SELECT "offset",octet_length(data) FROM fountain_private.attachment_chunks '
                                  'WHERE workspace_id=%s AND attachment_id=%s ORDER BY "offset"',
                                  (self.workspace_id, identity), fetch="all")
-            return [(offset, length, "blob") for offset, length in rows]
+            merged = [(offset, length, "blob") for offset, length in rows]
+            if self._files is not None: merged.extend(self._files.list(identity))
+            require(len({row[0] for row in merged}) == len(merged), "Attachment has conflicting chunk references", 409)
+            return sorted(merged, key=lambda row: row[0])
 
     def chunk_delete(self, identity):
         with self.transaction():
-            return self._execute("DELETE FROM fountain_private.attachment_chunks WHERE workspace_id=%s AND attachment_id=%s",
-                                 (self.workspace_id, identity))
+            removed = self._files.delete(identity) if self._files is not None else 0
+            return removed + self._execute("DELETE FROM fountain_private.attachment_chunks WHERE workspace_id=%s AND attachment_id=%s",
+                                           (self.workspace_id, identity))
+
+    def file_garbage_collect(self, now=None, limit=500):
+        require(self._files is not None, "Attachment directory is not configured", 503)
+        return self._files.garbage_collect(now=now, limit=limit)
 
     def presence_lookup(self, *, page=None, origin=None, now=None):
         clauses, parameters = ["workspace_id=%s", "kind='presence'"], [self.workspace_id]
@@ -230,4 +292,7 @@ class PostgresStore:
 
     def close(self):
         with self.lock:
-            self._connection.close()
+            try:
+                if self._files is not None: self._files.close()
+            finally:
+                self._connection.close()

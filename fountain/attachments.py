@@ -126,10 +126,16 @@ class FileStorage:
                 position += length
             require(position == upload["size"], "Upload bytes are incomplete", 409)
             digest, position = hashlib.sha256(), 0
-            while position < upload["size"]:
-                data = self._slice(identity, position, upload["size"] - position)
-                digest.update(data)
-                position += len(data)
+            if callable(getattr(self.store, "chunk_hash_into", None)):
+                # Filesystem chunks can resolve their immutable manifest once,
+                # then hash bounded local reads without a DB round trip per 64 KiB.
+                for offset, length, _ in rows:
+                    self.store.chunk_hash_into(identity, offset, length, digest)
+            else:
+                while position < upload["size"]:
+                    data = self._slice(identity, position, upload["size"] - position)
+                    digest.update(data)
+                    position += len(data)
             attachment = self.store.put("attachment", {"id": identity, "owner_id": upload["owner_id"], "page_id": upload.get("page_id"),
                 "name": upload["name"], "size": upload["size"], "mime": "application/octet-stream", "storage": "chunks", "sha256": digest.hexdigest()})
             upload["completed"] = True

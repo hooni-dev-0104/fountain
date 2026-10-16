@@ -13,9 +13,11 @@ async function application(){
     const supabaseUrl=Deno.env.get('SUPABASE_URL');if(!supabaseUrl)throw Error('Backend configuration is unavailable');
     const publishableKey=keys('SUPABASE_PUBLISHABLE_KEYS','SUPABASE_ANON_KEY')[0],secretKeys=keys('SUPABASE_SECRET_KEYS','SUPABASE_SERVICE_ROLE_KEY');
     const cryptoKeys=await Promise.all(secretKeys.map(async secret=>({secret,id:Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(secret)))).map(byte=>byte.toString(16).padStart(2,'0')).join('').slice(0,24)})));
-    // AI remains unconfigured until the operator chooses a supported provider.
-    // A personal subscription is not silently converted into paid API access.
-    return createApplication({supabaseUrl,publishableKey,serviceKey:secretKeys[0],cryptoKeys,workspaceId:deployment.workspaceId,origins:deployment.webOrigins,setupEnabled:deployment.setupEnabled,env:{}});
+    const env:Record<string,string>={};
+    for(const name of ['FOUNTAIN_AI_PROVIDER','FOUNTAIN_AI_URL','FOUNTAIN_AI_MODEL','FOUNTAIN_AI_KEY']){
+      const value=Deno.env.get(name);if(value!==undefined)env[name]=value;
+    }
+    return createApplication({supabaseUrl,publishableKey,serviceKey:secretKeys[0],cryptoKeys,workspaceId:deployment.workspaceId,origins:deployment.webOrigins,setupEnabled:deployment.setupEnabled,env});
   })().catch(error=>{loading=undefined;throw error;});
   return loading;
 }

@@ -6102,7 +6102,7 @@
   "cloudEntryFingerprints": {
     "supabase/functions/_shared/backend.ts": "bb8940580a7f205d2d95f3014de57ecc87be30693175aaf3516c2e2f7d97131a",
     "supabase/functions/_shared/application.ts": "479723e49e0afbb4f18ec6f392e40082de33f64f545fc4fc29d9fcb657f7e839",
-    "supabase/functions/fountain-api/index.ts": "48359c532588c05ccb42a8148ccf5ac91f53e1c25dc21b371a64e1a33997246f",
+    "supabase/functions/fountain-api/index.ts": "cfefe3a32cfc1ddaae009df30618d33915f263ac044dd3c272dc39142cd92d2a",
     "supabase/functions/fountain-api/deployment.ts": "120e0a690de3041abca876c4fdbac20fe6f2b6247872be229a86ce7dc97ec5ee"
   },
   "foundationEvidence": {

@@ -26,3 +26,8 @@ test('login change or page denial during provider wait cannot return output or a
 test('an unconfigured provider cannot pretend to generate content or call a paid API',async()=>{
  const f=fixture(),run=createAI({...f,env:{},fetch:f.infer});await assert.rejects(run({prompt:'요약',page_id:'p'},f.context),error=>error.status===503);assert.equal(f.calls,0);
 });
+test('cloud inference requires an explicit provider URL even when a model and key exist',async()=>{
+ const f=fixture(),{FOUNTAIN_AI_URL,...partial}=env,run=createAI({...f,env:partial,fetch:f.infer});
+ await assert.rejects(run({prompt:'요약',page_id:'p'},f.context),error=>error.status===503&&error.message.includes('FOUNTAIN_AI_URL'));
+ assert.equal(f.calls,0);assert.equal([...f.records.values()].filter(v=>v.kind==='audit').length,0);
+});

@@ -16,6 +16,12 @@ python3 -m fountain.server
 
 원격 공급자는 HTTPS와 `FOUNTAIN_AI_KEY`가 필요하다. API 형식은 [OpenAI 공식 API 명세](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)를 참고했다. 유료 API로 자동 전환하거나 실패 시 다른 공급자를 호출하지 않는다.
 
+## Supabase 클라우드 설정
+
+Edge entry는 서버의 `FOUNTAIN_AI_PROVIDER`, `FOUNTAIN_AI_URL`, `FOUNTAIN_AI_MODEL`, `FOUNTAIN_AI_KEY`만 AI 설정으로 읽는다. [Supabase Edge Secrets](https://supabase.com/docs/guides/functions/secrets)에 사용할 공급자의 값을 명시적으로 등록할 수 있다. 현재 배포에는 공급자나 API 키를 등록하지 않았다. 이 연결 경로가 있다는 사실은 실제 모델 호출·품질·무료 사용량이 검증됐다는 뜻이 아니다.
+
+클라우드는 `compatible-http` 공급자의 HTTPS 주소·모델·키를 요구한다. 키와 모델만 설정하고 URL을 생략하면 호출하지 않으며 기능 상태도 미설정으로 표시한다. 기본 유료 주소나 개인 구독 CLI로 자동 전환하지 않는다. URL·키는 서버 안에서만 사용하고 공개 세션 응답에 포함하지 않는다. Supabase worker의 `127.0.0.1`은 사용자 PC가 아니므로 위 로컬 모델 예시는 Python 로컬 실행용이다. 클라우드에서 PC 모델을 쓰려면 별도의 도달 가능한 공급자가 필요하며 항상 켜진 개발자 Mac을 운영 백엔드의 필수 요소로 두지 않는다.
+
 ## Google AI Pro 구독 검증 결과
 
 **현재 Pro 구독을 Fountain의 AI 공급자로 연결하지 않는다. 실제 모델 호출은 성공하지 않았다.**

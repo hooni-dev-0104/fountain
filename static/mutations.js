@@ -5,6 +5,7 @@
   const PAUSED = new Set(['conflict', 'denied', 'invalid', 'paused']);
   const PAGE_FIELDS = ['title', 'icon', 'cover', 'favorite'];
   const ROW_FIELDS = ['parent_row_id', 'depends_on'];
+  const ARCHIVE_TARGETS=Symbol('archive targets');
   const preparedImports = new WeakMap();
   const copy = value => structuredClone(value);
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
@@ -36,18 +37,18 @@
       this.closed = false; this.writing = 0; this.requests = new Set(); this.workspaceSource = copy(profile.workspace || {}); this.pages = new Map(); this.delay = 1000;
       this.online = () => this.sync().catch(error => this.report(error));
       this.queueChanged = event => { if (!this.closed && event.detail?.profileId === this.profile.id && !this.writing) { this.changed({ reason: event.detail?.recoveryImport ? 'recovery-import' : 'queue' }).catch(error => this.report(error)); if(!event.detail?.recoveryImport)this.schedule(); } };
-      this.profileCleared = event => { if (!this.closed && event.detail?.profileId === this.profile.id) { this.close(); this.denied({ status: 401, kind: 'session', message: '로그인이 종료되었습니다.' }); } };
-      this.profileChanged = async () => { const current = await this.offline.getProfile().catch(() => null); if (!this.closed && current?.id !== this.profile.id) { this.close(); this.denied({ status: 401, kind: 'session', switched: true, message: '다른 로그인으로 전환되었습니다.' }); } };
+      this.profileCleared = event => { if (!this.closed && (event.detail?.profileId === this.profile.id||event.detail?.profileIds?.includes(this.profile.id))) { this.close(); this.denied({ status: 401, kind: 'session', message: '로그인이 종료되었습니다.' }); } };
+      this.profileChanged = async () => { const current = await this.offline.getProfile().catch(() => null); if (!this.closed && current?.id !== this.profile.id) { this.close(); this.denied({ status: 401, kind: 'session', switched: true,suspended:true, message: '다른 로그인으로 전환되었습니다.' }); } };
       addEventListener('online', this.online); addEventListener('fountain-offline-mutations-changed', this.queueChanged);
       addEventListener('fountain-offline-profile-cleared', this.profileCleared); addEventListener('fountain-offline-profile-changed', this.profileChanged);
       this.schedule();
     }
     report(error) { if (this.closed || error?.name === 'AbortError' || error?.code === 'STALE_CONTROLLER') return; try { this.onError(error); } catch { /* UI errors cannot undo an already durable change. */ } }
-    denied(detail) { try { this.onDenied(detail); } catch { /* Keep authorization decisions independent of rendering. */ } }
+    async denied(detail) { try { await this.onDenied(detail); } catch { /* Keep authorization decisions independent of rendering. */ } }
     async guard() {
       require(!this.closed, '이 연결은 종료되었습니다.', 401, 'STALE_CONTROLLER');
       const current = await this.offline.getProfile();
-      if (!current || current.id !== this.profile.id) { this.close(); this.denied({ status: 401, kind: 'session', switched: true, message: '기존 로그인에 저장한 변경입니다.' }); throw failure('로그인이 변경되었습니다.', 401, 'STALE_CONTROLLER'); }
+      if (!current || current.id !== this.profile.id) { const error=failure('로그인이 변경되었습니다.',401,'STALE_CONTROLLER');await this.loseSession(error,true);throw error; }
       require(!this.closed, '이 연결은 종료되었습니다.', 401, 'STALE_CONTROLLER'); return current;
     }
     bound(value, session = false) {
@@ -67,8 +68,8 @@
     }
     async loseSession(error, switched = false) {
       if (this.closed) return;
-      this.close(); await this.offline.clearProfile(this.profile).catch(() => {});
-      this.denied({ status: error.status || 401, kind: 'session', switched, message: error.message });
+      this.close(); await this.denied({ status: error.status || 401, kind: 'session', switched, suspended:true, message: error.message });
+      await this.offline.suspendProfile(this.profile);
     }
     async authenticate() {
       let session;
@@ -397,6 +398,26 @@
       for(const {key,snapshot} of await this.offline.listSnapshots(this.profile))if(snapshot.page?.id&&!localPages.some(local=>local.metadata.page.id===snapshot.page.id)&&(!id||selected.some(record=>record.operation.kind.startsWith('page.')&&record.operation.target_id===snapshot.page.id)))for(const record of await this.offline.getDrafts(key))if(!['pending','basis'].includes(record.draft.reason))drafts.push({page_id:snapshot.page.id,draft:copy(record.draft)});
       await this.guard();return {format:'fountain-recovery-v2',origin:this.transport.origin||this.profile.origin,workspace_id:this.profile.workspaceId,member_id:this.profile.memberId,source_binding:this.profile.cacheBinding,exported_at:new Date().toISOString(),records:copy(selected),localPages,drafts};
     }
+    async recoveryArchives(options={}){await this.authenticate();await this.guard();return this.offline.listRecoveryProfiles(this.profile,options);}
+    async prepareArchivedRecovery(id,{isCurrent}={}){
+      this.importCurrent(isCurrent);await this.authenticate();this.importCurrent(isCurrent);const source=await this.offline.readRecoveryProfile(this.profile,id);this.importCurrent(isCurrent);await this.guard();this.importCurrent(isCurrent);
+      const profile=source.profile,envelope={format:'fountain-recovery-v2',origin:profile.origin,workspace_id:profile.workspaceId,member_id:profile.memberId,source_binding:profile.cacheBinding,records:copy(source.mutations),localPages:[],drafts:[]};let serial=0;
+      const readable=text=>{const result=[];for(let offset=0;offset<text.length;){let end=Math.min(offset+100000,text.length);if(end<text.length&&text.charCodeAt(end-1)>=0xd800&&text.charCodeAt(end-1)<=0xdbff)end--;result.push({id:'archive_raw_'+(++serial),type:'code',language:'json',parent_id:null,text:text.slice(offset,end)});offset=end;}return result;};
+      const keys=new Set([...source.operations,...source.drafts.filter(row=>row.draft?.reason!=='basis'),...source.localPages.filter(row=>row.metadata?.localOnly!==false)].map(row=>row.key));
+      const creates=new Map(source.mutations.filter(row=>row.operation.kind==='page.create').map(row=>[row.resourceKey,row]));for(const key of creates.keys())keys.add(key);
+      for(const resourceKey of keys){
+        const pageId=decodeURIComponent(resourceKey.split('|').at(-1)),snapshot=source.snapshots.find(row=>row.key===resourceKey)?.snapshot,operations=source.operations.filter(row=>row.key===resourceKey).map(row=>row.operation),drafts=source.drafts.filter(row=>row.key===resourceKey),local=source.localPages.find(row=>row.key===resourceKey);
+        if(creates.has(resourceKey)){const operation=creates.get(resourceKey).operation;envelope.localPages.push({metadata:copy(local?.metadata||{page:{id:pageId}}),snapshot:copy(snapshot||{page:{id:pageId},epoch:operation.document_epoch||'archive_unresolved',blocks:[]}),operations:copy(operations),drafts:copy(drafts)});}
+        const blocks=[];
+        const views=drafts.filter(row=>Array.isArray(row.draft?.blocks)&&row.draft.blocks.length&&row.draft.reason!=='basis');if(!creates.has(resourceKey)&&!views.length&&snapshot?.blocks)views.push({draft:{blocks:snapshot.blocks}});
+        for(const view of views){const map=new Map(view.draft.blocks.map(block=>[block.id,'archive_view_'+(++serial)]));for(const block of view.draft.blocks)blocks.push({...copy(block),id:map.get(block.id),parent_id:map.get(block.parent_id)||null});}
+        // Raw source preserves every tab, operation and basis, including unresolved or other epochs.
+        if(snapshot||operations.length||drafts.length)blocks.push(...readable(JSON.stringify({snapshot:snapshot||null,ops:operations,drafts:drafts.map(row=>({clientId:row.clientId,draft:row.draft}))},null,2)));
+        if(blocks.length)envelope.drafts.push({page_id:pageId,draft:{blocks,reason:'auth_suspended'}});
+      }
+      const text=JSON.stringify(envelope);if(new TextEncoder().encode(text).byteLength>16*1024*1024)throw failure('보관된 기록이 16MiB 복구 범위를 넘어 원본을 유지했습니다.',409,'RECOVERY_ARCHIVE_LIMIT');this.importCurrent(isCurrent);
+      return this.prepareImport(text,{isCurrent,[ARCHIVE_TARGETS]:true});
+    }
     importCurrent(isCurrent) {
       if (this.closed || isCurrent && !isCurrent()) { const error = failure('가져오기 미리보기가 닫혔습니다.', 409, 'STALE_REQUEST'); error.name = 'AbortError'; throw error; }
     }
@@ -428,13 +449,13 @@
       require((operation.depends_on || []).length <= 50, '연결된 복구 변경은 한 항목당 50개까지 준비할 수 있습니다.');
       return operation;
     }
-    async prepareImport(text, { targetPageId, isCurrent } = {}) {
+    async prepareImport(text, { targetPageId, isCurrent, [ARCHIVE_TARGETS]:archiveTargets=false } = {}) {
       require(globalThis.FountainRecovery && this.offline.stageRecoveryImport, '복구 파일 가져오기를 지원하지 않는 저장소입니다.', 409, 'UNSUPPORTED_RECOVERY');
       this.importCurrent(isCurrent); if(this.scheduled){this.importResume=true;this.importResumeAt=Math.min(this.importResumeAt,this.scheduledAt);} clearTimeout(this.timer); this.scheduled=false; this.importBusy++;
       try {
         const source = FountainRecovery.parse(text, { origin: this.transport.origin || this.profile.origin, workspaceId: this.profile.workspaceId, memberId: this.profile.memberId });
-        if (source.kind === 'body') require(targetPageId, '본문을 복사할 현재 문서를 선택해 주세요.', 400, 'TARGET_PAGE_REQUIRED');
-        const digest=source.kind==='body'?FountainCollaboration.sha256(canonical({sourceDigest:source.digest,targetPageId})):source.digest;
+        if (source.kind === 'body'&&!archiveTargets) require(targetPageId, '본문을 복사할 현재 문서를 선택해 주세요.', 400, 'TARGET_PAGE_REQUIRED');
+        const digest=source.kind==='body'&&!archiveTargets?FountainCollaboration.sha256(canonical({sourceDigest:source.digest,targetPageId})):source.digest;
         await this.authenticate(); this.importCurrent(isCurrent);
         const reads = new Map(), specs = new Map();
         const read = async (kind, id) => {
@@ -543,7 +564,7 @@
           items.push({kind:operation.kind,targetId:target,...(schema?{databaseId:operation.database_id,...(titleProperty?{titlePropertyId:titleProperty.id}:{}),propertyLabels:Object.fromEntries(schema.map(property=>[property.id,property.name||property.id]))}:{}),title,before,after,...(bodyDeferred?{bodyDeferred,preservedBlocks,preservedCodePoints}:{}),...(deleteRows?{deleteRows}:{})});
         }
         for (const entry of source.drafts) {
-          const target=source.kind==='body'?targetPageId:pages.get(entry.page_id)||entry.page_id;identity(target);
+          const target=source.kind==='body'&&!archiveTargets?targetPageId:pages.get(entry.page_id)||entry.page_id;identity(target);
           let page=pageValues.get(target);if(!page) page=(await read('page',target)).page;
           require(page.access_level>=3&&!page.locked&&!page.archived,'본문을 복사할 문서를 편집할 권한이 없습니다.',403);
           for (const block of entry.draft.blocks) if (block.attachment_id) await read('metadata',identity(block.attachment_id));

@@ -6,6 +6,8 @@
   const STORES = ['profiles', 'meta', 'snapshots', 'operations', 'drafts', 'databaseSnapshots', 'mutations', 'localPages'];
   const LOCAL_TTL = 24 * 60 * 60 * 1000;
   let connection;
+  const suspendedHere=new Set();
+  const ARCHIVE_LIMIT=16*1024*1024;
   const copy = value => structuredClone(value);
   const request = operation => new Promise((resolve, reject) => {
     operation.onsuccess = () => resolve(operation.result);
@@ -77,6 +79,7 @@
     const pointer = await request(tx.objectStore('meta').get('active'));
     if (!pointer) return null;
     const profile = await request(tx.objectStore('profiles').get(pointer.profileId));
+    if(profile&&(suspendedHere.has(profile.id)||await request(tx.objectStore('meta').get('suspended:'+profile.id))||await request(tx.objectStore('meta').get('revoked:'+profile.id))))return null;
     return profile && profile.origin === SERVER_ORIGIN && Number.isFinite(profile.validUntil)
       && profile.validUntil > Date.now() ? profile : null;
   }
@@ -123,7 +126,7 @@
     const profile = { id, origin: SERVER_ORIGIN, workspaceId: input.workspaceId, memberId: input.memberId,
       cacheBinding: session.cache_binding,
       session: copy(safeSession), workspace: copy(input.workspace), validUntil, updatedAt: Date.now() };
-    let changed = false;
+    let changed = false,suspendedPrevious=null,expiredSource=false;
     const saved = await transaction(STORES, 'readwrite', async tx => {
       if (globalThis.FountainTransport?.outboxEnabled) {
         const storage = globalThis.FountainNativeStorage;
@@ -135,14 +138,16 @@
         // local sessions. Never extend its lifetime by recomputing a fresh TTL.
         profile.validUntil = Math.min(profile.validUntil, expiry);
       }
+      if(suspendedHere.has(id)||await request(tx.objectStore('meta').get('suspended:'+id)))throw Object.assign(new DOMException('Suspended login cannot become active again','SecurityError'),{fountainCode:'PROFILE_SUSPENDED'});
       if (await request(tx.objectStore('meta').get('revoked:' + id))) {
         throw new DOMException('Offline session was logged out', 'SecurityError');
       }
+      const existing=await request(tx.objectStore('profiles').get(id));
+      if(existing&&Number.isFinite(existing.validUntil)&&existing.validUntil<=Date.now()){await suspendStored(tx,id);expiredSource=true;return null;}
       const previous = await request(tx.objectStore('meta').get('active'));
       changed = previous?.profileId !== id;
       if (previous && previous.profileId !== id) {
-        tx.objectStore('meta').put({ id: 'revoked:' + previous.profileId, revokedAt: Date.now() });
-        await purge(tx, previous.profileId);
+        await suspendStored(tx,previous.profileId);suspendedPrevious=previous.profileId;
       }
       if (Array.isArray(profile.workspace?.pages)) {
         const pages = [];
@@ -160,10 +165,64 @@
       }
       tx.objectStore('profiles').put(profile);
       tx.objectStore('meta').put({ id: 'active', profileId: id });
+      tx.objectStore('meta').put({id:'last-profile',profileId:id});
       return copy(profile);
     });
-    if (changed) profileChanged(id);
+    if(expiredSource){profileChanged(null,true,id);throw Object.assign(new DOMException('Expired login was retained and cannot become active again','SecurityError'),{fountainCode:'PROFILE_SUSPENDED'});}
+    if (changed) profileChanged(id,true,suspendedPrevious);
     return saved;
+  }
+  function archiveError(message='보관된 기록을 안전하게 확인하지 못했습니다.',code='RECOVERY_ARCHIVE_INVALID'){return Object.assign(new Error(message),{code,status:409});}
+  function sourceIdentity(profile,id){
+    if(!profile||profile.id!==id||profile.origin!==SERVER_ORIGIN||namespace(profile)!==id||profile.session?.cache_binding!==profile.cacheBinding||profile.session?.member?.id!==profile.memberId)throw archiveError();
+  }
+  function boundedArchive(value,budget){
+    const stack=[[value,0]],seen=new Set();let nodes=0;
+    while(stack.length){const [item,depth]=stack.pop();if(++nodes>150000||depth>32)throw archiveError('보관된 기록이 커서 원본을 유지했습니다.','RECOVERY_ARCHIVE_LIMIT');if(item&&typeof item==='object'){if(seen.has(item)||!Array.isArray(item)&&Object.getPrototypeOf(item)!==Object.prototype&&Object.getPrototypeOf(item)!==null)throw archiveError();seen.add(item);for(const name in item){if(!Object.prototype.hasOwnProperty.call(item,name))continue;if(['__proto__','prototype','constructor'].includes(name))throw archiveError();if(stack.length+nodes>=150000)throw archiveError('보관된 기록이 커서 원본을 유지했습니다.','RECOVERY_ARCHIVE_LIMIT');stack.push([item[name],depth+1]);}}else if(!['string','number','boolean'].includes(typeof item)&&item!==null&&item!==undefined)throw archiveError();else if(typeof item==='number'&&!Number.isFinite(item))throw archiveError();}
+    let text;try{text=JSON.stringify(value);}catch{throw archiveError();}budget.bytes+=new TextEncoder().encode(text).byteLength;budget.nodes+=nodes;if(budget.bytes>ARCHIVE_LIMIT||budget.nodes>150000)throw archiveError('보관된 기록이 16MiB 복구 범위를 넘어 원본을 유지했습니다.','RECOVERY_ARCHIVE_LIMIT');return value;
+  }
+  async function suspendStored(tx,id,lastEdits){
+    const meta=tx.objectStore('meta'),pointer=await request(meta.get('active'));
+    if(await request(meta.get('revoked:'+id)))return{profileId:id,lastEditsSaved:false,captured:false,reason:'revoked'};if(!await request(tx.objectStore('profiles').getKey(id)))return{profileId:id,lastEditsSaved:false,captured:false,reason:'missing'};
+    const previous=await request(meta.get('suspended:'+id));
+    if(!previous){
+      if(lastEdits&&pointer?.profileId===id)await retainLastEdits(tx,id,lastEdits);
+      const counts={};for(const name of STORES.filter(name=>!['profiles','meta'].includes(name)))counts[name]=await request(tx.objectStore(name).index('profileId').count(IDBKeyRange.only(id)));
+      meta.put({id:'suspended:'+id,profileId:id,createdAt:Date.now(),counts});
+    }
+    if(pointer?.profileId===id){meta.put({id:'last-profile',profileId:id});meta.delete('active');}const captured=!!lastEdits&&pointer?.profileId===id&&!previous;return{profileId:id,lastEditsSaved:captured,captured,reason:previous||pointer?.profileId!==id?'inactive':'suspended'};
+  }
+  async function retainLastEdits(tx,id,input){
+    boundedArchive(input,{bytes:0,nodes:0});if(!input||typeof input.pageId!=='string'||!input.pageId||input.pageId.length>160||Object.keys(input).some(key=>!['pageId','draft','title'].includes(key)))throw archiveError();
+    const resourceKey=id+'|'+identifier(input.pageId,'page'),now=Date.now(),nonce=crypto.randomUUID?.()||Date.now().toString(36)+'_'+Math.random().toString(36).slice(2);
+    if(input.draft){if(!input.draft||typeof input.draft!=='object'||Array.isArray(input.draft)||Object.keys(input.draft).some(key=>!['epoch','seq','ops','blocks','reason','createdAt','history_pending','imported','source_digest'].includes(key))||!Array.isArray(input.draft.blocks)&&!Array.isArray(input.draft.ops))throw archiveError();tx.objectStore('drafts').put({key:resourceKey,clientId:'suspended_'+nonce,profileId:id,draft:{...copy(input.draft),reason:'auth_suspended'},updatedAt:now});}
+    if(input.title){if(typeof input.title.title!=='string'||Array.from(input.title.title).length>500||input.title.basePage?.id!==input.pageId)throw archiveError();const operationId='suspended_'+nonce;tx.objectStore('mutations').put({profileId:id,id:operationId,resourceKey,status:'paused',sequence:now,createdAt:now,updatedAt:now,operation:{id:operationId,kind:'page.patch',target_id:input.pageId,body:{title:input.title.title},base:{fields:{title:input.title.basePage.title??null}},depends_on:[]}});}
+  }
+  async function suspendProfile(profile,{lastEdits}={}){
+    const id=namespace(profile);suspendedHere.add(id);let result;
+    try{result=await transaction(STORES,'readwrite',tx=>suspendStored(tx,id,lastEdits&&copy(lastEdits)));}
+    finally{profileChanged(null,true,id);}return result;
+  }
+  async function suspendActiveProfile(options={}){
+    let id;try{return await transaction(STORES,'readwrite',async tx=>{const pointer=await request(tx.objectStore('meta').get('active'));id=pointer?.profileId;if(options.expectedProfileId!==undefined&&id!==options.expectedProfileId){id=null;return{profileId:options.expectedProfileId,lastEditsSaved:false,captured:false,reason:'inactive'};}if(!id)return{profileId:null,lastEditsSaved:false,captured:false,reason:'missing'};suspendedHere.add(id);return suspendStored(tx,id,options.lastEdits&&copy(options.lastEdits));});}finally{if(id)profileChanged(null,true,id);}
+  }
+  async function recoveryOwner(tx,current){const profile=await active(tx);if(!profile||profile.id!==namespace(current)||profile.id!==current.id)throw new DOMException('Current authenticated recovery profile required','SecurityError');return profile;}
+  async function listRecoveryProfiles(current,{cursor=null,limit=20}={}){
+    if(!Number.isSafeInteger(limit)||limit<1||limit>100)throw new TypeError('Invalid archive page size');
+    return transaction(['profiles','meta'],'readonly',async tx=>{
+      const owner=await recoveryOwner(tx,current),prefix=owner.id.split('|').slice(0,3).join('|')+'|';let after=null;if(cursor!==null){try{after=atob(cursor);}catch{throw new TypeError('Invalid recovery cursor');}if(!after.startsWith(prefix)||after.split('|').length!==4)throw new TypeError('Invalid recovery cursor');}
+      const items=[];let last=null,scanned=0,next=null;const range=after?IDBKeyRange.bound(after,prefix+'\uffff',true):IDBKeyRange.bound(prefix,prefix+'\uffff');
+      await new Promise((resolve,reject)=>{const op=tx.objectStore('profiles').openKeyCursor(range);op.onerror=()=>reject(op.error);op.onsuccess=async()=>{try{const row=op.result;if(!row){resolve();return;}last=row.primaryKey;const marker=await request(tx.objectStore('meta').get('suspended:'+last));if(marker&&last!==owner.id&&last.split('|').length===4){const counts={};if(marker.profileId!==last||!Number.isSafeInteger(marker.createdAt)||marker.createdAt<0)throw archiveError();for(const name of STORES.filter(name=>!['profiles','meta'].includes(name))){const value=marker.counts?.[name];if(!Number.isSafeInteger(value)||value<0)throw archiveError();counts[name]=value;}items.push({id:last,createdAt:marker.createdAt,counts});}if(items.length>=limit||++scanned>=1000){next=btoa(last);resolve();return;}row.continue();}catch(error){reject(error);}};});await recoveryOwner(tx,current);return{items,next};
+    });
+  }
+  async function readRecoveryProfile(current,id){
+    if(typeof id!=='string')throw new TypeError('Archive identifier required');
+    return transaction(STORES,'readonly',async tx=>{
+      const owner=await recoveryOwner(tx,current),prefix=owner.id.split('|').slice(0,3).join('|')+'|';if(id===owner.id||!id.startsWith(prefix)||id.split('|').length!==4||!await request(tx.objectStore('meta').get('suspended:'+id))||await request(tx.objectStore('meta').get('revoked:'+id)))throw new DOMException('Recovery profile does not match current actor','SecurityError');
+      const source=await request(tx.objectStore('profiles').get(id));sourceIdentity(source,id);const result={profile:{id,origin:source.origin,workspaceId:source.workspaceId,memberId:source.memberId,cacheBinding:source.cacheBinding}},budget={bytes:0,nodes:0};
+      for(const name of STORES.filter(name=>!['profiles','meta'].includes(name))){result[name]=[];await new Promise((resolve,reject)=>{const op=tx.objectStore(name).index('profileId').openCursor(IDBKeyRange.only(id));op.onerror=()=>reject(op.error);op.onsuccess=()=>{try{const cursor=op.result;if(!cursor){resolve();return;}const row=cursor.value;if(row.profileId!==id)throw archiveError();const resourceKey=row.resourceKey||row.key;if(!resourceType(source,resourceKey)||name==='mutations'&&(row.id!==row.operation?.id||!['page.create','page.patch','row.create','row.patch','row.delete'].includes(row.operation?.kind)))throw archiveError();const target=decodeURIComponent(resourceKey.split('|').at(-1));if(name==='mutations'&&(row.operation.kind.startsWith('row.')?row.operation.database_id!==target:row.operation.target_id!==target)||name==='operations'&&(row.id!==row.operation?.id||resourceType(source,resourceKey)!=='page')||name==='drafts'&&(!row.draft||typeof row.clientId!=='string'||!row.clientId)||name==='localPages'&&row.metadata?.page?.id!==target)throw archiveError();if(name==='snapshots'&&row.snapshot?.page?.id!==target||name==='databaseSnapshots'&&row.snapshot?.database?.id!==target)throw archiveError();if(row.snapshot)for(const [field,expected]of [['workspace_id',source.workspaceId],['current_member_id',source.memberId],['session_binding',source.cacheBinding]])if(row.snapshot[field]!==undefined&&row.snapshot[field]!==expected)throw archiveError();result[name].push(copy(boundedArchive(row,budget)));cursor.continue();}catch(error){reject(error);}};});}
+      await recoveryOwner(tx,current);return result;
+    });
   }
   function getProfile() {
     return transaction(['profiles', 'meta'], 'readonly', active);
@@ -807,7 +866,7 @@
       cursor.onerror = () => reject(cursor.error);
       cursor.onsuccess = () => {
         if (!cursor.result) { resolve(); return; }
-        if (cursor.result.value.id.startsWith('recovery-import:' + profileId + ':')) tx.objectStore('meta').delete(cursor.result.primaryKey);
+        if (cursor.result.value.id==='suspended:'+profileId||cursor.result.value.id.startsWith('recovery-import:' + profileId + ':')) tx.objectStore('meta').delete(cursor.result.primaryKey);
         cursor.result.continue();
       };
     });
@@ -815,13 +874,14 @@
     if (pointer?.profileId === profileId) tx.objectStore('meta').delete('active');
   }
   const logoutChannel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('fountain-offline') : null;
-  function announce(profileId, broadcast = true) {
-    globalThis.dispatchEvent(new CustomEvent('fountain-offline-profile-cleared', { detail: { profileId } }));
-    if (broadcast) logoutChannel?.postMessage({ type: 'profile-cleared', profileId });
+  function announce(profileId, broadcast = true, detail = {}) {
+    globalThis.dispatchEvent(new CustomEvent('fountain-offline-profile-cleared', { detail: { ...detail,profileId } }));
+    if (broadcast) logoutChannel?.postMessage({ ...detail,type: 'profile-cleared', profileId });
   }
-  function profileChanged(profileId, broadcast = true) {
-    globalThis.dispatchEvent(new CustomEvent('fountain-offline-profile-changed', { detail: { profileId } }));
-    if (broadcast) logoutChannel?.postMessage({ type: 'profile-changed', profileId });
+  function profileChanged(profileId, broadcast = true, suspendedProfileId = null) {
+    if(suspendedProfileId)suspendedHere.add(suspendedProfileId);
+    globalThis.dispatchEvent(new CustomEvent('fountain-offline-profile-changed', { detail: { profileId, ...(suspendedProfileId?{suspendedProfileId}:{}) } }));
+    if (broadcast) logoutChannel?.postMessage({ type: 'profile-changed', profileId, ...(suspendedProfileId?{suspendedProfileId}:{}) });
   }
   function resourcePurged(resourceKey, broadcast = true) {
     const parts = resourceKey.split('|'), kind = parts.length === 6 && parts[4] === 'database' ? 'database' : 'page';
@@ -837,9 +897,9 @@
     if (broadcast) logoutChannel?.postMessage({ type: 'local-pages-changed', key: resourceKey });
   }
   if (logoutChannel) logoutChannel.onmessage = event => {
-    if (event.data?.type === 'profile-cleared' && typeof event.data.profileId === 'string') announce(event.data.profileId, false);
+    if (event.data?.type === 'profile-cleared' && typeof event.data.profileId === 'string') announce(event.data.profileId, false,event.data);
     if (event.data?.type === 'resource-purged' && typeof event.data.key === 'string') resourcePurged(event.data.key, false);
-    if (event.data?.type === 'profile-changed' && typeof event.data.profileId === 'string') profileChanged(event.data.profileId, false);
+    if (event.data?.type === 'profile-changed' && (typeof event.data.profileId === 'string'||event.data.profileId===null)) profileChanged(event.data.profileId, false,event.data.suspendedProfileId);
     if (event.data?.type === 'mutations-changed' && typeof event.data.profileId === 'string') mutationsChanged(event.data.profileId, false, event.data.recoveryImport === true);
     if (event.data?.type === 'local-pages-changed' && typeof event.data.key === 'string') localPagesChanged(event.data.key, false);
   };
@@ -887,13 +947,12 @@
   }
   async function purgeActor(tx, profileId) {
     const prefix = profileId.split('|').slice(0, 3).join('|') + '|';
-    const profiles = await request(tx.objectStore('profiles').getAll());
-    const ids = new Set([profileId, ...profiles.filter(profile => profile.id.startsWith(prefix)).map(profile => profile.id)]);
+    const ids=new Set([profileId]);await new Promise((resolve,reject)=>{const op=tx.objectStore('profiles').openKeyCursor(IDBKeyRange.bound(prefix,prefix+'\uffff'));op.onerror=()=>reject(op.error);op.onsuccess=()=>{if(!op.result){resolve();return;}ids.add(op.result.primaryKey);op.result.continue();};});
     for (const id of ids) {
       tx.objectStore('meta').put({ id: 'revoked:' + id, revokedAt: Date.now() });
       await purge(tx, id);
     }
-    return profileId;
+    return [...ids];
   }
   async function clearProfile(profile) {
     const id = namespace(profile);
@@ -903,12 +962,8 @@
     });
     announce(id);
   }
-  async function clearActiveProfile() {
-    const id = await transaction(STORES, 'readwrite', async tx => {
-      const pointer = await request(tx.objectStore('meta').get('active'));
-      return pointer ? purgeActor(tx, pointer.profileId) : null;
-    });
-    if (id) announce(id);
+  async function clearActiveProfile(profile) {
+    const result=await transaction(STORES,'readwrite',async tx=>{const pointer=await request(tx.objectStore('meta').get('active')),last=await request(tx.objectStore('meta').get('last-profile'));const id=profile?namespace(profile):pointer?.profileId||last?.profileId;if(!id)return null;const profileIds=await purgeActor(tx,id);if(last&&profileIds.includes(last.profileId))tx.objectStore('meta').delete('last-profile');return{profileId:id,profileIds,scope:'actor',actorPrefix:id.split('|').slice(0,3).join('|')+'|'};});if(result)announce(result.profileId,true,result);
   }
   const serviceWorkerReady = !globalThis.FountainTransport?.native && globalThis.isSecureContext && 'serviceWorker' in navigator
     ? navigator.serviceWorker.register('/sw.js', { scope: '/' }).then(() => navigator.serviceWorker.ready).catch(() => null)
@@ -919,5 +974,5 @@
     updateMutation, acknowledgeMutations, removeMutation, replaceMutations, discardMutations, stageLocalPage, stageRecoveryImport,
     saveLocalPage, getLocalPage, listLocalPages, deleteLocalPage,
     putOperations, pendingOperations, acknowledge, commitOperationsAck, saveDraft, getDrafts,
-    clearProfile, clearActiveProfile, purgeResource, serviceWorkerReady });
+    suspendProfile,suspendActiveProfile,listRecoveryProfiles,readRecoveryProfile,clearProfile, clearActiveProfile, purgeResource, serviceWorkerReady });
 })();

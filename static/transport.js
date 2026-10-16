@@ -43,10 +43,31 @@
     localPath('/' + route, 'app');
     return root.location.origin + '/#' + route;
   }
-  function shareURL(route = 'home') {
-    const value = appURL(route);
-    // The packaged desktop origin serves local UI only; it is not a public link.
-    return root.location.origin === 'https://fountain.desktop.invalid' ? null : value;
+  function primaryFrontend(value) {
+    if (value === undefined || value === null) return null;
+    if (typeof value !== 'string' || /[\\\u0000-\u0020\u007f]/.test(value)) invalid();
+    let url; try { url = new URL(value); } catch { invalid(); }
+    // Compare the raw origin: never silently normalize metadata supplied by callers.
+    if (url.protocol !== 'https:' || url.origin !== value) invalid();
+    return value;
   }
-  root.FountainTransport = Object.freeze({ origin: root.location.origin, native: false, apiURL, request, events, xhr, publicURL: path => localPath(path, 'public'), appURL, shareURL, downloadURL: apiURL });
+  function shareOrigin(primaryOrigin) {
+    return primaryFrontend(primaryOrigin) ?? (root.location.origin === 'https://fountain.desktop.invalid' ? null : root.location.origin);
+  }
+  function shareURL(route = 'home', primaryOrigin) {
+    appURL(route); // Logical routes remain validated even when no public origin exists.
+    const origin = shareOrigin(primaryOrigin);
+    return origin === null ? null : origin + '/#' + route;
+  }
+  function publicShareURL(path, primaryOrigin) {
+    localPath(path, 'public');
+    const origin = shareOrigin(primaryOrigin);
+    return origin === null ? null : new URL(path, origin).href;
+  }
+  function publicURL(path, primaryOrigin) {
+    const local = localPath(path, 'public'), primary = primaryFrontend(primaryOrigin);
+    // Desktop previews stay within the bundled UI and its popup policy.
+    return root.location.origin === 'https://fountain.desktop.invalid' || primary === null ? local : new URL(path, primary).href;
+  }
+  root.FountainTransport = Object.freeze({ origin: root.location.origin, native: false, apiURL, request, events, xhr, publicURL, publicShareURL, appURL, shareURL, downloadURL: apiURL });
 })(globalThis);

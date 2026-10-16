@@ -25,6 +25,10 @@
     if(url.protocol!=='https:'||url.username||url.password||url.pathname!=='/'||url.search||url.hash)invalid();
     return url.origin;
   }
+  function primaryFrontend(value) {
+    if(value===undefined||value===null)return null;
+    const origin=validateOrigin(value);if(origin!==value)invalid();return origin;
+  }
   function path(value,kind='api') {
     if(typeof value!=='string'||!value.startsWith('/')||value.startsWith('//')||/[\\\u0000-\u0020\u007f#]/.test(value))invalid();
     const pathname=value.split('?')[0];if(/%(?![0-9a-f]{2})/i.test(pathname))invalid();let decoded=pathname;
@@ -195,13 +199,21 @@
       const result=await invoke('saveData',{filename:name,bodyBase64:base64(body)},expected);if(result.saved!==true)throw new Error('파일 내보내기를 완료하지 않았습니다.');return result;
     }
     function downloadURL(value){path(value,'download');configured();const token=id();downloadLinks.set(token,{path:value,scope:scope()});while(downloadLinks.size>4096)downloadLinks.delete(downloadLinks.keys().next().value);const url=new URL(root.location.href);url.hash='fountain-download/'+token;return url.href;}
-    function publicURL(value){configured();return new URL(path(value,'public'),configuration.origin).href;}
+    function shareOrigin(primaryOrigin){
+      const primary=primaryFrontend(primaryOrigin);if(primary!==null)return primary;
+      const backend=new URL(configuration.origin);
+      return !backend.port&&/^[a-z0-9]{20}\.supabase\.co$/.test(backend.hostname)?null:configuration.origin;
+    }
+    function publicURL(value,primaryOrigin){
+      const validated=path(value,'public');configured();const origin=shareOrigin(primaryOrigin);
+      return origin===null?null:new URL(validated,origin).href;
+    }
     function appURL(route='home') {
       configured();if(typeof route!=='string'||! /^(home|page\/[^/]+|database\/[^/]+)$/.test(route)||/[\\\u0000-\u0020\u007f#?]/.test(route))invalid();path('/'+route,'app');return configuration.origin+'/#'+route;
     }
-    function shareURL(route='home') {
-      const value=appURL(route),backend=new URL(configuration.origin);
-      return !backend.port&&/^[a-z0-9]{20}\.supabase\.co$/.test(backend.hostname)?null:value;
+    function shareURL(route='home',primaryOrigin) {
+      appURL(route);const origin=shareOrigin(primaryOrigin);
+      return origin===null?null:origin+'/#'+route;
     }
     root.document.addEventListener('click',event=>{
       const anchor=event.target.closest?.('a');if(!anchor)return;
@@ -210,7 +222,7 @@
       event.preventDefault();event.stopImmediatePropagation();const entry=downloadLinks.get(url.hash.slice('#fountain-download/'.length));if(!entry||!current(entry.scope))return;
       download(entry.path,anchor.download||'fountain-download').catch(error=>{if(error.name!=='AbortError')root.dispatchEvent(new CustomEvent('fountain-native-error',{detail:{message:error.message}}));});
     },true);
-    return Object.freeze({native:true,get origin(){return configuration.origin;},get generation(){return configuration.generation;},get outboxVersion(){return configuration.outboxVersion;},get outboxEnabled(){return configuration.outboxEnabled;},get recoveryVersion(){return configuration.recoveryVersion;},get recoveryEnabled(){return configuration.recoveryEnabled;},get scopeEpoch(){return publicScopeEpoch;},initialize,configure,apiURL,request,events,xhr,download,saveData,downloadURL,publicURL,appURL,shareURL});
+    return Object.freeze({native:true,get origin(){return configuration.origin;},get generation(){return configuration.generation;},get outboxVersion(){return configuration.outboxVersion;},get outboxEnabled(){return configuration.outboxEnabled;},get recoveryVersion(){return configuration.recoveryVersion;},get recoveryEnabled(){return configuration.recoveryEnabled;},get scopeEpoch(){return publicScopeEpoch;},initialize,configure,apiURL,request,events,xhr,download,saveData,downloadURL,publicURL,publicShareURL:publicURL,appURL,shareURL});
   }
   root.FountainNativeTransport=Object.freeze({create,validateOrigin});
 })(globalThis);

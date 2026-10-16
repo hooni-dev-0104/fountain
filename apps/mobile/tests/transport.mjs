@@ -104,4 +104,26 @@ for(const origin of ['https://ehnovtfadpkwtubmwltl.supabase.co','https://ehnovtf
 for(const origin of ['https://ehnovtfadpkwtubmwltl.supabase.co:8443','https://ehnovtfadpkwtubmwltl.supabase.co.example']){
  await share.configure({origin});assert.equal(share.shareURL('page/family'),origin+'/#page/family');
 }
+// Primary frontend addresses are strict, explicit link data; no native authority changes.
+for(const origin of ['https://family.example','https://ehnovtfadpkwtubmwltl.supabase.co','https://ehnovtfadpkwtubmwltl.supabase.co:443','https://ehnovtfadpkwtubmwltl.supabase.co:8443','https://ehnovtfadpkwtubmwltl.supabase.co.example']){
+ await share.configure({origin});const canonical=share.origin,api=share.apiURL('/api/session'),generation=share.generation,calls=shareFixture.calls.length;
+ const cloud=new URL(canonical).hostname==='ehnovtfadpkwtubmwltl.supabase.co'&&!new URL(canonical).port;
+ for(const primary of ['https://share.example','https://share.example:8443','https://xn--bcher-kva.example','https://[::1]']){
+  assert.equal(share.shareURL('page/한글',primary),primary+'/#page/한글');
+  assert.equal(share.publicShareURL('/forms/family?view=%2F',primary),primary+'/forms/family?view=%2F');
+  assert.equal(share.publicURL('/sites/family',primary),primary+'/sites/family');
+ }
+ for(const unset of [null,undefined]){
+  assert.equal(share.shareURL('home',unset),cloud?null:canonical+'/#home');
+  for(const method of ['publicURL','publicShareURL'])assert.equal(share[method]('/forms/family',unset),cloud?null:canonical+'/forms/family');
+ }
+ for(const primary of ['',false,0,{},new URL('https://share.example'),'http://share.example','HTTPS://share.example','https://SHARE.example','https://share.example:443','https://share.example:08443','https://share.example/','https://share.example/.','https://share.example/%2e','https://user:secret@share.example','https://share.example?','https://share.example#','https://share.example?q=1','https://share.example#fragment','https://%73hare.example','https://bücher.example','https://[0:0:0:0:0:0:0:1]','https://share.example\\path',' https://share.example','https://share.example\n']){
+  assert.throws(()=>share.shareURL('home',primary));assert.throws(()=>share.publicShareURL('/forms/family',primary));assert.throws(()=>share.publicURL('/forms/family',primary));
+ }
+ for(const primary of [null,'https://share.example']){
+  for(const method of ['publicURL','publicShareURL'])for(const path of ['/api/session','/forms/../private','/sites/%252e%252e','/sites/a%252f%252fb','/forms/id#fragment','//outside.invalid/forms/id'])assert.throws(()=>share[method](path,primary));
+  for(const route of ['page/%2fescape','api/session','page/id#fragment'])assert.throws(()=>share.shareURL(route,primary));
+ }
+ assert.equal(share.origin,canonical);assert.equal(share.generation,generation);assert.equal(share.apiURL('/api/session'),api);assert.equal(share.appURL('page/family'),canonical+'/#page/family');assert.equal(shareFixture.calls.length,calls);
+}
 console.log('PASS native transport: strict paths/headers/bytes, real Response, redirects, cancel/auth/config fences, serial foreground polls, acknowledged chunks and public-only bundle');

@@ -1,0 +1,24 @@
+{
+  "name": "fountain-mobile",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Fountain iOS and Android client",
+  "scripts": {
+    "sync": "npm run build && cap sync",
+    "ios": "cap open ios",
+    "android": "cap open android",
+    "build": "node scripts/build.mjs",
+    "test": "node tests/transport.mjs && node tests/browser.mjs"
+  },
+  "dependencies": {
+    "@capacitor/core": "8.5.3"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.5.3",
+    "@capacitor/ios": "8.5.3",
+    "@capacitor/android": "8.5.3"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

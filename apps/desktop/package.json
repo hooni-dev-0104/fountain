@@ -1,0 +1,18 @@
+{
+  "name": "fountain-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Fountain 공통 서버 데스크톱 클라이언트",
+  "main": "src/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test ../../tests/desktop/*.test.cjs",
+    "package:mac": "node pack.cjs darwin arm64",
+    "package:windows": "node pack.cjs win32 x64"
+  },
+  "devDependencies": {
+    "electron": "44.8.0",
+    "@electron/packager": "20.3.0"
+  },
+  "author": "Fountain"
+}

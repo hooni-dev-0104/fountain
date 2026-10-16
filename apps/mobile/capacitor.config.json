@@ -1,0 +1,17 @@
+{
+  "appId": "dev.fountain.workspace",
+  "appName": "Fountain",
+  "webDir": "www",
+  "loggingBehavior": "none",
+  "ios": {
+    "contentInset": "automatic"
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": false
+    },
+    "CapacitorCookies": {
+      "enabled": false
+    }
+  }
+}

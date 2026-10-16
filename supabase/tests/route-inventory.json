@@ -5266,9 +5266,12 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
       "notes": "Actual legacy handler returns configuration before method validation. Non-GET methods are recognized, not a recommended new cloud API contract."
     },
@@ -5296,9 +5299,12 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
       "notes": "Actual legacy handler returns configuration before method validation. Non-GET methods are recognized, not a recommended new cloud API contract."
     },
@@ -5326,11 +5332,14 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
-      "notes": "Actual legacy handler returns configuration before method validation. Non-GET methods are recognized, not a recommended new cloud API contract."
+      "notes": "Intentional cloud correction: authenticated discovery accepts GET/HEAD only; this legacy method is explicitly rejected with 405 SCIM Error and no snapshot or commit."
     },
     {
       "id": "PUT /scim/v2/ServiceProviderConfig",
@@ -5356,11 +5365,14 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
-      "notes": "Actual legacy handler returns configuration before method validation. Non-GET methods are recognized, not a recommended new cloud API contract."
+      "notes": "Intentional cloud correction: authenticated discovery accepts GET/HEAD only; this legacy method is explicitly rejected with 405 SCIM Error and no snapshot or commit."
     },
     {
       "id": "PATCH /scim/v2/ServiceProviderConfig",
@@ -5386,11 +5398,14 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
-      "notes": "Actual legacy handler returns configuration before method validation. Non-GET methods are recognized, not a recommended new cloud API contract."
+      "notes": "Intentional cloud correction: authenticated discovery accepts GET/HEAD only; this legacy method is explicitly rejected with 405 SCIM Error and no snapshot or commit."
     },
     {
       "id": "DELETE /scim/v2/ServiceProviderConfig",
@@ -5416,11 +5431,14 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
-      "notes": "Actual legacy handler returns configuration before method validation. Non-GET methods are recognized, not a recommended new cloud API contract."
+      "notes": "Intentional cloud correction: authenticated discovery accepts GET/HEAD only; this legacy method is explicitly rejected with 405 SCIM Error and no snapshot or commit."
     },
     {
       "id": "OPTIONS /scim/v2/ServiceProviderConfig",
@@ -5446,11 +5464,14 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
-      "notes": "Actual legacy handler returns configuration before method validation. Non-GET methods are recognized, not a recommended new cloud API contract."
+      "notes": "Intentional cloud correction: authenticated discovery accepts GET/HEAD only; this legacy method is explicitly rejected with 405 SCIM Error and no snapshot or commit."
     },
     {
       "id": "GET /scim/v2/Users",
@@ -5476,9 +5497,12 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
       "notes": "Configured SCIM bearer required; no X-Fountain-Request needed; owner service principal. Users delete/deactivate revokes legacy sessions; Groups delete removes access references."
     },
@@ -5506,9 +5530,12 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
       "notes": "Configured SCIM bearer required; no X-Fountain-Request needed; owner service principal. Users delete/deactivate revokes legacy sessions; Groups delete removes access references."
     },
@@ -5536,9 +5563,12 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
       "notes": "Configured SCIM bearer required; no X-Fountain-Request needed; owner service principal. Users delete/deactivate revokes legacy sessions; Groups delete removes access references."
     },
@@ -5566,9 +5596,12 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
       "notes": "Configured SCIM bearer required; no X-Fountain-Request needed; owner service principal. Users delete/deactivate revokes legacy sessions; Groups delete removes access references."
     },
@@ -5596,9 +5629,12 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
       "notes": "Configured SCIM bearer required; no X-Fountain-Request needed; owner service principal. Users delete/deactivate revokes legacy sessions; Groups delete removes access references."
     },
@@ -5626,9 +5662,12 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
       "notes": "Configured SCIM bearer required; no X-Fountain-Request needed; owner service principal. Users delete/deactivate revokes legacy sessions; Groups delete removes access references."
     },
@@ -5656,9 +5695,12 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
       "notes": "Configured SCIM bearer required; no X-Fountain-Request needed; owner service principal. Users delete/deactivate revokes legacy sessions; Groups delete removes access references."
     },
@@ -5686,9 +5728,12 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
       "notes": "Configured SCIM bearer required; no X-Fountain-Request needed; owner service principal. Users delete/deactivate revokes legacy sessions; Groups delete removes access references."
     },
@@ -5716,9 +5761,12 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
       "notes": "Configured SCIM bearer required; no X-Fountain-Request needed; owner service principal. Users delete/deactivate revokes legacy sessions; Groups delete removes access references."
     },
@@ -5746,9 +5794,12 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
       "notes": "Configured SCIM bearer required; no X-Fountain-Request needed; owner service principal. Users delete/deactivate revokes legacy sessions; Groups delete removes access references."
     },
@@ -5776,9 +5827,12 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
       "notes": "Configured SCIM bearer required; no X-Fountain-Request needed; owner service principal. Users delete/deactivate revokes legacy sessions; Groups delete removes access references."
     },
@@ -5806,9 +5860,12 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
       "notes": "Configured SCIM bearer required; no X-Fountain-Request needed; owner service principal. Users delete/deactivate revokes legacy sessions; Groups delete removes access references."
     },
@@ -5836,9 +5893,12 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
       "notes": "Configured SCIM bearer required; no X-Fountain-Request needed; owner service principal. Users delete/deactivate revokes legacy sessions; Groups delete removes access references."
     },
@@ -5866,9 +5926,12 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
       "notes": "Configured SCIM bearer required; no X-Fountain-Request needed; owner service principal. Users delete/deactivate revokes legacy sessions; Groups delete removes access references."
     },
@@ -5896,9 +5959,12 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
       "notes": "Configured SCIM bearer required; no X-Fountain-Request needed; owner service principal. Users delete/deactivate revokes legacy sessions; Groups delete removes access references."
     },
@@ -5926,9 +5992,12 @@
         ]
       },
       "cloud": {
-        "status": "pending",
+        "status": "staged-auth",
         "productionParityVerified": false,
-        "evidence": []
+        "evidence": [
+          "supabase/functions/_shared/scim-http.ts",
+          "supabase/tests/scim-http.mjs"
+        ]
       },
       "notes": "Configured SCIM bearer required; no X-Fountain-Request needed; owner service principal. Users delete/deactivate revokes legacy sessions; Groups delete removes access references."
     },
@@ -6100,8 +6169,8 @@
     }
   ],
   "cloudEntryFingerprints": {
-    "supabase/functions/_shared/backend.ts": "bb8940580a7f205d2d95f3014de57ecc87be30693175aaf3516c2e2f7d97131a",
-    "supabase/functions/_shared/application.ts": "039865889d2e00d696f48c106237c81c47d0fb5ff33d18d77d6d5346657298b0",
+    "supabase/functions/_shared/backend.ts": "d2bd9fa16e12c40fa454e6d63ad2fbc356a570043befc22aff8f2d6267c733c8",
+    "supabase/functions/_shared/application.ts": "24f9ac8669867b0a81d8495183340b7b191d930aa0b045aa70af8389b3af6fb6",
     "supabase/functions/fountain-api/index.ts": "cfefe3a32cfc1ddaae009df30618d33915f263ac044dd3c272dc39142cd92d2a",
     "supabase/functions/fountain-api/deployment.ts": "120e0a690de3041abca876c4fdbac20fe6f2b6247872be229a86ce7dc97ec5ee"
   },

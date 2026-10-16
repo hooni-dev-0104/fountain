@@ -2,11 +2,15 @@
 import {HttpError,canonicalOrigin,checkRequest,errorResponse,jsonResponse,preflight,readJSON,requestPath} from './http.ts';
 import type {AuthResult,AuthContext} from './auth.ts';
 export type AuthBoundary={login(body:unknown,cookie?:string|null):Promise<AuthResult>;setup?:(body:unknown,cookie?:string|null)=>Promise<AuthResult>;session(cookie?:string|null):Promise<AuthResult>;logout(cookie?:string|null,options?:{expectedBinding?:string}):Promise<AuthResult>;authorize?:(cookie?:string|null)=>Promise<AuthContext>};
-type Config={origins:string[];auth:()=>Promise<AuthBoundary>;domain?:(request:Request,path:string,context:AuthContext)=>Promise<Response>;setupEnabled?:boolean;setupCreate?:(body:Record<string,unknown>,cookie?:string|null)=>Promise<AuthResult>};
+type Config={origins:string[];auth:()=>Promise<AuthBoundary>;domain?:(request:Request,path:string,context:AuthContext)=>Promise<Response>;scim?:(request:Request)=>Promise<Response>;setupEnabled?:boolean;setupCreate?:(body:Record<string,unknown>,cookie?:string|null)=>Promise<AuthResult>};
 export function createBackend(config:Config):(request:Request)=>Promise<Response> {
   const origins=new Set(config.origins.map(canonicalOrigin));
   async function serve(request:Request):Promise<Response>{
-    const path=requestPath(request);checkRequest(request,origins);
+    // SCIM authenticates its own bearer and rejects browser cookies/origins.
+    // Its handler also validates malformed paths and returns SCIM errors.
+    if(config.scim&&/^(?:\/functions\/v1\/fountain-api|\/fountain-api)?\/scim\/v2\//.test(new URL(request.url).pathname))return config.scim(request);
+    const path=requestPath(request);
+    checkRequest(request,origins);
     if(request.method==='OPTIONS')return preflight(request,origins);
     if(path==='/health'&&['GET','HEAD'].includes(request.method))return jsonResponse({service:'fountain',backend:'supabase',status:'migration_in_progress',ready:false});
     const auth=await config.auth(),cookie=request.headers.get('Cookie');

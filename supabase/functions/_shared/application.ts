@@ -16,6 +16,7 @@ import {createRealtime} from './realtime.ts';
 import {createAI} from './ai.ts';
 import {createAccounts} from './accounts.ts';
 import {createGrantAdmin} from './grant-admin.ts';
+import {createScimHTTP} from './scim-http.ts';
 import {createBackup,createBackupProvider} from './backup.ts';
 import {createBackupJobs,createBackupJobProvider,createBackupSourceRangeReader,collectBackupJobGarbage} from './backup-jobs.ts';
 import {HttpError,jsonResponse,readJSON} from './http.ts';
@@ -27,11 +28,12 @@ export function createApplication(config:Config):(request:Request)=>Promise<Resp
   const provider=createStoreProvider(connection),storage=createStorage({...connection,bucket:'fountain-files',maxObjectBytes:CHUNK_SIZE}),backupProvider=createBackupProvider(connection);
   const backupJobProvider=createBackupJobProvider(connection),readSourceRange=createBackupSourceRangeReader({...connection,bucket:'fountain-files'});
   const env={...config.env};
-  // SCIM needs its own bearer/service authority; a cookie user must never be
-  // substituted for it. Do not advertise this staged boundary as configured.
+  // The local process-wide SCIM secret is not a cloud credential. Cloud SCIM
+  // resolves an explicitly issued grant through its own bearer-only boundary.
   delete env.FOUNTAIN_SCIM_TOKEN;
+  const scim=createScimHTTP(connection);
   return async request=>createBackend({
-    origins:config.origins,auth:async()=>auth,setupEnabled:config.setupEnabled,
+    origins:config.origins,auth:async()=>auth,setupEnabled:config.setupEnabled,scim,
     setupCreate:(body,cookie)=>onboarding.bootstrapCreate(body,input=>auth.setup(input,cookie)),
     domain:async(current,path,context)=>{
       const authorize=()=>auth.authorize(current.headers.get('Cookie'));

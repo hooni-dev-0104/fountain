@@ -264,7 +264,7 @@ try {
     const urls = await page.evaluate(async () => (await Promise.all((await caches.keys()).map(async name =>
       (await (await caches.open(name)).keys()).map(request => new URL(request.url).pathname)))).flat());
     assert.ok(urls.includes('/') && urls.includes('/offline.js') && urls.includes('/collaboration.js'));
-    assert.ok(urls.every(path => ['/', '/index.html', '/app.js', '/style.css', '/collaboration.js', '/offline.js', '/uploads.js', '/transport.js', '/mutations.js', '/presence.js', '/version-diff.js', '/recovery-import.js'].includes(path)), 'SW must never cache private responses');
+    assert.ok(urls.every(path => ['/', '/index.html', '/app.js', '/backup.js', '/style.css', '/collaboration.js', '/offline.js', '/uploads.js', '/transport.js', '/mutations.js', '/presence.js', '/version-diff.js', '/recovery-import.js'].includes(path)), 'SW must never cache private responses');
     assert.ok(urls.includes('/version-diff.js'), 'version comparison must be part of the offline public shell');
     assert.ok(urls.includes('/recovery-import.js'), 'recovery import must be bundled in the offline public shell');
     stage = 'fresh boot after authoritative online 401';

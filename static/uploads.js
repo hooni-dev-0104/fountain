@@ -119,7 +119,7 @@
     }
     async save(job) {
       const generation=this.generation; await this.authorized(); if(!this.liveJob(job)||!this.current()||generation!==this.generation&&job.status!=='paused')throw abortError('전송 상태가 변경되어 저장을 중지했습니다.'); const record= {
-        key:this.scopeId+'|'+identifier(job.id),id:job.id,profileId:this.profileId,scopeId:this.scopeId,pageId:this.scope.pageId,name:job.name,size:job.size,lastModified:job.lastModified,fingerprint:clone(job.fingerprint),offset:job.offset,expiresAt:job.expiresAt
+        key:this.scopeId+'|'+identifier(job.id),id:job.id,profileId:this.profileId,scopeId:this.scopeId,pageId:this.scope.pageId,name:job.name,size:job.size,lastModified:job.lastModified,fingerprint:clone(job.fingerprint),offset:job.offset,expiresAt:job.expiresAt,publicationVersion:job.publicationVersion||0,publication:clone(job.publication||null)
       }; await transaction('readwrite',async store=> {
         if(!this.liveJob(job)||generation!==this.generation&&job.status!=='paused')return; const previous=await request(store.get(record.key)); if(!this.liveJob(job)||generation!==this.generation&&job.status!=='paused')return; if(!previous||previous.offset<=record.offset)store.put(record);
       }); const active=await FountainOffline.getProfile(); if(!this.liveJob(job)||active?.id!==this.profileId) {
@@ -164,7 +164,7 @@
     }
     async start(file) {
       if(!this.current())throw error('파일을 추가할 문서 편집 권한이 없습니다.',403); if(this.active())throw error('현재 전송을 마치거나 일시 중지한 뒤 다른 파일을 선택해 주세요.'); if(!Number.isSafeInteger(file.size)||file.size>MAX_SIZE)throw error('파일당 최대 5 GB까지 전송할 수 있습니다.'); const temporary='preparing_'+Date.now()+'_'+Math.random().toString(16).slice(2),job= {
-        id:temporary,name:file.name,size:file.size,lastModified:file.lastModified,offset:0,file,loaded:0,status:'fingerprint',message:'파일의 앞·뒤 일부를 확인하고 있습니다.'
+        id:temporary,name:file.name,size:file.size,lastModified:file.lastModified,offset:0,file,loaded:0,publicationVersion:1,status:'fingerprint',message:'파일의 앞·뒤 일부를 확인하고 있습니다.'
       }; this.jobs.set(temporary,job); this.emit(); const generation=++this.generation; try {
         job.fingerprint=await fingerprint(file); if(!this.current()||generation!==this.generation)throw abortError(); job.status='starting'; job.message='전송을 준비하고 있습니다.'; this.emit(); const state=await this.json(job,'/uploads', {
           name:file.name,size:file.size,page_id:this.scope.pageId
@@ -181,7 +181,7 @@
     }
     async resume(id,file) {
       const job=this.jobs.get(id); if(!job)throw error('이어 보낼 전송 정보를 찾을 수 없습니다.'); if(this.active())throw error('진행 중인 전송을 먼저 일시 중지해 주세요.'); if(!this.current())throw error('현재 문서의 편집 권한을 확인해 주세요.',403); const selected=file||job.file; if(!selected)throw error('동일한 원본 파일을 다시 선택해 주세요.'); job.status='fingerprint'; job.message='다시 선택한 파일의 일부 표본을 비교하고 있습니다.'; this.emit(); const generation=++this.generation; try {
-        const actual=await fingerprint(selected); if(!sameFingerprint(job.fingerprint,actual))throw error('파일 이름·크기·수정 시각 또는 일부 표본이 다릅니다. 이전에 보낸 원본 파일을 선택해 주세요.'); if(!this.current()||generation!==this.generation)throw abortError(); job.file=selected; job.status='checking'; job.message='서버에 저장된 위치를 확인하고 있습니다.'; this.emit(); const state=await this.json(job,'/uploads/'+encodeURIComponent(id)); if(!this.current()||generation!==this.generation)throw abortError(); this.validateState(job,state); job.offset=state.offset; job.expiresAt=state.expires_at; await this.save(job); if(state.completed)return await this.finish(job,state.attachment,generation); return await this.transfer(job,generation);
+        const actual=await fingerprint(selected); if(!sameFingerprint(job.fingerprint,actual))throw error('파일 이름·크기·수정 시각 또는 일부 표본이 다릅니다. 이전에 보낸 원본 파일을 선택해 주세요.'); if(!this.current()||generation!==this.generation)throw abortError(); job.file=selected; job.status='checking'; job.message='서버에 저장된 위치를 확인하고 있습니다.'; this.emit(); const state=await this.json(job,'/uploads/'+encodeURIComponent(id)); if(!this.current()||generation!==this.generation)throw abortError(); this.validateState(job,state); job.offset=state.offset; job.expiresAt=state.expires_at;if(!state.completed)job.publicationVersion=1; await this.save(job); if(state.completed)return await this.finish(job,state.attachment,generation); return await this.transfer(job,generation);
       }
       catch(failure) {
         return this.fail(job,failure,generation);
@@ -225,7 +225,9 @@
       }); return await this.finish(job,attachment,generation);
     }
     async finish(job,attachment,generation) {
-      if(!attachment||attachment.id!==job.id||attachment.size!==job.size)throw error('완성된 파일 정보를 확인하지 못했습니다.'); if(!this.current()||generation!==this.generation)throw abortError(); job.offset=job.size; job.status='attaching'; job.message='완성된 파일을 문서에 연결하고 있습니다.'; this.emit(); const accepted=await this.onComplete(attachment,this.scope,()=>this.current()&&generation===this.generation&&job.status==='attaching'); if(!this.current()||generation!==this.generation||accepted!==true)throw abortError(); await this.remove(job.id); job.status='done'; job.message='문서에 파일을 추가했습니다.'; job.file=null; job.loaded=0; this.emit(); return attachment;
+      if(!attachment||attachment.id!==job.id||attachment.size!==job.size)throw error('완성된 파일 정보를 확인하지 못했습니다.'); if(!this.current()||generation!==this.generation)throw abortError(); job.offset=job.size; job.status='attaching'; job.message='완성된 파일을 문서에 연결하고 있습니다.'; this.emit(); const current=()=>this.current()&&generation===this.generation&&this.liveJob(job)&&job.status==='attaching';
+      const publication={version:job.publicationVersion||0,get:()=>clone(job.publication||null),save:async receipt=>{if(!current())throw abortError();const previous=job.publication;job.publication=clone(receipt);try{await this.save(job);if(!current())throw abortError();}catch(failure){job.publication=previous;throw failure;}}};
+      const accepted=await this.onComplete(attachment,this.scope,current,publication); if(!this.current()||generation!==this.generation||accepted!==true)throw abortError(); await this.remove(job.id); job.status='done'; job.message='문서에 파일을 추가했습니다.'; job.file=null; job.loaded=0; this.emit(); return attachment;
     }
     async fail(job,failure,generation) {
       if(generation!==undefined&&generation!==this.generation)return null; job.loaded=0; if(failure.name==='AbortError') {

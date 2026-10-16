@@ -25,7 +25,35 @@ function isAdmin() { return ['owner','admin'].includes(state.session?.member?.ro
 function resourceLevel(resource) {
   return Number.isInteger(resource?.access_level)?resource.access_level:(state.session?.mode==='accounts'?0:4);
 }
-function pageEditable() { return resourceLevel(state.page)>=3&&!state.page?.locked; }
+function pageEditable() { return resourceLevel(state.page)>=3&&!state.page?.locked&&!state.page?.archived; }
+function blockEditable() { return pageEditable()&&!state.history?.historyPending; }
+function editorTransaction(kind,fn,options={}) {
+  const channel=state.channel;if(!channel||!blockEditable())return;
+  return channel.transact({kind,beforeSelection:selectedTextPosition(),afterSelection:()=>selectedTextPosition(),...options},fn);
+}
+function refreshHistoryControls(history=state.channel?.historyState?.()||{}) {
+  state.history=history;
+  for(const direction of ['undo','redo']){const button=$(`[data-action="${direction}"]`);if(button)button.disabled=!pageEditable()||history.busy||!history[direction==='undo'?'canUndo':'canRedo'];}
+  const pending=!!history.historyPending;
+  for(const element of $$('#blocks .block-content'))element.contentEditable=String(blockEditable());
+  for(const element of $$('#blocks .block'))element.draggable=blockEditable();
+  for(const element of $$('#blocks button,#blocks input,.rich-toolbar button:not([data-action="undo"]):not([data-action="redo"]),.rich-toolbar select,[data-action="add-block"]'))element.disabled=!blockEditable();
+  const attachment=$('[data-action="add-file"]');if(attachment)attachment.disabled=!blockEditable()||state.offline||!!state.uploadManager?.active();
+  let notice=$('#history-state');
+  if(pending||history.truncated){if(!notice){notice=document.createElement('p');notice.id='history-state';notice.className='history-state';notice.setAttribute('role','status');$('#blocks')?.before(notice);}notice.textContent=pending?'실행 취소 결과를 확인하려면 연결이 필요합니다. 본문 편집을 잠시 기다려 주세요.':'이전의 큰 편집은 실행 취소 범위를 벗어났습니다.';}else notice?.remove();
+}
+async function runHistory(direction) {
+  const channel=state.channel,epoch=channel?.base?.epoch,binding=state.session?.cache_binding;
+  if(!channel||state.route!=='page'||!blockEditable()||state.composition||channel.historyState().busy)return;
+  const result=await channel[direction]();
+  if(state.channel!==channel||channel.base.epoch!==epoch||state.session?.cache_binding!==binding)return;
+  refreshHistoryControls();if(result.selection&&!result.historyPending){restoreTextPosition(result.selection);if(!document.activeElement?.closest?.('.block-content'))focusBlock(state.blocks.find(block=>!['file','divider'].includes(block.type))?.id,false);}
+}
+function historyInput(event) {
+  if(!['historyUndo','historyRedo'].includes(event.inputType))return false;
+  if(event.isComposing||state.composition)return false;
+  event.preventDefault();if(!state.historyCommand)runHistory(event.inputType==='historyUndo'?'undo':'redo').catch(error=>toast(error.message));return true;
+}
 function databaseEditable() { return resourceLevel(state.database)>=3; }
 function canCreateRow() {
   return state.database?.can_create_row??(databaseEditable()&&state.database?.row_permissions?.allow_create!==false);
@@ -384,8 +412,9 @@ async function loadHomeData() {
 function richTokensFromChars(chars) {
   const tokens=[];for(const char of chars){const marks=char.marks||{};if(tokens.length&&FountainCollaboration.canonical(tokens.at(-1).marks)===FountainCollaboration.canonical(marks))tokens.at(-1).text+=char.text;else tokens.push({text:char.text,marks:{...marks}});}return tokens;
 }
-function nestBlock(id,direction) {
-  if(!pageEditable())return;
+function nestBlock(id,direction,grouped=false) {
+  if(!grouped)return editorTransaction('structure',()=>nestBlock(id,direction,true));
+  if(!blockEditable())return;
   readBlocks();const block=state.blocks.find(item=>item.id===id),index=state.blocks.indexOf(block);if(!block)return;
   if(direction>0){const previous=[...state.blocks.slice(0,index)].reverse().find(item=>(item.parent_id||null)===(block.parent_id||null));if(!previous)return toast('앞에 있는 블록 아래로 들여쓸 수 있습니다.');block.parent_id=previous.id;}
   else{const parent=state.blocks.find(item=>item.id===block.parent_id);if(!parent)return;block.parent_id=parent.parent_id||null;}
@@ -393,24 +422,26 @@ function nestBlock(id,direction) {
 }
 document.addEventListener('beforeinput',event=>{
   if(event.target.id==='page-title'&&!state.titlePending)state.titleInputBasis={...structuredClone(state.pageViewBasis||state.page),title:event.target.innerText.trim()||'제목 없음'};
-  const element=event.target.closest?.('.block-content');if(!element||!state.channel||state.composition)return;
-  state.inputBaseline={id:element.closest('.block').dataset.id,chars:state.channel.chars(element.closest('.block').dataset.id)};
+  const element=event.target.closest?.('.block-content');if(!element||!state.channel)return;
+  if(historyInput(event))return;if(!blockEditable()){event.preventDefault();return;}if(state.composition)return;
+  state.inputBaseline={id:element.closest('.block').dataset.id,chars:state.channel.chars(element.closest('.block').dataset.id),selection:selectedTextPosition(),kind:['insertParagraph','insertLineBreak'].includes(event.inputType)?'structure':'typing'};
 });
 document.addEventListener('compositionstart',event=>{
   const element=event.target.closest?.('.block-content');if(!element||!state.channel)return;
-  const id=element.closest('.block').dataset.id;state.composition={id,chars:state.channel.chars(id)};
+  if(!blockEditable())return;state.channel.breakHistory();const id=element.closest('.block').dataset.id;state.composition={id,chars:state.channel.chars(id),selection:selectedTextPosition()};
 });
 document.addEventListener('compositionend',event=>{
   const element=event.target.closest?.('.block-content'),composition=state.composition;if(!element||!composition)return;
-  queueMicrotask(()=>{if(state.composition!==composition)return;state.composition=null;commitEditableText(element,composition.chars);state.inputBaseline=null;patchDocumentBlocks();scheduleSave();});
+  queueMicrotask(()=>{if(state.composition!==composition)return;state.composition=null;commitEditableText(element,composition.chars,{kind:'composition',beforeSelection:composition.selection});state.channel?.breakHistory();state.inputBaseline=null;patchDocumentBlocks();scheduleSave();});
 });
 document.addEventListener('pointerdown',event=>{
   const control=event.target.closest?.('.rich-toolbar');if(!control)return;
   state.richSelection=richSelection();if(event.target.closest('button'))event.preventDefault();
 });
+document.addEventListener('focusin',event=>{if(!event.target.closest?.('.block-content,.rich-toolbar'))state.channel?.breakHistory();});
 document.addEventListener('selectionchange',()=>{
   if(!state.composition)state.presenceManager?.update();
-  if(document.activeElement?.closest?.('.block-content'))state.richSelection=richSelection();
+  if(document.activeElement?.closest?.('.block-content')){state.richSelection=richSelection();const selected=selectedTextPosition();if(!state.composition&&state.expectedSelection&&FountainCollaboration.canonical(selected)!==FountainCollaboration.canonical(state.expectedSelection))state.channel?.breakHistory();state.expectedSelection=selected;}
 });
 window.addEventListener('fountain-offline-profile-changed',async()=>{
   const current=await FountainOffline.getProfile().catch(()=>null);
@@ -445,8 +476,9 @@ window.addEventListener('online',async()=>{
   }catch(error){if(!error.status)state.offline=true;else toast(error.message);renderSyncIndicators();}
 });
 
-function insertPlainText(element,text) {
-  if(!pageEditable()||!state.channel)return;
+function insertPlainText(element,text,grouped=false) {
+  if(!grouped)return editorTransaction('paste',()=>insertPlainText(element,text,true));
+  if(!blockEditable()||!state.channel)return;
   const id=element.closest('.block').dataset.id,baseline=state.channel.chars(id),selection=getSelection();
   if(!selection.rangeCount||!element.contains(selection.anchorNode)){element.focus();const range=document.createRange();range.selectNodeContents(element);range.collapse(false);selection.removeAllRanges();selection.addRange(range);}
   const range=selection.getRangeAt(0);range.deleteContents();const node=document.createTextNode(text);range.insertNode(node);range.setStartAfter(node);range.collapse(true);selection.removeAllRanges();selection.addRange(range);commitEditableText(element,baseline);scheduleSave();
@@ -496,7 +528,7 @@ async function cacheProfile(workspaceId=state.workspace?.workspace_id||state.ses
 function closeDocument() {
   state.presenceManager?.close();state.presenceManager=null;state.presenceChannel=null;
   state.uploadManager?.dispose();state.uploadManager=null;state.uploadReselectId=null;
-  state.channel?.close();state.channel=null;state.renderedChars=new Map();state.composition=null;state.inputBaseline=null;clearTimeout(state.saveTimer);state.saveTimer=null;state.recoveryDrafts=[];
+  state.channel?.close();state.channel=null;state.history={};state.expectedSelection=null;state.renderedChars=new Map();state.composition=null;state.inputBaseline=null;clearTimeout(state.saveTimer);state.saveTimer=null;state.recoveryDrafts=[];
 }
 function documentStatus({status,pending,durable=true}) {
   if(!state.channel||state.route!=='page')return;
@@ -506,7 +538,7 @@ function documentStatus({status,pending,durable=true}) {
   if(state.offline){const note=document.createElement('div');note.id='offline-state';note.className='offline-notice';note.textContent='오프라인에서 문서를 편집하고 있습니다. 연결되면 변경 사항을 합칩니다. 제목과 문서, 보관한 데이터베이스의 변경은 이 기기에 저장됩니다. 댓글·파일·공유 설정은 연결 후 사용할 수 있습니다.';$('.editor-wrap')?.prepend(note);}
   const title=$('#page-title');if(title)title.contentEditable=String(pageEditable());
   const comment=$('#comment-form');if(comment)comment.hidden=state.offline||state.localPageOnly||resourceLevel(state.page)<2;
-  renderSyncIndicators();ensurePresence();
+  renderSyncIndicators();ensurePresence();refreshHistoryControls();
 }
 function renderPresenceParticipants(participants) {
   const container=$('#page-presence');if(!container)return;
@@ -578,7 +610,7 @@ async function openDocument(id,detail,cachedSnapshot) {
     onPresence:payload=>{if(state.channel===channel){ensurePresence();state.presenceManager?.receive(payload);}},
     onChange:change=>{
       if(state.channel!==channel||state.route!=='page')return;
-      const beforeEditable=pageEditable(),selection=selectedTextPosition();
+      const beforeEditable=pageEditable(),selection=change.selection||selectedTextPosition();
       state.page=metadataOverlay({...change.snapshot.page,access_level:change.snapshot.access_level},change.snapshot);state.blocks=change.blocks;
       if(!pageEditable())state.uploadManager?.pauseAll('문서가 읽기 전용으로 바뀌어 전송을 일시 중지했습니다.');
       ensurePresence();
@@ -586,7 +618,7 @@ async function openDocument(id,detail,cachedSnapshot) {
       if(beforeEditable!==pageEditable()){renderPage();return;}
       patchDocumentBlocks(selection);
       patchPageMetadataUI();
-    },onStatus:documentStatus,onDraft:drafts=>{if(state.channel===channel){state.recoveryDrafts=drafts;renderRecoveryDrafts();}},
+    },onHistory:history=>{if(state.channel===channel)refreshHistoryControls(history);},onStatus:documentStatus,onDraft:drafts=>{if(state.channel===channel){state.recoveryDrafts=drafts;renderRecoveryDrafts();}},
     onError:error=>{if(state.channel===channel)toast(error.message);},
     onDenied:({status,message,switched})=>{
       if(state.channel!==channel&&state.channel!==null)return;
@@ -594,7 +626,7 @@ async function openDocument(id,detail,cachedSnapshot) {
       if(switched){state.offlineProfile=null;boot();return;}
       if(status===401)renderLogin(false);else{$('#main').innerHTML=`<div class="empty"><h2>이 문서에 접근할 수 없습니다.</h2><p>${esc(message)}</p><button class="outline-btn" data-action="home">홈으로 돌아가기</button></div>`;if(state.workspace)state.workspace.pages=state.workspace.pages.filter(page=>page.id!==id);renderSidebar();renderTopbar('접근 권한 없음');}
     }});
-  state.channel=channel;await channel.open(snapshot,{cached:!!cachedSnapshot});if(state.localPageOnly&&!state.blocks.length&&pageEditable()){channel.reconcile([{id:uid(),type:'paragraph',text:'',parent_id:null}]);await channel.persistence;}state.openingDocument=false;recordRecentPage(id);
+  state.channel=channel;await channel.open(snapshot,{cached:!!cachedSnapshot});if(state.localPageOnly&&!state.blocks.length&&pageEditable()){channel.transact({kind:'structure',record:false},()=>channel.reconcile([{id:uid(),type:'paragraph',text:'',parent_id:null}]));await channel.persistence;}state.openingDocument=false;recordRecentPage(id);
 }
 function richTextHTML(block) {
   const tokens=block.rich_text?.map(token=>token.text).join('')===block.text?block.rich_text:[{text:block.text||'',marks:{}}];
@@ -609,19 +641,20 @@ function richTextHTML(block) {
 }
 function blockDepth(block) {let depth=0,parent=block.parent_id,seen=new Set([block.id]);while(parent&&!seen.has(parent)){seen.add(parent);depth++;parent=state.blocks.find(item=>item.id===parent)?.parent_id;}return Math.min(depth,8);}
 function reconcileEditor() {
-  if(!state.channel||state.composition||state.reconciling||!pageEditable())return;
-  readBlocks();const desired=structuredClone(state.blocks);state.reconciling=true;
-  try{state.channel.reconcile(desired);}finally{state.reconciling=false;}
+  if(!state.channel||state.composition||state.reconciling||!blockEditable())return [];
+  readBlocks();const desired=structuredClone(state.blocks);if(FountainCollaboration.canonical(FountainCollaboration.normalizeBlocks(desired))===FountainCollaboration.canonical(FountainCollaboration.normalizeBlocks(FountainCollaboration.project(state.channel.state))))return [];state.reconciling=true;
+  try{return state.channel.reconcile(desired);}finally{state.reconciling=false;}
 }
-function commitEditableText(element,baseline) {
-  if(!state.channel||!pageEditable()||state.composition)return;
+function commitEditableText(element,baseline,meta={},grouped=false) {
+  if(!grouped)return editorTransaction(meta.kind||state.inputBaseline?.kind||'typing',()=>commitEditableText(element,baseline,meta,true),{blockId:element.closest('.block').dataset.id,beforeSelection:meta.beforeSelection||state.inputBaseline?.selection||selectedTextPosition()});
+  if(!state.channel||!blockEditable()||state.composition)return;
   const id=element.closest('.block').dataset.id;
   const raw=editorPlainText(element);
   const offset=selectedTextPosition();
   const operations=state.channel.replaceText(id,raw,baseline||state.channel.chars(id),state.typingMarks);
   const inserted=operations.filter(operation=>operation.type==='text.insert').at(-1);
-  if(offset&&inserted&&offset.anchor.offset===offset.focus.offset){const id=inserted.id+':'+(Array.from(inserted.text).length-1);offset.anchor={before:id,after:null,offset:offset.anchor.offset};offset.focus={...offset.anchor};restoreTextPosition(offset);return;}
-  if(offset){const chars=state.channel.chars(id);const point=offset.anchor.offset;offset.anchor={before:chars[point-1]?.id||null,after:chars[point]?.id||null,offset:point};const end=offset.focus.offset;offset.focus={before:chars[end-1]?.id||null,after:chars[end]?.id||null,offset:end};restoreTextPosition(offset);}
+  if(offset&&inserted&&offset.anchor.offset===offset.focus.offset){const id=inserted.id+':'+(Array.from(inserted.text).length-1);offset.anchor={before:id,after:null,offset:offset.anchor.offset};offset.focus={...offset.anchor};restoreTextPosition(offset);state.expectedSelection=selectedTextPosition();return operations;}
+  if(offset){const chars=state.channel.chars(id);const point=offset.anchor.offset;offset.anchor={before:chars[point-1]?.id||null,after:chars[point]?.id||null,offset:point};const end=offset.focus.offset;offset.focus={before:chars[end-1]?.id||null,after:chars[end]?.id||null,offset:end};restoreTextPosition(offset);}state.expectedSelection=selectedTextPosition();return operations;
 }
 function richSelection() {
   const position=selectedTextPosition();if(!position)return null;
@@ -629,10 +662,10 @@ function richSelection() {
   return {id:position.id,position,chars:chars.slice(start,end),start,end};
 }
 function applyRichMark(mark,value) {
-  if(!pageEditable()||!state.channel)return;
+  if(!blockEditable()||!state.channel)return;
   const selected=state.richSelection||richSelection();if(!selected)return toast('먼저 글자를 선택해 주세요.');
-  if(!selected.chars.length){state.typingMarks={...(state.typingMarks||{}),[mark]:value};toast('다음에 입력할 글자에 서식을 적용합니다.');return;}
-  state.channel.format(selected.id,selected.chars.map(char=>char.id),{[mark]:value});restoreTextPosition(selected.position);state.richSelection=richSelection();
+  if(!selected.chars.length){state.channel.breakHistory();state.typingMarks={...(state.typingMarks||{}),[mark]:value};toast('다음에 입력할 글자에 서식을 적용합니다.');return;}
+  editorTransaction('format',()=>state.channel.format(selected.id,selected.chars.map(char=>char.id),{[mark]:value}),{beforeSelection:selected.position,afterSelection:selected.position});restoreTextPosition(selected.position);state.richSelection=richSelection();
 }
 function renderRecoveryDrafts() {
   $('#recovery-drafts')?.remove();if(!state.recoveryDrafts?.length||!$('.editor-wrap'))return;
@@ -644,7 +677,7 @@ function renderRecoveryDrafts() {
 function renderPage() {
   const p=state.page;state.pageViewBasis=structuredClone(p);
   renderTopbar(p.title,p.icon);
-  $('#main').innerHTML=`${p.cover?'<div class="page-cover"></div>':''}<article class="editor-wrap ${p.cover?'has-cover':''}"><button class="page-emoji" data-action="change-icon" aria-label="페이지 아이콘 변경">${esc(p.icon||'📄')}</button><h1 class="page-title" id="page-title" contenteditable="${pageEditable()}" role="textbox" aria-label="페이지 제목">${esc(p.title)}</h1><div class="page-tools" style="flex-wrap:wrap"><span>${icon('clock')}</span><span>${date(p.updated_at)} 수정</span><button data-action="favorite" class="${p.favorite?'favorite-on':''}">${p.favorite?'★ 즐겨찾기':'☆ 즐겨찾기'}</button><button data-action="toggle-cover">${p.cover?'커버 제거':'커버 추가'}</button>${!pageEditable()?'<span>🔒 읽기 전용</span>':'<button data-action="add-file" title="파일당 최대 5 GB">📎 파일 추가</button><input id="attachment-input" type="file" aria-label="첨부할 파일 (최대 5 GB)" hidden>'}<button data-action="ai" style="margin-left:auto">✦ AI 도우미</button></div>${pageEditable()?`<div class="rich-toolbar" aria-label="글자 서식"><button data-action="rich-mark" data-mark="bold" aria-label="굵게"><b>B</b></button><button data-action="rich-mark" data-mark="italic" aria-label="기울임"><i>I</i></button><button data-action="rich-mark" data-mark="underline" aria-label="밑줄"><u>U</u></button><button data-action="rich-mark" data-mark="strike" aria-label="취소선"><s>S</s></button><button data-action="rich-mark" data-mark="code" aria-label="인라인 코드">&lt;/&gt;</button><button data-action="rich-link">${icon('link')}링크</button><label>글자색<select id="rich-color" aria-label="글자색"><option value="default">기본</option>${FountainCollaboration.PALETTE.filter(color=>color!=='default').map(color=>`<option value="${color}">${esc(({gray:'회색',brown:'갈색',orange:'주황',yellow:'노랑',green:'초록',blue:'파랑',purple:'보라',pink:'분홍',red:'빨강'})[color])}</option>`).join('')}</select></label><label>배경<select id="rich-background" aria-label="글자 배경"><option value="default">없음</option>${FountainCollaboration.PALETTE.filter(color=>color!=='default').map(color=>`<option value="${color}">${esc(({gray:'회색',brown:'갈색',orange:'주황',yellow:'노랑',green:'초록',blue:'파랑',purple:'보라',pink:'분홍',red:'빨강'})[color])}</option>`).join('')}</select></label></div>`:''}<div id="blocks" aria-label="페이지 블록">${state.blocks.map(blockHTML).join('')}</div>${pageEditable()?'<button class="editor-end" data-action="add-block"><span>+</span> 글을 쓰거나 ‘/’로 블록을 추가하세요</button>':''}<section class="comment-section"><h3>댓글 <span class="muted">${state.comments.filter(c=>!c.resolved).length}</span></h3><div id="comments">${commentsHTML()}</div><form class="comment-form" id="comment-form"><input name="text" aria-label="댓글 내용" placeholder="생각을 나눠보세요…" required maxlength="10000"><button class="outline-btn">보내기 ${icon('arrow')}</button></form></section></article>`;
+  $('#main').innerHTML=`${p.cover?'<div class="page-cover"></div>':''}<article class="editor-wrap ${p.cover?'has-cover':''}"><button class="page-emoji" data-action="change-icon" aria-label="페이지 아이콘 변경">${esc(p.icon||'📄')}</button><h1 class="page-title" id="page-title" contenteditable="${pageEditable()}" role="textbox" aria-label="페이지 제목">${esc(p.title)}</h1><div class="page-tools" style="flex-wrap:wrap"><span>${icon('clock')}</span><span>${date(p.updated_at)} 수정</span><button data-action="favorite" class="${p.favorite?'favorite-on':''}">${p.favorite?'★ 즐겨찾기':'☆ 즐겨찾기'}</button><button data-action="toggle-cover">${p.cover?'커버 제거':'커버 추가'}</button>${!pageEditable()?'<span>🔒 읽기 전용</span>':'<button data-action="add-file" title="파일당 최대 5 GB">📎 파일 추가</button><input id="attachment-input" type="file" aria-label="첨부할 파일 (최대 5 GB)" hidden>'}<button data-action="ai" style="margin-left:auto">✦ AI 도우미</button></div>${pageEditable()?`<div class="rich-toolbar" aria-label="본문 편집"><button data-action="undo" aria-label="실행 취소" title="실행 취소 (⌘/Ctrl Z)">↶</button><button data-action="redo" aria-label="다시 실행" title="다시 실행 (⌘/Ctrl Shift Z)">↷</button><span class="history-divider" aria-hidden="true"></span><button data-action="rich-mark" data-mark="bold" aria-label="굵게"><b>B</b></button><button data-action="rich-mark" data-mark="italic" aria-label="기울임"><i>I</i></button><button data-action="rich-mark" data-mark="underline" aria-label="밑줄"><u>U</u></button><button data-action="rich-mark" data-mark="strike" aria-label="취소선"><s>S</s></button><button data-action="rich-mark" data-mark="code" aria-label="인라인 코드">&lt;/&gt;</button><button data-action="rich-link">${icon('link')}링크</button><label>글자색<select id="rich-color" aria-label="글자색"><option value="default">기본</option>${FountainCollaboration.PALETTE.filter(color=>color!=='default').map(color=>`<option value="${color}">${esc(({gray:'회색',brown:'갈색',orange:'주황',yellow:'노랑',green:'초록',blue:'파랑',purple:'보라',pink:'분홍',red:'빨강'})[color])}</option>`).join('')}</select></label><label>배경<select id="rich-background" aria-label="글자 배경"><option value="default">없음</option>${FountainCollaboration.PALETTE.filter(color=>color!=='default').map(color=>`<option value="${color}">${esc(({gray:'회색',brown:'갈색',orange:'주황',yellow:'노랑',green:'초록',blue:'파랑',purple:'보라',pink:'분홍',red:'빨강'})[color])}</option>`).join('')}</select></label></div>`:''}<div id="blocks" aria-label="페이지 블록">${state.blocks.map(blockHTML).join('')}</div>${pageEditable()?'<button class="editor-end" data-action="add-block"><span>+</span> 글을 쓰거나 ‘/’로 블록을 추가하세요</button>':''}<section class="comment-section"><h3>댓글 <span class="muted">${state.comments.filter(c=>!c.resolved).length}</span></h3><div id="comments">${commentsHTML()}</div><form class="comment-form" id="comment-form"><input name="text" aria-label="댓글 내용" placeholder="생각을 나눠보세요…" required maxlength="10000"><button class="outline-btn">보내기 ${icon('arrow')}</button></form></section></article>`;
   if(!pageEditable()) {
     for(const action of ['change-icon','favorite','toggle-cover'])$$(`[data-action="${action}"]`).forEach(el=>el.disabled=true);
   }
@@ -672,11 +705,11 @@ const blockTypes=[['paragraph','텍스트','일반 텍스트로 작성','T'],['h
 function blockHTML(b,i) {
   const type=b.type||'paragraph';
   let marker='';
-  if(type==='todo')marker=`<span class="block-marker"><input type="checkbox" aria-label="할 일 완료" data-check="${esc(b.id)}" ${b.checked?'checked':''} ${!pageEditable()?'disabled':''}></span>`;
+  if(type==='todo')marker=`<span class="block-marker"><input type="checkbox" aria-label="할 일 완료" data-check="${esc(b.id)}" ${b.checked?'checked':''} ${!blockEditable()?'disabled':''}></span>`;
   else if(type==='bullet')marker='<span class="block-marker">•</span>';
   else if(type==='numbered')marker=`<span class="block-marker">${i+1}.</span>`;
   else if(type==='toggle')marker=`<button class="block-marker" data-action="toggle-block" data-id="${esc(b.id)}">▸</button>`;
-  return `<div class="block ${b.checked?'checked':''}" data-id="${esc(b.id)}" data-type="${esc(type)}" style="--block-depth:${blockDepth(b)}" draggable="${pageEditable()}">${pageEditable()?`<span class="block-handle"><button data-action="block-menu" data-id="${esc(b.id)}" aria-label="블록 메뉴">⠿</button></span>`:''}${type==='file'?`<a class="outline-btn attachment-link" href="${esc(FountainTransport.downloadURL('/api/attachments/'+encodeURIComponent(b.attachment_id||'')+'/download'))}" download="${esc(b.text||'첨부 파일')}">📎 ${esc(b.text||'첨부 파일')}<span class="muted small">${Number.isFinite(b.size)?(b.size/1000).toLocaleString('ko-KR',{maximumFractionDigits:1})+' KB':''} ↓</span></a>`:type==='divider'?'<hr>':marker+`<div class="block-content" contenteditable="${pageEditable()}" role="textbox" aria-multiline="true" data-placeholder="글을 쓰거나 ‘/’로 명령어를 입력하세요">${richTextHTML(b)}</div>`}</div>`;
+  return `<div class="block ${b.checked?'checked':''}" data-id="${esc(b.id)}" data-type="${esc(type)}" style="--block-depth:${blockDepth(b)}" draggable="${blockEditable()}">${blockEditable()?`<span class="block-handle"><button data-action="block-menu" data-id="${esc(b.id)}" aria-label="블록 메뉴">⠿</button></span>`:''}${type==='file'?`<a class="outline-btn attachment-link" href="${esc(FountainTransport.downloadURL('/api/attachments/'+encodeURIComponent(b.attachment_id||'')+'/download'))}" download="${esc(b.text||'첨부 파일')}">📎 ${esc(b.text||'첨부 파일')}<span class="muted small">${Number.isFinite(b.size)?(b.size/1000).toLocaleString('ko-KR',{maximumFractionDigits:1})+' KB':''} ↓</span></a>`:type==='divider'?'<hr>':marker+`<div class="block-content" contenteditable="${blockEditable()}" role="textbox" aria-multiline="true" data-placeholder="글을 쓰거나 ‘/’로 명령어를 입력하세요">${richTextHTML(b)}</div>`}</div>`;
 }
 function editorPlainText(element) {
   let last=element;while(last.lastChild)last=last.lastChild;
@@ -724,18 +757,26 @@ function ensureUploads() {
   if(manager&&Object.keys(scope).every(key=>manager.scope[key]===scope[key])&&!manager.closed){renderUploads(manager.view());return;}
   manager?.dispose();
   const created=new FountainUploads.UploadManager({scope,isCurrent:currentUploadScope,onChange:jobs=>{if(state.uploadManager===created)renderUploads(jobs);},onDenied:uploadDenied,
-    onComplete:async(attachment,originalScope,canAttach=()=>true)=>{
+    onComplete:async(attachment,originalScope,canAttach=()=>true,publication)=>{
       if(state.uploadManager!==created||!currentUploadScope(originalScope)||!canAttach())return false;
+      const channel=state.channel,epoch=channel?.base?.epoch;
+      const current=()=>state.channel===channel&&channel?.base?.epoch===epoch&&state.uploadManager===created&&currentUploadScope(originalScope)&&canAttach();
       const actual=await api('/session');if(actual.cache_binding!==originalScope.binding||actual.member?.id!==originalScope.memberId){created.dispose();boot();return false;}
-      if(state.uploadManager!==created||!currentUploadScope(originalScope)||!canAttach())return false;
-      const channel=state.channel;
-      if(!state.blocks.some(block=>block.type==='file'&&block.attachment_id===attachment.id)){
-        readBlocks();state.blocks.push({id:uid(),type:'file',text:attachment.name,attachment_id:attachment.id,size:attachment.size});reconcileEditor();
+      if(!current())return false;
+      let receipt=publication?.get();
+      if(!receipt){
+        if(publication?.version!==1)throw new Error('이전 첨부의 문서 연결 기록을 확인할 수 없습니다. 복구 내용을 확인한 뒤 파일을 새로 전송해 주세요.');
+        if(!blockEditable())throw new Error('실행 취소 결과를 확인한 뒤 첨부를 다시 시도해 주세요.');
+        const blockId=uid(),group=uid(),make=(type,fields)=>channel.operation(type,blockId,{...fields,group_id:group});
+        const ops=[make('block.insert',{parent_id:null,after_id:state.blocks.filter(block=>!block.parent_id).at(-1)?.id||null,block_type:'file'}),make('text.insert',{after_id:null,text:attachment.name}),make('block.set',{field:'attachment_id',value:attachment.id}),make('block.set',{field:'size',value:attachment.size})];
+        receipt={epoch,block_id:blockId,ops};await publication.save(receipt);
       }
-      await channel.persistence;if(state.channel!==channel||!currentUploadScope(originalScope)||!canAttach())return false;
-      await channel.flush();
-      if(state.channel!==channel||!currentUploadScope(originalScope)||!canAttach())return false;
-      if(!channel.base.blocks?.some(block=>block.type==='file'&&block.attachment_id===attachment.id))throw new Error('파일 전송은 끝났지만 문서 첨부가 아직 저장되지 않았습니다. 다시 시도해 주세요.');
+      if(!current())return false;
+      if(receipt.epoch!==epoch||!Array.isArray(receipt.ops)||!receipt.ops.length)throw new Error('문서 버전이 변경되어 이전 첨부를 자동으로 연결하지 않았습니다. 파일을 새로 전송해 주세요.');
+      channel.transact({kind:'attachment',beforeSelection:selectedTextPosition(),afterSelection:()=>selectedTextPosition()},()=>channel.submitPrepared(receipt.ops));
+      await channel.persistence;if(!current())return false;
+      await channel.flush();if(!current())return false;
+      if(!receipt.ops.every(operation=>Object.hasOwn(channel.base.state.seen,operation.id)))throw new Error('파일 전송은 끝났지만 문서 첨부가 아직 저장되지 않았습니다. 다시 시도해 주세요.');
       return true;
     }});
   state.uploadManager=created;created.load().catch(failure=>{if(state.uploadManager===created&&!created.closed)toast(failure.message);});
@@ -779,8 +820,9 @@ function renderBlocks(focusId) {
   patchDocumentBlocks();
   if(focusId)focusBlock(focusId);
 }
-function addBlock(type='paragraph',afterId,text='') {
-  if(!pageEditable())throw new Error('페이지 편집 권한이 없습니다.');
+function addBlock(type='paragraph',afterId,text='',grouped=false) {
+  if(!grouped)return editorTransaction('structure',()=>addBlock(type,afterId,text,true));
+  if(!blockEditable())throw new Error('페이지 편집 권한이 없습니다.');
   readBlocks();
   const b= {
     id:uid(),type,text
@@ -1247,8 +1289,11 @@ async function showActivity() {
   const audit=normalizeList(data.events||data.audit||data.entries||data);
   openModal('워크스페이스 활동',`<p>워크스페이스에서 기록된 최근 변경 사항입니다.</p>${audit.slice(0,100).map(r=>`<div class="history-item"><div>${esc(r.action||r.event)}<small>${esc(r.actor_name||r.user||r.actor||'로컬 멤버')} · ${esc(r.target_name||r.resource_type||'')} · ${date(r.created_at||r.timestamp)}</small></div></div>`).join('')||'<div class="empty">아직 기록된 활동이 없습니다.</div>'}`);
 }
-async function doAction(target) {
+async function doAction(target,grouped=false) {
   const a=target.dataset.action,id=target.dataset.id;
+  if(['undo','redo'].includes(a)){await runHistory(a);return;}
+  if(['block-menu','rich-mark','rich-link','add-file','apply-recovery','indent-block','outdent-block','add-block','change-block-type','set-block-type','delete-block','move-block'].includes(a)&&!blockEditable())throw new Error('본문 편집 결과를 확인하는 중입니다. 잠시 기다려 주세요.');
+  if(!grouped&&['apply-recovery','change-block-type','set-block-type','delete-block','move-block'].includes(a))return editorTransaction('structure',()=>doAction(target,true));
   if((state.offline||state.localPageOnly)&&(serverOnlyActions.has(a)||administrativeActions.has(a)))throw new Error('이 작업은 페이지가 서버에 저장되고 연결된 상태에서 사용할 수 있습니다.');
   if(administrativeActions.has(a)&&!isAdmin())throw new Error('관리자 권한이 필요합니다.');
   const edits=['favorite','toggle-cover','change-icon','add-file','add-block','block-menu','change-block-type','set-block-type','delete-block','move-block','restore-version','lock-page','delete-page','verify-page','move-page'];
@@ -1599,7 +1644,7 @@ document.addEventListener('input',event=> {
     state.titleTimer=setTimeout(()=>saveTitle().catch(e=>toast(e.message)),450);
   }
   if(el.classList.contains('block-content')) {
-    if(state.composition||event.isComposing)return;
+    if(state.composition||event.isComposing)return;if(['historyUndo','historyRedo'].includes(event.inputType)){patchDocumentBlocks();return;}if(!blockEditable()){patchDocumentBlocks();return;}
     const id=el.closest('.block').dataset.id;commitEditableText(el,state.inputBaseline?.id===id?state.inputBaseline.chars:undefined);state.inputBaseline=null;
     const text=state.blocks.find(block=>block.id===id)?.text||'';if(text.startsWith('/'))openSlash(id,text.slice(1));else closeSlash();scheduleSave();
   }
@@ -1616,10 +1661,10 @@ document.addEventListener('change',event=> {
   if(el.closest('#advanced-form')&&$('#advanced-form')?.dataset.kind==='automations'){if(el.name==='trigger')updateScheduleFields();if(el.name==='database_id')loadAutomationRows(el.value).catch(error=>toast(error.message));}
   if(el.id==='timeline-property'){state.timelineProperty=el.value;state.timelineBounds=null;state.timelineFocusDay=null;renderDatabase();return;}
   if(el.id==='timeline-zoom'){state.timelineZoom=el.value;renderDatabase();return;}
-  if(el.dataset.check&&!pageEditable())return;
+  if(el.dataset.check&&!blockEditable())return;
   if(el.id==='attachment-input'){const file=el.files?.[0];el.value='';attachFile(file).catch(error=>toast(error.message));return;}
   if(el.dataset.check) {
-    const b=state.blocks.find(b=>b.id===el.dataset.check); b.checked=el.checked; el.closest('.block').classList.toggle('checked',el.checked); scheduleSave();
+    editorTransaction('structure',()=>{const b=state.blocks.find(b=>b.id===el.dataset.check); b.checked=el.checked; el.closest('.block').classList.toggle('checked',el.checked); scheduleSave();});
   }
 });
 document.addEventListener('keydown',event=> {
@@ -1636,7 +1681,9 @@ document.addEventListener('keydown',event=> {
   if(event.target.id==='search-input'&&event.key==='Enter') {
     event.preventDefault(); $('.search-result')?.click(); return;
   }
-  const el=event.target.closest('.block-content'); if(!el)return;if(event.isComposing||state.composition||event.keyCode===229)return; if(!pageEditable())return;
+  const el=event.target.closest('.block-content'); if(!el)return;if(event.isComposing||state.composition||event.keyCode===229)return;
+  if((event.metaKey||event.ctrlKey)&&!event.altKey&&(event.key.toLowerCase()==='z'||event.ctrlKey&&event.key.toLowerCase()==='y')){event.preventDefault();state.historyCommand=true;setTimeout(()=>{state.historyCommand=false;},0);runHistory(event.key.toLowerCase()==='y'||event.shiftKey?'redo':'undo').catch(error=>toast(error.message));return;}
+  if(!blockEditable())return;
   const block=el.closest('.block'),id=block.dataset.id,b=state.blocks.find(b=>b.id===id);
   if(event.key==='Tab'){event.preventDefault();nestBlock(id,event.shiftKey?-1:1);return;}
   if((event.metaKey||event.ctrlKey)&&['b','i','u'].includes(event.key.toLowerCase())){event.preventDefault();const mark={b:'bold',i:'italic',u:'underline'}[event.key.toLowerCase()];state.richSelection=richSelection();applyRichMark(mark,!state.richSelection?.chars.every(char=>char.marks[mark]===true));return;}
@@ -1644,7 +1691,7 @@ document.addEventListener('keydown',event=> {
     event.preventDefault(); if($('.slash-menu')) {
       $('.slash-menu button')?.click(); return;
     }
-    readBlocks(); if(!b.text&&['bullet','numbered','todo','heading1','heading2','heading3','quote'].includes(b.type)) {
+    editorTransaction('structure',()=>{readBlocks(); if(!b.text&&['bullet','numbered','todo','heading1','heading2','heading3','quote'].includes(b.type)) {
       b.type='paragraph'; renderBlocks(id); scheduleSave(); return;
     }
     const sel=getSelection(); const range=sel.rangeCount?sel.getRangeAt(0).cloneRange():null; let offset=b.text.length; if(range) {
@@ -1652,24 +1699,24 @@ document.addEventListener('keydown',event=> {
     }
     const points=Array.from(b.text),rest=points.slice(offset).join(''); b.text=points.slice(0,offset).join(''); const type=['todo','bullet','numbered'].includes(b.type)?b.type:'paragraph'; const next= {
       id:uid(),type,text:rest,parent_id:b.parent_id||null,rich_text:richTokensFromChars(state.channel.chars(id).slice(Array.from(b.text).length))
-    }; state.blocks.splice(state.blocks.indexOf(b)+1,0,next); renderBlocks(next.id); scheduleSave();
+    }; state.blocks.splice(state.blocks.indexOf(b)+1,0,next); renderBlocks(next.id); scheduleSave();});
   }
   else if(event.key==='Backspace'&&!el.innerText) {
     const i=state.blocks.indexOf(b); if(i>0) {
-      event.preventDefault(); state.blocks.splice(i,1); renderBlocks(state.blocks[i-1].id); scheduleSave();
+      event.preventDefault();editorTransaction('structure',()=>{state.blocks.splice(i,1); renderBlocks(state.blocks[i-1].id); scheduleSave();});
     }
   }
   else if(event.key===' ') {
     const shortcuts= {
       '#':'heading1','##':'heading2','###':'heading3','-':'bullet','*':'bullet','1.':'numbered','[]':'todo','[ ]':'todo','>':'quote','```':'code','---':'divider'
     }; if(shortcuts[el.innerText]) {
-      event.preventDefault(); b.type=shortcuts[el.innerText]; b.text=''; renderBlocks(id); scheduleSave();
+      event.preventDefault();editorTransaction('structure',()=>{b.type=shortcuts[el.innerText]; b.text=''; renderBlocks(id); scheduleSave();});
     }
   }
 });
 let dragId=null;
 document.addEventListener('dragstart',e=> {
-  const b=e.target.closest('.block'); if(!pageEditable()||!b||e.target.closest('[contenteditable=true]')) {
+  const b=e.target.closest('.block'); if(!blockEditable()||!b||e.target.closest('[contenteditable=true]')) {
     e.preventDefault(); return;
   }
   dragId=b.dataset.id; b.classList.add('dragging'); e.dataTransfer.setData('text/plain',dragId);
@@ -1678,7 +1725,7 @@ document.addEventListener('dragover',e=> {
   if(dragId&&e.target.closest('.block'))e.preventDefault();
 });
 document.addEventListener('drop',e=> {
-  const b=e.target.closest('.block'); if(!dragId||!b)return; e.preventDefault(); readBlocks(); const from=state.blocks.findIndex(b=>b.id===dragId),to=state.blocks.findIndex(v=>v.id===b.dataset.id); const [item]=state.blocks.splice(from,1); state.blocks.splice(to,0,item); renderBlocks(dragId); scheduleSave(); dragId=null;
+  const b=e.target.closest('.block'); if(!dragId||!b)return; e.preventDefault();if(!blockEditable()){dragId=null;return;}editorTransaction('structure',()=>{readBlocks(); const from=state.blocks.findIndex(b=>b.id===dragId),to=state.blocks.findIndex(v=>v.id===b.dataset.id); const [item]=state.blocks.splice(from,1); state.blocks.splice(to,0,item); renderBlocks(dragId); scheduleSave(); dragId=null;});
 });
 document.addEventListener('dragend',()=> {
   $$('.dragging').forEach(b=>b.classList.remove('dragging')); dragId=null;

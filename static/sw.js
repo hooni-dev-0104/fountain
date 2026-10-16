@@ -1,6 +1,6 @@
 /* Generic shell only. Private API, public-site and form responses never enter CacheStorage. */
 'use strict';
-const CACHE = 'fountain-shell-presence-v1';
+const CACHE = 'fountain-shell-history-v1';
 const SHELL = ['/', '/index.html', '/app.js', '/style.css', '/collaboration.js', '/offline.js', '/uploads.js', '/transport.js', '/mutations.js', '/presence.js'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL.map(path => new Request(path, { cache: 'reload', credentials: 'omit' }))))

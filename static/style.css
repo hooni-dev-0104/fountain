@@ -2036,3 +2036,20 @@ svg {
 .offline-notice,.recovery-drafts{font-size:11px;line-height:1.9;border:1px solid #e4e9d8;background:#f6f8ef;padding:14px 17px;border-radius:7px;margin-bottom:24px;color:#8b987b}
 .recovery-drafts{background:#faf4e7;border-color:#ede3cb;color:#a19171}.recovery-drafts strong{color:#8f805f}.recovery-drafts p{margin:5px 0 10px}.recovery-drafts>div{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin-top:10px}.recovery-drafts>div>span{font-size:9px;margin-right:auto}.recovery-drafts button{font-size:10px}
 @media(max-width:680px){.rich-toolbar{gap:2px;padding:5px}.rich-toolbar label{margin-left:3px}.rich-toolbar button{font-size:10px;padding:4px}.block{margin-left:calc(var(--block-depth,0) * 16px)}.offline-notice,.recovery-drafts{font-size:10px;padding:12px}}
+/* Upload progress contains metadata only; document blocks appear after server finalization. */
+.upload-panel{border:1px solid #e5eadc;background:#fafcf6;border-radius:8px;padding:16px 18px;margin-bottom:22px}
+.upload-panel-title{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:13px;font-size:11px;color:#788768}
+.upload-panel-title>span{font-size:9px;color:#a3ad94}
+.upload-card{border:1px solid #e9eddf;border-radius:6px;padding:13px 14px;background:white;margin-top:9px}
+.upload-file-heading{display:flex;align-items:center;gap:8px;font-size:11px;margin-bottom:11px;min-width:0}
+.upload-file-heading>strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;font-weight:500}
+.upload-file-heading>span:last-child{font-size:9px;color:#a1ab92;white-space:nowrap}
+.upload-card progress{display:block;width:100%;height:5px;appearance:none;border:0;background:#edf1e5;border-radius:5px;overflow:hidden;accent-color:#96ad7e}
+.upload-card progress::-webkit-progress-bar{background:#edf1e5;border-radius:5px}.upload-card progress::-webkit-progress-value{background:#a0b58b;border-radius:5px;transition:width .12s}
+.upload-progress-label{font-size:9px;color:#97a087;margin-top:7px;text-align:right}
+.upload-card p{font-size:10px;color:#929d81;line-height:1.8;margin:8px 0 0;word-break:keep-all}
+.upload-actions{display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap;margin-top:10px}
+.upload-actions button{border:1px solid #e3e9d8;border-radius:4px;font-size:10px;padding:5px 9px;color:#7f8f6b;white-space:nowrap}
+.upload-actions button:hover{background:#f1f5e9}
+.upload-sample-note{font-size:9px;color:#a3ac96;line-height:1.9;margin:13px 1px 0;word-break:keep-all}
+@media(max-width:680px){.upload-panel{padding:13px 11px}.upload-card{padding:11px 10px}.upload-actions button{font-size:9px;padding:5px 7px}.upload-sample-note{font-size:8px}}

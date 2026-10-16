@@ -131,6 +131,7 @@ function renderTopbar(title='홈',emoji='') {
   pruneAdministrativeControls();
 }
 async function navigate(route,id) {
+  state.uploadTargetPageId=route==='page'?id:null;state.uploadManager?.pauseAll('다른 문서를 여는 동안 파일 전송을 일시 중지했습니다.');
   const binding=state.session?.cache_binding,generation=state.bootGeneration;
   try {
     await saveTitle();
@@ -305,6 +306,7 @@ async function cacheProfile(workspaceId=state.workspace?.workspace_id||state.ses
   state.offlineProfile=profile;return profile;
 }
 function closeDocument() {
+  state.uploadManager?.dispose();state.uploadManager=null;state.uploadReselectId=null;
   state.channel?.close();state.channel=null;state.renderedChars=new Map();state.composition=null;state.inputBaseline=null;clearTimeout(state.saveTimer);state.saveTimer=null;state.recoveryDrafts=[];
 }
 function documentStatus({status,pending,durable=true}) {
@@ -360,6 +362,7 @@ async function openDocument(id,detail,cachedSnapshot) {
       if(state.channel!==channel||state.route!=='page')return;
       const beforeEditable=pageEditable(),selection=selectedTextPosition();
       state.page={...change.snapshot.page,access_level:change.snapshot.access_level};state.blocks=change.blocks;
+      if(!pageEditable())state.uploadManager?.pauseAll('문서가 읽기 전용으로 바뀌어 전송을 일시 중지했습니다.');
       if(state.openingDocument||state.composition)return;
       if(beforeEditable!==pageEditable()){renderPage();return;}
       patchDocumentBlocks(selection);
@@ -422,13 +425,13 @@ function renderRecoveryDrafts() {
 function renderPage() {
   const p=state.page;
   renderTopbar(p.title,p.icon);
-  $('#main').innerHTML=`${p.cover?'<div class="page-cover"></div>':''}<article class="editor-wrap ${p.cover?'has-cover':''}"><button class="page-emoji" data-action="change-icon" aria-label="페이지 아이콘 변경">${esc(p.icon||'📄')}</button><h1 class="page-title" id="page-title" contenteditable="${pageEditable()}" role="textbox" aria-label="페이지 제목">${esc(p.title)}</h1><div class="page-tools" style="flex-wrap:wrap"><span>${icon('clock')}</span><span>${date(p.updated_at)} 수정</span><button data-action="favorite" class="${p.favorite?'favorite-on':''}">${p.favorite?'★ 즐겨찾기':'☆ 즐겨찾기'}</button><button data-action="toggle-cover">${p.cover?'커버 제거':'커버 추가'}</button>${!pageEditable()?'<span>🔒 읽기 전용</span>':'<button data-action="add-file" title="파일당 최대 5 MB">📎 파일 추가</button><input id="attachment-input" type="file" aria-label="첨부할 파일 (최대 5 MB)" hidden>'}<button data-action="ai" style="margin-left:auto">✦ AI 도우미</button></div>${pageEditable()?`<div class="rich-toolbar" aria-label="글자 서식"><button data-action="rich-mark" data-mark="bold" aria-label="굵게"><b>B</b></button><button data-action="rich-mark" data-mark="italic" aria-label="기울임"><i>I</i></button><button data-action="rich-mark" data-mark="underline" aria-label="밑줄"><u>U</u></button><button data-action="rich-mark" data-mark="strike" aria-label="취소선"><s>S</s></button><button data-action="rich-mark" data-mark="code" aria-label="인라인 코드">&lt;/&gt;</button><button data-action="rich-link">${icon('link')}링크</button><label>글자색<select id="rich-color" aria-label="글자색"><option value="default">기본</option>${FountainCollaboration.PALETTE.filter(color=>color!=='default').map(color=>`<option value="${color}">${esc(({gray:'회색',brown:'갈색',orange:'주황',yellow:'노랑',green:'초록',blue:'파랑',purple:'보라',pink:'분홍',red:'빨강'})[color])}</option>`).join('')}</select></label><label>배경<select id="rich-background" aria-label="글자 배경"><option value="default">없음</option>${FountainCollaboration.PALETTE.filter(color=>color!=='default').map(color=>`<option value="${color}">${esc(({gray:'회색',brown:'갈색',orange:'주황',yellow:'노랑',green:'초록',blue:'파랑',purple:'보라',pink:'분홍',red:'빨강'})[color])}</option>`).join('')}</select></label></div>`:''}<div id="blocks" aria-label="페이지 블록">${state.blocks.map(blockHTML).join('')}</div>${pageEditable()?'<button class="editor-end" data-action="add-block"><span>+</span> 글을 쓰거나 ‘/’로 블록을 추가하세요</button>':''}<section class="comment-section"><h3>댓글 <span class="muted">${state.comments.filter(c=>!c.resolved).length}</span></h3><div id="comments">${commentsHTML()}</div><form class="comment-form" id="comment-form"><input name="text" aria-label="댓글 내용" placeholder="생각을 나눠보세요…" required maxlength="10000"><button class="outline-btn">보내기 ${icon('arrow')}</button></form></section></article>`;
+  $('#main').innerHTML=`${p.cover?'<div class="page-cover"></div>':''}<article class="editor-wrap ${p.cover?'has-cover':''}"><button class="page-emoji" data-action="change-icon" aria-label="페이지 아이콘 변경">${esc(p.icon||'📄')}</button><h1 class="page-title" id="page-title" contenteditable="${pageEditable()}" role="textbox" aria-label="페이지 제목">${esc(p.title)}</h1><div class="page-tools" style="flex-wrap:wrap"><span>${icon('clock')}</span><span>${date(p.updated_at)} 수정</span><button data-action="favorite" class="${p.favorite?'favorite-on':''}">${p.favorite?'★ 즐겨찾기':'☆ 즐겨찾기'}</button><button data-action="toggle-cover">${p.cover?'커버 제거':'커버 추가'}</button>${!pageEditable()?'<span>🔒 읽기 전용</span>':'<button data-action="add-file" title="파일당 최대 5 GB">📎 파일 추가</button><input id="attachment-input" type="file" aria-label="첨부할 파일 (최대 5 GB)" hidden>'}<button data-action="ai" style="margin-left:auto">✦ AI 도우미</button></div>${pageEditable()?`<div class="rich-toolbar" aria-label="글자 서식"><button data-action="rich-mark" data-mark="bold" aria-label="굵게"><b>B</b></button><button data-action="rich-mark" data-mark="italic" aria-label="기울임"><i>I</i></button><button data-action="rich-mark" data-mark="underline" aria-label="밑줄"><u>U</u></button><button data-action="rich-mark" data-mark="strike" aria-label="취소선"><s>S</s></button><button data-action="rich-mark" data-mark="code" aria-label="인라인 코드">&lt;/&gt;</button><button data-action="rich-link">${icon('link')}링크</button><label>글자색<select id="rich-color" aria-label="글자색"><option value="default">기본</option>${FountainCollaboration.PALETTE.filter(color=>color!=='default').map(color=>`<option value="${color}">${esc(({gray:'회색',brown:'갈색',orange:'주황',yellow:'노랑',green:'초록',blue:'파랑',purple:'보라',pink:'분홍',red:'빨강'})[color])}</option>`).join('')}</select></label><label>배경<select id="rich-background" aria-label="글자 배경"><option value="default">없음</option>${FountainCollaboration.PALETTE.filter(color=>color!=='default').map(color=>`<option value="${color}">${esc(({gray:'회색',brown:'갈색',orange:'주황',yellow:'노랑',green:'초록',blue:'파랑',purple:'보라',pink:'분홍',red:'빨강'})[color])}</option>`).join('')}</select></label></div>`:''}<div id="blocks" aria-label="페이지 블록">${state.blocks.map(blockHTML).join('')}</div>${pageEditable()?'<button class="editor-end" data-action="add-block"><span>+</span> 글을 쓰거나 ‘/’로 블록을 추가하세요</button>':''}<section class="comment-section"><h3>댓글 <span class="muted">${state.comments.filter(c=>!c.resolved).length}</span></h3><div id="comments">${commentsHTML()}</div><form class="comment-form" id="comment-form"><input name="text" aria-label="댓글 내용" placeholder="생각을 나눠보세요…" required maxlength="10000"><button class="outline-btn">보내기 ${icon('arrow')}</button></form></section></article>`;
   if(!pageEditable()) {
     for(const action of ['change-icon','favorite','toggle-cover'])$$(`[data-action="${action}"]`).forEach(el=>el.disabled=true);
   }
   if(resourceLevel(p)<2)$('#comment-form')?.remove();
   state.renderedChars=new Map(state.blocks.map(block=>[block.id,state.channel?.chars(block.id)||[]]));
-  documentStatus({status:state.channel?.status||'synced',pending:state.channel?.pending.size||0,durable:state.channel?.durable!==false});renderRecoveryDrafts();
+  documentStatus({status:state.channel?.status||'synced',pending:state.channel?.pending.size||0,durable:state.channel?.durable!==false});renderRecoveryDrafts();ensureUploads();
   pruneAdministrativeControls();
 
 }
@@ -467,36 +470,70 @@ async function savePage() {
   if(state.route!=='page'||!state.channel)return;
   reconcileEditor();await state.channel.flush();
 }
-// File bytes stay on the local server; page blocks store only attachment references.
-async function attachFile(file) {
-  if(state.route!=='page'||!pageEditable())throw new Error('파일을 추가할 편집 권한이 없습니다.');
-  if(!file)return;
-  if(file.size>5_000_000)throw new Error('파일당 최대 5 MB까지 첨부할 수 있습니다.');
-  if(state.uploading)throw new Error('이전 파일 업로드가 끝난 후 다시 시도해 주세요.');
-  const pageId=state.page.id;
-  state.uploading=true;
-  try {
-    const data=await new Promise((resolve,reject)=>{
-      const reader=new FileReader();
-      reader.onload=()=>resolve(String(reader.result).split(',')[1]);
-      reader.onerror=()=>reject(new Error('파일을 읽지 못했습니다. 다시 선택해 주세요.'));
-      reader.readAsDataURL(file);
-    });
-    if(state.route!=='page'||state.page.id!==pageId||!pageEditable())throw new Error('페이지가 변경되어 파일 첨부를 취소했습니다.');
-    const attachment=await api('/attachments',{name:file.name,data});
-    if(state.route!=='page'||state.page.id!==pageId||!pageEditable()){
-      await api('/attachments/'+encodeURIComponent(attachment.id),{},'DELETE');
-      throw new Error('페이지가 변경되어 파일 첨부를 취소했습니다.');
-    }
-    readBlocks();
-    state.blocks.push({id:uid(),type:'file',text:attachment.name,attachment_id:attachment.id,size:attachment.size});
-    renderBlocks();
-    scheduleSave();
-    toast('파일을 첨부했습니다.');
-  } finally {
-    state.uploading=false;
-  }
+function uploadScope() {
+  return {workspaceId:state.offlineProfile?.workspaceId||state.workspace?.workspace_id||state.session?.workspace_id,memberId:state.session?.member?.id,binding:state.session?.cache_binding,pageId:state.page?.id};
 }
+function currentUploadScope(scope) {
+  return state.route==='page'&&state.uploadTargetPageId===scope.pageId&&state.page?.id===scope.pageId&&state.session?.member?.id===scope.memberId&&state.session?.cache_binding===scope.binding&&state.offlineProfile?.workspaceId===scope.workspaceId&&pageEditable()&&!state.offline;
+}
+function sizeLabel(size) {
+  if(size>=1_000_000_000)return (size/1_000_000_000).toLocaleString('ko-KR',{maximumFractionDigits:2})+' GB';
+  if(size>=1_000_000)return (size/1_000_000).toLocaleString('ko-KR',{maximumFractionDigits:2})+' MB';
+  if(size>=1000)return (size/1000).toLocaleString('ko-KR',{maximumFractionDigits:1})+' KB';return size+' B';
+}
+async function uploadDenied({status,message,scope}) {
+  if(state.session?.cache_binding!==scope.binding||state.page?.id!==scope.pageId)return;
+  if(status===401){await state.channel?.deny(401,message);return;}
+  if(status===410){toast('전송 기한이 만료되었습니다. 파일을 새로 선택해 다시 전송해 주세요.');return;}
+  try{const snapshot=await api('/pages/'+encodeURIComponent(scope.pageId)+'/collaboration');if(state.channel?.pageId===scope.pageId)await state.channel.receive(snapshot,'upload-permission');toast(status===404?'전송 정보가 만료되었거나 삭제되었습니다. 파일을 새로 선택해 주세요.':message);}
+  catch(failure){if([401,403,404].includes(failure.status))await state.channel?.deny(failure.status,failure.message);else toast(message);}
+}
+function ensureUploads() {
+  if(!window.FountainUploads||!state.page||!state.offlineProfile)return;
+  const scope=uploadScope(),manager=state.uploadManager;
+  if(manager&&Object.keys(scope).every(key=>manager.scope[key]===scope[key])&&!manager.closed){renderUploads(manager.view());return;}
+  manager?.dispose();
+  const created=new FountainUploads.UploadManager({scope,isCurrent:currentUploadScope,onChange:jobs=>{if(state.uploadManager===created)renderUploads(jobs);},onDenied:uploadDenied,
+    onComplete:async(attachment,originalScope,canAttach=()=>true)=>{
+      if(state.uploadManager!==created||!currentUploadScope(originalScope)||!canAttach())return false;
+      const actual=await api('/session');if(actual.cache_binding!==originalScope.binding||actual.member?.id!==originalScope.memberId){created.dispose();boot();return false;}
+      if(state.uploadManager!==created||!currentUploadScope(originalScope)||!canAttach())return false;
+      const channel=state.channel;
+      if(!state.blocks.some(block=>block.type==='file'&&block.attachment_id===attachment.id)){
+        readBlocks();state.blocks.push({id:uid(),type:'file',text:attachment.name,attachment_id:attachment.id,size:attachment.size});reconcileEditor();
+      }
+      await channel.persistence;if(state.channel!==channel||!currentUploadScope(originalScope)||!canAttach())return false;
+      await channel.flush();
+      if(state.channel!==channel||!currentUploadScope(originalScope)||!canAttach())return false;
+      if(!channel.base.blocks?.some(block=>block.type==='file'&&block.attachment_id===attachment.id))throw new Error('파일 전송은 끝났지만 문서 첨부가 아직 저장되지 않았습니다. 다시 시도해 주세요.');
+      return true;
+    }});
+  state.uploadManager=created;created.load().catch(failure=>{if(state.uploadManager===created&&!created.closed)toast(failure.message);});
+}
+function renderUploads(jobs) {
+  let panel=$('#upload-panel');if(!$('.editor-wrap'))return;
+  if(!jobs.length){panel?.remove();const add=$('[data-action="add-file"]');if(add)add.disabled=!pageEditable()||state.offline;return;}
+  if(!panel){panel=document.createElement('section');panel.id='upload-panel';panel.className='upload-panel';panel.setAttribute('aria-label','파일 전송');($('.rich-toolbar')||$('#blocks')).before(panel);}
+  const editable=pageEditable()&&!state.offline,signature=jobs.map(job=>[job.id,job.name,job.status,job.message,job.hasFile,editable].join(':')).join('|');
+  if(panel.dataset.signature!==signature){
+    panel.dataset.signature=signature;
+    panel.innerHTML=`<div class="upload-panel-title"><strong>파일 전송</strong><span>파일당 최대 5 GB</span></div>${jobs.map(job=>{
+      const active=['fingerprint','starting','uploading','checking','finishing','attaching'].includes(job.status),complete=job.status==='done';
+      return `<article class="upload-card" data-upload-id="${esc(job.id)}" data-upload-state="${esc(job.status)}"><div class="upload-file-heading"><span aria-hidden="true">${complete?'✓':'📎'}</span><strong>${esc(job.name)}</strong><span>${sizeLabel(job.size)}</span></div><progress max="${Math.max(1,job.size)}" value="0" aria-label="${esc(job.name)} 전송 진행률"></progress><div class="upload-progress-label"></div><p role="status">${esc(job.message)}</p><div class="upload-actions">${active&&job.status!=='attaching'?`<button data-action="upload-pause" data-id="${esc(job.id)}">일시 중지</button>`:''}${!active&&!complete&&!['denied','cancelled'].includes(job.status)?`${job.hasFile?`<button data-action="upload-retry" data-id="${esc(job.id)}" ${!editable?'disabled':''}>다시 시도</button>`:''}<button data-action="upload-reselect" data-id="${esc(job.id)}" ${!editable?'disabled':''}>동일한 원본 파일 선택</button>`:''}${!complete&&!['denied','cancelled','attaching'].includes(job.status)?`<button data-action="upload-cancel" data-id="${esc(job.id)}">취소</button>`:''}${complete||job.status==='denied'?`<button data-action="upload-dismiss" data-id="${esc(job.id)}">닫기</button>`:''}</div></article>`;
+    }).join('')}<p class="upload-sample-note">이어 보내기는 파일 이름·크기·수정 시각과 앞뒤 일부 표본을 비교합니다. 원본 전체가 동일하다는 검증은 아닙니다. 새로고침 후에는 원본 파일을 다시 선택해 주세요.</p>`;
+  }
+  for(const job of jobs){const card=$(`[data-upload-id="${CSS.escape(job.id)}"]`,panel);if(!card)continue;const transferred=job.status==='done'?job.size:Math.min(job.size,job.offset+(job.loaded||0));$('progress',card).value=job.size===0&&job.status==='done'?1:transferred;$('.upload-progress-label',card).textContent=`${sizeLabel(transferred)} / ${sizeLabel(job.size)} · ${job.size?Math.min(100,Math.floor(transferred/job.size*100)):job.status==='done'?100:0}%`;
+  }
+  const add=$('[data-action="add-file"]');if(add)add.disabled=state.uploadManager?.active()||!editable;
+}
+async function attachFile(file) {
+  if(!file)return;
+  if(!pageEditable()||state.offline)throw new Error('파일을 전송하려면 문서 편집 권한과 서버 연결이 필요합니다.');
+  ensureUploads();const manager=state.uploadManager;if(!manager)throw new Error('파일 전송 정보를 준비하지 못했습니다.');
+  const resumeId=state.uploadReselectId;state.uploadReselectId=null;
+  return resumeId?manager.resume(resumeId,file):manager.start(file);
+}
+
 function focusBlock(id,atEnd=true) {
   const el=$(`.block[data-id="${CSS.escape(id)}"] .block-content`);
   if(!el)return;
@@ -1039,7 +1076,12 @@ async function doAction(target) {
       for(const block of blocks)state.blocks.push({...structuredClone(block),id:ids.get(block.id),parent_id:ids.get(block.parent_id)||null});
       reconcileEditor();await state.channel.persistence;await FountainOffline.saveDraft(state.channel.key,record.clientId,null);state.recoveryDrafts=await FountainOffline.getDrafts(state.channel.key);state.recoveryDrafts=state.recoveryDrafts.filter(record=>!['pending','basis'].includes(record.draft.reason));renderRecoveryDrafts();scheduleSave();toast('복구 내용을 새 블록으로 추가했습니다.');break;
     }
-    case'add-file':if(state.route!=='page'||!pageEditable())throw new Error('파일을 추가할 편집 권한이 없습니다.');$('#attachment-input')?.click();break;
+    case'upload-pause':state.uploadManager?.pause(id);break;
+    case'upload-retry':await state.uploadManager?.resume(id);break;
+    case'upload-reselect':state.uploadReselectId=id;$('#attachment-input')?.click();break;
+    case'upload-cancel':await state.uploadManager?.cancel(id);break;
+    case'upload-dismiss':state.uploadManager?.jobs.delete(id);if(state.uploadManager)renderUploads(state.uploadManager.view());break;
+    case'add-file':if(state.route!=='page'||!pageEditable())throw new Error('파일을 추가할 편집 권한이 없습니다.');state.uploadReselectId=null;$('#attachment-input')?.click();break;
     case'add-block':addBlock();
     break;
     case'block-menu': {

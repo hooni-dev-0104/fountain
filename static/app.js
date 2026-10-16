@@ -39,6 +39,8 @@ const state = {
 };
 // SCIM credentials belong to this settings view only. Never add them to state or caches.
 let scimPanel=null;
+let searchView=null,searchNavigation=0;
+function clearSearch(){const view=searchView;searchView=null;if(!view)return;view.closed=true;clearTimeout(view.timer);view.probe.abort();view.request?.abort();view.results.replaceChildren();view.input.value='';}
 function clearScimPanel(){const panel=scimPanel;scimPanel=null;for(const input of $$('#scim-secret,#scim-proof'))input.value='';panel?.close();}
 // BEGIN SCIM VIEW MODEL — response secrets remain inside this disposable closure.
 function scimGrantStatus(grant,now=Date.now()) {
@@ -510,12 +512,12 @@ async function loadDatabaseData(id,{remote=!state.offline}={}) {
   if(state.offlineProfile)await cachedResourceIds();
   return data;
 }
-async function api(path, body, method) {
+async function api(path, body, method, options={}) {
   const requestScope={binding:state.session?.cache_binding,memberId:state.session?.member?.id,bootGeneration:state.bootGeneration};
   const stale=()=>{const error=new Error('로그인 상태가 변경되었습니다. 다시 확인해 주세요.');error.code='STALE_REQUEST';return error;};
-  const assertCurrent=()=>{if(requestScope.binding!==state.session?.cache_binding||requestScope.memberId!==state.session?.member?.id||requestScope.bootGeneration!==state.bootGeneration)throw stale();};
+  const assertCurrent=()=>{if(options.current&&!options.current()||requestScope.binding!==state.session?.cache_binding||requestScope.memberId!==state.session?.member?.id||requestScope.bootGeneration!==state.bootGeneration)throw stale();};
   const response = await FountainTransport.request('/api' + path, {
-    method:method || (body ? 'POST':'GET'),headers: {
+    ...(options.signal?{signal:options.signal}:{}),method:method || (body ? 'POST':'GET'),headers: {
       'Content-Type':'application/json'
     }, ...(body ? {
       body:JSON.stringify(body)
@@ -533,7 +535,7 @@ async function api(path, body, method) {
     error.status = response.status;
     error.data=data;
     if(response.status===401&&path!=='/session'){
-      const session=await FountainTransport.request('/api/session').then(result=>result.json()).catch(()=>null);
+      const session=await FountainTransport.request('/api/session',options.signal?{signal:options.signal}:undefined).then(result=>result.json()).catch(()=>null);
       assertCurrent();
       if(session?.authenticated)throw stale();
       if(session)state.session=session;
@@ -640,6 +642,7 @@ async function navigate(route,id) {
     }
     renderSidebar();
     window.scrollTo(0,0);
+    return true;
   }
   catch(error) {
     if(!current())return;
@@ -1266,6 +1269,7 @@ async function reloadDatabase() {
   applyDatabaseControls();
 }
 function openModal(title,content,cls='') {
+  clearSearch();searchNavigation++;
   clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;closeSlash();
   $('#overlay-root').innerHTML=`<div class="modal-backdrop"><section class="modal ${cls}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="modal-head"><h2>${esc(title)}</h2><button class="modal-close" data-action="close-modal" aria-label="닫기">×</button></header><div class="modal-body">${content}</div></section></div>`;
   if(state.route==='page'&&resourceLevel(state.page)<4)$$('[data-action="delete-page"],[data-action="move-page"]',$('.modal')).forEach(el=>el.remove());
@@ -1275,6 +1279,7 @@ function openModal(title,content,cls='') {
   requestAnimationFrame(()=>{if(body?.isConnected)$('input:not([type=checkbox]),textarea,select,button',body)?.focus();});
 }
 function closeModal() {
+  clearSearch();searchNavigation++;
   clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;$('#overlay-root').innerHTML='';
   closeSlash();
 }
@@ -1301,21 +1306,73 @@ function form(content,id,submit='만들기') {
   return `<form class="form-grid" id="${id}">${content}<div class="form-actions"><button type="button" class="outline-btn" data-action="close-modal">취소</button><button class="solid-btn">${submit}</button></div></form>`;
 }
 function openSearch() {
-  openModal('워크스페이스 검색','<input class="search-input" id="search-input" placeholder="페이지와 아이디어를 찾아보세요…" aria-label="검색어"><div class="search-results" id="search-results"></div><div class="keyboard-hint">Enter로 열기 &nbsp; · &nbsp; Esc로 닫기</div>','search-modal');
+  if(!state.loaded||!state.workspace||state.nativeRecoveryPaused||state.authSuspending)return;
+  const options=(items,label)=>`<option value="">${label}</option>${items.map(item=>`<option value="${esc(item.id)}">${esc(item.name||item.title||item.email||item.id)}</option>`).join('')}`;
+  openModal('워크스페이스 검색',`<input class="search-input" id="search-input" placeholder="페이지, 데이터베이스, 항목 검색…" aria-label="검색어"><div class="search-tools"><span id="search-mode" role="status">검색 범위를 확인하고 있어요…</span><button class="outline-btn" id="search-filter-toggle" aria-expanded="false" aria-controls="search-filters">${icon('filter')}필터</button></div><form id="search-filters" hidden><fieldset disabled><div class="search-types"><label><input type="checkbox" name="types" value="page" checked>페이지</label><label><input type="checkbox" name="types" value="database" checked>데이터베이스</label><label><input type="checkbox" name="types" value="row" checked>항목</label><label><input type="checkbox" name="title_only">제목만</label></div><div class="search-filter-grid"><label>소유자<select name="owner">${options(state.workspace.members||[],'모든 소유자')}</select></label><label>팀스페이스<select name="teamspace">${options(state.workspace.teamspaces||[],'전체 팀스페이스')}</select></label><label class="search-filter-wide">페이지 범위<select name="in">${options(state.workspace.pages||[],'모든 페이지 · 하위 문서 포함')}</select></label><label>날짜 기준<select name="date_field"><option value="updated">수정일</option><option value="created">생성일</option></select></label><label>정렬<select name="sort"><option value="relevance">관련도</option><option value="updated_desc">최근 수정순</option><option value="updated_asc">오래된 수정순</option><option value="created_desc">최근 생성순</option><option value="created_asc">오래된 생성순</option><option value="title">제목순</option></select></label><label>시작일<input type="date" name="after"></label><label>종료일 · 해당 날짜 포함<input type="date" name="before"></label></div><button type="button" class="text-btn" id="search-reset">필터 초기화</button></fieldset></form><div id="search-status" role="status" aria-live="polite"></div><div class="search-results" id="search-results"></div><div class="search-footer"><span class="keyboard-hint">Enter로 열기 · Esc로 닫기</span><button class="outline-btn" id="search-more" hidden>더 보기</button><button class="outline-btn" id="search-retry" hidden>다시 검색</button></div>`,'search-modal');
   $('.modal-body').style.padding='0';
   $('.modal-head').style.display='none';
-  renderSearch('');
+  const view={modal:$('.search-modal'),input:$('#search-input'),results:$('#search-results'),form:$('#search-filters'),status:$('#search-status'),modeLabel:$('#search-mode'),more:$('#search-more'),retry:$('#search-retry'),sequence:0,items:[],next:null,marker:null,closed:false,busy:false,offline:state.offline,mode:state.offline?'offline':'pending',scope:searchScope(),probe:new AbortController()};
+  searchView=view;
+  $('#search-filter-toggle').onclick=event=>{const expanded=event.currentTarget.getAttribute('aria-expanded')!=='true';event.currentTarget.setAttribute('aria-expanded',String(expanded));view.form.hidden=!expanded;};
+  view.form.onchange=()=>renderSearch(view);
+  view.form.onsubmit=event=>{event.preventDefault();renderSearch(view);};
+  $('#search-reset').onclick=()=>{view.form.reset();renderSearch(view);};
+  view.more.onclick=()=>renderSearch(view,true);view.retry.onclick=()=>renderSearch(view);
+  view.results.onclick=event=>{const button=event.target.closest('.search-result');if(!button)return;event.stopPropagation();const item=view.items[Number(button.dataset.index)];if(item)void openSearchResult(view,item);};
+  updateSearchMode(view);
+  if(view.offline){void renderSearch(view);return;}
+  void (async()=>{try{
+    const capabilities=await api('/capabilities',undefined,undefined,{signal:view.probe.signal,current:()=>searchCurrent(view)});
+    if(!searchCurrent(view))return;view.mode=capabilities.search_advanced===true?'advanced':'legacy';
+  }catch(error){if(!searchCurrent(view)||error.name==='AbortError'||error.code==='STALE_REQUEST')return;if([404,405].includes(error.status))view.mode='legacy';else{view.mode='unavailable';view.status.textContent='검색 지원 여부를 확인하지 못했습니다. 연결과 권한을 확인한 뒤 다시 열어 주세요.';}}
+  if(!searchCurrent(view))return;updateSearchMode(view);if(view.mode!=='unavailable')await renderSearch(view);
+  })();
 }
-async function renderSearch(q) {
-  try {
-    const data=state.offline?{results:[...state.workspace.pages.filter(page=>state.cachedPages?.has(page.id)).map(page=>({...page,type:'page'})),...state.workspace.databases.filter(database=>state.cachedDatabases?.has(database.id)).map(database=>({...database,title:database.name,type:'database'}))].filter(item=>(item.title||'').toLowerCase().includes(q.toLowerCase()))}:await api('/search?q='+encodeURIComponent(q));
-    if(!$('#search-results'))return;
-    const results=normalizeList(data.results||data.pages||data);
-    $('#search-results').innerHTML=results.length?results.map(p=>`<button class="search-result" data-action="${p.type==='database'?'database':'page'}" data-id="${esc(p.id||p.page_id)}"><span class="page-icon">${esc(p.icon||'📄')}</span><span>${esc(p.title||p.name)}<small style="display:block">${esc(p.excerpt||p.snippet||'Fountain 스튜디오')}</small></span><span class="muted" style="margin-left:auto">↵</span></button>`).join(''):'<div class="empty">검색 결과가 없어요. 다른 단어로 찾아보세요.</div>';
-  }
-  catch(e) {
-    toast(e.message);
-  }
+function searchScope(){return {binding:state.session?.cache_binding,member:state.session?.member?.id,workspace:state.workspace?.workspace_id,boot:state.bootGeneration,epoch:FountainTransport.scopeEpoch};}
+function sameSearchScope(scope){return !state.nativeRecoveryPaused&&!state.authSuspending&&Object.entries(scope).every(([key,value])=>searchScope()[key]===value);}
+function searchCurrent(view){return searchView===view&&!view.closed&&view.modal.isConnected&&$('.search-modal')===view.modal&&$('#search-results')===view.results&&view.offline===state.offline&&sameSearchScope(view.scope);}
+window.addEventListener('offline',()=>{if(searchView)closeModal();});
+window.addEventListener('online',()=>{if(searchView)closeModal();});
+function updateSearchMode(view){view.modeLabel.textContent={pending:'검색 범위를 확인하고 있어요…',advanced:'페이지 · 데이터베이스 · 항목 검색',legacy:'기존 서버 · 페이지 검색만 지원',offline:'오프라인 · 기기에 보관된 제목만 검색',unavailable:'검색을 사용할 수 없습니다.'}[view.mode];$('fieldset',view.form).disabled=view.mode!=='advanced';}
+function searchParameters(view,more){
+  const fields=new FormData(view.form),query=new URLSearchParams({q:view.input.value,limit:'20'}),types=fields.getAll('types');
+  if(!types.length)throw new Error('검색할 유형을 하나 이상 선택하세요.');query.set('types',types.join(','));query.set('title_only',fields.has('title_only')?'1':'0');
+  for(const name of ['owner','teamspace','in','date_field','sort'])if(fields.get(name))query.set(name,fields.get(name));
+  for(const name of ['after','before'])if(fields.get(name)){const value=String(fields.get(name));if(!/^\d{4}-\d{2}-\d{2}$/.test(value))throw new Error('날짜를 확인해 주세요.');const [y,m,d]=value.split('-').map(Number),date=new Date(0);date.setFullYear(y,m-1,d);date.setHours(0,0,0,0);if(name==='before')date.setDate(date.getDate()+1);const iso=date.toISOString();if(!/^\d{4}-/.test(iso))throw new Error('날짜 범위를 확인해 주세요.');query.set(name,iso);}
+  if(query.has('after')&&query.has('before')&&query.get('after')>=query.get('before'))throw new Error('종료일은 시작일보다 빠를 수 없습니다.');
+  if(more){query.set('offset',String(view.next));query.set('result_set',view.marker);}return query;
+}
+async function renderSearch(view,more=false){
+  if(!view||!searchCurrent(view)||['pending','unavailable'].includes(view.mode)||more&&view.busy)return;
+  view.request?.abort();const controller=new AbortController();view.request=controller;const sequence=++view.sequence,current=()=>searchCurrent(view)&&sequence===view.sequence&&!controller.signal.aborted;
+  view.busy=true;view.more.hidden=true;view.retry.hidden=true;view.status.textContent='검색하고 있어요…';
+  if(!more){view.items=[];view.next=null;view.marker=null;view.results.replaceChildren();}
+  try{
+    let data;
+    if(view.mode==='offline'){const q=view.input.value.toLocaleLowerCase();data={results:[...(state.workspace.pages||[]).filter(p=>state.cachedPages?.has(p.id)).map(p=>({type:'page',id:p.id,title:p.title,icon:p.icon})),...(state.workspace.databases||[]).filter(d=>state.cachedDatabases?.has(d.id)).map(d=>({type:'database',id:d.id,title:d.name,icon:d.icon}))].filter(item=>(item.title||'').toLocaleLowerCase().includes(q))};}
+    else data=await api(view.mode==='advanced'?'/search/advanced?'+searchParameters(view,more):'/search?q='+encodeURIComponent(view.input.value),undefined,undefined,{signal:controller.signal,current});
+    if(!current())return;
+    const items=normalizeList(data.results||data.pages||data).filter(item=>view.mode==='legacy'?(item.type||'page')==='page':['page','database','row'].includes(item.type||'page')).map(item=>({type:item.type||'page',id:item.id||item.page_id,title:item.title||item.name||'제목 없음',icon:item.icon,snippet:view.mode==='offline'?'기기에 보관된 제목':item.snippet||item.excerpt||'',database_id:item.database_id,database_title:item.database_title}));
+    view.items=more?[...view.items,...items]:items;view.next=data.has_more&&Number.isSafeInteger(data.next_offset)?data.next_offset:null;view.marker=typeof data.result_set==='string'&&/^[a-f0-9]{64}$/.test(data.result_set)?data.result_set:null;
+    view.results.innerHTML=view.items.length?view.items.map((item,index)=>`<button class="search-result" data-index="${index}"><span class="page-icon">${esc(item.icon||(item.type==='row'?'▦':item.type==='database'?'▤':'📄'))}</span><span class="search-result-copy"><span class="search-result-title">${esc(item.title)}</span><small class="search-result-kind">${esc(item.type==='row'?'항목 · '+(item.database_title||'데이터베이스'):item.type==='database'?'데이터베이스':'페이지')}</small>${item.snippet?`<small class="search-result-snippet">${esc(item.snippet)}</small>`:''}</span><span class="search-result-arrow" aria-hidden="true">↵</span></button>`).join(''):'<div class="empty">검색 결과가 없어요. 다른 단어나 필터를 확인해 주세요.</div>';
+    view.status.textContent=view.mode==='advanced'?`${Number.isSafeInteger(data.total)?data.total:view.items.length}개 결과 · ${view.items.length}개 표시`:`${view.items.length}개 결과`;
+    view.more.hidden=!(view.next!==null&&view.marker);view.more.disabled=false;
+  }catch(error){
+    if(!current()||error.name==='AbortError'||error.code==='STALE_REQUEST')return;
+    if([403,404].includes(error.status)){view.items=[];view.next=null;view.marker=null;view.results.replaceChildren();}
+    if(error.status===409){view.items=[];view.next=null;view.marker=null;view.results.replaceChildren();view.status.textContent='목록이 변경되었습니다. 처음부터 다시 검색해 주세요.';view.retry.hidden=false;}
+    else view.status.textContent=error.status===404?'선택한 범위를 찾을 수 없거나 접근할 수 없습니다.':error.status===403?'이 검색에 접근할 권한이 없습니다.':error.status&&error.status>=500?'검색 서버에 연결하지 못했습니다. 다시 시도해 주세요.':error.message;
+  }finally{if(current())view.busy=false;}
+}
+async function openSearchResult(view,item){
+  if(!searchCurrent(view)||typeof item.id!=='string')return;
+  const scope=view.scope,ticket=searchNavigation;
+  if(item.type!=='row'){await navigate(item.type==='database'?'database':'page',item.id);return;}
+  if(typeof item.database_id!=='string')return;
+  const opened=await navigate('database',item.database_id);
+  if(opened!==true||!sameSearchScope(scope)||searchNavigation!==ticket+1||$('.modal')||state.route!=='database'||state.database?.id!==item.database_id)return;
+  if(!state.rows.some(row=>row.id===item.id)){toast('항목이 삭제되었거나 더 이상 접근할 수 없습니다.');return;}
+  openRow(item.id);
 }
 function openRow(id,initialStatus) {
   const row=state.rows.find(r=>r.id===id);
@@ -2082,7 +2139,7 @@ document.addEventListener('input',event=> {
     const text=state.blocks.find(block=>block.id===id)?.text||'';if(text.startsWith('/'))openSlash(id,text.slice(1));else closeSlash();scheduleSave();
   }
   if(el.id==='search-input') {
-    clearTimeout(state.searchTimer); state.searchTimer=setTimeout(()=>renderSearch(el.value),150);
+    const view=searchView;if(view&&searchCurrent(view)){clearTimeout(view.timer);view.sequence++;view.request?.abort();view.items=[];view.results.replaceChildren();view.more.hidden=true;view.status.textContent='검색을 준비하고 있어요…';view.timer=setTimeout(()=>renderSearch(view),150);}
   }
   if(el.id==='db-filter-input') {
     state.filter=el.value; $('#db-view').innerHTML=databaseView();
@@ -2355,7 +2412,7 @@ function renderLogin(preserve=true) {
   if(state.authRetentionError&&$('#login-error'))$('#login-error').textContent=state.authRetentionError;
 }
 async function boot() {
-  clearScimPanel();
+  clearScimPanel();clearSearch();
   if(state.nativeRecoveryPaused)return;
   const generation=(state.bootGeneration||0)+1;state.bootGeneration=generation;
   const cachedIdentity=await window.FountainOffline?.getProfile().catch(()=>null);

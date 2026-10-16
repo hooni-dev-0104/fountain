@@ -566,9 +566,15 @@
       try {
         const saved=preparedImports.get(this).get(prepared?.token);require(saved&&saved.digest===prepared.digest,'가져오기 미리보기를 다시 열어 주세요.',409,'IMPORT_PREVIEW_STALE');
         await this.authenticate();this.importCurrent(isCurrent);require(this.profile.session.member.role===saved.role,'권한이 바뀌었습니다. 미리보기를 다시 확인해 주세요.',409,'IMPORT_PREVIEW_STALE');
-        for(const proof of saved.proofs){const value=await this.importRead(proof.path,proof.kind,proof.id,isCurrent);require(this.importFingerprint(value,proof)===proof.fingerprint,'복구 대상의 현재 내용이나 권한이 바뀌었습니다. 미리보기를 다시 확인해 주세요.',409,'IMPORT_PREVIEW_STALE');}
+        const verifiedEditablePageIds=[],draftTargets=new Set(saved.bundle.drafts.map(draft=>draft.resourceKey));
+        for(const proof of saved.proofs){
+          const value=await this.importRead(proof.path,proof.kind,proof.id,isCurrent);require(this.importFingerprint(value,proof)===proof.fingerprint,'복구 대상의 현재 내용이나 권한이 바뀌었습니다. 미리보기를 다시 확인해 주세요.',409,'IMPORT_PREVIEW_STALE');
+          // A newly fetched workspace may know a target absent from the older cache.
+          // Only this revalidated response supplies storage's separate target proof.
+          if(proof.kind==='workspace')for(const page of value.pages||[])if(proof.pageIds.includes(page.id)&&page.access_level>=3&&!page.locked&&!page.archived&&draftTargets.has(this.offline.key(this.profile,page.id)))verifiedEditablePageIds.push(page.id);
+        }
         this.importCurrent(isCurrent);
-        const result=await this.write(()=>{this.importCurrent(isCurrent);return this.offline.stageRecoveryImport(this.profile,copy(saved.bundle),{isCurrent:()=>!this.closed&&(!isCurrent||isCurrent())});});
+        const result=await this.write(()=>{this.importCurrent(isCurrent);return this.offline.stageRecoveryImport(this.profile,copy(saved.bundle),{verifiedEditablePageIds,isCurrent:()=>!this.closed&&(!isCurrent||isCurrent())});});
         this.importCurrent(isCurrent);preparedImports.get(this).delete(prepared.token);await this.changed({reason:'recovery-import'});return result;
       } finally { this.importBusy--; if(!this.importBusy&&this.importResume){this.importResume=false;const delay=Math.max(0,this.importResumeAt-Date.now());this.importResumeAt=Infinity;this.schedule(delay);} }
     }

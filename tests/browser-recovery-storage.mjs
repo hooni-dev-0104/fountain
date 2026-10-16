@@ -85,6 +85,23 @@ try {
   const duplicate = await page.evaluate(async () => FountainOffline.stageRecoveryImport(profile, bundle('new-preparation', { digest: firstBundle.digest })));
   assert.equal(duplicate.duplicate, true); assert.deepEqual(duplicate.operationIds, first.result.operationIds);
   assert.equal(await page.evaluate(() => events.length), 1);
+  stage = 'fresh server target is an explicit option and never imported authority';
+  await page.evaluate(() => { window.freshDraft = { digest: FountainCollaboration.sha256('fresh-server-target'), mutations: [], localPages: [], drafts: [{ resourceKey: FountainOffline.key(profile, 'fresh-server-page'), clientId: 'fresh-target', draft: { reason: 'imported_recovery', blocks: [{ id: 'fresh-text', type: 'paragraph', text: '아직 캐시하지 않은 문서의 복구' }] } }] }; });
+  const beforeFresh = await page.evaluate(() => readAll());
+  assert.equal(await rejection(page, async () => FountainOffline.stageRecoveryImport(profile, freshDraft), 'SecurityError'), true);
+  for (const value of [null, 'fresh-server-page', [null], [''], ['x'.repeat(161)], Array(2001).fill('fresh-server-page')]) {
+    assert.equal(await page.evaluate(async value => { try { await FountainOffline.stageRecoveryImport(profile, freshDraft, { verifiedEditablePageIds: value }); return false; } catch (error) { return error.name; } }, value), 'TypeError');
+  }
+  assert.equal(await rejection(page, async () => FountainOffline.stageRecoveryImport(profile, { ...freshDraft, verifiedEditablePageIds: ['fresh-server-page'] }), 'TypeError'), true);
+  assert.deepEqual(await page.evaluate(() => readAll()), beforeFresh);
+  const freshResult = await page.evaluate(() => FountainOffline.stageRecoveryImport(profile, freshDraft, { verifiedEditablePageIds: ['fresh-server-page'] }));
+  assert.equal(freshResult.draftKeys.length, 1);
+  assert.equal(await page.evaluate(async () => (await FountainOffline.getDrafts(FountainOffline.key(profile, 'fresh-server-page')))[0].draft.blocks[0].text), '아직 캐시하지 않은 문서의 복구');
+  await page.evaluate(() => FountainOffline.purgeResource(FountainOffline.key(profile, 'fresh-server-page')));
+  const afterFreshRevoke = await page.evaluate(() => readAll());
+  assert.equal(await rejection(page, async () => FountainOffline.stageRecoveryImport(profile, { ...freshDraft, digest: FountainCollaboration.sha256('revoked-fresh-target') }, { verifiedEditablePageIds: ['fresh-server-page'] }), 'SecurityError'), true);
+  assert.deepEqual(await page.evaluate(() => readAll()), afterFreshRevoke);
+
   stage = 'two tabs racing the same digest commit exactly once';
   const second = await context.newPage(); await boot(second); await second.evaluate(profile => { window.profile = profile; }, profile);
   const digest = 'a'.repeat(64);

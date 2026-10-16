@@ -60,6 +60,21 @@ try{
   const bodyReceipt=await call(page,'importPrepared',bodyPreview);assert.equal(bodyReceipt.draftKeys.length,1);const bodyDraft=await page.evaluate(async id=>(await FountainOffline.getDrafts(FountainOffline.key(profile,id))).find(record=>record.draft.imported).draft,currentPage.id);assert.equal(bodyDraft.blocks.map(value=>value.text).join(''),raw);assert.equal(bodyDraft.ops,undefined);
   const otherReceipt=await call(tab,'importPrepared',otherTarget);assert.equal(otherReceipt.duplicate,false);const bodyAgain=await call(page,'prepareImport',raw,{targetPageId:currentPage.id});assert.equal((await call(page,'importPrepared',bodyAgain)).duplicate,true);assert.deepEqual(serverState(),virginBefore,'first-use body recovery preview/stage must not lazily create collaboration state');
 
+  stage='fresh workspace-only body target stages despite an older persisted page list';
+  const freshTarget=await api(actor,'/pages',{title:'캐시 뒤 새 기존 문서'});
+  const freshCache=await page.evaluate(async id=>({cached:(await FountainOffline.getProfile(profile.id)).workspace.pages.some(value=>value.id===id),snapshot:await FountainOffline.getSnapshot(FountainOffline.key(profile,id))}),freshTarget.id);
+  assert.equal(freshCache.cached,false);assert.equal(freshCache.snapshot,null);
+  const freshTargetBefore=serverState(),freshPreview=await call(page,'prepareImport',JSON.stringify({blocks:[{id:'fresh-body',text:'캐시에 없어도 보존🙂'}]}),{targetPageId:freshTarget.id});
+  assert.equal(freshPreview.items[0].targetId,freshTarget.id);assert.deepEqual(serverState(),freshTargetBefore);
+  const freshTargetReceipt=await call(page,'importPrepared',freshPreview);assert.equal(freshTargetReceipt.draftKeys.length,1);
+  const freshSaved=await page.evaluate(async id=>({drafts:await FountainOffline.getDrafts(FountainOffline.key(profile,id)),snapshot:await FountainOffline.getSnapshot(FountainOffline.key(profile,id)),cached:(await FountainOffline.getProfile(profile.id)).workspace.pages.some(value=>value.id===id)}),freshTarget.id);
+  assert.ok(freshSaved.drafts.some(record=>record.draft.blocks[0].text==='캐시에 없어도 보존🙂'));assert.equal(freshSaved.snapshot,null);assert.equal(freshSaved.cached,false);assert.deepEqual(serverState(),freshTargetBefore);
+  const permissionPreview=await call(page,'prepareImport',JSON.stringify({blocks:[{id:'stale-body',text:'잠금 뒤 보존 금지'}]}),{targetPageId:freshTarget.id});
+  await api(actor,'/pages/'+freshTarget.id,{locked:true},'PATCH');await assert.rejects(call(page,'importPrepared',permissionPreview),/바뀌었습니다/);
+  assert.equal((await page.evaluate(id=>FountainOffline.getDrafts(FountainOffline.key(profile,id)),freshTarget.id)).length,1);
+  await assert.rejects(call(page,'prepareImport',JSON.stringify({blocks:[{id:'locked-body',text:'잠긴 문서'}]}),{targetPageId:freshTarget.id}),/편집할 권한/);
+  await api(actor,'/pages/'+freshTarget.id,{locked:false},'PATCH');
+
   stage='fresh parent/child pages and formatted Unicode bodies stage without original ACL';
   const createFile=await page.evaluate(({source,prefix,currentPage})=>{
     const record=(id,target,parent)=>({id,profileId:prefix,resourceKey:prefix+'|'+target,status:'conflict',operation:{id,kind:'page.create',target_id:target,body:{title:target,parent_id:parent,permissions:[{member_id:'forged',access:4}]},depends_on:[]}});

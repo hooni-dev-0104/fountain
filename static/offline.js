@@ -591,7 +591,11 @@
     mutationsChanged(namespace(profile));
     localPagesChanged(resourceKey);
   }
-  async function stageRecoveryImport(profile, bundle, { isCurrent = () => true } = {}) {
+  async function stageRecoveryImport(profile, bundle, { isCurrent = () => true, verifiedEditablePageIds = [] } = {}) {
+    if (!Array.isArray(verifiedEditablePageIds) || verifiedEditablePageIds.length > 2000
+        || !verifiedEditablePageIds.every(id => typeof id === 'string' && id.length > 0 && id.length <= 160)) throw new TypeError('Invalid verified recovery targets');
+    // Caller supplies only targets rechecked against the current server, never imported file fields.
+    const verifiedTargets = new Set(verifiedEditablePageIds);
     const check = () => {
       if (typeof isCurrent !== 'function' || isCurrent() !== true) throw new DOMException('Recovery preview is no longer current', 'AbortError');
     };
@@ -742,7 +746,8 @@
       const existingEpochs = new Set(snapshots.map(row => row.snapshot?.epoch));
       for (const draft of drafts) if (!localPages.has(draft.resourceKey)
           && !current.workspace?.pages?.some(page => page.id === resourceID(draft.resourceKey))
-          && !snapshots.some(row => row.key === draft.resourceKey)) throw new DOMException('Recovery draft requires a current target page', 'SecurityError');
+          && !snapshots.some(row => row.key === draft.resourceKey)
+          && !verifiedTargets.has(resourceID(draft.resourceKey))) throw new DOMException('Recovery draft requires a current target page', 'SecurityError');
       for (const item of value.mutations) {
         const op = item.operation;
         if (existing.some(row => row.id === op.id)) fail('Recovery operation ID already exists');

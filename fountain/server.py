@@ -15,6 +15,7 @@ import os
 import threading
 import re
 import sqlite3
+import ssl
 from contextlib import nullcontext
 import mimetypes
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -532,10 +533,11 @@ def handler_for(application):
                 allowed = {f"localhost:{self.server.server_port}", f"127.0.0.1:{self.server.server_port}", f"[::1]:{self.server.server_port}"}
                 for allowed_host in self.server.allowed_hosts:
                     allowed.add(f'{allowed_host}:{self.server.server_port}')
-                if self.server.server_port == 80: allowed.update({"localhost", "127.0.0.1", "[::1]"})
+                if self.server.server_port == (443 if self.server.scheme == 'https' else 80):
+                    allowed.update({"localhost", "127.0.0.1", "[::1]", *self.server.allowed_hosts})
                 require(host in allowed, "Untrusted Host", 403)
                 origin = self.headers.get("Origin")
-                require(origin is None or origin == "http://" + host, "Untrusted Origin", 403)
+                require(origin is None or origin == self.server.scheme + "://" + host, "Untrusted Origin", 403)
                 url = urlparse(self.path)
                 require(not url.scheme and not url.netloc, "Invalid request target")
                 path = unquote(url.path)
@@ -597,12 +599,12 @@ def handler_for(application):
                         return
                     if method == 'POST':
                         token = auth.login(body, self.client_address[0])
-                        self._cookie_header = 'fountain_session=' + token + '; Max-Age=604800; HttpOnly; SameSite=Strict; Path=/'
+                        self._cookie_header = 'fountain_session=' + token + '; Max-Age=604800; HttpOnly; SameSite=Strict; Path=/' + ('; Secure' if self.server.scheme == 'https' else '')
                         self.send_payload(200, auth.session_info('fountain_session=' + token))
                         return
                     if method == 'DELETE':
                         auth.logout(cookie)
-                        self._cookie_header = 'fountain_session=; Max-Age=0; HttpOnly; SameSite=Strict; Path=/'
+                        self._cookie_header = 'fountain_session=; Max-Age=0; HttpOnly; SameSite=Strict; Path=/' + ('; Secure' if self.server.scheme == 'https' else '')
                         self.send_payload(200, {'authenticated': not auth.enabled, 'required': auth.enabled})
                         return
                     raise APIError(405, 'Unsupported session method')
@@ -646,9 +648,29 @@ def handler_for(application):
 
 
 class FountainServer(ThreadingHTTPServer):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, tls_context=None, **kwargs):
         self.stream_stop = threading.Event()
+        self.tls_context = tls_context
+        self.scheme = 'https' if tls_context is not None else 'http'
+        self.tls_handshake_timeout = 5
         super().__init__(*args, **kwargs)
+
+    def process_request_thread(self, request, client_address):
+        if self.tls_context is not None:
+            secured = None
+            try:
+                request.settimeout(self.tls_handshake_timeout)
+                secured = self.tls_context.wrap_socket(request, server_side=True, do_handshake_on_connect=False)
+                secured.do_handshake()
+                if self.stream_stop.is_set():
+                    self.shutdown_request(secured)
+                    return
+                secured.settimeout(30)
+            except (OSError, ValueError):
+                self.shutdown_request(secured if secured is not None else request)
+                return
+            request = secured
+        super().process_request_thread(request, client_address)
 
     def shutdown(self):
         self.stream_stop.set()
@@ -669,7 +691,19 @@ class FountainServer(ThreadingHTTPServer):
         super().server_close()
 
 
-def create_server(host="127.0.0.1", port=8787, db_path=".data/fountain.db", static=STATIC, allowed_hosts=None):
+def create_server(host="127.0.0.1", port=8787, db_path=".data/fountain.db", static=STATIC, allowed_hosts=None,
+                  tls_cert=None, tls_key=None):
+    require((tls_cert is None) == (tls_key is None), 'TLS requires both a certificate and a private key')
+    tls_context = None
+    if tls_cert is not None:
+        # Validate TLS before creating the user's database or data directory.
+        try:
+            tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            tls_context.minimum_version = ssl.TLSVersion.TLSv1_2
+            tls_context.set_alpn_protocols(['http/1.1'])
+            tls_context.load_cert_chain(tls_cert, tls_key, password=lambda: '')
+        except (OSError, ValueError, TypeError) as error:
+            raise APIError(400, 'Unable to load the TLS certificate and private key') from error
     allowed_hosts = allowed_hosts or []
     require(all(isinstance(h, str) and h and not any(c in h for c in '/:@ \t\r\n') for h in allowed_hosts), 'Invalid allowed host')
     if host not in {'127.0.0.1', 'localhost'}:
@@ -684,18 +718,19 @@ def create_server(host="127.0.0.1", port=8787, db_path=".data/fountain.db", stat
             pass
         else:
             os.close(descriptor)
-    store = Store(db_path)
+    store, server = Store(db_path), None
     try:
         application = Application(store, static)
         if host not in {'127.0.0.1', 'localhost'}:
             require(application.auth.enabled, 'Family network access requires FOUNTAIN_ACCESS_TOKEN or individual accounts')
-    except Exception:
+        server = FountainServer((host, port), handler_for(application), tls_context=tls_context)
+        server.application = application
+        server.allowed_hosts = allowed_hosts
+        return server
+    except BaseException:
+        if server is not None: server.server_close()
         store.close()
         raise
-    server = FountainServer((host, port), handler_for(application))
-    server.application = application
-    server.allowed_hosts = allowed_hosts
-    return server
 
 
 def main():
@@ -704,10 +739,17 @@ def main():
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--allowed-host", action="append", default=[], help="LAN hostname or IP allowed by Host validation")
     parser.add_argument("--data", default=".data/fountain.db")
+    parser.add_argument("--tls-cert", help="PEM certificate chain for direct HTTPS")
+    parser.add_argument("--tls-key", help="Matching unencrypted PEM private key")
     args = parser.parse_args()
+    if bool(args.tls_cert) != bool(args.tls_key): parser.error('--tls-cert and --tls-key must be supplied together')
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    server = create_server(args.host, args.port, args.data, allowed_hosts=args.allowed_host)
-    print(f"Fountain: http://localhost:{server.server_port}", flush=True)
+    try:
+        server = create_server(args.host, args.port, args.data, allowed_hosts=args.allowed_host,
+                               tls_cert=args.tls_cert, tls_key=args.tls_key)
+    except (APIError, OSError) as error:
+        parser.error(str(error))
+    print(f"Fountain: {server.scheme}://localhost:{server.server_port}", flush=True)
     try: server.serve_forever()
     except KeyboardInterrupt: pass
     finally:

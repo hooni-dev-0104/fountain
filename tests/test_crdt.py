@@ -114,6 +114,33 @@ class CRDTTests(unittest.TestCase):
         self.assertEqual(changed["rich_text"], [{"text": "legacy replacement", "marks": {}}])
         with self.assertRaises(APIError): normalize_blocks([{**block, "text": "replacement", "rich_text": [{"text": "old", "marks": {"link": "javascript:alert(1)"}}]}])
 
+    def test_normalization_canonicalizes_legacy_parent_tree_without_changing_sibling_order(self):
+        cases = [
+            ([{"id": "orphan", "text": "유실 방지", "parent_id": "ghost"}], ["orphan"], {"orphan": None}),
+            ([{"id": "second", "parent_id": "parent", "text": "둘째"},
+              {"id": "grandchild", "parent_id": "second", "text": "아래"},
+              {"id": "first", "parent_id": "parent", "text": "첫째"},
+              {"id": "other", "text": "별도"},
+              {"id": "parent", "text": "상위", "type": "heading_1"}],
+             ["other", "parent", "second", "grandchild", "first"],
+             {"parent": None, "other": None, "second": "parent", "grandchild": "second", "first": "parent"}),
+            ([{"id": "b", "parent_id": "a", "text": "나"},
+              {"id": "a", "parent_id": "b", "text": "가"},
+              {"id": "self", "parent_id": "self", "text": "독립"}],
+             ["a", "b", "self"], {"a": None, "b": "a", "self": None}),
+        ]
+        for source, order, parents in cases:
+            with self.subTest(order=order):
+                original = copy.deepcopy(source)
+                normalized = normalize_blocks(source)
+                self.assertEqual([block["id"] for block in normalized], order)
+                self.assertEqual({block["id"]: block["parent_id"] for block in normalized}, parents)
+                self.assertEqual(project(seed_state(normalized)), normalized)
+                self.assertEqual(normalize_blocks(normalized), normalized)
+                self.assertEqual(source, original)
+        normalized = normalize_blocks(cases[1][0])
+        self.assertEqual(next(block for block in normalized if block["id"] == "parent")["type"], "heading1")
+
     def test_invalid_operations_marks_unicode_and_transport_bounds(self):
         state = seed_state([{"id": "block", "text": ""}])
         invalid = [operation("a", True, "block.delete"), operation("a", 0, "block.delete"),

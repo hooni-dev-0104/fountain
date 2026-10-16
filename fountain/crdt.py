@@ -104,7 +104,20 @@ def normalize_blocks(blocks):
         for field in FIELDS - {"type"}:
             if field in block: item[field] = _field(field, copy.deepcopy(block[field]))
         result.append(item)
-    return result
+    # Legacy PUT/import may list children before parents or carry stale links.
+    # Canonicalize only the tree here; constructing character state is unnecessary.
+    parents = _break_cycles({item["id"]: item["parent_id"] if item["parent_id"] in identities
+                             and item["parent_id"] != item["id"] else None for item in result})
+    children = {}
+    for item in result:
+        item["parent_id"] = parents[item["id"]]
+        children.setdefault(item["parent_id"], []).append(item)
+    stack, ordered = list(reversed(children.get(None, []))), []
+    while stack:
+        item = stack.pop()
+        ordered.append(item)
+        stack.extend(reversed(children.get(item["id"], [])))
+    return ordered
 
 
 def _block(identity):

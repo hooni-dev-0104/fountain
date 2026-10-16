@@ -121,7 +121,10 @@ const prepares = [
   ['POST','/api/databases',{owner_id:'forged'}], ['POST','/api/databases',{permissions:acl({alice:'view'})}],
   ['PATCH','/api/databases/db',{name:'x',owner_id:'forged'}], ['PATCH','/api/databases/managed-db',{owner_id:'forged'}],
   ['PATCH','/api/databases/managed-db',{row_permissions:{mode:'all'}}], ['PATCH','/api/databases/db/permissions',{}],
-  ['POST','/api/databases/db/rows',{owner_id:'forged',properties:{related:['visible-2'],files:['row-file']}}],
+  // One failing reference per vector: Python intentionally iterates a set of
+  // relation/file keys, so two simultaneous denials have no stable first message.
+  ['POST','/api/databases/db/rows',{owner_id:'forged',properties:{related:['visible-2']}}],
+  ['POST','/api/databases/db/rows',{owner_id:'forged',properties:{files:['row-file']}}],
   ['PATCH','/api/databases/db/rows/visible',{parent_row_id:null,depends_on:[],properties:{related:[]},owner_id:'forged'}],
   ['PATCH','/api/databases/db/rows/visible',{values:{related:null}}],
   ['PATCH','/api/databases/db/rows/visible',{properties:{related:['hidden']}}],

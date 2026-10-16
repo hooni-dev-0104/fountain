@@ -34,8 +34,9 @@ Each direct test performs one anonymous GET and zero POSTs/mutations. It does no
 prove bridge/configure/login, private-cookie authentication, editing, live UI
 propagation or OS file saving. Earlier authenticated relay-based observation is
 documented separately in [native-cloud-validation.md](native-cloud-validation.md).
-The desktop client still needs a frontend origin/relay or bundled UI transport;
-this change does not enable desktop rendering from the API-only Supabase origin.
+The desktop client was verified separately after this routing milestone; see
+[desktop cloud verification](../../../docs/research/desktop-cloud-verification.md).
+This anonymous routing check does not prove desktop rendering or native login.
 Windows execution and physical devices remain unverified.
 
 ## Explicit opt-in

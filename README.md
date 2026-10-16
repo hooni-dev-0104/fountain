@@ -24,7 +24,7 @@ node --check static/app.js
 
 개인·가족용으로 앱 안의 모든 기능을 무료로 사용합니다. 결제나 플랜 제한이 없습니다. 실제 구현 범위와 Notion과의 차이는 [기능 현황](docs/FEATURES.md), 역공학 근거는 [REA 조사](docs/research/notion-rea.md)에 있습니다.
 
-목표 플랫폼은 웹·macOS·Windows·iOS·Android이며 같은 계정의 기기들은 하나의 원본 서버와 동기화합니다. macOS arm64 설치 앱에서는 Supabase 직접 연결과 별도 QA 공간의 실제 로그인·문서 편집·두 앱 사이 동기화·첨부 전송을 확인했습니다. Windows x64 portable 폴더는 생성·파일 검사를 통과했으나 Windows 실행은 미검증입니다. iOS·Android는 SDK 빌드와 Supabase 직접 경로의 익명 요청 검사까지 통과했으며, 그 경로에서 실제 로그인·편집 전파는 남았습니다. 실행·패키징은 [데스크톱 안내](apps/desktop/README.md), SDK 검증 범위는 [모바일 안내](apps/mobile/README.md), 공통 계정/서버와 무료 저장소 제약은 [플랫폼 설계](docs/PLATFORMS.md)에 있습니다.
+목표 플랫폼은 웹·macOS·Windows·iOS·Android이며 같은 계정의 기기들은 하나의 원본 서버와 동기화합니다. macOS arm64 설치 앱에서는 Supabase 직접 연결과 별도 QA 공간의 실제 로그인·문서 편집·두 앱 사이 동기화·첨부 전송을 확인했습니다. Windows x64 portable 폴더는 생성·파일 검사를 통과했으나 Windows 실행은 미검증입니다. iOS·Android는 SDK 빌드와 운영 API의 익명 요청 검사, 별도 QA 공간의 실제 UI 로그인·문서 편집·Android→iOS→Android 변경 읽기를 통과했습니다. 동시 편집과 다섯 플랫폼 전체 전파는 남아 있습니다. 실행·패키징은 [데스크톱 안내](apps/desktop/README.md), SDK 검증 범위는 [모바일 안내](apps/mobile/README.md), 공통 계정/서버와 무료 저장소 제약은 [플랫폼 설계](docs/PLATFORMS.md)에 있습니다.
 
 모바일 미전송 편집은 현재 앱 캐시에 보관합니다. [SQLite 저장소 개발 상태](docs/NATIVE_OUTBOX.md)에서 기본 비활성 설정과 실기기 검증·이관 조건을 확인할 수 있습니다.
 

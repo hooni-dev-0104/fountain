@@ -1,0 +1,311 @@
+{
+  "version": 1,
+  "observedAt": "2026-10-16T19:13:53.120466+00:00",
+  "goalComplete": false,
+  "scope": "real bundled Android/iOS UI, Auth/PG, and sequential cross-device document readback through isolated sealed Supabase QA",
+  "sourceSHA256": {
+    "apps/mobile/android/app/src/main/java/dev/fountain/workspace/FountainNativePlugin.java": "6089e4b9d089afc6c06f4c4506f851cfa9e76e8fb8575dc28756e13dfb8ab361",
+    "apps/mobile/android/app/src/main/java/dev/fountain/workspace/NativePolicy.java": "d87bc5ce6134cca1e2f19c1829867035bda3097a4c1e6a693ecb207ddf09c051",
+    "apps/mobile/android/app/src/main/java/dev/fountain/workspace/NativeCookieBoundary.java": "dab6fea807362a3b67bc4d9a9debe73af40e09841f9bc6a109d345343227e3e3",
+    "apps/mobile/android/app/src/main/java/dev/fountain/workspace/CookieVault.java": "e7072c9d7108d941d1b98dca9db185838b2dfa1d952dfae3e32cd93b2efce0ae",
+    "apps/mobile/web/bootstrap.js": "47c4206a2cd1016e5250a6a0a0a0ad7920188e226ef41aa695b886efe8c12e9f",
+    "apps/mobile/ios/App/App/AppDelegate.swift": "6eff4aff4ac6d399819ef918079c575e0d87cd0579dbcf1b0d536dd9f9540db6",
+    "apps/mobile/ios/App/AppTests/FountainNativeTests.swift": "426bdd8a5f5996e38c4026a90a12b8182a40522295cb79d6624195810bd8c1c8",
+    "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/CloudClientDeviceTest.java": "46e378cdb06000041509b6a24f506d41646a5a0458d112426c9204cbd9b3347b",
+    "apps/mobile/tests/prepare-cloud-client-input.py": "c51b265ca786c1ba0695a66f51f3a7e0499420c2f5f984129224db5c8bd0fd33",
+    "apps/mobile/web/native-transport.js": "e1199586553fcaa0ca7238c3811b736b1ecd62ff53da740d9ae66b6df674e714",
+    "apps/mobile/tests/transport.mjs": "5a50fcdb7bbbfa1c2a91dd8e6074406c1cfa76659322e9a417467ffa3f1cacc8",
+    "supabase/tests/live-desktop-entry.template.ts": "76a4f36c6b523234be41dd02aa77646ac604489e517ba91755547f22b9c0651c",
+    "supabase/tests/desktop-entry.mjs": "c59b18de35121ac242341fc0be4da3fc10a01ab8062734b87a98925cc1f87721"
+  },
+  "executedSourceSHA256": {
+    "androidFirstAndPolicyTests": "2f8d3664ab57be646605bef13a8b4f622af14c722f1dba9ba01c9aad9f802442",
+    "androidReadbackTests": "46e378cdb06000041509b6a24f506d41646a5a0458d112426c9204cbd9b3347b",
+    "iosSignedUIAndKeychainAndNormalTests": "426bdd8a5f5996e38c4026a90a12b8182a40522295cb79d6624195810bd8c1c8",
+    "iosProductSourceBeforeAndAfterSigning": "6eff4aff4ac6d399819ef918079c575e0d87cd0579dbcf1b0d536dd9f9540db6"
+  },
+  "runtime": {
+    "androidSDK": 36,
+    "androidBuildTools": "36.0.0",
+    "java": 21,
+    "capacitor": "8.5.3",
+    "iosSimulator": "27.0 arm64",
+    "dedicatedAndroid": "FountainRecoveryQA",
+    "dedicatedIOS": "Fountain QA",
+    "physicalDevices": false,
+    "backendOnDevice": false,
+    "newDependencies": 0,
+    "tlsExceptionsAdded": false,
+    "nativeOrdinaryOutboxEnabled": false,
+    "mobileSync": "foreground snapshot polling"
+  },
+  "actual": {
+    "androidFirstUI": {
+      "passed": true,
+      "actualMainWebViewUI": true,
+      "sealedQAEndpoint": true,
+      "directProductionEndpoint": false,
+      "uploadVerified": false,
+      "nativeDownloadVerified": false,
+      "workspaceSHA256": "d1cc904e472914017166fcad6a405bdf65a51803adca98bb6b08126b83783d40",
+      "editTextSHA256": "624cb10f7ab7e972cdf960855f3d65306b5876447bcf5d1e0fea79f2f256b095",
+      "configuredThroughUI": false,
+      "anonymousInterceptBeforeCredentials": true,
+      "uiBootstrapLogin": true,
+      "nativeKeystoreSessionSaved": true,
+      "rendererCookieEmpty": true,
+      "rendererCookieHeadersAbsent": true,
+      "uiCreatedPageServerCount": 1,
+      "createdPageIdSHA256": "fec980ff9a1fa7b40c0510e6b6af75a32cc6727b17d643eea3a0806c05f47525",
+      "uiSharedParagraphSaved": true,
+      "uiReloadReadVerified": true,
+      "nativeCookieBoundaryIntact": true,
+      "normalLogoutVerified": true,
+      "logoutThroughUI": true,
+      "forwardedRequests": 47,
+      "blockedHttpsRequests": 1,
+      "testFactoryDisabled": true
+    },
+    "iosUI": {
+      "actualRunCompleted": true,
+      "androidSharedTextRead": true,
+      "credentialRequests": 1,
+      "interceptedRequests": 23,
+      "logoutVerified": true,
+      "newNativeOwnerKeychainSession": true,
+      "outboxEnabled": false,
+      "persistedEdit": true,
+      "rendererCookieEmpty": true,
+      "sessionVerified": true,
+      "textSHA256": "5d47c6f0f7ec39aed516bac2637046e83b3b1517b310adf18440382e3844908b"
+    },
+    "androidReadbackUI": {
+      "passed": true,
+      "actualMainWebViewUI": true,
+      "sealedQAEndpoint": true,
+      "directProductionEndpoint": false,
+      "bootstrapUsed": false,
+      "domainEdits": 0,
+      "uploadVerified": false,
+      "nativeDownloadVerified": false,
+      "workspaceSHA256": "d1cc904e472914017166fcad6a405bdf65a51803adca98bb6b08126b83783d40",
+      "expectedTextSHA256": "5d47c6f0f7ec39aed516bac2637046e83b3b1517b310adf18440382e3844908b",
+      "configuredThroughUI": false,
+      "configuredThroughNativeFallback": true,
+      "anonymousInterceptBeforeCredentials": true,
+      "normalUILogin": true,
+      "sameAccountOwner": true,
+      "nativeKeystoreSessionSaved": true,
+      "rendererCookieEmpty": true,
+      "rendererCookieHeadersAbsent": true,
+      "sidebarPageClicked": true,
+      "iosParagraphReadInUI": true,
+      "actualBackendReadMatched": true,
+      "matchingParagraphs": 1,
+      "nativeCookieBoundaryIntact": true,
+      "normalLogoutVerified": true,
+      "logoutThroughUI": true,
+      "forwardedRequests": 22,
+      "blockedHttpsRequests": 0,
+      "testFactoryDisabled": true,
+      "failurePresent": false
+    },
+    "iosUnmodifiedDirectAnonymous": {
+      "accountsMode": true,
+      "actualPluginNativeHTTPS": true,
+      "anonymous": true,
+      "bindingNull": true,
+      "enabled": true,
+      "http200": true,
+      "identityNull": true,
+      "memberNull": true,
+      "mutations": 0,
+      "noExposedSetCookie": true,
+      "requests": 1,
+      "required": true,
+      "workspaceNull": true
+    },
+    "finalPostgresBeforeCleanup": [
+      {
+        "qa_owner_users": 1,
+        "qa_auth_sessions": 0,
+        "qa_entities": 25,
+        "ios_edit_persisted": true,
+        "all_storage_objects": 0
+      }
+    ]
+  },
+  "executedTests": {
+    "androidPolicyDevice": {
+      "tests": 1,
+      "failures": 0,
+      "skipped": 0
+    },
+    "androidFirstUI": {
+      "tests": 1,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": 23.185
+    },
+    "androidReadbackUI": {
+      "tests": 1,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": 13.231
+    },
+    "iosSignedKeychainEligibility": {
+      "tests": 1,
+      "failures": 0,
+      "skipped": 0
+    },
+    "iosSignedUI": {
+      "tests": 1,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": 13.327
+    },
+    "iosNormalRouteBridgeAssetRegression": {
+      "tests": 3,
+      "failures": 0,
+      "skipped": 0,
+      "seconds": 0.946
+    },
+    "sealedEntryNode": 12,
+    "mobileMockNativeSuites": 2,
+    "iosPortableChecks": 22,
+    "androidOfflineAPKBuild": true,
+    "iosDebugSDKBuild": true,
+    "iosReleaseSDKBuild": true,
+    "typescriptTypecheck": false
+  },
+  "keychainFix": {
+    "sameProductSource": true,
+    "before": {
+      "status": -34018
+    },
+    "after": {
+      "status": -25300
+    },
+    "unsignedBuild": "CODE_SIGNING_ALLOWED=NO produced linker-only signature; no simulated application identifier",
+    "workingBuild": "CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- lets Xcode generate Simulator application identifier",
+    "manualEntitlementFileAdded": false,
+    "keychainPermissionFenceWeakened": false,
+    "keychainDataOrAttributesReturnedByProbe": false,
+    "appleAccountOrCertificateProvisioningUsed": false,
+    "priorUIFailures": 2,
+    "priorFailuresBeforeCredentials": true,
+    "priorFailure": "NATIVE_STORAGE; zero network/protocol hits",
+    "resolvedBySignedActualUI": true
+  },
+  "qaIsolation": {
+    "productionApiNamespaceChanged": false,
+    "privilegedTestURLInterception": true,
+    "androidFactory": "test APK only; captured original platform wire URL before install; nonce gate disabled then process force-stopped",
+    "iosProtocol": "XCTest-only forwarding protocol; native-only DEBUG class injection guarded by exact QA environment/device; callbacks returned FIFO to original client thread",
+    "normalReleaseHasQASeam": false,
+    "releaseAppSHA256": "b2aba018807be02f2e8214f4205f958301a0109868a26a41c6245c87614f26d3",
+    "releaseSymbolAndStringAuditPassed": true,
+    "verifierVersion": 47,
+    "verifierBundleSHA256": "5d9c8c7e94a8cb2885c4d0d3e2695a3bfc711f4e272253fe207a23a8462bcd73",
+    "firstProviderUserCreatedViaAndroidUI": true,
+    "providerUserCreatedViaFixtureAdminBeforeUI": false,
+    "originalBusinessDataUsed": false
+  },
+  "assets": {
+    "publicFiles": 19,
+    "sha256": {
+      "app.js": "791ed3d71624ebfaaaa647c588de5c92fef26e1743c2dc6a9674efd0003efa75",
+      "backup.js": "c0548d859efdc96005f0fcc0abf9778ee1078e788722547116a9cd198d9f6f0a",
+      "bootstrap.js": "47c4206a2cd1016e5250a6a0a0a0ad7920188e226ef41aa695b886efe8c12e9f",
+      "capacitor.js": "3333389c8cccd266c26399aaf7fc2a695c110684dd6340aea47935416be86a0c",
+      "collaboration.js": "f08ee824aa340e481b033fbfcb7c2b29a25393f559e36476bac9b932b0a0c3a5",
+      "index.html": "86c6eda1241a4c34e86d070d838280c4ea936dec7bb31da419c93d296698a43c",
+      "mutations.js": "11e45ad39476a2a530fa083af7e1d314013d7be52b135d68afd114cdca0d5b90",
+      "native-configuration.css": "ad4585eb50d4d65a9daffc65943fd97e21444d8fb1473c796052a9a5f592d90f",
+      "native-outbox.js": "5344471234571d8566d740e188c3ff739b49d8e60497fbed8acfc0bc9167df83",
+      "native-recovery.js": "1d9b8cacc8355f157b354f30b184e8039301069ab5169e752c9cdb7122035ec0",
+      "native-transport.js": "e1199586553fcaa0ca7238c3811b736b1ecd62ff53da740d9ae66b6df674e714",
+      "offline.js": "68eb866807f6791aac95e39900a905c575bf0b6c738307c1a79203ce0bb437db",
+      "presence.js": "d96cdcf62db278b104d30964ec3f93c42a8cfea5175af3c792438abc74986189",
+      "public.js": "2d3a139d0c21d8dec8e518ebad474035c20b851936aaba7a82140d4e56c13bc9",
+      "recovery-import.js": "22eb1d697123de4bf04e72bf0b7e74652ffaccdf434fe9d6421fa9c3dd959fc0",
+      "style.css": "f0de02a936925a40b355f97e004aa699729bcee3d3727c1b6333ffdba8bcd216",
+      "sw.js": "dd3d1110eb030c24eacc95f5394331198d1a906619867ef2f6444f3d3d733ef2",
+      "uploads.js": "d1aa2da0439c8e21597dc41953c0582ac9341d694299d9486fe4991e725bb513",
+      "version-diff.js": "bb17e720430a7657de62639ebe484c90ca3a4e9f0caab9b77258caa2034699a2"
+    },
+    "sourceAndNativeCopyAndIOSPackagedChecks": 76,
+    "androidAPKAssetChecks": 19,
+    "testFactoryOrNonceHeaderInMainAPK": false,
+    "androidAppAPK": {
+      "bytes": 4611150,
+      "sha256": "f661bb488a2ebc390ee1c32e034c7d2740fd26def98c97e62f0df6ddfc628b2a"
+    },
+    "androidTestAPK": {
+      "sha256": "17dbe33a0cf35ff22c3e399237cb4954c773800e8aad7f6854f55a1640785940"
+    },
+    "iosDebugAppBinarySHA256": "a2d212376e32d87444584f923e31cf334aacb5520c8fa3f18c9ff05076bdc2ce"
+  },
+  "cleanup": {
+    "authAPI": {
+      "status": 200,
+      "protectedMarkersVerified": true,
+      "present": 1,
+      "deleted": 1
+    },
+    "qaRowsAcross29TablesRemaining": 0,
+    "qaAuthUsers": 0,
+    "allAuthSessions": 0,
+    "qaMappings": 0,
+    "storageObjects": 0,
+    "cronJobs": 0,
+    "verifierVersion": 49,
+    "verifierInert404": true,
+    "retirement": {
+      "checks": [
+        {
+          "path": "wire",
+          "oldNonceStatus": 404
+        },
+        {
+          "path": "cleanup-check",
+          "oldNonceStatus": 404
+        },
+        {
+          "path": "cleanup",
+          "oldNonceStatus": 404
+        }
+      ],
+      "retired": true
+    },
+    "privateNoncePasswordInputRemoved": true,
+    "deviceInputsAndResultsRemoved": true,
+    "androidFactoryProcessForceStopped": true,
+    "ownedAndroidEmulatorStopped": true,
+    "preexistingIOSSimulatorKeptBooted": true
+  },
+  "preserved": {
+    "apiVersion": 9,
+    "apiSHA256": "6e6071ea9ac9239f657eb9ec76d45c505438b68418d9c4876033ea11506dba52",
+    "workerVersion": 3,
+    "maintenanceVersion": 3,
+    "migrations": 25,
+    "originalEntities": 153,
+    "originalMeta": 6,
+    "sixBusinessSessionFingerprintsMatch": true,
+    "localhost8787HTTP": 200,
+    "productionCutover": false
+  },
+  "notVerified": [
+    "direct unmodified production API authentication",
+    "simultaneous foreground polling propagation between devices",
+    "authenticated app-process restart (Android reloaded WebView, iOS replaced native owner in same process)",
+    "actual mobile attachment or backup transfer and OS file saving in this cloud UI test",
+    "new iOS provider account creation",
+    "Android server-configuration UI (adapter configure fallback used)",
+    "physical iOS/Android devices",
+    "Windows execution",
+    "public web host and original owner onboarding",
+    "full original Notion paid-feature parity"
+  ]
+}

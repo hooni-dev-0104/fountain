@@ -121,6 +121,37 @@ public final class NativePolicyFixture {
         for(String server:Arrays.asList(project+"/functions/v1/fountain-api",project+"?path=x",project+"#x","https://user:password@ehnovtfadpkwtubmwltl.supabase.co","http://ehnovtfadpkwtubmwltl.supabase.co"))rejects(()->NativePolicy.apiUrl(server,"/api/session"));
     }
 
+    static void publicLinks() {
+        String cloud="https://ehnovtfadpkwtubmwltl.supabase.co",web="https://family.example",other="https://other.example";
+        equal(NativePolicy.publicWebOrigin(web),web);
+        equal(NativePolicy.publicWebOrigin(web+":8443"),web+":8443");
+        for(String raw:Arrays.asList(web+"/",web+":443","HTTPS://family.example","https://FAMILY.example",web+"?x",web+"#x",web+"/path","http://family.example","https://user@family.example",web+"\\evil",web+"\n"))rejects(()->NativePolicy.publicWebOrigin(raw));
+        NativePolicy.PublicWebTrust trust=new NativePolicy.PublicWebTrust();
+        equal(trust.allows(web+"/forms/a",cloud,1,2,3,true),false);
+        equal(trust.allows(web+"/forms/a",web,1,2,3,true),true);
+        equal(trust.allows(web+":8443/sites/a",web+":8443",1,2,3,true),true);
+        trust.observe(cloud,1,2,3,web);
+        for(String route:Arrays.asList("/forms/a","/sites/a_-9","/forms/"+String.join("",Collections.nCopies(160,"a"))))equal(trust.allows(web+route,cloud,1,2,3,true),true);
+        for(String target:Arrays.asList(other+"/forms/a",web+":443/forms/a",web+"/forms/a?x=1",web+"/sites/a#x",web+"/forms/%61",web+"/forms/../a",web+"/forms/a/extra",web+"/api/session",web+"/forms/",web+"/forms/"+String.join("",Collections.nCopies(161,"a")),"https://user@family.example/forms/a","https://FAMILY.example/forms/a",web+"/sites/a%250a"))equal(trust.allows(target,cloud,1,2,3,true),false);
+        equal(trust.allows(web+"/forms/a",cloud,2,2,3,true),false);
+        equal(trust.allows(web+"/forms/a",cloud,1,3,3,true),false);
+        equal(trust.allows(web+"/forms/a",cloud,1,2,4,true),false);
+        equal(trust.allows(web+"/forms/a",other,1,2,3,true),false);
+        equal(trust.allows(web+"/forms/a",cloud,1,2,3,false),false);
+        equal(trust.allows(web+"/forms/a",web,1,2,3,false),false);
+        trust.clear();equal(trust.allows(web+"/forms/a",cloud,1,2,3,true),false);
+        for(Object invalid:Arrays.asList(web+"/",web+":443",Boolean.TRUE,42)){
+            trust.observe(cloud,1,2,3,web);trust.observe(cloud,1,2,3,invalid);
+            equal(trust.allows(web+"/forms/a",cloud,1,2,3,true),false);
+        }
+        trust.observe(cloud,1,2,3,web);trust.observe(cloud,1,2,3,null);
+        equal(trust.allows(web+"/forms/a",cloud,1,2,3,true),false);
+        trust.observe(web,1,2,3,other);
+        equal(trust.allows(other+"/sites/a",web,1,2,3,true),true);
+        equal(trust.allows(web+"/sites/a",web,1,2,3,true),false);
+        trust.clear();equal(trust.allows(web+"/sites/a",web,1,2,3,true),true);
+    }
+
     public static void main(String[] args) throws Exception {
         equal(NativePolicy.origin("https://Example.COM:443/"), "https://example.com");
         equal(NativePolicy.origin("https://127.0.0.1:8443"), "https://127.0.0.1:8443");
@@ -158,7 +189,7 @@ public final class NativePolicyFixture {
         equal(invalidations[0], 2); NativeCookieBoundary.unregister(callback);
         CookieHandler.setDefault(new java.net.CookieManager());
         equal(NativeCookieBoundary.permits(NativeCookieBoundary.epoch()), false);
-        sessionInvalidationFaults(); cloudRouting();
+        sessionInvalidationFaults(); cloudRouting(); publicLinks();
         System.out.println("PASS: " + checks + " independent Android policy/cookie-boundary checks (JDK only; not an Android build)");
     }
 }

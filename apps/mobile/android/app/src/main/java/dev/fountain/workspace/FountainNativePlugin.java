@@ -5,8 +5,11 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.SystemClock;
 import android.util.Base64;
+import android.webkit.WebResourceRequest;
+import android.webkit.WebView;
 import androidx.activity.result.ActivityResult;
 import com.getcapacitor.JSObject;
+import com.getcapacitor.BridgeWebViewClient;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
@@ -47,6 +50,7 @@ public class FountainNativePlugin extends Plugin {
     private final ExecutorService sessions = Executors.newSingleThreadExecutor();
     private final ScheduledExecutorService deadlines = Executors.newSingleThreadScheduledExecutor();
     private final Map<String, Operation> operations = new HashMap<>();
+    private final NativePolicy.PublicWebTrust publicWeb = new NativePolicy.PublicWebTrust();
     private long generation, authGeneration, ownerBoundaryEpoch;
     private final Runnable boundaryInvalidated = () -> {
         synchronized (lock) { invalidateRecovery(); authGeneration++; cancelAll(null, "STALE_SESSION"); }
@@ -67,6 +71,7 @@ public class FountainNativePlugin extends Plugin {
         final long generation, boundaryEpoch;
         final PluginCall call;
         final boolean logout;
+        final boolean publicSession;
         final AtomicBoolean closed = new AtomicBoolean();
         volatile long authGeneration;
         volatile HttpsURLConnection connection;
@@ -82,9 +87,9 @@ public class FountainNativePlugin extends Plugin {
         String undeliveredRecoveryInventory, undeliveredRecoveryExport;
         volatile NativeRecovery.Authority recoveryAuthority;
         int recoveryFileIndex, filesSaved;
-        Operation(String id, String origin, long generation, long authGeneration, PluginCall call, boolean logout) {
+        Operation(String id, String origin, long generation, long authGeneration, PluginCall call, boolean logout, boolean publicSession) {
             this.id = id; this.origin = origin; this.generation = generation;
-            this.authGeneration = authGeneration; this.call = call; this.logout = logout;
+            this.authGeneration = authGeneration; this.call = call; this.logout = logout; this.publicSession = publicSession;
             this.boundaryEpoch = NativeCookieBoundary.epoch();
         }
     }
@@ -118,6 +123,25 @@ public class FountainNativePlugin extends Plugin {
             cleanAbandonedExports();
         } catch (Exception error) { broken = true; }
         NativeCookieBoundary.register(boundaryInvalidated);
+        // Capacitor's plugin URL hook omits isForMainFrame. Keep it closed to
+        // external loads and authorize OS opening only at this request boundary.
+        getBridge().setWebViewClient(new BridgeWebViewClient(getBridge()) {
+            @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                if (localUrl(request.getUrl())) return super.shouldOverrideUrlLoading(view, request);
+                synchronized (lock) {
+                    boolean live = request.isForMainFrame() && "GET".equals(request.getMethod()) && !request.isRedirect()
+                        && view == getBridge().getWebView() && bundleAllowed() && !destroyed && !broken && !recoveryMode
+                        && NativeCookieBoundary.permits(ownerBoundaryEpoch);
+                    // Async UI actions can lose hasGesture; the native-owned
+                    // session metadata and bundled main frame remain required.
+                    if (publicWeb.allows(request.getUrl().toString(), origin, generation, authGeneration, ownerBoundaryEpoch, live)) {
+                        try { getActivity().startActivity(new Intent(Intent.ACTION_VIEW, request.getUrl())); }
+                        catch (Exception unavailable) { /* Keep the WebView closed even without a browser. */ }
+                    }
+                }
+                return true;
+            }
+        });
     }
 
     private static String nullable(JSONObject state, String key) {
@@ -171,6 +195,7 @@ public class FountainNativePlugin extends Plugin {
         return invalidateSession(null);
     }
     private NativePolicy.SessionInvalidation invalidateSession(String explicitNativeActor) {
+        publicWeb.clear();
         if (OUTBOX_ENABLED && !recoveryMode) try { NativeOutbox storage=durableOutbox();storage.revoke();if(explicitNativeActor!=null)storage.eraseActor(explicitNativeActor); }
         catch (Exception failure) { broken = true; }
         NativePolicy.SessionInvalidation result = NativePolicy.invalidateSession(origin, activeCookie, revokeCookie, sessionStorage());
@@ -237,6 +262,7 @@ public class FountainNativePlugin extends Plugin {
                 }
                 try {
                     invalidateRecovery();
+                    publicWeb.clear();
                     if (OUTBOX_ENABLED && !recoveryMode && origin != null) durableOutbox().revoke();
                     persist(next, generation + 1, null, null, null);
                     if (outbox != null) { outbox.close(); outbox = null; }
@@ -310,10 +336,14 @@ public class FountainNativePlugin extends Plugin {
     }
 
     private Operation begin(PluginCall call, boolean logout, int timeoutMs) {
+        return begin(call, logout, timeoutMs, false);
+    }
+
+    private Operation begin(PluginCall call, boolean logout, int timeoutMs, boolean publicSession) {
         NativePolicy.require(origin != null && integer(call, "generation", 0, 9_007_199_254_740_990L) == generation);
         String id = call.getString("id");
         NativePolicy.require(id != null && id.matches("[A-Za-z0-9_.:-]{1,160}") && !operations.containsKey(id));
-        Operation operation = new Operation(id, origin, generation, authGeneration, call, logout);
+        Operation operation = new Operation(id, origin, generation, authGeneration, call, logout, publicSession);
         operation.deadline = SystemClock.elapsedRealtime() + timeoutMs;
         operations.put(id, operation);
         operation.timeout = deadlines.schedule(() -> fail(operation, "Native operation timed out", "TIMEOUT"), timeoutMs, TimeUnit.MILLISECONDS);
@@ -383,7 +413,7 @@ public class FountainNativePlugin extends Plugin {
                     return;
                 }
             }
-            Operation operation = begin(call, session && method.equals("DELETE"), timeout);
+            Operation operation = begin(call, session && method.equals("DELETE"), timeout, session && !method.equals("DELETE"));
             Runnable work = () -> {
                 try {
                     if (session) revokePending(); // Never attaches the caller's cancellable connection.
@@ -576,6 +606,15 @@ public class FountainNativePlugin extends Plugin {
                     operation.generation+":"+operation.authGeneration+":"+operation.boundaryEpoch);recovery.refresh(identity);}
                 catch(Exception unauthenticated){invalidateRecovery();}
             }
+            if (session) {
+                check(operation);
+                Object primary = null;
+                if (response.status >= 200 && response.status < 300) try {
+                    JSONObject description = new JSONObject(OutboxPolicy.utf8(response.body));
+                    if (description.opt("authenticated") instanceof Boolean) primary = description.opt("public_web_origin");
+                } catch (Exception malformed) { /* Missing/invalid metadata closes public links only. */ }
+                publicWeb.observe(operation.origin, operation.generation, operation.authGeneration, operation.boundaryEpoch, primary);
+            }
         }
     }
 
@@ -719,6 +758,8 @@ public class FountainNativePlugin extends Plugin {
     private void fail(Operation operation, String message, String code) {
         synchronized (lock) {
             if (!operation.closed.compareAndSet(false, true)) { cleanupFile(operation); return; }
+            if (operation.publicSession && operation.generation == generation && operation.authGeneration == authGeneration
+                && operation.boundaryEpoch == ownerBoundaryEpoch && Objects.equals(operation.origin, origin)) publicWeb.clear();
             operations.remove(operation.id);
             if (operation.timeout != null) operation.timeout.cancel(false);
             if (operation.connection != null) operation.connection.disconnect();
@@ -729,6 +770,7 @@ public class FountainNativePlugin extends Plugin {
     }
 
     private void cancelAll(Operation except, String reason) {
+        publicWeb.clear();
         for (Operation operation : new ArrayList<>(operations.values())) if (operation != except)
             fail(operation, "Native operation was superseded", reason);
     }
@@ -969,12 +1011,14 @@ public class FountainNativePlugin extends Plugin {
         catch (Exception ignored) { /* The OS provider may refuse deletion; never report success. */ }
     }
 
-    @Override public Boolean shouldOverrideLoad(Uri url) {
+    private boolean localUrl(Uri url) {
         try {
             URI local = new URI(getBridge().getLocalUrl());
-            return !Objects.equals(url.getScheme(), local.getScheme()) || !Objects.equals(url.getEncodedAuthority(), local.getRawAuthority());
-        } catch (Exception error) { return true; }
+            return Objects.equals(url.getScheme(), local.getScheme()) && Objects.equals(url.getEncodedAuthority(), local.getRawAuthority());
+        } catch (Exception error) { return false; }
     }
+
+    @Override public Boolean shouldOverrideLoad(Uri url) { return !localUrl(url); }
 
     @Override protected void handleOnDestroy() {
         synchronized (lock) { invalidateRecovery(); destroyed = true; authGeneration++; cancelAll(null, "APP_CLOSED"); }

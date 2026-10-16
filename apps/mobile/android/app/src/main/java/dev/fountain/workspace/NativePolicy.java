@@ -9,6 +9,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 
 /** Pure validation shared by every native network entry point. */
@@ -72,6 +73,37 @@ final class NativePolicy {
         // This fixed transport prefix is never configurable or caller supplied.
         boolean cloud = uri.getPort() == -1 && uri.getHost().matches("[a-z0-9]{20}\\.supabase\\.co");
         return canonical + (cloud ? "/functions/v1/fountain-api" : "") + validated;
+    }
+
+    static String publicWebOrigin(String value) {
+        require(value != null && value.equals(origin(value)));
+        return value;
+    }
+
+    /** RAM-only authority observed from the native session response, never JS input. */
+    static final class PublicWebTrust {
+        private String primary, backend;
+        private long generation, auth, boundary;
+        void clear() { primary = null; backend = null; }
+        void observe(String server, long currentGeneration, long currentAuth, long currentBoundary, Object raw) {
+            clear();
+            if (!(raw instanceof String)) return;
+            try { primary = publicWebOrigin((String) raw); }
+            catch (IllegalArgumentException invalid) { return; }
+            backend = server; generation = currentGeneration; auth = currentAuth; boundary = currentBoundary;
+        }
+        boolean allows(String target, String server, long currentGeneration, long currentAuth, long currentBoundary, boolean live) {
+            if (!live || server == null || target == null) return false;
+            String trusted = null;
+            if (primary != null && Objects.equals(backend, server) && generation == currentGeneration && auth == currentAuth && boundary == currentBoundary) trusted = primary;
+            else try {
+                String canonical = origin(server);
+                URI uri = URI.create(canonical);
+                if (!canonical.equals(server) || uri.getPort() == -1 && uri.getHost().matches("[a-z0-9]{20}\\.supabase\\.co")) return false;
+                trusted = canonical;
+            } catch (IllegalArgumentException invalid) { return false; }
+            return target.startsWith(trusted + "/") && target.substring(trusted.length()).matches("/(forms|sites)/[A-Za-z0-9_-]{1,160}");
+        }
     }
 
     static String decode(String value) throws Exception {

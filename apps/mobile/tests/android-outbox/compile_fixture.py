@@ -43,10 +43,10 @@ STUBS = {
 'android/content/ContentResolver.java': '''package android.content; import android.net.Uri; import java.io.*; public class ContentResolver {
  public OutputStream openOutputStream(Uri u,String m)throws IOException{return null;} public int delete(Uri u,String s,String[] a){return 0;}
 }''',
-'android/app/Activity.java': 'package android.app; public class Activity extends android.content.Context { public static final int RESULT_OK=1; public void runOnUiThread(Runnable r){} }',
+'android/app/Activity.java': 'package android.app; public class Activity extends android.content.Context { public static final int RESULT_OK=1; public void runOnUiThread(Runnable r){} public void startActivity(android.content.Intent i){} }',
 'android/content/Intent.java': '''package android.content; import android.net.Uri; public class Intent {
- public static final String ACTION_CREATE_DOCUMENT="",CATEGORY_OPENABLE="",EXTRA_TITLE="";
- public Intent(String s){} public void addCategory(String s){} public void setType(String s){} public void putExtra(String k,String v){} public Uri getData(){return null;}
+ public static final String ACTION_CREATE_DOCUMENT="",ACTION_VIEW="",CATEGORY_OPENABLE="",EXTRA_TITLE="";
+ public Intent(String s){} public Intent(String s,Uri u){} public void addCategory(String s){} public void setType(String s){} public void putExtra(String k,String v){} public Uri getData(){return null;}
 }''',
 'android/net/Uri.java': 'package android.net; public class Uri { public String getScheme(){return null;} public String getEncodedAuthority(){return null;} }',
 'android/os/SystemClock.java': 'package android.os; public class SystemClock { public static long elapsedRealtime(){return 0;} }',
@@ -56,6 +56,7 @@ STUBS = {
 'android/system/OsConstants.java': 'package android.system; public class OsConstants { public static boolean S_ISDIR(int m){return true;} public static boolean S_ISREG(int m){return true;} }',
 'android/util/Base64.java': 'package android.util; public class Base64 { public static final int NO_WRAP=2; public static byte[] decode(String s,int n){return null;} public static String encodeToString(byte[] b,int n){return null;} }',
 'android/webkit/WebView.java': 'package android.webkit; public class WebView { public String getUrl(){return null;} }',
+'android/webkit/WebResourceRequest.java': 'package android.webkit; public interface WebResourceRequest { android.net.Uri getUrl(); boolean isForMainFrame(); String getMethod(); boolean isRedirect(); }',
 'androidx/activity/result/ActivityResult.java': 'package androidx.activity.result; public class ActivityResult { public int getResultCode(){return 0;} public android.content.Intent getData(){return null;} }',
 'com/getcapacitor/JSObject.java': '''package com.getcapacitor; public class JSObject extends org.json.JSONObject {
  public JSObject put(String k,Object v){return this;} public String getString(String k){return null;}
@@ -64,7 +65,8 @@ STUBS = {
  public void reject(String m,String c){} public void resolve(JSObject o){} public String getString(String k){return null;}
  public String getString(String k,String d){return d;} public JSObject getObject(String k,JSObject d){return d;} public JSObject getData(){return null;}
 }''',
-'com/getcapacitor/Bridge.java': 'package com.getcapacitor; public class Bridge { public android.webkit.WebView getWebView(){return null;} public String getLocalUrl(){return null;} }',
+'com/getcapacitor/Bridge.java': 'package com.getcapacitor; public class Bridge { public android.webkit.WebView getWebView(){return null;} public String getLocalUrl(){return null;} public void setWebViewClient(BridgeWebViewClient c){} }',
+'com/getcapacitor/BridgeWebViewClient.java': 'package com.getcapacitor; public class BridgeWebViewClient { public BridgeWebViewClient(Bridge b){} public boolean shouldOverrideUrlLoading(android.webkit.WebView v,android.webkit.WebResourceRequest r){return false;} }',
 'com/getcapacitor/Plugin.java': '''package com.getcapacitor; public class Plugin {
  public void load(){} public android.app.Activity getActivity(){return null;} public android.content.Context getContext(){return null;}
  public Bridge getBridge(){return null;} public void startActivityForResult(PluginCall c,android.content.Intent i,String s){}

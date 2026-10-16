@@ -16,6 +16,7 @@ import {createRealtime} from './realtime.ts';
 import {createAI} from './ai.ts';
 import {createAccounts} from './accounts.ts';
 import {createBackup,createBackupProvider} from './backup.ts';
+import {createBackupJobs,createBackupJobProvider,createBackupSourceRangeReader,collectBackupJobGarbage} from './backup-jobs.ts';
 import {HttpError,jsonResponse,readJSON} from './http.ts';
 type Config={supabaseUrl:string;publishableKey:string;serviceKey:string;cryptoKeys:Array<{id:string;secret:string|Uint8Array}>;workspaceId:string;origins:string[];fetch?:typeof fetch;env?:Record<string,string|undefined>;setupEnabled?:boolean};
 export function createApplication(config:Config):(request:Request)=>Promise<Response>{
@@ -23,6 +24,7 @@ export function createApplication(config:Config):(request:Request)=>Promise<Resp
   const onboarding=createOnboarding({...connection,publishableKey:config.publishableKey});
   const auth=createAuth({...connection,publishableKey:config.publishableKey,cryptoKeys:config.cryptoKeys,vault:createSessionVault(connection),...(config.setupEnabled?{setupClaim:onboarding.claim}:{})});
   const provider=createStoreProvider(connection),storage=createStorage({...connection,bucket:'fountain-files',maxObjectBytes:CHUNK_SIZE}),backupProvider=createBackupProvider(connection);
+  const backupJobProvider=createBackupJobProvider(connection),readSourceRange=createBackupSourceRangeReader({...connection,bucket:'fountain-files'});
   const env={...config.env};
   // SCIM needs its own bearer/service authority; a cookie user must never be
   // substituted for it. Do not advertise this staged boundary as configured.
@@ -40,6 +42,10 @@ export function createApplication(config:Config):(request:Request)=>Promise<Resp
       }
       const accounts=createAccounts({...connection,authorize}),accountResponse=await accounts.handle(current,path,context);
       if(accountResponse)return accountResponse;
+      const jobConfig={provider:backupJobProvider,storage,authorize,readSourceRange};
+      if(path==='/api/backup/jobs'&&current.method==='POST')await collectBackupJobGarbage(jobConfig,context,1);
+      const jobResponse=await createBackupJobs(jobConfig).handle(current,path,context);
+      if(jobResponse)return jobResponse;
       const backup=createBackup({provider:backupProvider,storage,authorize}),backupResponse=await backup.handle(current,path,context);
       if(backupResponse)return backupResponse;
       const base={...connection,provider,authorize},files=createFiles({...base,storage});

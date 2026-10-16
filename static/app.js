@@ -1208,7 +1208,7 @@ async function reloadDatabase() {
   applyDatabaseControls();
 }
 function openModal(title,content,cls='') {
-  clearRecoveryImport();state.versionView=null;closeSlash();
+  stopBackup();clearRecoveryImport();state.versionView=null;closeSlash();
   $('#overlay-root').innerHTML=`<div class="modal-backdrop"><section class="modal ${cls}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="modal-head"><h2>${esc(title)}</h2><button class="modal-close" data-action="close-modal" aria-label="닫기">×</button></header><div class="modal-body">${content}</div></section></div>`;
   if(state.route==='page'&&resourceLevel(state.page)<4)$$('[data-action="delete-page"],[data-action="move-page"]',$('.modal')).forEach(el=>el.remove());
   if(state.route==='page'&&resourceLevel(state.page)<3){for(const action of ['lock-page','delete-page','verify-page','move-page','change-block-type','move-block','delete-block','restore-version'])$$(`[data-action="${action}"]`,$('.modal')).forEach(el=>el.remove());}
@@ -1217,8 +1217,24 @@ function openModal(title,content,cls='') {
   requestAnimationFrame(()=>{if(body?.isConnected)$('input:not([type=checkbox]),textarea,select,button',body)?.focus();});
 }
 function closeModal() {
-  clearRecoveryImport();state.versionView=null;$('#overlay-root').innerHTML='';
+  stopBackup();clearRecoveryImport();state.versionView=null;$('#overlay-root').innerHTML='';
   closeSlash();
+}
+function stopBackup(){const manager=state.backupManager;state.backupManager=null;if(manager)void manager.close();}
+function backupScope(){return {profileId:state.offlineProfile?.id,binding:state.session?.cache_binding,workspaceId:state.workspace?.workspace_id||state.session?.workspace_id||state.offlineProfile?.workspaceId,memberId:state.session?.member?.id,transportEpoch:FountainTransport.scopeEpoch,boot:state.bootGeneration,channel:state.channel,epoch:state.channel?.base?.epoch,route:state.route};}
+async function openBackup(){
+  if(!isOwner())throw new Error('소유자만 백업할 수 있습니다.');
+  openModal('워크스페이스 백업','<p>서버에 저장된 내용을 백업 파일로 준비합니다.</p><div id="backup-status" role="status" aria-live="polite"></div><progress id="backup-progress" aria-label="백업 진행률" style="width:100%"></progress><div class="form-actions"><button class="outline-btn" data-action="backup-cancel">취소</button><button class="solid-btn" data-action="backup-retry" hidden>다시 시도</button></div>','backup-modal');
+  const modal=$('.backup-modal'),current=scope=>modal.isConnected&&isOwner()&&!state.nativeRecoveryPaused&&Object.entries(scope).every(([key,value])=>backupScope()[key]===value);
+  const manager=new FountainBackup.Manager({getScope:backupScope,isCurrent:current,onChange:value=>{
+    if(state.backupManager!==manager||!modal.isConnected)return;
+    const labels={working:value.job?.phase==='snapshot'?'저장된 내용을 확인하고 있어요…':'백업 파일을 만들고 있어요…',downloading:'백업 파일을 내려받고 있어요…',complete:FountainTransport.native?'백업 파일을 저장했습니다.':'백업 파일을 전달했습니다. 브라우저의 다운로드 목록에서 확인하세요.',legacy:'기존 서버의 백업 다운로드를 시작했습니다.',error:value.error||'백업을 완료하지 못했습니다.'};
+    const progress=value.job?.progress,detail=value.state==='working'&&progress?` · ${progress.source_rows.toLocaleString('ko-KR')}개 항목 · ${(progress.output_bytes/1048576).toLocaleString('ko-KR',{maximumFractionDigits:1})} MB`:value.state==='downloading'&&value.job?.size?` · ${(value.downloaded/1048576).toLocaleString('ko-KR',{maximumFractionDigits:1})} / ${(value.job.size/1048576).toLocaleString('ko-KR',{maximumFractionDigits:1})} MB`:'';
+    $('#backup-status').textContent=(labels[value.state]||'백업을 준비하고 있어요…')+detail;
+    const meter=$('#backup-progress');if(value.state==='complete'){meter.max=1;meter.value=1;}else if(value.state==='downloading'&&value.job?.size){meter.max=value.job.size;meter.value=value.downloaded;}else meter.removeAttribute('value');
+    $('[data-action="backup-retry"]',modal).hidden=value.state!=='error';$('[data-action="backup-retry"]',modal).textContent=value.restartRequired?'새 백업 시작':'다시 시도';$('[data-action="backup-cancel"]',modal).textContent=['complete','legacy','error'].includes(value.state)?'닫기':'취소';
+  }});
+  state.backupManager=manager;await manager.start();
 }
 function field(label,name,placeholder='',type='text',value='') {
   return `<label>${label}<input name="${name}" type="${type}" placeholder="${esc(placeholder)}" value="${esc(value)}" ${type==='text'?'maxlength="300"':''}></label>`;
@@ -1938,7 +1954,9 @@ async function doAction(target,grouped=false) {
     break;
     case'new-property':openModal('데이터베이스 속성 추가',form(field('속성 이름','name','마감일')+`<label>속성 종류<select name="type"><option value="text">텍스트</option><option value="number">숫자</option><option value="status">상태</option><option value="select">선택</option><option value="date">날짜</option><option value="person">사람</option><option value="checkbox">체크박스</option><option value="multi_select">다중 선택</option><option value="files">파일 ID 목록</option><option value="url">URL</option><option value="email">이메일</option><option value="relation">관계형</option><option value="formula">수식</option><option value="rollup">롤업</option></select></label>`+field('선택 항목 (쉼표로 구분)','options','시작 전, 진행 중, 완료')+field('수식','expression',"prop('estimate') * 2")+`<label>관계형 대상 데이터베이스<select name="database_id">${state.workspace.databases.map(d=>`<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('')}</select></label><label>롤업에 사용할 관계 속성<select name="relation_property"><option value="">관계 속성을 선택하세요</option>${state.database.properties.filter(p=>p.type==='relation').map(p=>`<option value="${esc(p.id)}">${esc(p.name)} (${esc(p.id)})</option>`).join('')}</select></label>`+field('롤업 대상 속성 ID','target_property','estimate')+`<label>롤업 집계<select name="aggregation"><option value="sum">합계</option><option value="count">개수</option><option value="average">평균</option><option value="min">최솟값</option><option value="max">최댓값</option></select></label>`,'property-form'));
     break;
-    case'backup':{if(state.workspace.settings?.disable_export)throw new Error('워크스페이스에서 내보내기를 제한했습니다.');if(FountainTransport.native){await FountainTransport.download('/api/backup','fountain-backup.sqlite');break;}const link=document.createElement('a');link.href=FountainTransport.downloadURL('/api/backup');link.download='fountain-backup.sqlite';link.click();break;}
+    case'backup':{if(state.workspace.settings?.disable_export)throw new Error('워크스페이스에서 내보내기를 제한했습니다.');await openBackup();break;}
+    case'backup-retry':if(state.backupManager?.restartRequired)await openBackup();else await state.backupManager?.retry();break;
+    case'backup-cancel':closeModal();toast('백업 창을 닫았습니다.');break;
     case'export': {
       const data=await api('/export?format='+target.dataset.format);
       download(data.filename,data.content,data.mime);
@@ -2222,6 +2240,7 @@ window.addEventListener('beforeunload',event=> {
   }
 });
 function renderLogin(preserve=true) {
+  stopBackup();
   if(state.nativeRecoveryPaused)return;
   if(preserve)return suspendLoginInput().then(current=>{if(current)renderLogin(false);});
   closeDocument();closeMutations();state.offlineProfile=null;state.offline=false;

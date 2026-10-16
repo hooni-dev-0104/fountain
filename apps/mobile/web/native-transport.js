@@ -36,7 +36,7 @@
     }
     if(kind==='api'&&!pathname.startsWith('/api/'))invalid();
     if(kind==='public'&&!/^\/(forms|sites)\/[^/]+$/.test(pathname))invalid();
-    if(kind==='download'&&(value.includes('?')||!/^\/api\/(backup|attachments\/[^/]+\/download)$/.test(pathname)))invalid();
+    if(kind==='download'&&!/^\/api\/(?:backup(?:\?job_id=[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12})?|attachments\/[^/?]+\/download)$/.test(value))invalid();
     return value;
   }
   function filename(value) {
@@ -186,8 +186,8 @@
         }
       };return connection;
     }
-    async function download(value,name='fountain-download') {
-      path(value,'download');configured();filename(name);const expected=scope();const result=await invoke('download',{path:value,filename:name},expected);
+    async function download(value,name='fountain-download',options={}) {
+      path(value,'download');configured();filename(name);const expected=scope();const result=await invoke('download',{path:value,filename:name},expected,options.signal);
       if(result.saved!==true)throw new Error('파일 내보내기를 완료하지 않았습니다.');return result;
     }
     async function saveData(name,content,mime='text/plain') {

@@ -1,7 +1,5 @@
--- DRAFT: root applies only after independent review and isolated SQL/Auth tests.
 -- Owner-only export is the sole cloud path allowed to read legacy credentials.
 -- Trusted server authorization, NOT end-user RLS; no legacy grants are changed.
-BEGIN;
 CREATE FUNCTION fountain_cloud.backup_authorize(p_context jsonb) RETURNS jsonb
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog AS $$
 DECLARE principal jsonb; settings jsonb; ws text;
@@ -128,4 +126,3 @@ GRANT EXECUTE ON FUNCTION public.fountain_cloud_backup_authorize(jsonb) TO servi
 CREATE FUNCTION public.fountain_cloud_backup_export(p_context jsonb,p_expected_revision bigint DEFAULT NULL,p_cursor jsonb DEFAULT NULL) RETURNS jsonb LANGUAGE sql VOLATILE SECURITY INVOKER SET search_path=pg_catalog AS $$ SELECT fountain_cloud.backup_export(p_context,p_expected_revision,p_cursor) $$;
 REVOKE ALL ON FUNCTION public.fountain_cloud_backup_export(jsonb,bigint,jsonb) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.fountain_cloud_backup_export(jsonb,bigint,jsonb) TO service_role;
-COMMIT;

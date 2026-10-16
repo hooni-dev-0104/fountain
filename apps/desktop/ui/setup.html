@@ -1,0 +1,6 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+<title>Fountain 서버 설정</title><link rel="stylesheet" href="setup.css"></head>
+<body><main><div class="brand">Fountain</div><h1>내 서버에 연결</h1><p>웹에서 사용하는 서버 주소를 입력하세요.<br>같은 계정으로 문서와 변경 내용을 이어서 사용할 수 있습니다.</p>
+<form id="server-form"><label for="server">서버 주소</label><input id="server" name="server" type="url" placeholder="https://notes.example.com" autocomplete="url" required maxlength="2048"><small>외부 서버는 HTTPS, 로컬 서버는 localhost HTTP도 사용할 수 있습니다.</small><p id="error" role="alert"></p><button type="submit">연결</button></form><p class="footnote">서버별 로그인과 로컬 저장공간은 따로 보관됩니다.</p></main><script src="setup.js"></script></body></html>

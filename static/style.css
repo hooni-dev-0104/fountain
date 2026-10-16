@@ -2071,3 +2071,15 @@ svg {
 @media(max-width:680px){.data-table-scroll .data-table{min-width:calc(180px + (var(--table-columns) - 1) * 112px)}.data-table-scroll .data-table th:first-child{width:180px}.data-table-scroll .data-table th:last-child,.data-table-scroll .data-table td:last-child{display:table-cell}.data-table-scroll .task-name{max-width:none;overflow:visible}}
 /* Grid children must shrink around the table's own horizontal scroll area. */
 .dashboard-bottom>section{min-width:0}
+
+/* Presence is painted outside the editor, so remote cursors never alter text or IME. */
+.page-presence{display:flex;align-items:center;gap:7px;min-width:0;flex-shrink:0}
+.presence-avatars{display:flex;padding-left:5px}.presence-avatar{display:inline-flex;width:24px;height:24px;border-radius:50%;align-items:center;justify-content:center;margin-left:-5px;color:#fff;background:var(--presence-color);border:2px solid #fff;font-size:10px;font-weight:600}
+.presence-count{font-size:10px;white-space:nowrap;color:#8a927e}
+.presence-overlay{position:fixed;inset:0;overflow:hidden;pointer-events:none;z-index:30;contain:strict}
+.remote-selection{position:absolute;background:var(--presence-color);opacity:.16;pointer-events:none}
+.remote-caret{position:absolute;width:2px;background:var(--presence-color);pointer-events:none}
+.remote-caret-label{position:absolute;top:-19px;left:0;max-width:150px;background:var(--presence-color);color:white;border-radius:4px 4px 4px 0;padding:2px 6px;font-size:9px;line-height:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:680px){.page-presence{gap:3px}.presence-avatar{width:20px;height:20px;font-size:8px}.presence-count{font-size:9px}.presence-avatars .presence-avatar:nth-child(n+3){display:none}.remote-caret-label{max-width:110px;font-size:8px}.top-actions .sync-topbar{max-width:94px}}
+
+@media(max-width:680px){.presence-avatars .presence-avatar:nth-child(n+2){display:none}.presence-count{font-size:0}.presence-count::after{content:attr(data-short);font-size:9px}.top-actions [data-action="share"]{font-size:0;gap:0;white-space:nowrap}.top-actions [data-action="share"] svg{margin:0}}

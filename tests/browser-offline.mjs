@@ -264,7 +264,7 @@ try {
     const urls = await page.evaluate(async () => (await Promise.all((await caches.keys()).map(async name =>
       (await (await caches.open(name)).keys()).map(request => new URL(request.url).pathname)))).flat());
     assert.ok(urls.includes('/') && urls.includes('/offline.js') && urls.includes('/collaboration.js'));
-    assert.ok(urls.every(path => ['/', '/index.html', '/app.js', '/style.css', '/collaboration.js', '/offline.js', '/uploads.js', '/transport.js', '/mutations.js'].includes(path)), 'SW must never cache private responses');
+    assert.ok(urls.every(path => ['/', '/index.html', '/app.js', '/style.css', '/collaboration.js', '/offline.js', '/uploads.js', '/transport.js', '/mutations.js', '/presence.js'].includes(path)), 'SW must never cache private responses');
     stage = 'fresh boot after authoritative online 401';
     // Close every old live channel before the policy change: a fresh boot must
     // purge its existing cache without relying on another tab's SSE denial.

@@ -298,8 +298,8 @@ function renderSidebar() {
   pruneAdministrativeControls();renderSyncIndicators();
 }
 function renderTopbar(title='홈',emoji='') {
-  $('#topbar').innerHTML=`<div class="crumb"><button class="mobile-toggle" data-action="toggle-sidebar" aria-label="메뉴 열기">${icon('menu')}</button><button data-action="home">Fountain 스튜디오</button><span>/</span><span>${esc(emoji)}</span><span class="current">${esc(title)}</span></div><div class="top-actions"><span class="save-status" id="save-status">${state.route==='page'?'모든 변경 사항 저장됨':'나만의 리듬으로, 함께'}</span><button class="sync-status-button sync-topbar" data-action="sync-queue" title="기기 저장과 동기화"><span aria-hidden="true">↻</span><span data-sync-label>기기 저장</span></button><div class="avatar-stack" aria-label="워크스페이스 멤버">${(state.workspace?.members||[]).slice(0,3).map(m=>`<span>${esc((m.name||'나')[0])}</span>`).join('')}</div>${state.route==='page'?`<button ${resourceLevel(state.page)<3?'disabled':''} data-action="favorite" aria-label="즐겨찾기">${icon('star')}</button><button data-action="share">${icon('share')}공유</button><button data-action="history" aria-label="페이지 기록">${icon('clock')}</button><button data-action="page-menu" aria-label="페이지 메뉴">${icon('dots')}</button>`:`${state.route==='database'?`<button data-action="db-share">${icon('share')}공유</button>`:''}<button class="desktop-only" data-action="activity" aria-label="활동 기록">${icon('clock')}</button><button data-action="settings" aria-label="설정">${icon('dots')}</button>`}</div>`;
-  pruneAdministrativeControls();renderSyncIndicators();
+  $('#topbar').innerHTML=`<div class="crumb"><button class="mobile-toggle" data-action="toggle-sidebar" aria-label="메뉴 열기">${icon('menu')}</button><button data-action="home">Fountain 스튜디오</button><span>/</span><span>${esc(emoji)}</span><span class="current">${esc(title)}</span></div><div class="top-actions"><span class="save-status" id="save-status">${state.route==='page'?'모든 변경 사항 저장됨':'나만의 리듬으로, 함께'}</span><button class="sync-status-button sync-topbar" data-action="sync-queue" title="기기 저장과 동기화"><span aria-hidden="true">↻</span><span data-sync-label>기기 저장</span></button><div id="page-presence" class="page-presence" aria-label="현재 페이지 접속자" role="status"></div>${state.route==='page'?`<button ${resourceLevel(state.page)<3?'disabled':''} data-action="favorite" aria-label="즐겨찾기">${icon('star')}</button><button data-action="share" aria-label="페이지 공유">${icon('share')}공유</button><button data-action="history" aria-label="페이지 기록">${icon('clock')}</button><button data-action="page-menu" aria-label="페이지 메뉴">${icon('dots')}</button>`:`${state.route==='database'?`<button data-action="db-share">${icon('share')}공유</button>`:''}<button class="desktop-only" data-action="activity" aria-label="활동 기록">${icon('clock')}</button><button data-action="settings" aria-label="설정">${icon('dots')}</button>`}</div>`;
+  pruneAdministrativeControls();renderSyncIndicators();renderPresenceParticipants(state.presenceManager?.participants||[]);
 }
 async function navigate(route,id) {
   state.uploadTargetPageId=route==='page'?id:null;state.uploadManager?.pauseAll('다른 문서를 여는 동안 파일 전송을 일시 중지했습니다.');
@@ -409,6 +409,7 @@ document.addEventListener('pointerdown',event=>{
   state.richSelection=richSelection();if(event.target.closest('button'))event.preventDefault();
 });
 document.addEventListener('selectionchange',()=>{
+  if(!state.composition)state.presenceManager?.update();
   if(document.activeElement?.closest?.('.block-content'))state.richSelection=richSelection();
 });
 window.addEventListener('fountain-offline-profile-changed',async()=>{
@@ -493,6 +494,7 @@ async function cacheProfile(workspaceId=state.workspace?.workspace_id||state.ses
   state.offlineProfile=profile;return profile;
 }
 function closeDocument() {
+  state.presenceManager?.close();state.presenceManager=null;state.presenceChannel=null;
   state.uploadManager?.dispose();state.uploadManager=null;state.uploadReselectId=null;
   state.channel?.close();state.channel=null;state.renderedChars=new Map();state.composition=null;state.inputBaseline=null;clearTimeout(state.saveTimer);state.saveTimer=null;state.recoveryDrafts=[];
 }
@@ -504,7 +506,34 @@ function documentStatus({status,pending,durable=true}) {
   if(state.offline){const note=document.createElement('div');note.id='offline-state';note.className='offline-notice';note.textContent='오프라인에서 문서를 편집하고 있습니다. 연결되면 변경 사항을 합칩니다. 제목과 문서, 보관한 데이터베이스의 변경은 이 기기에 저장됩니다. 댓글·파일·공유 설정은 연결 후 사용할 수 있습니다.';$('.editor-wrap')?.prepend(note);}
   const title=$('#page-title');if(title)title.contentEditable=String(pageEditable());
   const comment=$('#comment-form');if(comment)comment.hidden=state.offline||state.localPageOnly||resourceLevel(state.page)<2;
-  renderSyncIndicators();
+  renderSyncIndicators();ensurePresence();
+}
+function renderPresenceParticipants(participants) {
+  const container=$('#page-presence');if(!container)return;
+  container.replaceChildren();if(state.route!=='page'||state.offline||!participants.length)return;
+  const people=document.createElement('span');people.className='presence-avatars';
+  for(const person of participants.slice(0,3)){
+    const avatar=document.createElement('span');avatar.className='presence-avatar';avatar.style.setProperty('--presence-color',person.color);avatar.textContent=Array.from(person.name)[0]||'·';avatar.title=person.name;people.append(avatar);
+  }
+  const count=document.createElement('span');count.className='presence-count';count.textContent=participants.length+'명 접속';count.dataset.short=participants.length+'명';container.append(people,count);container.title=participants.map(person=>person.name).join(', ');
+}
+function ensurePresence() {
+  const channel=state.channel,profile=state.offlineProfile;
+  if(!window.FountainPresence||!channel||!profile||state.route!=='page'||state.openingDocument)return;
+  if(state.presenceManager&&state.presenceChannel===channel){
+    if(state.presenceManager.epoch!==channel.base.epoch)state.presenceManager.restart(channel.base.epoch);
+    if(state.offline||state.localPageOnly||channel.remoteDeferred)state.presenceManager.pause({leave:!state.offline});else state.presenceManager.start();state.presenceManager.layout();return;
+  }
+  state.presenceManager?.close();
+  const manager=new FountainPresence.Manager({pageId:channel.pageId,profile,clientId:channel.clientId,epoch:channel.base.epoch,
+    isAuthorized:()=>state.offlineProfile?.id===profile.id&&state.session?.cache_binding===profile.session.cache_binding&&state.session?.member?.id===profile.memberId,
+    isCurrent:()=>state.channel===channel&&state.route==='page'&&state.page?.id===channel.pageId&&!state.offline&&!state.localPageOnly&&!channel.remoteDeferred&&resourceLevel(state.page)>=1,
+    getSelection:()=>{const selection=selectedTextPosition();return selection&&!state.composition?{block_id:selection.id,anchor:selection.anchor,focus:selection.focus}:null;},
+    getBlockElement:id=>$(`.block[data-id="${CSS.escape(id)}"] .block-content`),getChars:id=>channel.chars(id),
+    onParticipants:participants=>{if(state.presenceManager===manager)renderPresenceParticipants(participants);},
+    onDenied:async()=>{if(state.presenceManager===manager&&state.channel===channel)await channel.reconnect();}
+  });
+  state.presenceManager=manager;state.presenceChannel=channel;manager.start();
 }
 function selectedTextPosition() {
   const selection=getSelection();if(!selection?.rangeCount)return null;
@@ -535,7 +564,7 @@ function patchDocumentBlocks(saved=selectedTextPosition()) {
   }
   for(const old of retained.values())old.remove();
   state.renderedChars=new Map(state.blocks.map(block=>[block.id,state.channel?.chars(block.id)||[]]));
-  restoreTextPosition(saved);
+  restoreTextPosition(saved);state.presenceManager?.layout();if(!state.composition)state.presenceManager?.update();
 }
 async function openDocument(id,detail,cachedSnapshot) {
   const binding=state.session?.cache_binding;
@@ -546,11 +575,13 @@ async function openDocument(id,detail,cachedSnapshot) {
   state.page=metadataOverlay({...snapshot.page,access_level:snapshot.access_level},snapshot);state.blocks=snapshot.blocks;
   state.versions=detail?.versions||[];state.comments=detail?.comments||[];state.openingDocument=true;
   const channel=new FountainCollaboration.DocumentChannel({pageId:id,profile:state.offlineProfile,fetcher:api,deferRemote:!!state.localPageOnly,
+    onPresence:payload=>{if(state.channel===channel){ensurePresence();state.presenceManager?.receive(payload);}},
     onChange:change=>{
       if(state.channel!==channel||state.route!=='page')return;
       const beforeEditable=pageEditable(),selection=selectedTextPosition();
       state.page=metadataOverlay({...change.snapshot.page,access_level:change.snapshot.access_level},change.snapshot);state.blocks=change.blocks;
       if(!pageEditable())state.uploadManager?.pauseAll('문서가 읽기 전용으로 바뀌어 전송을 일시 중지했습니다.');
+      ensurePresence();
       if(state.openingDocument||state.composition)return;
       if(beforeEditable!==pageEditable()){renderPage();return;}
       patchDocumentBlocks(selection);

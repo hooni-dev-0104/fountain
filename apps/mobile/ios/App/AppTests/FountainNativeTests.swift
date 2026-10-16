@@ -283,4 +283,81 @@ final class FountainNativeTests: XCTestCase {
             XCTAssertEqual(result["ok"] as? Bool, false); XCTAssertFalse((result["text"] as? String ?? "").contains(marker))
         }
     }
+    func testBackupExactQueryAndInt64RangeBounds() throws {
+        let id = "00000000-0000-0000-0000-000000000001", path = "/api/backup?job_id=" + id
+        XCTAssertEqual(try FountainBackupPlan.id(path), id); XCTAssertNil(try FountainBackupPlan.id("/api/backup"))
+        for invalid in [path + "&extra=1", path + "#fragment", path + "&job_id=" + id, "/api/backup?job_id=%30" + id.dropFirst(), path + "\n"] {
+            XCTAssertThrowsError(try FountainBackupPlan.id(String(invalid)))
+        }
+        let plan = try FountainBackupPlan(encoded(["id": id, "phase": "ready", "size": Int64(6_000_000_123), "sha256": String(repeating: "a", count: 64), "expires_at": "2099-01-01T00:00:00Z"]), id: id)
+        XCTAssertEqual(plan.size, 6_000_000_123)
+        let url = URL(string: "https://native-backup-qa.invalid/api/backup")!
+        let good = HTTPURLResponse(url: url, statusCode: 206, httpVersion: nil, headerFields: ["Content-Range": "bytes 6000000000-6000000122/6000000123", "Content-Length": "123"])!
+        try plan.piece(good, offset: 6_000_000_000, length: 123, received: 123)
+        for status in [200, 302, 416] {
+            let bad = HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: ["Content-Range": "bytes 0-262143/6000000123", "Content-Length": "262144"])!
+            XCTAssertThrowsError(try plan.piece(bad, offset: 0, length: 262144, received: 262144))
+        }
+    }
+    @MainActor func testActualHTTPSBackupRangeHashCancelAndOwnerFence() async throws {
+        // Explicit isolated loopback fixture; root CA is installed only on the dedicated QA Simulator.
+        let view = try await webView(); XCTAssertEqual(view.url?.host, "localhost")
+        for _ in 0..<100 {
+            if (try? await script("return !!globalThis.Capacitor?.isPluginAvailable('FountainNative');")) as? Bool == true { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        let configured = try await script("const p=Capacitor.registerPlugin('FountainNative');globalThis.__backupQA={p,results:{}};return await p.configure({origin:'https://127.0.0.1:61602'});") as! [String: Any]
+        let generation = configured["generation"] as! Int
+        let original = try temporary("backup-qa-original.txt"); let source = Data("last original offline input 🏠".utf8); try source.write(to: original)
+        func login(_ mode: String) async throws {
+            let result = try await script("const p=__backupQA.p;return await p.request({id:crypto.randomUUID(),generation,method:'POST',path:'/api/session',headers:{'Content-Type':'application/json'},bodyBase64:btoa(JSON.stringify({mode})),timeoutMs:30000});", arguments: ["generation": generation, "mode": mode]) as! [String: Any]
+            XCTAssertEqual(result["status"] as? Int, 200)
+            try await Task.sleep(nanoseconds: 300_000_000)
+        }
+        func start() async throws -> String {
+            let id = UUID().uuidString
+            _ = try await script("(async()=>{for(let attempt=0;attempt<100;attempt++){try{return await __backupQA.p.download({id,generation,path:'/api/backup?job_id=00000000-0000-0000-0000-000000000001',filename:'fountain-backup-qa.sqlite'});}catch(error){if(error.code!=='NATIVE_BUSY'||attempt===99)throw error;await new Promise(resolve=>setTimeout(resolve,50));}}})().then(value=>__backupQA.results[id]={ok:true,value},error=>__backupQA.results[id]={ok:false,code:error.code});return true;", arguments: ["generation": generation, "id": id]); return id
+        }
+        func result(_ id: String) async throws -> [String: Any] {
+            for _ in 0..<200 {
+                if let value = try await script("return __backupQA.results[id]||null;", arguments: ["id": id]) as? [String: Any] { return value }
+                try await Task.sleep(nanoseconds: 100_000_000)
+            }
+            throw NSError(domain: "BackupQA", code: 2)
+        }
+        func files() -> [URL] {
+            let manager = FileManager.default
+            return ((try? manager.contentsOfDirectory(at: manager.temporaryDirectory, includingPropertiesForKeys: nil)) ?? []).filter { $0.lastPathComponent.hasPrefix("Fountain-") }.map { $0.appendingPathComponent("fountain-backup-qa.sqlite") }.filter { manager.fileExists(atPath: $0.path) }
+        }
+        try await login("normal"); let normal = try await start()
+        var displayed = false
+        for _ in 0..<200 {
+            if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene, scene.windows.first?.rootViewController?.presentedViewController is UIDocumentPickerViewController { displayed = true; break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        let early = try await script("return __backupQA.results[id]||null;", arguments: ["id": normal])
+        XCTAssertTrue(displayed, "Verified download reaches actual iOS picker; outcome=\(early)")
+        let exports = files(); XCTAssertEqual(exports.count, 1)
+        if let exported = exports.first {
+            let bytes = try Data(contentsOf: exported)
+            var expected = Data(capacity: 786555)
+            for index in 0..<786555 { expected.append(UInt8((index * 31 + index / 65536 * 17) & 255)) }
+            XCTAssertEqual(bytes, expected)
+        }
+        _ = try await script("return await __backupQA.p.cancel({id});", arguments: ["id": normal])
+        let cancelledNormal = try await result(normal); XCTAssertEqual(cancelledNormal["ok"] as? Bool, false)
+        for mode in ["hash", "range", "denied"] {
+            try await login(mode); let id = try await start(); let denied = try await result(id); XCTAssertEqual(denied["ok"] as? Bool, false, mode)
+            XCTAssertTrue(files().isEmpty); XCTAssertEqual(try Data(contentsOf: original), source)
+        }
+        try await login("cancel"); let pending = try await start(); try await Task.sleep(nanoseconds: 250_000_000)
+        _ = try await script("return await __backupQA.p.cancel({id});", arguments: ["id": pending])
+        let cancelled = try await result(pending); XCTAssertEqual(cancelled["ok"] as? Bool, false)
+        XCTAssertTrue(files().isEmpty); XCTAssertEqual(try Data(contentsOf: original), source)
+        try await login("cancel"); let loggedOut = try await start(); try await Task.sleep(nanoseconds: 250_000_000)
+        _ = try await script("return await __backupQA.p.request({id:crypto.randomUUID(),generation,method:'DELETE',path:'/api/session',bodyBase64:'',timeoutMs:30000});", arguments: ["generation": generation])
+        let logoutOutcome = try await result(loggedOut); XCTAssertEqual(logoutOutcome["ok"] as? Bool, false)
+        XCTAssertTrue(files().isEmpty); XCTAssertEqual(try Data(contentsOf: original), source)
+    }
+
 }

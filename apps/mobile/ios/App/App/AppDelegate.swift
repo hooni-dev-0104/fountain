@@ -208,6 +208,32 @@ private struct FountainCookies: Codable {
     var revoke: String?
 }
 
+// Job downloads accept one canonical UUID query and use Int64 counters, independently of attachment limits.
+struct FountainBackupPlan {
+    let size: Int64, sha: String, expires: Date
+    static func id(_ path: String) throws -> String? {
+        guard path.hasPrefix("/api/backup?") else { return nil }
+        guard path.range(of: "^/api/backup\\?job_id=[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$", options: .regularExpression) == path.startIndex..<path.endIndex else { throw FountainFailure.invalid }
+        return String(path.dropFirst("/api/backup?job_id=".count))
+    }
+    init(_ data: Data, id: String) throws {
+        guard let value = try JSONSerialization.jsonObject(with: data) as? [String: Any], value["id"] as? String == id,
+              value["phase"] as? String == "ready", let number = value["size"] as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID(), number.doubleValue >= 1, number.doubleValue <= 9_007_199_254_740_991,
+              number.doubleValue.rounded(.towardZero) == number.doubleValue,
+              let sha = value["sha256"] as? String, sha.utf8.count == 64, sha.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil,
+              let raw = value["expires_at"] as? String else { throw FountainFailure.invalid }
+        let formatter = ISO8601DateFormatter(); formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let expires = formatter.date(from: raw) ?? ISO8601DateFormatter().date(from: raw), expires > Date() else { throw FountainFailure.stale }
+        self.size = number.int64Value; self.sha = sha; self.expires = expires
+    }
+    func piece(_ response: HTTPURLResponse, offset: Int64, length: Int, received: Int) throws {
+        guard offset >= 0, offset < size, length > 0, length <= 262144, received == length, response.statusCode == 206,
+              response.value(forHTTPHeaderField: "Content-Range") == "bytes \(offset)-\(offset + Int64(length) - 1)/\(size)",
+              response.value(forHTTPHeaderField: "Content-Length") == String(length), expires > Date() else { throw FountainFailure.incomplete }
+    }
+}
+
 private final class FountainJob {
     let id: String
     let call: CAPPluginCall
@@ -220,6 +246,10 @@ private final class FountainJob {
     let timeout: TimeInterval
     let mode: String
     let startedAt = Date().timeIntervalSince1970 * 1000
+    var backupAuthority: FountainRecovery.Authority?
+    var backupPlan: FountainBackupPlan?
+    var backupOffset: Int64 = 0
+    var backupHash = SHA256()
     var sentCookie: String?
     var logoutActor: FountainOutbox.LogoutActor?
     var task: URLSessionDataTask?
@@ -241,6 +271,7 @@ private final class FountainTransfer {
     var data = Data()
     var received: Int64 = 0
     var expected: Int64 = -1
+    var maximum: Int64 = 16 * 1024 * 1024
     var error: FountainFailure?
     var sink: FileHandle?
     var timer: DispatchSourceTimer?
@@ -956,7 +987,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     }
 
     private func network(path: String, method: String, headers: [String: String], body: Data, cookie: String?,
-                         timeout: TimeInterval, file: URL?, done: @escaping (HTTPURLResponse?, Data, FountainFailure?) -> Void) throws -> URLSessionDataTask {
+                         timeout: TimeInterval, file: URL?, maximum: Int64 = 16 * 1024 * 1024, done: @escaping (HTTPURLResponse?, Data, FountainFailure?) -> Void) throws -> URLSessionDataTask {
         guard let backend = origin, let url = URL(string: backend + path), let base = URL(string: backend),
               url.scheme == "https", url.host == base.host, url.port == base.port else { throw FountainFailure.invalid }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
@@ -967,6 +998,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         if let cookie = cookie { request.setValue(cookie, forHTTPHeaderField: "Cookie") }
         let sink = try file.map { try FileHandle(forWritingTo: $0) }
         let transfer = FountainTransfer(streamed: file != nil, sink: sink, done: done)
+        transfer.maximum = maximum
         let task = session.dataTask(with: request)
         transfers[task.taskIdentifier] = transfer
         task.resume()
@@ -986,7 +1018,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         transfer.response = http; transfer.expected = response.expectedContentLength
         if (300..<400).contains(http.statusCode) { transfer.error = .redirect }
         if transfer.streamed && (transfer.expected < 0 || http.statusCode != 200) { transfer.error = .incomplete }
-        if !transfer.streamed && transfer.expected > 16 * 1024 * 1024 { transfer.error = .tooLarge }
+        if !transfer.streamed && transfer.expected > transfer.maximum { transfer.error = .tooLarge }
         completionHandler(transfer.error == nil ? .allow : .cancel)
     }
 
@@ -999,7 +1031,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         do {
             if let sink = transfer.sink { try sink.write(contentsOf: data) }
             else {
-                guard transfer.received <= 16 * 1024 * 1024 else { throw FountainFailure.tooLarge }
+                guard transfer.received <= transfer.maximum else { throw FountainFailure.tooLarge }
                 transfer.data.append(data)
             }
         } catch { transfer.error = error as? FountainFailure ?? .storage; dataTask.cancel() }
@@ -1082,11 +1114,75 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
             let path = call.getString("path") ?? ""
             let decoded = try self.validPath(path)
             let pieces = decoded.split(separator: "/")
-            guard !path.contains("?"), decoded == "/api/backup" ||
-                    (pieces.count == 4 && pieces[0] == "api" && pieces[1] == "attachments" && pieces[3] == "download") else { throw FountainFailure.invalid }
+            let backupID = try FountainBackupPlan.id(path)
+            guard backupID != nil || (!path.contains("?") && (decoded == "/api/backup" ||
+                    (pieces.count == 4 && pieces[0] == "api" && pieces[1] == "attachments" && pieces[3] == "download"))) else { throw FountainFailure.invalid }
             let job = try self.newJob(call, mode: "download")
-            do { job.file = try self.temporary(name); self.send(job) }
+            do {
+                job.file = try self.temporary(name)
+                if let id = backupID { job.sentCookie = try self.cookies().active; self.startBackup(job, id: id) }
+                else { self.send(job) }
+            }
             catch { self.end(job, failure: .storage) }
+        }
+    }
+
+    private func backupOwner(_ job: FountainJob, done: @escaping () -> Void) {
+        do {
+            guard current(job), let cookie = job.sentCookie, try cookies().active == cookie, let backend = origin else { throw FountainFailure.stale }
+            job.task = try network(path: "/api/session", method: "GET", headers: [:], body: Data(), cookie: cookie, timeout: job.timeout, file: nil, maximum: 65536) { response, data, error in
+                guard self.current(job) else { return }
+                do {
+                    guard error == nil, response?.statusCode == 200, try self.cookies().active == cookie,
+                          let body = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                          let member = body["member"] as? [String: Any], member["role"] as? String == "owner" else { throw error ?? FountainFailure.stale }
+                    let proof = try FountainRecovery.Authority.session(data, origin: backend, reference: cookie)
+                    if let previous = job.backupAuthority { guard previous.matches(proof) else { throw FountainFailure.stale } }
+                    job.backupAuthority = proof; done()
+                } catch { self.end(job, failure: error as? FountainFailure ?? .stale) }
+            }
+        } catch { end(job, failure: error as? FountainFailure ?? .stale) }
+    }
+
+    private func startBackup(_ job: FountainJob, id: String) {
+        backupOwner(job) {
+            do {
+                job.task = try self.network(path: "/api/backup/jobs/" + id, method: "GET", headers: [:], body: Data(), cookie: job.sentCookie, timeout: job.timeout, file: nil, maximum: 65536) { response, data, error in
+                    guard self.current(job) else { return }
+                    do {
+                        guard error == nil, response?.statusCode == 200 else { throw error ?? FountainFailure.network }
+                        job.backupPlan = try FountainBackupPlan(data, id: id)
+                        self.backupPiece(job, id: id)
+                    } catch { self.end(job, failure: error as? FountainFailure ?? .invalid) }
+                }
+            } catch { self.end(job, failure: error as? FountainFailure ?? .network) }
+        }
+    }
+
+    private func backupPiece(_ job: FountainJob, id: String) {
+        guard current(job), let plan = job.backupPlan, let file = job.file else { end(job, failure: .stale); return }
+        backupOwner(job) {
+            do {
+                guard plan.expires > Date() else { throw FountainFailure.stale }
+                if job.backupOffset == plan.size {
+                    let digest = job.backupHash.finalize().map { String(format: "%02x", $0) }.joined()
+                    let size = (try FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.int64Value
+                    guard digest == plan.sha, size == plan.size else { throw FountainFailure.incomplete }
+                    self.export(job); return
+                }
+                let offset = job.backupOffset, length = Int(min(262144, plan.size - offset))
+                job.task = try self.network(path: "/api/backup?job_id=" + id, method: "GET", headers: ["Range": "bytes=\(offset)-\(offset + Int64(length) - 1)"], body: Data(), cookie: job.sentCookie, timeout: job.timeout, file: nil, maximum: Int64(length)) { response, data, error in
+                    guard self.current(job) else { return }
+                    do {
+                        guard error == nil, let response = response, try self.cookies().active == job.sentCookie else { throw error ?? FountainFailure.stale }
+                        try plan.piece(response, offset: offset, length: length, received: data.count)
+                        let sink = try FileHandle(forWritingTo: file); defer { try? sink.close() }
+                        try sink.seekToEnd(); try sink.write(contentsOf: data); try sink.synchronize()
+                        job.backupHash.update(data: data); job.backupOffset += Int64(data.count)
+                        self.backupPiece(job, id: id)
+                    } catch { self.end(job, failure: error as? FountainFailure ?? .storage) }
+                }
+            } catch { self.end(job, failure: error as? FountainFailure ?? .storage) }
         }
     }
 
@@ -1261,6 +1357,9 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                 DispatchQueue.main.async {
                     Self.ownership.lock(); defer { Self.ownership.unlock() }
                     guard self.current(job), self.exportID == job.id else { return }
+                    if let proof = job.backupAuthority {
+                        guard (try? self.cookies().active) == job.sentCookie, proof.deadline > Date().timeIntervalSince1970 * 1000 else { self.queue.async { self.end(job, failure: .stale) }; return }
+                    }
                     if let token = self.recoverySaveTokens[job.id], let authority = self.recoverySaveAuthority[job.id], self.recovery?.validSave(token, other: authority) != true {
                         self.queue.async { self.failRecovery(job, FountainRecoveryError.stale) }; return
                     }
@@ -1284,7 +1383,10 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                 let expected = self.recoveryFiles[id]?.count ?? 0, saved = min(savedCount, expected)
                 reader.cancelPrepared()
                 self.resolveRecovery(job, result: ["saved": saved == expected && expected > 0, "filesSaved": saved, "generation": job.generation], reader: reader, authority: authority)
-            } else { self.end(job, result: ["saved": savedCount > 0, "generation": job.generation]) }
+            } else {
+                if let proof = job.backupAuthority { guard self.current(job), (try? self.cookies().active) == job.sentCookie, proof.deadline > Date().timeIntervalSince1970 * 1000 else { self.end(job, failure: .stale); return } }
+                self.end(job, result: ["saved": savedCount > 0, "generation": job.generation])
+            }
         }
     }
 }

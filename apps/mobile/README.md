@@ -38,7 +38,7 @@ Android 디버그 APK는 `apps/mobile/android`에서 `./gradlew assembleDebug`�
 
 기존 `/api/session`과 HttpOnly 세션을 재사용합니다. 세션은 iOS 앱 전용 Keychain 또는 Android Keystore로 암호화한 앱 저장소에 보관하고, Cookie·Set-Cookie를 JS에 반환하지 않습니다. Native HTTPS는 고정 서버의 상대 API 경로만 허용합니다. 자세한 요청·권한·철회 계약은 [NATIVE_CONTRACT.md](NATIVE_CONTRACT.md)에 있습니다.
 
-문서·접속 상태는 전경에서 권한 있는 스냅샷을 반복 조회합니다. 업로드는 기존 4MiB 조각과 offset 확인을 유지하며 진행률은 조각 응답 후 갱신합니다. 첨부·백업은 native 임시 파일로 스트리밍한 뒤 OS 저장 화면을 열도록 구현했습니다. 작은 JSON·CSV·복구 파일의 내보내기는 8MiB까지입니다. Native 요청과 파일 전송의 시간 제한은 45초이므로 모바일 대용량·이어 다운로드는 추가 검증과 보완이 필요합니다.
+문서·접속 상태는 전경에서 권한 있는 스냅샷을 반복 조회합니다. 업로드는 기존 4MiB 조각과 offset 확인을 유지하며 진행률은 조각 응답 후 갱신합니다. 첨부·백업은 native 임시 파일로 스트리밍한 뒤 OS 저장 화면을 열도록 구현했습니다. 작은 JSON·CSV·복구 파일의 내보내기는 8MiB까지입니다. 공통 화면의 [복구 JSON 가져오기](../../docs/RECOVERY_IMPORT.md)는 별도의 16MiB 입력 한도를 적용하며, 가져오기는 자동 동기화 대신 확인 후 대기열 보관으로 진행합니다. 최신 번들은 17개 정적 자산을 포함합니다. Native 요청과 파일 전송의 시간 제한은 45초이므로 모바일 대용량·이어 다운로드는 추가 검증과 보완이 필요합니다.
 
 서버 주소·작업공간·멤버·로그인 binding별로 캐시를 구분하고 native에서는 서비스 워커를 등록하지 않습니다. 번들과 IndexedDB로 여는 오프라인 흐름을 모의 검증했지만, SQLite 영구 outbox는 [비활성 개발 기반](../../docs/NATIVE_OUTBOX.md)으로 추가했습니다. 기본 `outboxEnabled:false` 경로에서는 새 저장소를 열거나 기존 캐시를 이관하지 않으며, 화면도 앱 캐시 보관으로 표시합니다. OS의 WebView 저장소 퇴거 뒤 미전송 편집 복구는 아직 보장하지 않습니다. 외부 양식·게시 링크는 공통 HTTPS 주소를 사용하며 외부 브라우저는 별도 로그인 상태를 가집니다.
 

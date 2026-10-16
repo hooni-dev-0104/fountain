@@ -55,5 +55,8 @@ node scripts/verify-browser-large-file.mjs 5000000000 /tmp/fountain-browser-larg
 | `DELETE /api/uploads/:id` | 미완료 업로드 취소 |
 | `POST /api/uploads/cleanup` | 소유자의 만료 업로드 정리 |
 | `GET/HEAD /api/attachments/:id/download` | 권한 검사·구간 다운로드 |
+| `GET/HEAD /api/attachments/:id/metadata` | 현재 권한 검사 후 ID·이름·크기·MIME·저장 방식·선택 해시만 조회 |
 
 파일당 5GB는 [Notion 공개 파일 명세](https://www.notion.com/help/images-files-and-media)를 참고한 자체 구현이다. Notion의 업로드 서버나 비공개 전송 프로토콜을 복원했다는 의미는 아니다.
+
+메타데이터 조회는 inline 데이터나 청크 파일을 읽지 않습니다. 완료된 첨부 manifest의 설명만 반환하며 로그인·현재 첨부 권한을 동일하게 검사합니다. 여기서 받은 크기나 저장된 해시는 이번 요청에서 실제 파일 바이트의 무결성을 다시 검증했다는 뜻이 아닙니다.

@@ -1,0 +1,78 @@
+{
+  "date": "2026-10-16",
+  "scope": "Manual recovery JSON import; full Notion/five-platform goal remains incomplete",
+  "formats": [
+    "actual legacy fountain-mutation-recovery-v1 export",
+    "fountain-recovery-v2",
+    "explicit-target legacy body draft"
+  ],
+  "legacy_fixture": {
+    "path": "tests/fixtures/recovery-v1.json",
+    "source_commit": "556336802037a3ed46665acf979cf00a85df0763",
+    "sha256": "cc3eeb7253a157dd6a0fe8c013a17dbaf48d8089c5d2f0dea9f7c8ca0400f63a",
+    "provenance": "Actual old browser controller export; no new serializer; isolated SQLite; no production data"
+  },
+  "behavior": {
+    "preview": "Current authorized workspace/database/attachment metadata only; no writes or downloads",
+    "confirm": "Fresh identifiers, fixed private copies, atomic paused queue and local drafts; explicit reapply required",
+    "deduplication": "Normalized digest per active login; two-tab atomic receipt",
+    "stale_scope": "Account, binding, route, modal and source changes cancel pending work",
+    "rollback": "Quota, transaction abort, revocation and duplicate conflicts preserve existing records"
+  },
+  "limits": {
+    "utf8_file_bytes": 16777216,
+    "typed_records": 1000,
+    "blocks": 2000,
+    "json_depth": 32,
+    "json_nodes": 150000,
+    "rga_construction_cost_per_file": 50000,
+    "append_codepoints": 50000,
+    "combined_body_codepoints": 100000,
+    "oversized_body": "Empty new-page seed with full readable recovery draft and original JSON; no silent truncation"
+  },
+  "verification": {
+    "postgres_unittest": {
+      "tests": 460,
+      "seconds": 264.919,
+      "exit_code": 0,
+      "skipped": 0,
+      "namespace": "Generated isolated test namespaces; production namespace never a fixture"
+    },
+    "postgres_two_origin_chrome": "PASS actual export/import, fresh IDs, paused row remains unchanged until explicit reapply, second server observes recovered value; CRDT/presence/offline merge/chunk file download passed",
+    "chrome": [
+      "recovery storage atomicity and two tabs",
+      "recovery core actual HTTP and full database readonly preview",
+      "recovery full UI stale scopes, XSS text, quota, body and append budgets",
+      "offline service worker",
+      "atomic operations acknowledgement",
+      "mobile HTTP mock bridge",
+      "disabled native outbox bootstrap and real IDB/SQLite mock"
+    ],
+    "node": "Legacy fixture, preparse bounds, malformed and amplified RGA rejection passed",
+    "independent_reviews": "Parser/controller, storage/ACL, metadata and UI approved",
+    "visual": {
+      "score": 95,
+      "verdict": "PASS",
+      "state": ".omx/state/fountain-recovery-import/ralph-progress.json"
+    },
+    "mobile_assets": 17
+  },
+  "platform_boundary": {
+    "native_outbox_enabled": false,
+    "native_sdk_compiled": false,
+    "windows_executed": false,
+    "external_https_host_deployed": false
+  },
+  "database_tls": {
+    "verify_full": true,
+    "fresh_connection": "PASS without CA/configuration changes; supersedes earlier outbox verification TLS hold"
+  },
+  "remaining": [
+    "Actual iOS/Android SDK and device verification",
+    "Native durable outbox activation prerequisites",
+    "Windows runtime verification",
+    "Common reachable HTTPS server",
+    "Large-document automatic recovery optimization",
+    "Remaining feature parity in docs/FEATURES.md"
+  ]
+}

@@ -1,7 +1,7 @@
 /* Bounded, resumable attachment transfers. IndexedDB stores metadata only, never file bytes or tokens. */
 (() => {
   'use strict';
-  const SERVER_ORIGIN=globalThis.FountainTransport?.origin||location.origin; const CHUNK_SIZE=4*1024*1024,MAX_SIZE=5_000_000_000,SAMPLE_SIZE=64*1024; const DATABASE='fountain-upload-metadata-v1'; let database; const request=operation=>new Promise((resolve,reject)=> {
+  const SERVER_ORIGIN=globalThis.FountainTransport?.origin||location.origin; const CHUNK_SIZE=4*1024*1024,MAX_SIZE=5_000_000_000,SAMPLE_SIZE=64*1024,VERIFY_CALLS=8; const DATABASE='fountain-upload-metadata-v1'; let database; const request=operation=>new Promise((resolve,reject)=> {
     operation.onsuccess=()=>resolve(operation.result); operation.onerror=()=>reject(operation.error);
   }); function open() {
     if(!database)database=new Promise((resolve,reject)=> {
@@ -122,7 +122,7 @@
     }
     view() {
       return [...this.jobs.values()].map(job=>( {
-        id:job.id,name:job.name,size:job.size,offset:job.offset,loaded:job.loaded||0,status:job.status,message:job.message||'',hasFile:!!job.file
+        id:job.id,name:job.name,size:job.size,offset:job.offset,loaded:job.loaded||0,status:job.status,message:job.message||'',hasFile:!!job.file,verificationPending:job.verificationPending===true,verifiedOffset:job.verifiedOffset||0
       }));
     }
     emit() {
@@ -136,7 +136,7 @@
     }
     async save(job) {
       const generation=this.generation; await this.authorized(); if(!this.liveJob(job)||!this.current()||generation!==this.generation&&job.status!=='paused')throw abortError('전송 상태가 변경되어 저장을 중지했습니다.'); const record= {
-        key:this.scopeId+'|'+identifier(job.id),id:job.id,profileId:this.profileId,scopeId:this.scopeId,pageId:this.scope.pageId,name:job.name,size:job.size,lastModified:job.lastModified,fingerprint:clone(job.fingerprint),offset:job.offset,expiresAt:job.expiresAt,publicationVersion:job.publicationVersion||0,publication:clone(job.publication||null)
+        key:this.scopeId+'|'+identifier(job.id),id:job.id,profileId:this.profileId,scopeId:this.scopeId,pageId:this.scope.pageId,name:job.name,size:job.size,lastModified:job.lastModified,fingerprint:clone(job.fingerprint),offset:job.offset,expiresAt:job.expiresAt,publicationVersion:job.publicationVersion||0,publication:clone(job.publication||null),...(job.verificationPending===undefined?{}:{verificationPending:job.verificationPending,verifiedOffset:job.verifiedOffset||0})
       }; await transaction('readwrite',async store=> {
         if(!this.liveJob(job)||!this.current()||generation!==this.generation&&job.status!=='paused')return; const previous=await request(store.get(record.key)); if(!this.liveJob(job)||!this.current()||generation!==this.generation&&job.status!=='paused')return; if(!previous||previous.offset<=record.offset)store.put(record);
       }); const active=await FountainOffline.getProfile(); if(!this.liveJob(job)||active?.id!==this.profileId) {
@@ -152,7 +152,7 @@
         for(const record of await request(store.index('scopeId').getAll(this.scopeId)))store.delete(record.key);
       });
     }
-    async json(job,path,body,method) {
+    async json(job,path,body,method,withStatus=false) {
       if(!this.current())throw abortError(); await this.authorized(); if(!this.current())throw abortError(); const controller=new AbortController(); job.controller=controller; try {
         const response=await FountainTransport.request('/api'+path, {
           method:method||(body?'POST':'GET'),signal:controller.signal,headers: {
@@ -170,7 +170,7 @@
             error:'서버 응답을 읽지 못했습니다.'
           };
         }
-        if(!response.ok)throw error(value.error||'파일 전송을 처리하지 못했습니다.',response.status); return value;
+        if(!response.ok)throw error(value.error||'파일 전송을 처리하지 못했습니다.',response.status); return withStatus?{status:response.status,value}:value;
       }
       catch(failure) {
         if(failure.name==='AbortError'||failure.status)throw failure; throw error('서버에 연결하지 못했습니다. 저장 위치를 확인해 다시 시도해 주세요.');
@@ -205,7 +205,7 @@
       }
     }
     validateState(job,state) {
-      if(state.id!==job.id||state.owner_id&&state.owner_id!==this.scope.memberId||state.page_id&&state.page_id!==this.scope.pageId||state.name!==job.name||state.size!==job.size||state.chunk_size!==CHUNK_SIZE||!Number.isSafeInteger(state.offset)||state.offset<0||state.offset>job.size||state.offset!==job.size&&state.offset%CHUNK_SIZE!==0)throw error('서버의 전송 정보가 원본 파일과 일치하지 않습니다.');
+      if(!state||typeof state.completed!=='boolean'||state.completed&&!state.attachment||state.id!==job.id||state.owner_id&&state.owner_id!==this.scope.memberId||state.page_id&&state.page_id!==this.scope.pageId||state.name!==job.name||state.size!==job.size||state.chunk_size!==CHUNK_SIZE||!Number.isSafeInteger(state.offset)||state.offset<0||state.offset>job.size||state.offset!==job.size&&state.offset%CHUNK_SIZE!==0)throw error('서버의 전송 정보가 원본 파일과 일치하지 않습니다.');
     }
     chunk(job,offset,generation) {
       const blob=job.file.slice(offset,Math.min(job.size,offset+CHUNK_SIZE)); return new Promise((resolve,reject)=> {
@@ -238,11 +238,30 @@
           if(failure.name==='AbortError'||[401,403,404,410,423].includes(failure.status)||retries>=2||!navigator.onLine)throw failure; retries++; job.status='checking'; job.message='연결을 다시 확인하고 서버의 저장 위치를 조회합니다.'; job.loaded=0; this.emit(); await new Promise(resolve=>setTimeout(resolve,300*retries)); if(!this.current()||generation!==this.generation)throw abortError(); const state=await this.json(job,'/uploads/'+encodeURIComponent(job.id)); this.validateState(job,state); job.offset=state.offset; await this.save(job); if(state.completed)return await this.finish(job,state.attachment,generation);
         }
       }
-      if(!this.current()||generation!==this.generation)throw abortError(); job.status='finishing'; job.loaded=0; job.message='서버에서 완성된 파일을 확인하고 있습니다.'; this.emit(); const attachment=await this.json(job,'/uploads/'+encodeURIComponent(job.id)+'/complete', {
-      }); return await this.finish(job,attachment,generation);
+      return await this.verify(job,generation);
+    }
+    async verify(job,generation) {
+      for(let attempt=0;attempt<VERIFY_CALLS;attempt++) {
+        if(!this.current()||generation!==this.generation)throw abortError();
+        job.status='finishing'; job.loaded=0; job.message='서버에서 완성된 파일을 확인하고 있습니다.'; this.emit();
+        const {status,value}=await this.json(job,'/uploads/'+encodeURIComponent(job.id)+'/complete',{},'POST',true);
+        if(!this.current()||generation!==this.generation)throw abortError(); await this.authorized();
+        if(!this.current()||generation!==this.generation)throw abortError();
+        if(status===201)return await this.finish(job,value,generation);
+        if(status!==202||value?.verification_pending!==true)throw error('파일 검증 응답을 확인하지 못했습니다. 전송 정보는 보관했습니다.');
+        this.validateState(job,value);
+        if(value.completed!==false||value.offset!==job.size||value.attachment!==undefined||!Number.isSafeInteger(value.verified_offset)||value.verified_offset<0||value.verified_offset>job.size||value.verified_offset<=(job.verifiedOffset||0))throw error('파일 검증 위치가 올바르게 진행되지 않았습니다. 전송 정보는 보관했습니다.');
+        job.verificationPending=true; job.verifiedOffset=value.verified_offset; await this.save(job);
+        job.message=`파일 검증 중 · ${job.verifiedOffset.toLocaleString()} / ${job.size.toLocaleString()} 바이트`; this.emit();
+        if(attempt+1<VERIFY_CALLS)await new Promise(resolve=>setTimeout(resolve,150));
+      }
+      if(!this.current()||generation!==this.generation)throw abortError();
+      job.status='paused'; job.message='서버의 파일 검증이 진행 중입니다. 계속하려면 다시 시도를 선택해 주세요.'; this.emit();
+      return null;
     }
     async finish(job,attachment,generation) {
-      if(!attachment||attachment.id!==job.id||attachment.size!==job.size)throw error('완성된 파일 정보를 확인하지 못했습니다.'); if(!this.current()||generation!==this.generation)throw abortError(); job.offset=job.size; job.status='attaching'; job.message='완성된 파일을 문서에 연결하고 있습니다.'; this.emit(); const current=()=>this.current()&&generation===this.generation&&this.liveJob(job)&&job.status==='attaching';
+      if(!attachment||attachment.id!==job.id||attachment.name!==job.name||attachment.size!==job.size||attachment.storage!=='chunks'||typeof attachment.mime!=='string'||!attachment.mime||typeof attachment.sha256!=='string'||!/^[a-f0-9]{64}$/.test(attachment.sha256)||attachment.verification_pending!==undefined||attachment.completed!==undefined||attachment.owner_id&&attachment.owner_id!==this.scope.memberId||attachment.page_id&&attachment.page_id!==this.scope.pageId)throw error('완성된 파일 정보를 확인하지 못했습니다.');
+      if(!this.current()||generation!==this.generation)throw abortError(); await this.authorized(); if(!this.current()||generation!==this.generation)throw abortError(); job.verificationPending=false; job.offset=job.size; job.status='attaching'; job.message='완성된 파일을 문서에 연결하고 있습니다.'; this.emit(); const current=()=>this.current()&&generation===this.generation&&this.liveJob(job)&&job.status==='attaching';
       const publication={version:job.publicationVersion||0,get:()=>clone(job.publication||null),save:async receipt=>{if(!current())throw abortError();const previous=job.publication;job.publication=clone(receipt);try{await this.save(job);if(!current())throw abortError();}catch(failure){job.publication=previous;throw failure;}}};
       const accepted=await this.onComplete(attachment,this.scope,current,publication); if(!this.current()||generation!==this.generation||accepted!==true)throw abortError(); await this.remove(job.id); job.status='done'; job.message='문서에 파일을 추가했습니다.'; job.file=null; job.loaded=0; this.emit(); return attachment;
     }

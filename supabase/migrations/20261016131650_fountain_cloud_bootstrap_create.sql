@@ -1,5 +1,3 @@
--- DRAFT: explicit operator-code account creation; generic signup stays disabled.
-BEGIN;
 ALTER TABLE fountain_cloud.onboarding_claims ADD COLUMN create_attempts integer NOT NULL DEFAULT 0 CHECK(create_attempts BETWEEN 0 AND 3);
 CREATE FUNCTION fountain_cloud.bootstrap_begin(p_workspace_id text,p_nonce_hash text) RETURNS jsonb
 LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path=pg_catalog AS $$
@@ -23,4 +21,3 @@ GRANT EXECUTE ON FUNCTION fountain_cloud.bootstrap_begin(text,text) TO service_r
 CREATE FUNCTION public.fountain_cloud_bootstrap_begin(p_workspace_id text,p_nonce_hash text) RETURNS jsonb LANGUAGE sql VOLATILE SECURITY INVOKER SET search_path=pg_catalog AS $$ SELECT fountain_cloud.bootstrap_begin(p_workspace_id,p_nonce_hash) $$;
 REVOKE ALL ON FUNCTION public.fountain_cloud_bootstrap_begin(text,text) FROM PUBLIC,anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.fountain_cloud_bootstrap_begin(text,text) TO service_role;
-COMMIT;

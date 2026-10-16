@@ -26,7 +26,7 @@ function isAdmin() { return ['owner','admin'].includes(state.session?.member?.ro
 function resourceLevel(resource) {
   return Number.isInteger(resource?.access_level)?resource.access_level:(state.session?.mode==='accounts'?0:4);
 }
-function pageEditable() { return resourceLevel(state.page)>=3&&!state.page?.locked&&!state.page?.archived; }
+function pageEditable() { return !state.nativeRecoveryPaused&&resourceLevel(state.page)>=3&&!state.page?.locked&&!state.page?.archived; }
 function blockEditable() { return pageEditable()&&!state.history?.historyPending; }
 function editorTransaction(kind,fn,options={}) {
   const channel=state.channel;if(!channel||!blockEditable())return;
@@ -100,7 +100,7 @@ async function cachedResourceIds() {
   state.cachedDatabases=new Set(databases.map(record=>record.snapshot.database.id));
 }
 async function ensureMutations() {
-  if(!window.FountainMutations||!state.offlineProfile)return null;
+  if(state.nativeRecoveryPaused||!window.FountainMutations||!state.offlineProfile)return null;
   const profile=state.offlineProfile;
   if(state.mutations&&state.mutationProfileId===profile.id)return state.mutations;
   closeMutations();state.mutationProfileId=profile.id;
@@ -318,11 +318,52 @@ async function confirmRecoveryImport() {
   }catch(error){if(current()){if(error.code==='IMPORT_PREVIEW_STALE'||error.status===409){view.scope.controller.discardPrepared?.(view.prepared?.token);view.prepared=null;}view.error=recoveryImportError(error);}}
   finally{if(current()){view.staging=false;renderRecoveryImport(view);}}
 }
+function nativeRecoveryAvailable() {
+  return globalThis.FountainTransport?.native===true&&globalThis.FountainNativeRecovery?.available===true;
+}
+async function prepareNativeRecovery() {
+  if(!nativeRecoveryAvailable())throw new Error('이 앱에서는 보관 내용 복구를 사용할 수 없습니다.');
+  if(state.nativeRecoveryPaused)return;
+  if(state.nativeRecoveryPreparing)throw new Error('현재 편집 내용을 보관하고 있습니다. 잠시 기다려 주세요.');
+  if(state.composition)throw new Error('입력 중인 글자를 마무리한 뒤 다시 열어 주세요.');
+  const scope={channel:state.channel,controller:state.mutations,profileId:state.offlineProfile?.id,binding:state.session?.cache_binding,epoch:FountainTransport.scopeEpoch};
+  const current=()=>state.channel===scope.channel&&state.mutations===scope.controller&&state.offlineProfile?.id===scope.profileId&&state.session?.cache_binding===scope.binding&&FountainTransport.scopeEpoch===scope.epoch;
+  const check=()=>{if(!current())throw new Error('문서나 로그인 상태가 바뀌었습니다. 다시 확인해 주세요.');};
+  clearTimeout(state.titleTimer);
+  try {
+  reconcileEditor();state.nativeRecoveryPreparing=true;
+  if(scope.channel)await scope.channel.persistence;
+  check();
+  if(scope.channel?.pending?.size&&scope.channel.durable===false)throw new Error('현재 편집 내용을 아직 보관하지 못했습니다. 저장 상태를 확인한 뒤 다시 열어 주세요.');
+  if(state.titleSaving)await state.titleSaving;
+  check();
+  const pending=state.titlePending;
+  if(pending){
+    if(!scope.controller)throw new Error('현재 제목을 먼저 보관한 뒤 다시 열어 주세요.');
+    await scope.controller.patchPage(pending.id,{title:pending.title},{basePage:pending.basePage});
+    check();if(state.titlePending===pending)state.titlePending=null;
+  }
+  if(scope.channel)await scope.channel.persistence;
+  check();
+  state.nativeRecoveryPaused=true;state.bootGeneration=(state.bootGeneration||0)+1;
+  clearTimeout(state.titleTimer);closeDocument();closeMutations();closeModal();document.body.classList.remove('sidebar-open');document.body.classList.add('login-mode');
+  for(const element of $$('#main [contenteditable]'))element.contentEditable='false';
+  for(const element of $$('#main input,#main textarea,#main select'))element.disabled=true;
+  const notice=document.createElement('section');notice.id='native-recovery-paused';notice.className='info-box';notice.setAttribute('role','status');
+  const text=document.createElement('p');text.textContent='보관 내용을 확인하는 동안 편집과 동기화를 일시 중지했습니다. 마친 뒤 앱을 다시 열어 계속하세요.';
+  const reopen=document.createElement('button');reopen.className='outline-btn';reopen.dataset.action='native-recovery';reopen.textContent='보관 내용 다시 확인';
+  const reload=document.createElement('button');reload.className='outline-btn';reload.dataset.action='reload-after-native-recovery';reload.textContent='앱 다시 열기';notice.append(text,reopen,reload);$('#main').replaceChildren(notice);
+  const status=$('#save-status');if(status)status.textContent='보관 내용 확인 · 편집 일시 중지';
+  } finally {
+    state.nativeRecoveryPreparing=false;
+    if(!state.nativeRecoveryPaused&&current()&&state.titlePending&&!state.titleSaving)state.titleTimer=setTimeout(()=>saveTitle().catch(error=>toast(error.message)),450);
+  }
+}
 async function openMutationQueue() {
   const scope={controller:state.mutations,profileId:state.offlineProfile?.id,binding:state.session?.cache_binding,memberId:state.session?.member?.id,workspaceId:state.workspace?.workspace_id,route:state.route,routeId:state.route==='page'?state.page?.id:state.route==='database'?state.database?.id:null};
   if(!scope.controller||!scope.profileId)throw new Error('로그인한 뒤 기기 저장 내용을 확인해 주세요.');
   const pages=(state.workspace?.pages||[]).filter(page=>resourceLevel(page)>=3&&!page.locked&&!page.archived);if(scope.route==='page'&&pageEditable()&&!pages.some(page=>page.id===scope.routeId))pages.unshift(state.page);
-  openModal('기기 저장과 동기화',`<p>${nativeCacheOnly()?'연결이 끊기면 변경을 앱 캐시에 보관합니다. 캐시를 지우거나 앱을 삭제하면 미전송 변경을 잃을 수 있으니 먼저 동기화하거나 복구 내용을 내려받으세요.':'연결이 끊겨도 변경을 이 기기에 보관합니다.'} 서버에서도 같은 값이 바뀌면 자동으로 덮어쓰지 않고 여기서 확인합니다.</p><div class="mutation-toolbar"><button class="solid-btn" id="sync-now" data-action="sync-now">지금 동기화</button><button class="outline-btn" data-action="export-mutations">전체 복구 내용 내려받기</button></div><section class="recovery-import-panel" aria-label="복구 JSON 가져오기"><h3>복구 JSON 가져오기</h3><p>내려받은 복구 파일을 먼저 검토하세요. 가져온 항목은 자동으로 서버에 반영하지 않습니다.</p><label class="recovery-file-label">복구 파일 · 최대 16 MiB<input id="recovery-import-file" type="file" accept=".json,application/json" aria-label="복구 JSON 파일"></label><div class="recovery-import-controls"><label>본문 복구 위치<select id="recovery-target-page" aria-label="본문 복구 위치"><option value="">문서를 선택하세요</option>${pages.map(page=>`<option value="${esc(page.id)}" ${scope.route==='page'&&scope.routeId===page.id?'selected':''}>${esc(page.title||'제목 없음')}</option>`).join('')}</select></label><button class="outline-btn" data-action="prepare-recovery-import" disabled>미리보기 다시 확인</button></div><div id="recovery-import-preview" aria-live="polite"></div></section><div id="mutation-queue-list" aria-live="polite"></div>`,'mutation-modal');
+  openModal('기기 저장과 동기화',`<p>${nativeCacheOnly()?'연결이 끊기면 변경을 앱 캐시에 보관합니다. 캐시를 지우거나 앱을 삭제하면 미전송 변경을 잃을 수 있으니 먼저 동기화하거나 복구 내용을 내려받으세요.':'연결이 끊겨도 변경을 이 기기에 보관합니다.'} 서버에서도 같은 값이 바뀌면 자동으로 덮어쓰지 않고 여기서 확인합니다.</p><div class="mutation-toolbar"><button class="solid-btn" id="sync-now" data-action="sync-now">지금 동기화</button><button class="outline-btn" data-action="export-mutations">전체 복구 내용 내려받기</button>${nativeRecoveryAvailable()?'<button class="outline-btn" data-action="native-recovery">앱 보관 내용 찾기</button>':''}</div><section class="recovery-import-panel" aria-label="복구 JSON 가져오기"><h3>복구 JSON 가져오기</h3><p>내려받은 복구 파일을 먼저 검토하세요. 가져온 항목은 자동으로 서버에 반영하지 않습니다.</p><label class="recovery-file-label">복구 파일 · 최대 16 MiB<input id="recovery-import-file" type="file" accept=".json,application/json" aria-label="복구 JSON 파일"></label><div class="recovery-import-controls"><label>본문 복구 위치<select id="recovery-target-page" aria-label="본문 복구 위치"><option value="">문서를 선택하세요</option>${pages.map(page=>`<option value="${esc(page.id)}" ${scope.route==='page'&&scope.routeId===page.id?'selected':''}>${esc(page.title||'제목 없음')}</option>`).join('')}</select></label><button class="outline-btn" data-action="prepare-recovery-import" disabled>미리보기 다시 확인</button></div><div id="recovery-import-preview" aria-live="polite"></div></section><div id="mutation-queue-list" aria-live="polite"></div>`,'mutation-modal');
   const view={scope,modal:$('.mutation-modal'),sequence:0,rawText:null,prepared:null};state.recoveryImport=view;
   try{const records=await scope.controller.records();if(!recoveryImportCurrent(view))return;state.mutationRecords=records;renderMutationQueue();}catch(error){if(recoveryImportCurrent(view)){view.error=recoveryImportError(error);renderRecoveryImport(view);}}
 }
@@ -436,11 +477,13 @@ function renderTopbar(title='홈',emoji='') {
   pruneAdministrativeControls();renderSyncIndicators();renderPresenceParticipants(state.presenceManager?.participants||[]);
 }
 async function navigate(route,id) {
+  if(state.nativeRecoveryPaused)return;
   state.uploadTargetPageId=route==='page'?id:null;state.uploadManager?.pauseAll('다른 문서를 여는 동안 파일 전송을 일시 중지했습니다.');
   const binding=state.session?.cache_binding,generation=state.bootGeneration;
+  const current=()=>!state.nativeRecoveryPaused&&binding===state.session?.cache_binding&&generation===state.bootGeneration;
   try {
-    await saveTitle();
-    await savePage();
+    await saveTitle();if(!current())return;
+    await savePage();if(!current())return;
     closeDocument();
     closeModal();
     document.body.classList.remove('sidebar-open');
@@ -452,17 +495,18 @@ async function navigate(route,id) {
       state.localPageOnly=!!local?.metadata.localOnly;
       if(state.offline||state.localPageOnly){
         const snapshot=local?.snapshot||await FountainOffline.getSnapshot(FountainOffline.key(state.offlineProfile,id));
+        if(!current())return;
         if(!snapshot)throw new Error('이 페이지는 기기에 보관되어 있지 않습니다. 연결 후 한 번 열어 주세요.');
         await openDocument(id,null,snapshot);
       }else{
         const detail=await api('/pages/'+encodeURIComponent(id));if(binding!==state.session?.cache_binding||generation!==state.bootGeneration)return;await openDocument(id,detail);
       }
-      renderPage();
+      if(!current())return;renderPage();
       location.hash='page/'+id;
     }
     else if(route==='database') {
       state.localPageOnly=false;state.navigatingDatabaseId=id;
-      const data=await loadDatabaseData(id);state.navigatingDatabaseId=null;
+      const data=await loadDatabaseData(id);if(!current())return;state.navigatingDatabaseId=null;
       state.database=data.database;
       state.rows=data.rows||[];
       renderDatabase();
@@ -476,12 +520,14 @@ async function navigate(route,id) {
     window.scrollTo(0,0);
   }
   catch(error) {
+    if(!current())return;
     if(!error.status&&error instanceof TypeError&&['page','database'].includes(route)&&!state.offline&&state.offlineProfile){state.offline=true;state.cachedPages=new Set((await FountainOffline.listSnapshots(state.offlineProfile)).map(record=>record.snapshot.page.id));await navigate(route,id);return;}
     state.navigatingDatabaseId=null;
     if(error.code==='STALE_REQUEST')return;if(error.code==='SESSION_CHANGED'){boot();return;}toast(error.message);
   }
 }
 function renderHome() {
+  if(state.nativeRecoveryPaused)return;
   renderTopbar();
   const pages=state.workspace.pages.filter(p=>!p.deleted&&!p.deleted_at&&!p.archived&&(!state.offline||state.cachedPages?.has(p.id))).slice(0,3);
   const today=new Date().toLocaleDateString('ko-KR', {
@@ -550,13 +596,16 @@ document.addEventListener('selectionchange',()=>{
   if(document.activeElement?.closest?.('.block-content')){state.richSelection=richSelection();const selected=selectedTextPosition();if(!state.composition&&state.expectedSelection&&FountainCollaboration.canonical(selected)!==FountainCollaboration.canonical(state.expectedSelection))state.channel?.breakHistory();state.expectedSelection=selected;}
 });
 window.addEventListener('fountain-offline-profile-changed',async()=>{
-  const current=await FountainOffline.getProfile().catch(()=>null);
+  if(state.nativeRecoveryPaused)return;
+  const generation=state.bootGeneration,current=await FountainOffline.getProfile().catch(()=>null);
+  if(state.nativeRecoveryPaused||generation!==state.bootGeneration)return;
   if(state.offlineProfile&&current?.id!==state.offlineProfile.id||current&&current.session.cache_binding!==state.session?.cache_binding){closeDocument();closeMutations();state.offlineProfile=null;state.page=null;state.blocks=[];$('#main').innerHTML='<div class="loading">로그인 계정을 확인하는 중…</div>';boot();}
 });
 window.addEventListener('fountain-offline-profile-cleared',event=>{
   if(state.loaded&&state.offlineProfile?.id===event.detail?.profileId)renderLogin();
 });
 window.addEventListener('fountain-offline-resource-purged',event=>{
+  if(state.nativeRecoveryPaused)return;
   if(!state.offlineProfile||!event.detail?.key)return;
   let id;try{id=decodeURIComponent(event.detail.key.split('|').at(-1));}catch{return;}
   if(event.detail.kind==='database'||event.detail.key.split('|').length===6){if(FountainOffline.databaseKey(state.offlineProfile,id)===event.detail.key)closeDeniedResource({kind:'database',databaseId:id});return;}
@@ -564,12 +613,14 @@ window.addEventListener('fountain-offline-resource-purged',event=>{
   if(state.workspace){state.workspace.pages=state.workspace.pages.filter(page=>page.id!==id);if(state.route==='home')renderHome();renderSidebar();}
 });
 window.addEventListener('offline',async()=>{
-  state.offline=true;const profile=state.offlineProfile;if(!profile)return;
-  const snapshots=await FountainOffline.listSnapshots(profile);if(state.offlineProfile?.id!==profile.id)return;
-  state.cachedPages=new Set(snapshots.map(record=>record.snapshot.page.id));await cachedResourceIds();renderSidebar();renderSyncIndicators();if(state.route==='home')renderHome();else if(state.route==='database')renderDatabase();
+  if(state.nativeRecoveryPaused)return;
+  state.offline=true;const profile=state.offlineProfile,generation=state.bootGeneration,binding=state.session?.cache_binding;if(!profile)return;
+  const current=()=>!state.nativeRecoveryPaused&&generation===state.bootGeneration&&state.offlineProfile?.id===profile.id&&binding===state.session?.cache_binding;
+  const snapshots=await FountainOffline.listSnapshots(profile);if(!current())return;
+  state.cachedPages=new Set(snapshots.map(record=>record.snapshot.page.id));await cachedResourceIds();if(!current())return;renderSidebar();renderSyncIndicators();if(state.route==='home')renderHome();else if(state.route==='database')renderDatabase();
 });
 window.addEventListener('online',async()=>{
-  if(!state.loaded)return;
+  if(!state.loaded||state.nativeRecoveryPaused)return;
   if(!state.mutations){if(!state.channel&&state.offline)boot();return;}
   const controller=state.mutations,binding=state.session?.cache_binding;
   try{
@@ -706,10 +757,14 @@ function patchDocumentBlocks(saved=selectedTextPosition()) {
   restoreTextPosition(saved);state.presenceManager?.layout();if(!state.composition)state.presenceManager?.update();
 }
 async function openDocument(id,detail,cachedSnapshot) {
-  const binding=state.session?.cache_binding;
+  if(state.nativeRecoveryPaused)return;
+  const binding=state.session?.cache_binding,generation=state.bootGeneration;
+  const current=()=>!state.nativeRecoveryPaused&&binding===state.session?.cache_binding&&generation===state.bootGeneration;
   const snapshot=cachedSnapshot||await api('/pages/'+encodeURIComponent(id)+'/collaboration');
+  if(!current())return;
   if(binding!==state.session?.cache_binding||snapshot.session_binding&&snapshot.session_binding!==binding){const error=new Error('로그인 계정이 변경되었습니다.');error.code='SESSION_CHANGED';throw error;}
   if(!state.offlineProfile&&!cachedSnapshot)await cacheProfile(snapshot.workspace_id);
+  if(!current())return;
   if(!state.offlineProfile)throw new Error('오프라인 저장 프로필을 확인하지 못했습니다. 다시 로그인해 주세요.');
   state.page=metadataOverlay({...snapshot.page,access_level:snapshot.access_level},snapshot);state.blocks=snapshot.blocks;
   state.comments=detail?.comments||[];state.openingDocument=true;
@@ -733,7 +788,7 @@ async function openDocument(id,detail,cachedSnapshot) {
       if(switched){state.offlineProfile=null;boot();return;}
       if(status===401)renderLogin(false);else{$('#main').innerHTML=`<div class="empty"><h2>이 문서에 접근할 수 없습니다.</h2><p>${esc(message)}</p><button class="outline-btn" data-action="home">홈으로 돌아가기</button></div>`;if(state.workspace)state.workspace.pages=state.workspace.pages.filter(page=>page.id!==id);renderSidebar();renderTopbar('접근 권한 없음');}
     }});
-  state.channel=channel;await channel.open(snapshot,{cached:!!cachedSnapshot});if(state.localPageOnly&&!state.blocks.length&&pageEditable()){channel.transact({kind:'structure',record:false},()=>channel.reconcile([{id:uid(),type:'paragraph',text:'',parent_id:null}]));await channel.persistence;}state.openingDocument=false;recordRecentPage(id);
+  state.channel=channel;await channel.open(snapshot,{cached:!!cachedSnapshot});if(!current()||state.channel!==channel){channel.close();return;}if(state.localPageOnly&&!state.blocks.length&&pageEditable()){channel.transact({kind:'structure',record:false},()=>channel.reconcile([{id:uid(),type:'paragraph',text:'',parent_id:null}]));await channel.persistence;}state.openingDocument=false;recordRecentPage(id);
 }
 function richTextHTML(block) {
   const tokens=block.rich_text?.map(token=>token.text).join('')===block.text?block.rich_text:[{text:block.text||'',marks:{}}];
@@ -782,6 +837,7 @@ function renderRecoveryDrafts() {
 }
 
 function renderPage() {
+  if(state.nativeRecoveryPaused)return;
   const p=state.page;state.pageViewBasis=structuredClone(p);
   renderTopbar(p.title,p.icon);
   $('#main').innerHTML=`${p.cover?'<div class="page-cover"></div>':''}<article class="editor-wrap ${p.cover?'has-cover':''}"><button class="page-emoji" data-action="change-icon" aria-label="페이지 아이콘 변경">${esc(p.icon||'📄')}</button><h1 class="page-title" id="page-title" contenteditable="${pageEditable()}" role="textbox" aria-label="페이지 제목">${esc(p.title)}</h1><div class="page-tools" style="flex-wrap:wrap"><span>${icon('clock')}</span><span>${date(p.updated_at)} 수정</span><button data-action="favorite" class="${p.favorite?'favorite-on':''}">${p.favorite?'★ 즐겨찾기':'☆ 즐겨찾기'}</button><button data-action="toggle-cover">${p.cover?'커버 제거':'커버 추가'}</button>${!pageEditable()?'<span>🔒 읽기 전용</span>':'<button data-action="add-file" title="파일당 최대 5 GB">📎 파일 추가</button><input id="attachment-input" type="file" aria-label="첨부할 파일 (최대 5 GB)" hidden>'}<button data-action="ai" style="margin-left:auto">✦ AI 도우미</button></div>${pageEditable()?`<div class="rich-toolbar" aria-label="본문 편집"><button data-action="undo" aria-label="실행 취소" title="실행 취소 (⌘/Ctrl Z)">↶</button><button data-action="redo" aria-label="다시 실행" title="다시 실행 (⌘/Ctrl Shift Z)">↷</button><span class="history-divider" aria-hidden="true"></span><button data-action="rich-mark" data-mark="bold" aria-label="굵게"><b>B</b></button><button data-action="rich-mark" data-mark="italic" aria-label="기울임"><i>I</i></button><button data-action="rich-mark" data-mark="underline" aria-label="밑줄"><u>U</u></button><button data-action="rich-mark" data-mark="strike" aria-label="취소선"><s>S</s></button><button data-action="rich-mark" data-mark="code" aria-label="인라인 코드">&lt;/&gt;</button><button data-action="rich-link">${icon('link')}링크</button><label>글자색<select id="rich-color" aria-label="글자색"><option value="default">기본</option>${FountainCollaboration.PALETTE.filter(color=>color!=='default').map(color=>`<option value="${color}">${esc(({gray:'회색',brown:'갈색',orange:'주황',yellow:'노랑',green:'초록',blue:'파랑',purple:'보라',pink:'분홍',red:'빨강'})[color])}</option>`).join('')}</select></label><label>배경<select id="rich-background" aria-label="글자 배경"><option value="default">없음</option>${FountainCollaboration.PALETTE.filter(color=>color!=='default').map(color=>`<option value="${color}">${esc(({gray:'회색',brown:'갈색',orange:'주황',yellow:'노랑',green:'초록',blue:'파랑',purple:'보라',pink:'분홍',red:'빨강'})[color])}</option>`).join('')}</select></label></div>`:''}<div id="blocks" aria-label="페이지 블록">${state.blocks.map(blockHTML).join('')}</div>${pageEditable()?'<button class="editor-end" data-action="add-block"><span>+</span> 글을 쓰거나 ‘/’로 블록을 추가하세요</button>':''}<section class="comment-section"><h3>댓글 <span class="muted">${state.comments.filter(c=>!c.resolved).length}</span></h3><div id="comments">${commentsHTML()}</div><form class="comment-form" id="comment-form"><input name="text" aria-label="댓글 내용" placeholder="생각을 나눠보세요…" required maxlength="10000"><button class="outline-btn">보내기 ${icon('arrow')}</button></form></section></article>`;
@@ -1072,6 +1128,7 @@ function databaseView() {
   return `<div style="padding:14px;font-size:13px">${now.getFullYear()}년 ${now.getMonth()+1}월</div><div class="calendar">${['일','월','화','수','목','금','토'].map(d=>`<div class="weekday">${d}</div>`).join('')}${Array.from({length:first},()=>'<div></div>').join('')}${Array.from({length:count},(_,i)=>{const key=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(i+1).padStart(2,'0')}`;return `<div>${i+1}${rows.filter(r=>{const range=dateRange(valuesOf(r)[dateProp?.id]);return range&&key>=range.startISO&&key<=range.endISO;}).map(r=>`<button data-action="edit-row" data-id="${esc(r.id)}">${esc(nameOf(r))}</button>`).join('')}</div>`;}).join('')}</div>${!dateProp?'<div class="info-box">날짜 속성을 추가하면 캘린더에 항목을 표시할 수 있습니다.</div>':''}`;
 }
 function renderDatabase() {
+  if(state.nativeRecoveryPaused)return;
   renderTopbar(state.database.name||state.database.title,'▤');
   $('#main').innerHTML=`<section class="db-full"><div class="eyebrow">TEAM WORK, IN ONE PLACE</div><div class="database-heading"><h1>▤ ${esc(state.database.name||state.database.title||'프로젝트')}</h1><button class="outline-btn" data-action="db-export">↗ CSV 내보내기</button></div><p class="muted">작은 할 일부터 큰 목표까지, 우리의 다음 한 걸음을 함께 기록해요.</p><div class="panel">${databaseToolbar()}<div id="db-filters" ${state.filter?'':'hidden'} class="filters"><input id="db-filter-input" aria-label="항목 필터" placeholder="모든 속성에서 검색" value="${esc(state.filter)}"><button class="outline-btn" data-action="db-sort">이름 ${state.sort?'↓':'↕'} 정렬</button><button data-action="clear-filter" aria-label="필터 해제">×</button></div><div id="db-view">${databaseView()}</div></div></section>`;
   applyDatabaseControls();
@@ -1349,7 +1406,9 @@ function download(filename,content,mime='text/plain') {
   setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 async function saveTitle() {
+  if(state.nativeRecoveryPreparing||state.nativeRecoveryPaused)return;
   if (state.titleSaving) await state.titleSaving;
+  if(state.nativeRecoveryPreparing||state.nativeRecoveryPaused)return;
   clearTimeout(state.titleTimer);
   const pending = state.titlePending;
   if (!pending) return;
@@ -1367,8 +1426,10 @@ async function saveTitle() {
   finally { state.titleSaving = null; }
 }
 async function updatePage(patch,basePage=structuredClone(state.pageViewBasis||state.page)) {
+  const scope={pageId:state.page?.id,controller:state.mutations,profileId:state.offlineProfile?.id,binding:state.session?.cache_binding};
   await savePage();
-  const id = state.page.id;
+  if(state.nativeRecoveryPaused||scope.pageId!==state.page?.id||scope.controller!==state.mutations||scope.profileId!==state.offlineProfile?.id||scope.binding!==state.session?.cache_binding){const error=new Error('문서나 로그인 상태가 바뀌었습니다. 다시 확인해 주세요.');error.code='STALE_REQUEST';throw error;}
+  const id = scope.pageId;
   const queued=state.mutations&&Object.keys(patch).every(key=>['title','icon','cover','favorite'].includes(key));
   const p=queued?await state.mutations.patchPage(id,patch,{basePage}):await api('/pages/'+id,{...patch,revision:state.page.revision},'PATCH');
   if(queued){state.mutationRecords=await state.mutations.records();if(!state.offline)await syncMutations();}
@@ -1461,6 +1522,7 @@ async function showActivity() {
 }
 async function doAction(target,grouped=false) {
   const a=target.dataset.action,id=target.dataset.id;
+  if(state.nativeRecoveryPaused&&!['native-recovery','reload-after-native-recovery'].includes(a))throw new Error('보관 내용을 확인한 뒤 앱을 다시 열어 주세요.');
   if(['undo','redo'].includes(a)){await runHistory(a);return;}
   if(['block-menu','rich-mark','rich-link','add-file','apply-recovery','indent-block','outdent-block','add-block','change-block-type','set-block-type','delete-block','move-block'].includes(a)&&!blockEditable())throw new Error('본문 편집 결과를 확인하는 중입니다. 잠시 기다려 주세요.');
   if(!grouped&&['apply-recovery','change-block-type','set-block-type','delete-block','move-block'].includes(a))return editorTransaction('structure',()=>doAction(target,true));
@@ -1472,6 +1534,8 @@ async function doAction(target,grouped=false) {
   if(['add-row','new-property'].includes(a)&&!(a==='add-row'?canCreateRow():resourceLevel(state.database)>=4))throw new Error('데이터베이스 편집 권한이 없습니다.');
   switch(a) {
     case'sync-queue':await openMutationQueue();break;
+    case'native-recovery':if(!nativeRecoveryAvailable())throw new Error('이 앱에서는 보관 내용 복구를 사용할 수 없습니다.');await FountainNativeRecovery.open();break;
+    case'reload-after-native-recovery':location.reload();break;
     case'prepare-recovery-import':await prepareRecoveryImport();break;
     case'confirm-recovery-import':await confirmRecoveryImport();break;
     case'recovery-preview-more':if(recoveryImportCurrent(state.recoveryImport)){state.recoveryImport.itemLimit=(state.recoveryImport.itemLimit||30)+30;renderRecoveryImport(state.recoveryImport);}break;
@@ -1851,6 +1915,7 @@ document.addEventListener('change',event=> {
   }
 });
 document.addEventListener('keydown',event=> {
+  if(state.nativeRecoveryPaused)return;
   if(['Enter',' '].includes(event.key)&&event.target.matches('[data-action="edit-row"][role="button"]')){event.preventDefault();doAction(event.target).catch(error=>toast(error.message));return;}
   if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='k') {
     event.preventDefault(); openSearch(); return;
@@ -1914,6 +1979,7 @@ document.addEventListener('dragend',()=> {
   $$('.dragging').forEach(b=>b.classList.remove('dragging')); dragId=null;
 });
 document.addEventListener('submit',async event=> {
+  if(state.nativeRecoveryPaused)return;
   const formElement=event.target; if(!formElement.id)return; event.preventDefault(); const data=Object.fromEntries(new FormData(formElement)),submit=$('button[type=submit],button.solid-btn',formElement); if(submit)submit.disabled=true; try {
     switch(formElement.id) {
       case'rich-link-form':{FountainCollaboration.validateMarks({link:data.link||null});closeModal();applyRichMark('link',data.link||null);break;}
@@ -2074,6 +2140,7 @@ window.addEventListener('beforeunload',event=> {
   }
 });
 function renderLogin(purge=true) {
+  if(state.nativeRecoveryPaused)return;
   closeDocument();closeMutations();if(purge&&state.offlineProfile)window.FountainOffline?.clearProfile(state.offlineProfile).catch(()=>{});state.offlineProfile=null;state.offline=false;
   state.loaded=false;
   state.workspace=null;state.page=null;state.blocks=[];state.database=null;state.rows=[];state.dirty=false;state.titlePending=null;clearTimeout(state.saveTimer);clearTimeout(state.titleTimer);
@@ -2083,8 +2150,10 @@ function renderLogin(purge=true) {
   document.body.classList.add('login-mode');
 }
 async function boot() {
+  if(state.nativeRecoveryPaused)return;
   const generation=(state.bootGeneration||0)+1;state.bootGeneration=generation;
   const cachedIdentity=await window.FountainOffline?.getProfile().catch(()=>null);
+  if(state.nativeRecoveryPaused||generation!==state.bootGeneration)return;
   try {
     document.body.classList.remove('login-mode');
     if(localStorage.getItem(logoutPendingKey())){const record=JSON.parse(localStorage.getItem(logoutPendingKey()));try{await api('/session',{},'DELETE');localStorage.removeItem(logoutPendingKey());}catch(error){if(!error.status){state.session={mode:['accounts','family','local'].includes(record.mode)?record.mode:'accounts',required:true,authenticated:false};renderLogin();return;}throw error;}}
@@ -2104,7 +2173,8 @@ async function boot() {
     if(e.code==='SESSION_CHANGED'){boot();return;}
     if(!e.status&&(e instanceof TypeError||e.name==='NetworkError'||e.name==='TimeoutError')){
       const profile=await window.FountainOffline?.getProfile().catch(()=>null);
-      if(profile){state.offlineProfile=profile;state.session=profile.session;state.serverWorkspace=profile.workspace;state.workspace=profile.workspace;state.offline=true;await ensureMutations();await cachedResourceIds();state.loaded=true;renderSidebar();const [route,id]=location.hash.slice(1).split('/');await navigate(['page','database'].includes(route)&&id?route:'home',id?decodeURIComponent(id):undefined);return;}
+      if(state.nativeRecoveryPaused||generation!==state.bootGeneration)return;
+      if(profile){state.offlineProfile=profile;state.session=profile.session;state.serverWorkspace=profile.workspace;state.workspace=profile.workspace;state.offline=true;await ensureMutations();if(state.nativeRecoveryPaused||generation!==state.bootGeneration)return;await cachedResourceIds();if(state.nativeRecoveryPaused||generation!==state.bootGeneration)return;state.loaded=true;renderSidebar();const [route,id]=location.hash.slice(1).split('/');await navigate(['page','database'].includes(route)&&id?route:'home',id?decodeURIComponent(id):undefined);return;}
     }
     if(e.status===401) {
       renderLogin();
@@ -2115,7 +2185,7 @@ async function boot() {
 }
 window.addEventListener('resize',()=>{if(state.route==='database'&&state.view==='timeline')requestAnimationFrame(focusTimeline);});
 window.addEventListener('hashchange', () => {
-  if (!state.loaded) return;
+  if (!state.loaded||state.nativeRecoveryPaused) return;
   const [route, encodedId] = location.hash.slice(1).split('/');
   let id;
   try { id = encodedId ? decodeURIComponent(encodedId) : undefined; }

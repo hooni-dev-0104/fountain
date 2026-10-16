@@ -1,4 +1,10 @@
 'use strict';
+// Connection codes live only in this tab, never in cache or persistent settings.
+let setupCodeFromLink=null;
+if(/^#setup=[A-Za-z0-9_-]{43}$/.test(location.hash)){
+  setupCodeFromLink=location.hash.slice(7);
+  history.replaceState(null,'',location.pathname+location.search+'#home');
+}
 const logoutPendingKey=()=>FountainTransport.native?'fountain-logout-pending:'+encodeURIComponent(FountainTransport.origin):'fountain-logout-pending';
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
@@ -2079,7 +2085,15 @@ document.addEventListener('submit',async event=> {
         await navigate(sharing.kind==='pages'?'page':'database',sharing.id);
         toast('공유 설정을 저장했습니다.');break;
       }
-      case'login-form':await api('/session',state.session?.mode==='accounts'?{email:data.email,password:data.password}:{token:data.token}); await boot(); break; case'page-form': {
+      case'login-form':{
+        const credentials=state.session?.mode==='accounts'?{email:data.email,password:data.password}:{token:data.token};
+        if(state.session?.setup_supported===true&&(data.setup_nonce||data.create_account)){
+          if(!/^[A-Za-z0-9_-]{43}$/.test(data.setup_nonce||''))throw new Error('연결 코드를 확인해주세요.');
+          credentials.setup_nonce=data.setup_nonce;
+          if(data.create_account){if(Array.from(data.password||'').length<10)throw new Error('새 비밀번호는 10자 이상 입력해주세요.');if(data.password!==data.setup_password_confirm)throw new Error('비밀번호 확인이 일치하지 않습니다.');credentials.create_account=true;}
+        }
+        await api('/session',credentials);setupCodeFromLink=null;formElement.reset();await boot();break;
+      } case'page-form': {
         if(state.session?.member?.role==='guest')throw new Error('페이지 생성 권한이 없습니다.');
         const parentId=formElement.dataset.parent||null,parent=state.workspace.pages.find(page=>page.id===parentId);
         if(parentId&&(!parent||resourceLevel(parent)<3))throw new Error('상위 페이지 편집 권한이 없습니다.');
@@ -2216,6 +2230,12 @@ function renderLogin(preserve=true) {
   $('#sidebar').innerHTML='';
   $('#topbar').innerHTML='';
   $('#main').innerHTML=`<div class="login-wrap"><div class="brand"><span class="brand-mark">f</span>fountain</div><h1>우리 가족의 작은 작업실</h1><p>가족과 나누는 문서, 아이디어, 일상.<br>${state.session?.mode==='accounts'?'내 이메일과 비밀번호로 로그인하세요.':'공유 암호를 입력하고 함께 시작하세요.'}</p><form class="form-grid" id="login-form">${state.session?.mode==='accounts'?'<label>이메일<input name="email" type="email" required autocomplete="username" autofocus placeholder="name@example.com"></label><label>비밀번호<input name="password" type="password" required autocomplete="current-password" placeholder="계정 비밀번호"></label>':'<label>공유 암호<input name="token" type="password" required autocomplete="current-password" autofocus placeholder="가족 공유 암호"></label>'}<button class="solid-btn">워크스페이스 열기</button><div id="login-error" role="alert"></div></form><small class="muted">Fountain · 구독 없이, 함께 쓰는 공간</small></div>`;
+  if(state.session?.mode==='accounts'&&state.session.setup_supported===true){
+    const panel=document.createElement('details');panel.className='info-box';panel.open=!!setupCodeFromLink;
+    panel.innerHTML='<summary>처음 연결하거나 초대받았나요?</summary><p>받은 연결 코드를 입력하세요. 처음 시작한다면 새 계정 만들기를 선택하세요.</p><label>연결 코드<input name="setup_nonce" type="password" autocomplete="off" spellcheck="false" maxlength="43" placeholder="받은 연결 코드"></label><label style="display:flex;gap:8px;align-items:center"><input name="create_account" type="checkbox" value="true" style="width:auto">새 계정 만들기</label><label id="setup-confirm" hidden>비밀번호 확인<input name="setup_password_confirm" type="password" autocomplete="new-password"></label>';
+    const form=$('#login-form');form.insertBefore(panel,$('button',form));$('input[name="setup_nonce"]',panel).value=setupCodeFromLink||'';
+    $('input[name="create_account"]',panel).addEventListener('change',event=>{const creating=event.target.checked;$('#setup-confirm').hidden=!creating;$('input[name="setup_password_confirm"]',panel).required=creating;$('input[name="password"]',form).autocomplete=creating?'new-password':'current-password';});
+  }
   document.body.classList.add('login-mode');
   if(state.authRetentionError&&$('#login-error'))$('#login-error').textContent=state.authRetentionError;
 }

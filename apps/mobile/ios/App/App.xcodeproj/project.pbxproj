@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		F04800000000000000000002 /* FountainRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04800000000000000000001 /* FountainRecovery.swift */; };
 		F04700000000000000000002 /* FountainOutbox.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04700000000000000000001 /* FountainOutbox.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
@@ -20,6 +21,7 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		F04800000000000000000001 /* FountainRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FountainRecovery.swift; sourceTree = "<group>"; };
 		F04700000000000000000001 /* FountainOutbox.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FountainOutbox.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
@@ -70,6 +72,7 @@
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				F04700000000000000000001 /* FountainOutbox.swift */,
+				F04800000000000000000001 /* FountainRecovery.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -163,6 +166,7 @@
 			files = (
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 				F04700000000000000000002 /* FountainOutbox.swift in Sources */,
+				F04800000000000000000002 /* FountainRecovery.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

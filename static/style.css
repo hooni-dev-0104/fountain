@@ -2089,3 +2089,55 @@ svg {
 .history-state{font-size:12px;line-height:1.6;color:#8a662e;background:#faf5e9;border-radius:6px;padding:9px 12px;margin:8px 0 14px;overflow-wrap:anywhere}
 .rich-toolbar [data-action="undo"],.rich-toolbar [data-action="redo"]{font-size:19px;min-width:30px}
 .rich-toolbar button:disabled,.rich-toolbar select:disabled{opacity:.4;cursor:default}
+
+/* Saved versions are separate, noneditable document previews. */
+.version-modal{width:1100px}
+.version-modal .modal-body{padding:20px 24px}
+.version-layout{display:grid;grid-template-columns:190px minmax(0,1fr);gap:22px}
+.version-list{display:flex;flex-direction:column;gap:7px;min-width:0;max-height:65vh;overflow:auto;padding-right:4px}
+.version-choice{display:flex;flex-direction:column;align-items:flex-start;text-align:left;border:1px solid var(--line);border-radius:7px;padding:12px;gap:5px;min-width:0;font-size:12px}
+.version-choice.selected{background:#f2f5ed;border-color:#9ba990;color:#435338}
+.version-choice small,.version-choice>span{font-size:10px;color:#727b67;overflow-wrap:anywhere}
+.version-comparison{min-width:0}
+.version-detail-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:13px}
+.version-detail-head strong{font-size:14px}
+.version-detail-head small{display:block;color:#737b6b;font-size:11px;margin-top:5px}
+.version-detail-head button{font-size:11px;flex:none}
+.version-summary{display:flex;flex-wrap:wrap;gap:6px;font-size:10px;margin:12px 0}
+.version-summary>span{border:1px solid var(--line);border-radius:4px;padding:4px 6px}
+.version-legend{display:flex;gap:7px;margin-left:auto}
+.version-modal del{background:#fce9e7;color:#9f3434;text-decoration:line-through;text-decoration-thickness:1px}
+.version-modal ins{background:#e8f2df;color:#395a2a;text-decoration:none;border-bottom:1px solid #7a9d64}
+.version-column-head,.version-pair{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+.version-column-head{font-size:11px;padding:12px 0 8px;color:#59634f}
+.version-title-pair>div{padding:12px;border:1px solid var(--line);border-radius:6px;min-width:0}
+.version-title-pair small{color:#808774;font-size:10px}
+.version-title-pair h3{font-size:17px;line-height:1.6;margin:7px 0 0;overflow-wrap:anywhere}
+.version-blocks .version-pair{margin-top:9px;align-items:stretch}
+.version-block{border:1px solid var(--line);border-radius:6px;padding:12px;min-width:0;background:#fff}
+.version-block-changed{border-color:#d8dfcc}
+.version-block-meta{display:flex;flex-wrap:wrap;gap:5px;font-size:9px;line-height:1.6;color:#7c856f;margin-bottom:9px;overflow-wrap:anywhere}
+.version-change-tags{font-weight:600;color:#697c53}
+.version-block-text{font-size:12px;line-height:1.85;white-space:pre-wrap;overflow-wrap:anywhere;min-height:1.85em}
+.version-block-missing{border-style:dashed;background:#fafbf8;color:#929886;font-size:11px;display:flex;align-items:center;justify-content:center}
+.version-type-heading1 .version-block-text{font-size:21px;font-weight:700}
+.version-type-heading2 .version-block-text{font-size:18px;font-weight:700}
+.version-type-heading3 .version-block-text{font-size:15px;font-weight:700}
+.version-type-code .version-block-text{font-family:monospace;background:#f5f6f2;padding:9px}
+.version-file small{display:block;color:#7c856f;font-size:10px}
+.version-confirm{border:1px solid #b9c6ac;background:#f5f7f0;padding:15px;border-radius:7px;margin:12px 0}
+.version-confirm strong{font-size:13px}
+.version-modal #version-status .info-box{font-size:12px;line-height:1.8;overflow-wrap:anywhere}
+.version-modal #version-status button{display:block;margin-top:10px}
+@media(max-width:700px){
+  .version-modal .modal-body{padding:16px}
+  .version-layout{grid-template-columns:minmax(0,1fr);gap:15px}
+  .version-list{flex-direction:row;max-height:none;overflow-x:auto;padding-bottom:5px}
+  .version-choice{flex:0 0 150px;min-height:90px}
+  .version-detail-head{align-items:flex-start;flex-wrap:wrap}
+  .version-column-head,.version-pair{gap:8px}
+  .version-block,.version-title-pair>div{padding:9px}
+  .version-title-pair h3{font-size:14px}
+  .version-block-text{font-size:11px}
+  .version-summary{gap:4px}
+}

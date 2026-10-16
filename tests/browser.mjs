@@ -97,8 +97,9 @@ try {
   await page.locator('#comment-form button').click();
   await page.waitForSelector('.comment-item');
   await clickAction('history');
-  await page.waitForSelector('.history-item');
-  assert.ok(await page.locator('.history-item').count() > 0);
+  await page.waitForSelector('.version-choice');
+  assert.ok(await page.locator('.version-choice').count() > 0);
+  assert.ok(await page.locator('.version-comparison').count() > 0);
   await clickAction('close-modal');
   await page.keyboard.press('Control+k');
   await page.locator('#search-input').fill(title);

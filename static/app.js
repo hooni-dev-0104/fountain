@@ -248,7 +248,9 @@ async function loadDatabaseData(id,{remote=!state.offline}={}) {
   return data;
 }
 async function api(path, body, method) {
-  const requestBinding=state.session?.cache_binding;
+  const requestScope={binding:state.session?.cache_binding,memberId:state.session?.member?.id,bootGeneration:state.bootGeneration};
+  const stale=()=>{const error=new Error('로그인 상태가 변경되었습니다. 다시 확인해 주세요.');error.code='STALE_REQUEST';return error;};
+  const assertCurrent=()=>{if(requestScope.binding!==state.session?.cache_binding||requestScope.memberId!==state.session?.member?.id||requestScope.bootGeneration!==state.bootGeneration)throw stale();};
   const response = await FountainTransport.request('/api' + path, {
     method:method || (body ? 'POST':'GET'),headers: {
       'Content-Type':'application/json'
@@ -258,16 +260,19 @@ async function api(path, body, method) {
     : {
     })
   });
-  if(requestBinding&&state.session?.cache_binding&&requestBinding!==state.session.cache_binding){const error=new Error('로그인 계정이 변경되었습니다.');error.code='STALE_REQUEST';throw error;}
+  assertCurrent();
   const data = await response.json().catch(()=>( {
     error:'응답을 읽을 수 없습니다.'
   }));
+  assertCurrent();
   if (!response.ok) {
     const error = new Error(typeof data.error === 'string' ? data.error : data.message || '요청을 처리하지 못했습니다.');
     error.status = response.status;
     error.data=data;
     if(response.status===401&&path!=='/session'){
       const session=await FountainTransport.request('/api/session').then(result=>result.json()).catch(()=>null);
+      assertCurrent();
+      if(session?.authenticated)throw stale();
       if(session)state.session=session;
       closeModal();renderLogin();
     }
@@ -327,7 +332,7 @@ function renderSidebar() {
   pruneAdministrativeControls();renderSyncIndicators();
 }
 function renderTopbar(title='홈',emoji='') {
-  $('#topbar').innerHTML=`<div class="crumb"><button class="mobile-toggle" data-action="toggle-sidebar" aria-label="메뉴 열기">${icon('menu')}</button><button data-action="home">Fountain 스튜디오</button><span>/</span><span>${esc(emoji)}</span><span class="current">${esc(title)}</span></div><div class="top-actions"><span class="save-status" id="save-status">${state.route==='page'?'모든 변경 사항 저장됨':'나만의 리듬으로, 함께'}</span><button class="sync-status-button sync-topbar" data-action="sync-queue" title="기기 저장과 동기화"><span aria-hidden="true">↻</span><span data-sync-label>기기 저장</span></button><div id="page-presence" class="page-presence" aria-label="현재 페이지 접속자" role="status"></div>${state.route==='page'?`<button ${resourceLevel(state.page)<3?'disabled':''} data-action="favorite" aria-label="즐겨찾기">${icon('star')}</button><button data-action="share" aria-label="페이지 공유">${icon('share')}공유</button><button data-action="history" aria-label="페이지 기록">${icon('clock')}</button><button data-action="page-menu" aria-label="페이지 메뉴">${icon('dots')}</button>`:`${state.route==='database'?`<button data-action="db-share">${icon('share')}공유</button>`:''}<button class="desktop-only" data-action="activity" aria-label="활동 기록">${icon('clock')}</button><button data-action="settings" aria-label="설정">${icon('dots')}</button>`}</div>`;
+  $('#topbar').innerHTML=`<div class="crumb"><button class="mobile-toggle" data-action="toggle-sidebar" aria-label="메뉴 열기">${icon('menu')}</button><button data-action="home">Fountain 스튜디오</button><span>/</span><span>${esc(emoji)}</span><span class="current">${esc(title)}</span></div><div class="top-actions"><span class="save-status" id="save-status">${state.route==='page'?'모든 변경 사항 저장됨':'나만의 리듬으로, 함께'}</span><button class="sync-status-button sync-topbar" data-action="sync-queue" title="기기 저장과 동기화"><span aria-hidden="true">↻</span><span data-sync-label>기기 저장</span></button><div id="page-presence" class="page-presence" aria-label="현재 페이지 접속자" role="status"></div>${state.route==='page'?`<button ${resourceLevel(state.page)<3?'disabled':''} data-action="favorite" aria-label="즐겨찾기">${icon('star')}</button><button data-action="share" aria-label="페이지 공유">${icon('share')}공유</button><button ${resourceLevel(state.page)<3?'disabled':''} data-action="history" aria-label="페이지 기록">${icon('clock')}</button><button data-action="page-menu" aria-label="페이지 메뉴">${icon('dots')}</button>`:`${state.route==='database'?`<button data-action="db-share">${icon('share')}공유</button>`:''}<button class="desktop-only" data-action="activity" aria-label="활동 기록">${icon('clock')}</button><button data-action="settings" aria-label="설정">${icon('dots')}</button>`}</div>`;
   pruneAdministrativeControls();renderSyncIndicators();renderPresenceParticipants(state.presenceManager?.participants||[]);
 }
 async function navigate(route,id) {
@@ -527,6 +532,7 @@ async function cacheProfile(workspaceId=state.workspace?.workspace_id||state.ses
   state.offlineProfile=profile;return profile;
 }
 function closeDocument() {
+  if(state.versionView)closeModal();state.versions=[];
   state.presenceManager?.close();state.presenceManager=null;state.presenceChannel=null;
   state.uploadManager?.dispose();state.uploadManager=null;state.uploadReselectId=null;
   state.channel?.close();state.channel=null;state.history={};state.expectedSelection=null;state.renderedChars=new Map();state.composition=null;state.inputBaseline=null;clearTimeout(state.saveTimer);state.saveTimer=null;state.recoveryDrafts=[];
@@ -606,13 +612,13 @@ async function openDocument(id,detail,cachedSnapshot) {
   if(!state.offlineProfile&&!cachedSnapshot)await cacheProfile(snapshot.workspace_id);
   if(!state.offlineProfile)throw new Error('오프라인 저장 프로필을 확인하지 못했습니다. 다시 로그인해 주세요.');
   state.page=metadataOverlay({...snapshot.page,access_level:snapshot.access_level},snapshot);state.blocks=snapshot.blocks;
-  state.versions=detail?.versions||[];state.comments=detail?.comments||[];state.openingDocument=true;
+  state.comments=detail?.comments||[];state.openingDocument=true;
   const channel=new FountainCollaboration.DocumentChannel({pageId:id,profile:state.offlineProfile,fetcher:api,deferRemote:!!state.localPageOnly,
     onPresence:payload=>{if(state.channel===channel){ensurePresence();state.presenceManager?.receive(payload);}},
     onChange:change=>{
       if(state.channel!==channel||state.route!=='page')return;
       const beforeEditable=pageEditable(),selection=change.selection||selectedTextPosition();
-      state.page=metadataOverlay({...change.snapshot.page,access_level:change.snapshot.access_level},change.snapshot);state.blocks=change.blocks;
+      state.page=metadataOverlay({...change.snapshot.page,access_level:change.snapshot.access_level},change.snapshot);state.blocks=change.blocks;invalidateVersionView();
       if(!pageEditable())state.uploadManager?.pauseAll('문서가 읽기 전용으로 바뀌어 전송을 일시 중지했습니다.');
       ensurePresence();
       if(state.openingDocument||state.composition)return;
@@ -980,7 +986,7 @@ async function reloadDatabase() {
   applyDatabaseControls();
 }
 function openModal(title,content,cls='') {
-  closeSlash();
+  state.versionView=null;closeSlash();
   $('#overlay-root').innerHTML=`<div class="modal-backdrop"><section class="modal ${cls}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="modal-head"><h2>${esc(title)}</h2><button class="modal-close" data-action="close-modal" aria-label="닫기">×</button></header><div class="modal-body">${content}</div></section></div>`;
   if(state.route==='page'&&resourceLevel(state.page)<4)$$('[data-action="delete-page"],[data-action="move-page"]',$('.modal')).forEach(el=>el.remove());
   if(state.route==='page'&&resourceLevel(state.page)<3){for(const action of ['lock-page','delete-page','verify-page','move-page','change-block-type','move-block','delete-block','restore-version'])$$(`[data-action="${action}"]`,$('.modal')).forEach(el=>el.remove());}
@@ -989,7 +995,7 @@ function openModal(title,content,cls='') {
   requestAnimationFrame(()=>{if(body?.isConnected)$('input:not([type=checkbox]),textarea,select,button',body)?.focus();});
 }
 function closeModal() {
-  $('#overlay-root').innerHTML='';
+  state.versionView=null;$('#overlay-root').innerHTML='';
   closeSlash();
 }
 function field(label,name,placeholder='',type='text',value='') {
@@ -1275,11 +1281,73 @@ async function updatePage(patch,basePage=structuredClone(state.pageViewBasis||st
   renderSidebar();
   renderTopbar(state.page.title,state.page.icon);
 }
+function versionScopeCurrent(view) {
+  const scope=view?.scope;
+  return !!scope&&state.versionView===view&&view.modal?.isConnected&&$('.version-modal')===view.modal&&state.route==='page'&&state.page?.id===scope.pageId&&state.channel===scope.channel&&scope.channel.pageId===scope.pageId&&!scope.channel.closed&&scope.channel.base?.epoch===scope.epoch&&resourceLevel(state.page)>=3&&!state.page.archived&&!state.offline&&state.session?.cache_binding===scope.binding&&state.session?.member?.id===scope.memberId&&state.offlineProfile?.id===scope.profileId&&state.workspace?.workspace_id===scope.workspaceId;
+}
+function invalidateVersionView() {
+  const view=state.versionView;if(!view)return;
+  if(!versionScopeCurrent(view)){state.versionView=null;if(view.modal?.isConnected)closeModal();}
+  else if(view.ready&&(view.locked!==!!state.page.locked||view.level!==resourceLevel(state.page))){view.locked=!!state.page.locked;view.level=resourceLevel(state.page);renderVersionComparison(view);}
+}
+function versionRuns(diff,side) {
+  return (diff?.runs||[]).filter(run=>run.type!==(side==='before'?'insert':'delete')).map(run=>run.type==='equal'?esc(run.text):`<${run.type==='delete'?'del':'ins'}>${esc(run.text)}</${run.type==='delete'?'del':'ins'}>`).join('');
+}
+function versionAttributes(block) {
+  if(!block)return '';
+  const labels=[blockTypes.find(([type])=>type===block.type)?.[1]||({file:'파일',image:'이미지'})[block.type]||'텍스트'];
+  if(block.type==='todo')labels.push(block.checked?'완료':'진행 중');
+  if(block.language)labels.push(block.language);
+  const marks=new Set();for(const token of block.rich_text||[])for(const [name,value] of Object.entries(token.marks||{}))if(value&&value!=='default')marks.add(({bold:'굵게',italic:'기울임',underline:'밑줄',strike:'취소선',code:'인라인 코드',link:'링크',color:'글자색',background:'배경색'})[name]||'서식');
+  return [...labels,...marks].map(esc).join(' · ');
+}
+function versionBlockHTML(block,change,side,items) {
+  if(!block)return '<div class="version-block version-block-missing">이 버전에는 없는 블록</div>';
+  const flags=[change.added?'추가':null,change.removed?'삭제':null,change.moved?'이동':null,change.textChanged?'글 변경':null,change.attributesChanged?'서식·속성 변경':null].filter(Boolean);
+  const index=items.findIndex(item=>item.id===block.id)+1;
+  let text=change.textChanged||change.added||change.removed?versionRuns(change.textDiff,side):richTextHTML(block).replace(/<a\b[^>]*>([\s\S]*?)<\/a>/g,'<span class="rich-link">$1</span>');
+  if(block.type==='file')text=`<span class="version-file">📎 ${esc(block.text||'첨부 파일')} <small>${Number.isFinite(block.size)?esc(sizeLabel(block.size)):''}</small></span>`;
+  else if(block.type==='divider')text='<hr>';
+  else if(block.type==='todo')text=(block.checked?'☑ ':'☐ ')+text;
+  return `<section class="version-block ${flags.length?'version-block-changed':''} version-type-${esc(block.type||'paragraph')}" data-preview-id="${esc(block.id)}" data-preview-side="${side}"><div class="version-block-meta"><span>${index}번째${block.parent_id?' · 하위 블록':''} · ${versionAttributes(block)}</span>${flags.length?`<span class="version-change-tags">${flags.map(esc).join(' · ')}</span>`:''}</div><div class="version-block-text">${text||'<span class="muted">빈 블록</span>'}</div></section>`;
+}
+function renderVersionComparison(view) {
+  if(!versionScopeCurrent(view)||!view.ready)return;
+  const selected=view.versions.find(version=>version.id===view.selectedId),body=$('.modal-body',view.modal);
+  const canRestore=resourceLevel(state.page)>=4&&!state.page.locked&&!view.restoreBlocked;
+  const list=`<nav class="version-list" aria-label="저장된 버전">${view.versions.map(version=>`<button class="version-choice ${version.id===view.selectedId?'selected':''}" data-action="select-version" data-id="${esc(version.id)}" aria-pressed="${version.id===view.selectedId}"><strong>버전 ${esc(version.revision??'')}</strong><small>${esc(date(version.created_at))}</small><span>${esc(version.title||'제목 없음')}</span></button>`).join('')}</nav>`;
+  if(!selected){body.innerHTML='<p>현재 서버 내용과 저장된 버전을 읽기 전용으로 비교합니다.</p><div class="empty">아직 저장된 이전 버전이 없습니다.</div>';return;}
+  const previous={title:selected.title||'',blocks:selected.blocks||[]},diff=FountainVersionDiff.compareVersions(previous,view.current);
+  const labels={added:'블록 추가',removed:'블록 삭제',moved:'이동',textChanged:'글 변경',attributesChanged:'서식·속성'};
+  const summary=Object.entries(diff.summary).filter(([,count])=>count).map(([name,count])=>`<span>${esc(labels[name]||name)} ${count}</span>`).join('');
+  body.innerHTML=`<p class="version-intro">저장된 버전 → 기록을 열었을 때의 서버 내용입니다. 미리보기는 문서를 변경하지 않습니다.</p><div class="version-layout">${list}<div class="version-comparison"><div class="version-detail-head"><div><strong>버전 ${esc(selected.revision??'')}과 현재 비교</strong><small>현재 서버 버전 ${esc(view.revision)}</small></div><button class="outline-btn" data-action="restore-version" data-id="${esc(selected.id)}" ${!canRestore||view.restoring?'disabled':''}>제목과 본문 복원</button></div>${resourceLevel(state.page)<4?'<p class="version-permission-note">미리보기는 가능하며, 복원에는 페이지 전체 권한이 필요합니다.</p>':state.page.locked?'<p class="version-permission-note">잠긴 페이지입니다. 잠금을 해제한 뒤 복원할 수 있습니다.</p>':''}<div class="version-summary">${diff.titleChanged?'<span>제목 변경</span>':''}${summary||(!diff.titleChanged?'<span>변경 없음</span>':'')}<span class="version-legend"><del>삭제</del><ins>추가</ins></span></div>${diff.coarse?'<p class="version-coarse">긴 텍스트는 달라진 구간을 묶어서 표시합니다.</p>':''}<div id="version-status" role="status">${view.error?`<div class="info-box">${esc(view.error)}${view.restoreBlocked?'<button class="outline-btn" data-action="history">최신 기록 다시 열기</button>':''}</div>`:''}</div>${view.confirming?`<section class="version-confirm" role="group" aria-label="버전 복원 확인"><strong>버전 ${esc(selected.revision??'')}의 제목과 본문으로 복원할까요?</strong><p>지금의 제목과 본문은 새 기록으로 보관됩니다. 비교 후 다른 변경이 저장되었다면 복원을 중지합니다.</p><div class="form-actions"><button class="outline-btn" data-action="cancel-version-restore" ${view.restoring?'disabled':''}>돌아가기</button><button class="solid-btn" data-action="confirm-version-restore" data-id="${esc(selected.id)}" ${view.restoring||!canRestore?'disabled':''}>${view.restoring?'복원하는 중…':'제목과 본문 복원 확인'}</button></div></section>`:''}<div class="version-column-head"><strong>이전 · 버전 ${esc(selected.revision??'')}</strong><strong>현재 · 서버 버전 ${esc(view.revision)}</strong></div><div class="version-pair version-title-pair"><div><small>페이지 제목</small><h3>${versionRuns(diff.titleDiff,'before')||'제목 없음'}</h3></div><div><small>페이지 제목</small><h3>${versionRuns(diff.titleDiff,'after')||'제목 없음'}</h3></div></div><div class="version-blocks">${diff.changes.map(change=>`<div class="version-pair">${versionBlockHTML(change.before,change,'before',previous.blocks)}${versionBlockHTML(change.after,change,'after',view.current.blocks)}</div>`).join('')||'<div class="empty">빈 페이지입니다.</div>'}</div></div></div>`;
+}
 async function historyModal() {
-  await savePage();
-  const d=await api('/pages/'+state.page.id);
-  state.versions=d.versions||[];
-  openModal('페이지 기록',`<p>이전 버전을 복원하면 현재 내용이 새 버전으로 보관됩니다.</p>${state.versions.map(v=>`<div class="history-item"><div>버전 ${esc(v.revision||v.version||'')}<small>${esc(v.title||state.page.title)} · ${date(v.created_at)}</small></div>${pageEditable()?`<button data-action="restore-version" data-id="${esc(v.id)}">이 버전 복원</button>`:''}</div>`).join('')||'<div class="empty">아직 저장된 이전 버전이 없습니다.</div>'}`);
+  const scope={pageId:state.page?.id,channel:state.channel,epoch:state.channel?.base?.epoch,binding:state.session?.cache_binding,memberId:state.session?.member?.id,profileId:state.offlineProfile?.id,workspaceId:state.workspace?.workspace_id};
+  if(state.route!=='page'||!scope.channel||resourceLevel(state.page)<3||state.offline||state.localPageOnly)throw new Error('연결된 페이지에서 편집 권한으로 기록을 확인할 수 있습니다.');
+  openModal('페이지 기록','<div class="loading">저장된 버전과 현재 내용을 확인하는 중…</div>','version-modal');
+  const view={scope,modal:$('.version-modal'),ready:false};state.versionView=view;
+  try{
+    await savePage();if(!versionScopeCurrent(view))return;
+    const detail=await api('/pages/'+encodeURIComponent(scope.pageId));if(!versionScopeCurrent(view))return;
+    if(resourceLevel(detail.page)<3){closeModal();return;}
+    view.current={title:detail.page.title||'',blocks:structuredClone(detail.blocks||detail.page.blocks||[])};view.revision=detail.page.revision;view.versions=structuredClone(detail.versions||[]);view.selectedId=view.versions[0]?.id;view.locked=!!state.page.locked;view.level=resourceLevel(state.page);view.ready=true;
+    renderVersionComparison(view);
+  }catch(error){if(!versionScopeCurrent(view))return;if([401,403,404].includes(error.status)){closeModal();return;}$('.modal-body',view.modal).innerHTML=`<div class="empty">${esc(error.message)}</div>`;}
+}
+async function restoreSelectedVersion(id) {
+  const view=state.versionView;if(!versionScopeCurrent(view)||!view.confirming||view.selectedId!==id||view.restoring||view.restoreBlocked)return;
+  if(resourceLevel(state.page)<4||state.page.locked)throw new Error('복원에는 잠금 해제된 페이지의 전체 권한이 필요합니다.');
+  view.restoring=true;view.error=null;renderVersionComparison(view);
+  try{
+    await api('/pages/'+encodeURIComponent(view.scope.pageId)+'/versions/'+encodeURIComponent(id)+'/restore',{revision:view.revision});
+    if(!versionScopeCurrent(view))return;
+    const channel=view.scope.channel;closeModal();await channel.reconnect();
+  }catch(error){
+    if(!versionScopeCurrent(view))return;view.restoring=false;view.confirming=false;
+    if([401,403,404].includes(error.status)){closeModal();return;}
+    view.restoreBlocked=error.status===409;view.error=view.restoreBlocked?'문서가 기록을 연 뒤 변경되었습니다. 최신 기록을 다시 열어 비교한 뒤 복원해 주세요.':error.status===423?'페이지가 잠겨 복원하지 못했습니다. 잠금을 해제한 뒤 다시 확인해 주세요.':error.message;renderVersionComparison(view);
+  }
 }
 async function showTrash() {
   await refreshWorkspace();
@@ -1441,11 +1509,10 @@ async function doAction(target,grouped=false) {
     }
     case'history':await historyModal();
     break;
-    case'restore-version':await api('/pages/'+state.page.id+'/versions/'+id+'/restore', {
-    });
-    await navigate('page',state.page.id);
-    toast('페이지 버전을 복원했습니다.');
-    break;
+    case'select-version':{const view=state.versionView;if(versionScopeCurrent(view)&&view.versions.some(version=>version.id===id)&&!view.restoring){view.selectedId=id;view.confirming=false;renderVersionComparison(view);}break;}
+    case'restore-version':{const view=state.versionView;if(versionScopeCurrent(view)&&view.selectedId===id&&resourceLevel(state.page)>=4&&!state.page.locked&&!view.restoreBlocked){view.confirming=true;renderVersionComparison(view);}break;}
+    case'cancel-version-restore':{const view=state.versionView;if(versionScopeCurrent(view)&&!view.restoring){view.confirming=false;renderVersionComparison(view);}break;}
+    case'confirm-version-restore':await restoreSelectedVersion(id);break;
     case'resolve-comment':await api('/comments/'+id, {
       resolved:true
     },'PATCH');

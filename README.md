@@ -1,9 +1,16 @@
 # Fountain
 
-Notion의 공개 동작과 요금제 명세를 참고한 독립 워크스페이스 앱입니다. Python 3.11 이상 표준 라이브러리와 SQLite를 사용하며 별도 런타임 패키지 설치가 필요하지 않습니다.
+Notion의 공개 동작과 요금제 명세를 참고한 독립 워크스페이스 앱입니다. 기본 실행은 Python 3.11 이상 표준 라이브러리와 SQLite를 사용하며 별도 런타임 패키지 설치가 필요하지 않습니다.
 
 ```sh
 python3 -m fountain.server --port 8787 --data .data/fountain.db
+```
+
+위 명령은 기본 SQLite 모드입니다. 이 프로젝트에서 이관한 현재 자료는 아래 명령으로 엽니다. 비공개 연결 파일에 작업공간 ID를 보관합니다.
+
+```sh
+.data/supabase-venv/bin/python -m fountain.server --database postgres \
+  --database-config .data/supabase-connection.json --attachment-root .data/fountain-files
 ```
 
 브라우저에서 http://127.0.0.1:8787 을 엽니다. 기본 실행은 로컬 개발 모드입니다. 다중 사용자 운영 환경으로 배포하기 전에 인증 및 외부 서비스 설정을 확인해야 합니다.
@@ -44,7 +51,7 @@ python3 -m fountain.server --host 0.0.0.0 --port 8787 \
 
 AI는 기본 비활성 상태이며 무료 로컬 모델 또는 호환 API를 명시적으로 설정할 수 있습니다. Gemini Pro 구독 연동 검토와 API 과금 구분은 [AI 안내](docs/AI.md)에 있습니다. `.env.example`은 설정 설명이며 서버가 자동으로 읽지는 않습니다.
 
-선택 PostgreSQL 모드로 Supabase를 공통 원본 DB로 사용할 수 있습니다. 서울의 Fountain 프로젝트에 실제 연결·RLS·트랜잭션·백업 복원을 검증했습니다. 현재 미리보기와 기존 데이터는 SQLite를 유지합니다. 선택 드라이버 설치, 비공개 연결 파일, 무료 용량과 운영 전환 조건은 [Supabase 안내](docs/SUPABASE.md)에 있습니다.
+현재 미리보기는 서울 Supabase PostgreSQL을 공통 원본으로 사용합니다. 기존 자료·계정·작업공간·로그인 상태를 보존해 이관했고 SQLite 원본과 전환 전후 백업도 남겼습니다. 새 첨부 청크는 서버 디스크에 저장하며 실제 5GB 저장소 읽기·범위 다운로드·백업 복원을 검증했습니다. 연결 옵션·무료 용량·검증 범위는 [Supabase 안내](docs/SUPABASE.md)에 있습니다. 기본 SQLite 실행과 현재 클라우드 자료를 여는 명령을 구분해 사용하세요.
 
 전체 백업은 설정 → 가져오기 / 내보내기 → 전체 백업 다운로드에서 받을 수 있습니다. 댓글·문서 이력·첨부·설정이 포함되고 로그인 세션·임시 클립보드는 제외됩니다. JSON은 문서와 데이터베이스의 이동용 내보내기입니다.
 

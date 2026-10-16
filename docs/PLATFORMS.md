@@ -10,7 +10,7 @@
 | macOS·Windows | 공통 웹 화면과 재사용할 도메인 API | Electron 프로젝트·설치 파일·서명·업데이트·실제 OS 검증 |
 | iOS·Android | 작은 화면 대응 웹 UI | 모바일 프로젝트·네이티브 저장소/인증/파일 연결·키보드/실기기 검증 |
 | 기기 간 동기화 | 같은 서버를 사용하는 브라우저들은 같은 원본 DB를 읽고 문서 편집을 병합 | 네이티브 전송·인증 연결과 다섯 플랫폼 간 검증 |
-| Supabase | 서울 프로젝트 생성, 비공개 스키마·강제 RLS·최소 권한 역할, 실제 TLS 연결·PostgreSQL 저장소·SQLite 백업 복원 검증 | 기존 데이터 이관·대용량 파일 저장소·공통 서버 운영·Supabase Auth 연결 |
+| Supabase | 서울 원본 DB·강제 RLS·최소 권한·TLS, 공유 파일 저장소, 기존 자료/계정 이관, 실제 5GB 저장소·SQLite 백업 복원 검증 | 상시 HTTPS 서버 운영·Supabase Auth 연결·대용량 전체 HTTP 전송 성능 |
 
 현재 저장소에는 Electron/Capacitor 패키지나 iOS/Android 빌드 프로젝트가 없다. 모바일 크기의 Chrome 테스트는 네이티브 앱 검증을 대신하지 않는다. `localhost:8787`은 접속하는 기기 자신을 가리키므로 휴대폰에서 같은 주소를 여는 것만으로 PC 데이터에 연결되지는 않는다.
 
@@ -49,7 +49,7 @@ Electron과 Capacitor는 구현 후보로 선정한 방향이다. 설치하거�
 
 ## Supabase 도입 경계
 
-승인받은 무료 조직에 Fountain 프로젝트를 서울 리전으로 생성하고 PostgreSQL 저장소와 비공개 스키마를 연결했다. 현재 로컬 미리보기는 SQLite를 유지하며 Supabase Auth는 아직 후보 단계다. 선택 설치·실행·권한·검증과 운영 전환 조건은 [Supabase 안내](SUPABASE.md)에 기록했다.
+승인받은 무료 조직에 Fountain 프로젝트를 서울 리전으로 생성하고 현재 미리보기의 원본을 PostgreSQL로 전환했다. 기존 SQLite·백업·계정·작업공간 ID·로그인 binding을 보존하며 첨부 청크는 공유 디스크에 저장한다. Supabase Auth는 아직 후보 단계이며 현재는 Fountain 개별 계정을 사용한다. 선택 설치·실행·권한·이관 검증은 [Supabase 안내](SUPABASE.md)에 기록했다.
 
 | 구성 | 도입 시 역할 | 보존해야 할 동작 |
 | --- | --- | --- |
@@ -73,13 +73,13 @@ Postgres 어댑터는 실제 트랜잭션·SAVEPOINT·작업공간 잠금으로 
 
 2026-10-16 [Supabase 가격표](https://supabase.com/pricing)에서 확인한 Free 기준은 DB 500MB, 파일 저장소 1GB, 일반 egress 5GB와 cached egress 5GB다. 비활성 프로젝트는 일주일 후 일시 정지될 수 있다. [Storage 한도 문서](https://supabase.com/docs/guides/storage/uploads/file-limits)의 무료 플랜 파일당 최대치는 50MB다. 이후 변경될 수 있으므로 실제 프로젝트 연결 때 다시 확인한다.
 
-현재 앱의 파일당 5GB 지원을 Supabase Free Storage에 그대로 옮길 수 없다. 큰 첨부는 별도의 자체 운영 저장소 또는 요구 한도를 지원하는 서비스가 필요하다. 무료 DB의 용량에는 문서 이력·동기화 기록 증가도 고려해야 한다. 앱 안의 기능에 결제 제한을 넣지 않는 것과 호스팅·저장소·네트워크·AI 공급자의 비용은 별개다. 무료 인프라에서 무제한 용량과 상시 가용성을 보장하지 않는다.
+현재 앱의 파일당 5GB 지원을 Supabase Free Storage에 그대로 옮길 수 없다. 현재는 큰 첨부의 바이트를 서버 디스크에 보관하고 DB에는 해시 manifest만 둔다. 이 저장소의 실제 5GB 전체 읽기·범위 다운로드·백업 복원을 검증했으며 전체 HTTP 5GB 전송 성능은 별도 측정 대상이다. 무료 DB의 용량에는 문서 이력·동기화 기록 증가도 고려해야 한다. 앱 안의 기능에 결제 제한을 넣지 않는 것과 호스팅·저장소·네트워크·AI 공급자의 비용은 별개다. 무료 인프라에서 무제한 용량과 상시 가용성을 보장하지 않는다.
 
 ## 실제 앱으로 연결하기 전에 필요한 작업
 
 1. 공통 서버 주소, 안정적인 사용자/작업공간 식별, 재시도 가능한 동기화 계약을 사용한다. 웹 화면의 문서·DB 행·새 페이지·메타데이터 편집은 기기별 캐시와 작업 큐에 연결했다. 네이티브 저장소·전송 어댑터도 같은 계약을 유지해야 한다.
 2. `fetch`·EventSource·업로드 XHR·다운로드·공개/공유 링크를 `static/transport.js`로 모았다. 현재 구현은 같은 출처 연결이며, 교차 출처 네이티브 어댑터는 미구현이다. 로그인 쿠키는 `HttpOnly; SameSite=Strict`이고 직접 HTTPS에서는 `Secure`도 설정한다. 서버 URL만 바꾸면 네이티브 로그인·실시간 연결이 완성되지 않는다. 네이티브 인증 전송과 세션 철회를 검증해야 한다. 허용 Origin을 무조건 풀어 해결하지 않는다.
-3. `--tls-cert`·`--tls-key`로 직접 TLS 1.2 이상의 HTTPS를 제공할 수 있다. 인증서 발급·갱신과 공통 서버의 상시 운영 배포는 남아 있다. 실제 소켓의 HTTP/HTTPS에 맞는 Origin만 허용하며 forwarded 헤더로 이 검사를 바꾸지 않는다. Supabase를 선택하면 Auth·Postgres 경계와 이관을 먼저 검증하며 현재 로컬 DB를 유지한다.
+3. `--tls-cert`·`--tls-key`로 직접 TLS 1.2 이상의 HTTPS를 제공할 수 있다. 인증서 발급·갱신과 공통 서버의 상시 운영 배포는 남아 있다. 실제 소켓의 HTTP/HTTPS에 맞는 Origin만 허용하며 forwarded 헤더로 이 검사를 바꾸지 않는다. 현재 Supabase 이관과 원본 보존을 검증했으며 로그인은 기존 Fountain 계정을 사용한다.
 4. Electron과 Capacitor 프로젝트를 추가하고 공통 화면을 연결한다. iOS/Android는 영구 캐시·Keychain/Keystore·앱 중단·복귀·파일 선택·공유를 각각 검증한다. 브라우저 IndexedDB가 모든 모바일 상황에서 영구 보존된다고 가정하지 않는다.
 5. macOS·Windows 설치 파일과 iOS·Android 패키지를 실제로 빌드하고, 서명·설치·업데이트·배포 방법을 정한다. 현재 네이티브 SDK 의존성 추가와 빌드/서명은 미진행이다.
 

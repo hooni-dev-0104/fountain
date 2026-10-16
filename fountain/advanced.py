@@ -35,7 +35,8 @@ def text(value, name, limit=10000):
 
 
 FEATURES = [
-    ('pages', '블록 문서와 중첩 페이지', 'Plus', 'implemented', '페이지·블록·검색·휴지통·파일'),
+    ('pages', '블록 문서와 중첩 페이지', 'Plus', 'implemented', '페이지·문자 서식·중첩 블록·검색·휴지통·파일'),
+    ('collaboration', '문서 실시간 공동 편집', 'Plus', 'implemented', '문자 RGA·서식 병합·SSE·권한 재검사; 원격 커서 표시는 미지원'),
     ('history', '페이지 버전 복원', 'Plus', 'implemented', 'SQLite에 저장한 버전 복원; 보존 기한 제한 없음'),
     ('databases', '데이터베이스와 보기', 'Plus', 'implemented', '속성·테이블·보드·달력·차트·목록·타임라인·하위 작업·의존관계'),
     ('forms', '사용자 지정 양식과 조건부 질문', 'Business', 'implemented', '조건에 맞는 질문 검증 후 데이터베이스 행 생성'),
@@ -56,7 +57,7 @@ FEATURES = [
     ('retention', '데이터 보존 정책', 'Enterprise', 'implemented', '만료 휴지통·회의 대화록 수동 정리'),
     ('integrations', '연결 앱·SIEM·DLP', 'Enterprise', 'configuration', '연결 설정 저장; 공급자 OAuth·동기화 미연동'),
     ('agents', '사용자 지정 AI 에이전트', 'Business', 'provider_required', '정해진 문서 작업 실행; 자율 외부 도구 실행 미지원'),
-    ('offline', '오프라인', 'Plus', 'partial', '인터넷 없는 로컬 서버 사용; 서버 없는 편집·충돌 병합 미지원'),
+    ('offline', '오프라인', 'Plus', 'partial', '보관한 문서의 브라우저 편집·재접속 병합·복구 초안; DB 행·새 페이지 생성은 미지원'),
     ('zero_retention', 'AI 공급자 데이터 무보존', 'Enterprise', 'provider_required', '사용하는 공급자 계약과 배포 설정으로 보장해야 함'),
     ('support', '전담 고객 성공·프리미엄 지원', 'Enterprise', 'service_required', '소프트웨어로 제공할 수 없는 인적 서비스'),
 ]

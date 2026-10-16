@@ -79,6 +79,8 @@ class Application:
         self.files.cleanup()
         from .collaboration import Collaboration
         self.collaboration = Collaboration(store, self.workspace)
+        from .presence import PresenceService
+        self.presence = PresenceService(store, self.auth)
         self.advanced = None
         from .scheduler import Scheduler
         self.scheduler = Scheduler(store, self.run_scheduled)
@@ -109,6 +111,15 @@ class Application:
 
     def dispatch(self, method, path, body, query, principal=_INTERNAL_PRINCIPAL, session_cookie=_INTERNAL_PRINCIPAL):
         body = copy.deepcopy(body)
+        parts = path.strip('/').split('/')
+        if len(parts) == 4 and parts[:2] == ['api', 'pages'] and parts[3] == 'presence':
+            require(method in {'GET', 'PUT', 'DELETE'}, 'Unsupported presence method', 405)
+            # Presence has no service-principal impersonation: it always belongs
+            # to a live browser login or the current no-login local binding.
+            require(session_cookie is not _INTERNAL_PRINCIPAL, 'Presence requires an original session cookie context', 403)
+            if method == 'GET': return 200, self.presence.snapshot(parts[2], session_cookie)
+            action = self.presence.update if method == 'PUT' else self.presence.leave
+            return 200, action(parts[2], body, session_cookie)
         if method == 'POST' and path == '/api/sync':
             # Each operation owns its commit and its fresh login/ACL check. Do
             # not surround the complete batch with this dispatch's transaction.
@@ -481,18 +492,21 @@ def handler_for(application):
                     shutil.rmtree(download.cleanup_dir)
 
         def stream_page(self, page_id, cookie):
+            stream_binding = None
             def snapshot():
-                # Authentication and group membership are live on every poll;
-                # never keep the Access object from the first HTTP request.
+                nonlocal stream_binding
+                # Recheck both the viewer and each publisher under the writer;
+                # presence never enters the document snapshot comparison.
                 with application.store.transaction():
-                    principal = application.auth.principal(cookie)
-                    require(principal is not None, 'Authentication required', 401)
-                    current = application.collaboration.snapshot(page_id, Access(application.store, principal))
-                    current['current_member_id'] = principal['id']
-                    current['session_binding'] = application.auth.session_info(cookie)['cache_binding']
-                    return current
+                    context = application._request_context(_INTERNAL_PRINCIPAL, cookie)
+                    if stream_binding is None: stream_binding = context['session_binding']
+                    require(context['session_binding'] == stream_binding, 'Login changed', 401)
+                    current = application.collaboration.snapshot(page_id, context['access'])
+                    current['current_member_id'] = context['access'].member_id
+                    current['session_binding'] = stream_binding
+                    return current, application.presence.snapshot(page_id, cookie)
 
-            current = snapshot()
+            current, presence = snapshot()
             self.send_response(200)
             self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
             self.send_header('Cache-Control', 'no-store')
@@ -501,13 +515,20 @@ def handler_for(application):
             self.end_headers()
             self.close_connection = True
             self.connection.settimeout(5)
-            previous, heartbeat = None, 0
+            previous, previous_presence, heartbeat = None, None, 0
             try:
                 while not self.server.stream_stop.is_set():
                     encoded = json.dumps(current, ensure_ascii=False, separators=(',', ':'))
+                    presence_key = json.dumps({'epoch': presence['epoch'], 'participants': presence['participants']},
+                                              ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+                    changed = False
                     if encoded != previous:
                         self.wfile.write(('event: snapshot\ndata: ' + encoded + '\n\n').encode())
-                        previous = encoded
+                        previous, changed = encoded, True
+                    if presence_key != previous_presence:
+                        self.wfile.write(('event: presence\ndata: ' + json.dumps(presence, ensure_ascii=False, separators=(',', ':')) + '\n\n').encode())
+                        previous_presence, changed = presence_key, True
+                    if changed:
                         heartbeat = 0
                     elif heartbeat >= 20:
                         self.wfile.write(b': heartbeat\n\n')
@@ -517,7 +538,7 @@ def handler_for(application):
                         break
                     heartbeat += 1
                     try:
-                        current = snapshot()
+                        current, presence = snapshot()
                     except APIError as error:
                         self.wfile.write(('event: denied\ndata: ' + json.dumps({'status': error.status, 'error': error.message}) + '\n\n').encode())
                         self.wfile.flush()

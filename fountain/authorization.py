@@ -141,6 +141,10 @@ class Authorization:
             if 'permissions' in body:
                 body['permissions'] = a.validate_permissions(body['permissions'])
             return
+        if len(parts) == 4 and parts[:2] == ['api', 'pages'] and parts[3] == 'presence':
+            require(method in {'GET', 'PUT', 'DELETE'}, 'Unsupported presence method', 405)
+            a.require_resource('page', parts[2], 1)
+            return
         if parts[:2] == ['api', 'pages'] and len(parts) >= 3:
             needed = 1 if not writing else 3
             if method == 'DELETE' or parts[-1] == 'permissions': needed = 4 if writing else 1

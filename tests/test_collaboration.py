@@ -227,17 +227,22 @@ class CollaborationStreamTests(unittest.TestCase):
         self.connection = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=4)
         self.connection.request('GET', '/api/pages/stream/events', headers={'Cookie': self.cookie})
         response = self.connection.getresponse()
+        self.addCleanup(response.close)
         self.assertEqual(response.status, 200)
         self.assertEqual(response.getheader('Cache-Control'), 'no-store')
         return response
 
     def event(self, response):
         event, data = '', ''
-        for _ in range(10):
+        for _ in range(30):
             line = response.fp.readline().decode().strip()
             if line.startswith('event: '): event = line[7:]
             if line.startswith('data: '): data = line[6:]
-            if not line and event: return event, json.loads(data)
+            if not line and event:
+                if event == 'presence':
+                    event, data = '', ''
+                    continue
+                return event, json.loads(data)
         self.fail('No SSE event received')
 
     def test_live_metadata_permission_downgrade_and_revocation(self):

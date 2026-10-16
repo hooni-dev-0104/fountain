@@ -162,9 +162,12 @@ authorityKeyIdentifier = keyid:always
         self.assertEqual(response.status, 200)
         self.assertIn("text/event-stream", response.getheader("Content-Type"))
         def snapshot():
-            for _ in range(20):
+            event = None
+            for _ in range(40):
                 line = response.readline()
-                if line.startswith(b"data: "): return json.loads(line[6:])
+                if line.startswith(b"event: "): event = line[7:].strip()
+                if line.startswith(b"data: ") and event == b"snapshot": return json.loads(line[6:])
+                if not line.strip(): event = None
             self.fail("No SSE snapshot arrived")
         try:
             initial = snapshot()

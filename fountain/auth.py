@@ -190,8 +190,11 @@ class Auth:
         return hashlib.sha256(token.encode()).hexdigest()
 
     def _session(self, cookie):
-        digest = self._digest(cookie)
-        if not digest:
+        return self.session_by_digest(self._digest(cookie))
+
+    def session_by_digest(self, digest):
+        """Validate a private session reference without retaining its raw cookie."""
+        if not isinstance(digest, str) or re.fullmatch(r"[a-f0-9]{64}", digest) is None:
             return None
         session = self.store.get("session", digest)
         if not session:
@@ -211,6 +214,15 @@ class Auth:
             self.store.delete("session", digest)
             return None
         return session
+
+    def principal_by_digest(self, digest):
+        """Resolve the current actor of a validated private session reference."""
+        session = self.session_by_digest(digest)
+        if not session: return None
+        if session.get("member_id"):
+            member = self._member(session["member_id"])
+            return self._safe(member) if member else None
+        return {"id": "local", "name": "가족 공용", "role": "owner", "active": True}
 
     def authenticate(self, cookie):
         return not self.enabled or self._session(cookie) is not None

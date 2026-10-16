@@ -14,6 +14,11 @@ SCHEMA = re.search(r'SCHEMA = \{(.*?)\n    \};', (SOURCE / 'NativeOutbox.java').
 SCHEMA = re.findall(r'"([^"\n]+)"', SCHEMA)
 
 
+def production_sql(prefix):
+    queries = re.findall(r'"([^"\n]+)"', (SOURCE / 'NativeOutbox.java').read_text())
+    return next(query for query in queries if query.startswith(prefix))
+
+
 class DurableSQLTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -132,6 +137,117 @@ os._exit(9)
         self.assertIn('profile.equals(value.getString("profileId"))', parser)
         self.assertIn('Arrays.equals(previous.getBlob(0)', parser)
         self.assertIn('NativePolicy.require(tombstone("profile", profile))', parser)
+
+    def test_failed_overlay_preserves_records_staging_receipts_head_and_lease(self):
+        raw = b'{"version":1,"changes":["unconfirmed"]}'
+        self.db.execute('INSERT INTO records VALUES(?,?,?,?,?,?)', ('active', 'drafts', '"page"', 'profile', 'profile|page', b'{"input":"preserve"}'))
+        self.db.execute(production_sql('INSERT INTO staging('), ('tx', 0, 0, 'owner-a', raw))
+        self.db.execute(production_sql('INSERT OR REPLACE INTO control('), ('staged-proof:tx', '3'))
+        self.db.execute(production_sql('INSERT OR REPLACE INTO control('), ('proof_epoch', '4'))
+        before = list(self.db.iterdump())
+        self.db.execute('BEGIN IMMEDIATE')
+        self.db.execute(production_sql('INSERT OR REPLACE INTO records(mode,bucket,key,profile_id,resource_key,payload) VALUES'),
+                        ('active', 'drafts', '"page"', 'profile', 'profile|page', b'{"input":"would replace"}'))
+        # A rejected Java preflight exits without setTransactionSuccessful.
+        self.db.execute('ROLLBACK')
+        self.assertEqual(list(self.db.iterdump()), before)
+        source = (SOURCE / 'NativeOutbox.java').read_text()
+        commit = source.split('JSObject commit(', 1)[1].split('private JSObject receipt(', 1)[0]
+        self.assertLess(commit.index('preflight(grant)'), commit.index('result = advance()'))
+        self.assertLess(commit.index('proof != proofEpoch()'), commit.index('change(changes.getJSONObject'))
+
+    def test_lost_ack_receipt_keeps_original_epoch_after_observation(self):
+        set_control = production_sql('INSERT OR REPLACE INTO control(')
+        self.db.execute(production_sql('INSERT INTO tx_receipts('), ('accepted', 'digest', 1))
+        self.db.execute(set_control, ('receipt-proof:accepted', '3'))
+        self.db.execute(set_control, ('proof_epoch', '9'))
+        self.db.execute(set_control, ('head', '8'))
+        self.db.execute(production_sql('INSERT INTO staging('), ('accepted', 0, 0, 'owner-a', b'exact retry'))
+        self.db.execute(set_control, ('staged-proof:accepted', '3'))
+        self.db.execute('BEGIN IMMEDIATE')
+        receipt = self.db.execute(production_sql('SELECT digest,head FROM tx_receipts'), ('accepted',)).fetchone()
+        original = self.db.execute(production_sql('SELECT value FROM control'), ('receipt-proof:accepted',)).fetchone()[0]
+        self.db.execute(production_sql('DELETE FROM staging WHERE tx_id='), ('accepted',))
+        self.db.execute(production_sql('DELETE FROM control WHERE key=?'), ('staged-proof:accepted',))
+        self.db.execute('COMMIT')
+        self.assertEqual((receipt, original), (('digest', 1), '3'))
+        self.assertEqual(self.db.execute('SELECT count(*) FROM staging').fetchone()[0], 0)
+        self.assertEqual(self.db.execute('SELECT value FROM control WHERE key=?', ('proof_epoch',)).fetchone()[0], '9')
+        self.assertEqual(self.db.execute('SELECT value FROM control WHERE key=?', ('head',)).fetchone()[0], '8')
+        source = (SOURCE / 'NativeOutbox.java').read_text().split('JSObject commit(', 1)[1]
+        self.assertLess(source.index('receipt(generation, result, tx, Long.parseLong(original))'), source.index('long proof = intentProof(input)'))
+
+    def test_native_resource_denial_quarantines_input_and_removes_transfers(self):
+        for bucket in ('snapshots', 'drafts', 'operations', 'mutations', 'transfers'):
+            self.db.execute('INSERT INTO records VALUES(?,?,?,?,?,?)', ('active', bucket, json.dumps(bucket), 'profile', 'profile|page', b'{"input":"keep private"}'))
+        self.db.execute('BEGIN IMMEDIATE')
+        self.db.execute(production_sql('INSERT OR IGNORE INTO tombstones('), ('resource', 'profile|page'))
+        self.db.execute(production_sql("INSERT OR REPLACE INTO records(mode,bucket,key,profile_id,resource_key,payload) SELECT 'quarantine'"), ('profile|page',))
+        self.db.execute(production_sql("DELETE FROM records WHERE resource_key=? AND"), ('profile|page',))
+        self.db.execute('COMMIT')
+        self.assertEqual(self.db.execute('SELECT count(*) FROM records WHERE mode=\'active\'').fetchone()[0], 0)
+        self.assertEqual(self.db.execute('SELECT bucket FROM records ORDER BY bucket').fetchall(), [('drafts',), ('mutations',), ('operations',)])
+        self.assertTrue(all(row[0] == b'{"input":"keep private"}' for row in self.db.execute('SELECT payload FROM records')))
+
+    def test_observed_floor_changes_only_private_control_not_business_head(self):
+        setter = production_sql('INSERT OR REPLACE INTO control(')
+        self.db.execute(setter, ('proof_epoch', '1'))
+        self.db.execute('INSERT INTO records VALUES(?,?,?,?,?,?)', ('active', 'databaseSnapshots', '"db"', 'profile', 'profile|database|db', b'{"old_row":"preserve"}'))
+        record = self.db.execute('SELECT * FROM records').fetchall()
+        ledger = {'profileId': 'profile', 'owner': 'owner-a', 'sessionRef': 'fixture-private-digest',
+                  'maxAccessRevision': 5, 'maxDataRevision': 100, 'entries': {}}
+        self.db.execute('BEGIN IMMEDIATE')
+        self.db.execute(setter, ('resource_proofs', json.dumps(ledger)))
+        self.db.execute(setter, ('proof_epoch', '2'))
+        self.db.execute('COMMIT')
+        self.assertEqual(self.db.execute('SELECT * FROM records').fetchall(), record)
+        self.assertEqual(self.db.execute('SELECT value FROM control WHERE key=\'head\'').fetchone()[0], '0')
+        self.assertEqual(self.db.execute('SELECT value FROM control WHERE key=\'lease\'').fetchone()[0], 'owner-a')
+        self.assertEqual(self.db.execute('SELECT count(*) FROM tx_receipts').fetchone()[0], 0)
+
+    def test_no_workspace_record_can_mask_negative_relation_target(self):
+        # Deliberately no profiles.workspace record: only DBb evidence and its
+        # native tombstone. Source checks below pin the actual reference path.
+        self.db.execute('INSERT INTO tombstones VALUES(?,?)', ('resource', 'profile|database|db-b'))
+        negative = self.db.execute(production_sql('SELECT 1 FROM tombstones'), ('resource', 'profile|database|db-b')).fetchone()
+        self.assertIsNotNone(negative)
+        source = (SOURCE / 'NativeOutbox.java').read_text()
+        refs = source.split('private void references(', 1)[1].split('private void workspaceCache(', 1)[0]
+        self.assertIn('proof(ledger, grant, "database", relatedID, report, 1)', refs)
+        self.assertIn('proof(ledger, grant, "database", candidate.getString("id"), report, 1)', refs)
+        proof = source.split('private JSONObject proof(', 1)[1].split('private boolean sameVersion(', 1)[0]
+        self.assertLess(proof.index('tombstone("resource", resource)'), proof.index('return entry'))
+        self.assertIn('entry.opt("denied") == Boolean.TRUE', proof)
+
+    def test_observer_and_final_callback_source_fences(self):
+        source = (SOURCE / 'NativeOutbox.java').read_text()
+        plugin = (SOURCE / 'FountainNativePlugin.java').read_text()
+        observer = source.split('void observe(', 1)[1].split('private static final class AccessReport', 1)[0]
+        self.assertIn('OutboxPolicy.freshRevisions(access, data, floorAccess, floorData)', observer)
+        self.assertIn('encodedLedger.getBytes(StandardCharsets.UTF_8).length > OutboxPolicy.RECORD', observer)
+        self.assertLess(observer.index('OutboxPolicy.stableObservation('), observer.index('advanceProof();'))
+        self.assertIn('if (malformed) throw new AccessRequired(); return;', observer)
+        self.assertIn('workspaceDenial.opt("terminal") == Boolean.TRUE', observer)
+        self.assertIn('status == 200 && !kind.equals("workspace") && tombstone(', observer)
+        self.assertNotIn('advance();', observer)
+        self.assertNotIn('set("lease"', observer)
+        report = source.split('private static final class AccessReport', 1)[1].split('private JSONObject proof(', 1)[0]
+        self.assertLess(report.index('issues.length() >= 100'), report.index('seen.add(key)'))
+        preflight = source.split('private AccessReport preflight(', 1)[1].split('private void scope(', 1)[0]
+        self.assertIn('workspaceCache(ledger, grant', preflight)
+        self.assertIn('references(ledger, grant, entry, basis, report)', preflight)
+        self.assertNotIn('value.getString("status")', preflight)
+        embedded = source.split('private void workspaceCache(', 1)[1].split('private JSONObject record(', 1)[0]
+        self.assertIn('tombstone("resource", resource) || specific != null', embedded)
+        action = plugin.split('private void observeResourceResponse(', 1)[1].split('private void check(', 1)[0]
+        self.assertLess(action.index('!OUTBOX_ENABLED'), action.index('durableOutbox()'))
+        self.assertLess(action.index('check(operation)'), action.index('storage.observe('))
+        self.assertIn('Objects.equals(sentCookie, activeCookie)', action)
+        self.assertIn('outbox.proofEpoch() != operation.responseProofEpoch', plugin)
+        self.assertIn('System.currentTimeMillis() >= operation.responseProofDeadline', plugin)
+        required = plugin.split('catch (NativeOutbox.AccessRequired error)', 1)[1].split('catch (IllegalArgumentException', 1)[0]
+        self.assertIn('OUTBOX_ACCESS_REQUIRED', required)
+        self.assertNotIn('broken =', required)
 
 
 if __name__ == '__main__':

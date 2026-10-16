@@ -69,6 +69,8 @@ public class FountainNativePlugin extends Plugin {
         volatile OutputStream exportStream;
         volatile ScheduledFuture<?> timeout;
         volatile long deadline;
+        volatile long responseProofEpoch = -1, responseProofBoundary = -1, responseProofDeadline = Long.MAX_VALUE;
+        volatile NativeOutbox responseProofStore;
         Operation(String id, String origin, long generation, long authGeneration, PluginCall call, boolean logout) {
             this.id = id; this.origin = origin; this.generation = generation;
             this.authGeneration = authGeneration; this.call = call; this.logout = logout;
@@ -248,15 +250,18 @@ public class FountainNativePlugin extends Plugin {
                         && integer(call, "generation", 0, OutboxPolicy.SAFE - 1) == generation);
                     NativeOutbox storage = durableOutbox();
                     JSObject result = action.run(storage);
-                    long expected = generation, expectedAuth = authGeneration, expectedBoundary = storage.boundary();
+                    long expected = generation, expectedAuth = authGeneration, expectedBoundary = storage.boundary(), expectedProof = storage.proofEpoch();
+                    long expectedDeadline = result.has("fragments") || "verified".equals(result.optString("identityState")) ? storage.deliveryDeadline() : Long.MAX_VALUE;
                     String expectedOrigin = origin;
                     getActivity().runOnUiThread(() -> { synchronized (lock) {
                         if (!broken && !destroyed && generation == expected && authGeneration == expectedAuth
                             && Objects.equals(origin, expectedOrigin) && outbox == storage && storage.boundary() == expectedBoundary
+                            && storage.proofEpoch() == expectedProof && System.currentTimeMillis() < expectedDeadline
                             && NativeCookieBoundary.permits(ownerBoundaryEpoch) && bundleAllowed()) call.resolve(result);
                         else call.reject("Native outbox owner changed", "STALE_SESSION");
                     } });
-                } catch (IllegalArgumentException error) { call.reject("Native outbox scope or input rejected", "OUTBOX_REJECTED"); }
+                } catch (NativeOutbox.AccessRequired error) { call.reject("Native resource access must be refreshed", "OUTBOX_ACCESS_REQUIRED"); }
+                catch (IllegalArgumentException error) { call.reject("Native outbox scope or input rejected", "OUTBOX_REJECTED"); }
                 catch (Exception error) {
                     // Any uncertain SQLite outcome fences this owner, including subsequent reads.
                     broken = true; authGeneration++; cancelAll(null, "OUTBOX_STORAGE_FAILED");
@@ -375,7 +380,8 @@ public class FountainNativePlugin extends Plugin {
                             applySessionResponse(operation, response, method.equals("POST"), true, cookie);
                             deliverResponse(operation, response);
                         } else sessionWrite(() -> {
-                            try { applySessionResponse(operation, response, false, false, cookie); deliverResponse(operation, response); }
+                            try { applySessionResponse(operation, response, false, false, cookie); observeResourceResponse(operation, response, method, path, cookie); deliverResponse(operation, response); }
+                            catch (NativeOutbox.AccessRequired error) { fail(operation, "Native resource access must be refreshed", "OUTBOX_ACCESS_REQUIRED"); }
                             catch (Exception error) { fail(operation, "Native session or outbox unavailable", "STALE_SESSION"); }
                         });
                     }
@@ -545,13 +551,34 @@ public class FountainNativePlugin extends Plugin {
                 try {
                     check(operation);
                     if (!bundleAllowed()) throw new IOException();
+                    if (operation.responseProofStore != null && (outbox != operation.responseProofStore
+                        || outbox.proofEpoch() != operation.responseProofEpoch || outbox.boundary() != operation.responseProofBoundary
+                        || System.currentTimeMillis() >= operation.responseProofDeadline)) throw new NativeOutbox.AccessRequired();
                     JSObject result = new JSObject(); result.put("status", response.status);
                     result.put("headers", response.headers); result.put("bodyBase64", Base64.encodeToString(response.body, Base64.NO_WRAP));
                     result.put("generation", operation.generation);
                     succeed(operation, result);
-                } catch (Exception error) { fail(operation, "Native request was superseded or secure session storage failed", "STALE_SESSION"); }
+                } catch (NativeOutbox.AccessRequired error) { fail(operation, "Native resource access must be refreshed", "OUTBOX_ACCESS_REQUIRED"); }
+                catch (Exception error) { fail(operation, "Native request was superseded or secure session storage failed", "STALE_SESSION"); }
             }
         });
+    }
+
+    private void observeResourceResponse(Operation operation, Response response, String method, String path, String sentCookie) throws Exception {
+        if (!OUTBOX_ENABLED || OutboxPolicy.canonicalResource(method, path) == null || !(response.status == 200 || response.status == 403 || response.status == 404)) return;
+        synchronized (lock) {
+            check(operation); if (!Objects.equals(sentCookie, activeCookie)) throw new NativeOutbox.AccessRequired();
+            try {
+                NativeOutbox storage = durableOutbox();
+                storage.observe(method, path, response.status, response.body, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration);
+                operation.responseProofStore = storage; operation.responseProofEpoch = storage.proofEpoch();
+                operation.responseProofBoundary = storage.boundary(); operation.responseProofDeadline = storage.deliveryDeadline();
+            } catch (NativeOutbox.AccessRequired required) { throw required; }
+            catch (Exception failure) {
+                broken = true; authGeneration++; cancelAll(null, "OUTBOX_STORAGE_FAILED"); vault.markInvalidated(origin);
+                throw failure;
+            }
+        }
     }
 
     private void check(Operation operation) throws IOException {

@@ -36,7 +36,7 @@ class PostgresBackupTests(unittest.TestCase):
     def setUp(self):
         self.namespace = uuid.uuid4().hex
         self.temp = tempfile.TemporaryDirectory()
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.stores = []
         self.addCleanup(self.temp.cleanup)
         self.addCleanup(self.cleanup_workspace)
@@ -44,7 +44,8 @@ class PostgresBackupTests(unittest.TestCase):
 
     def open_store(self, namespace=None):
         store = PostgresStore(os.environ["FOUNTAIN_TEST_POSTGRES_DSN"],
-                              workspace_id=namespace or self.namespace)
+                              workspace_id=namespace or self.namespace,
+                              attachment_root=getattr(self, "attachment_root", None))
         self.stores.append(store)
         return store
 
@@ -228,6 +229,117 @@ class PostgresBackupTests(unittest.TestCase):
         with patch.object(module, "_rows", side_effect=rows):
             create_postgres_backup(self.store, self.root / "bounded.db")
         self.assertEqual(batches, [128, 128, 1])
+
+    def enable_file_chunks(self):
+        self.attachment_root = self.root / "chunks"
+        self.store = self.open_store()
+
+    def test_file_chunks_materialize_bytes_deduplicate_and_strip_internal_bindings(self):
+        self.enable_file_chunks()
+        payloads = self.fixture()
+        original = self.store.get("attachment", "file")
+        self.store.put("attachment", {**original, "id": "duplicate"})
+        offset = 0
+        for data in payloads:
+            self.store.chunk_write("duplicate", offset, data)
+            offset += len(data)
+        gc_cursor = {"version": 1, "prefix": "ab", "name": "ab" + "0" * 62}
+        self.store.set_meta("attachment_file_gc_cursor", gc_cursor)
+        root_binding = self.store.meta("attachment_file_root")
+        source_manifests = self.store.list("attachment_chunk")
+        revision = self.store.meta("_entity_revision")
+        backup = self.root / "files.db"
+        with patch.object(self.store, "chunk_read_range", wraps=self.store.chunk_read_range) as read:
+            counts = create_postgres_backup(self.store, backup)
+        self.assertEqual(read.call_count, 4)
+        self.assertEqual([call.args[3] for call in read.call_args_list],
+                         [len(data) for data in payloads] * 2)
+        self.assertEqual(counts, {"attachment": 2, "credential": 1, "member": 1, "page": 1})
+        self.assertEqual(self.store.meta("_entity_revision"), revision)
+        self.assertEqual(self.store.list("attachment_chunk"), source_manifests)
+        self.assertEqual(self.store.meta("attachment_file_gc_cursor"), gc_cursor)
+        restored = self.root / "restored-files.db"
+        restore_backup(backup, restored)
+        target = Store(restored)
+        try:
+            self.assertIsNone(target.meta("attachment_file_root"))
+            self.assertIsNone(target.meta("attachment_file_gc_cursor"))
+            self.assertEqual(target.list("attachment_chunk"), [])
+            self.assertEqual(target.meta("_entity_revision"), revision)
+            for identity in ("file", "duplicate"):
+                actual = target.db.execute("SELECT data FROM attachment_chunks WHERE attachment_id=? ORDER BY offset", (identity,)).fetchall()
+                self.assertEqual([row[0] for row in actual], payloads)
+                self.assertEqual(target.get("attachment", identity), self.store.get("attachment", identity))
+        finally:
+            target.close()
+        # Two attachments sharing bytes retain independent manifests while the
+        # disk contains exactly one immutable blob for each content digest.
+        for data in payloads:
+            digest = hashlib.sha256(data).hexdigest()
+            self.assertEqual(len(list(self.attachment_root.rglob(digest))), 1)
+        contents = backup.read_bytes()
+        for manifest in source_manifests:
+            self.assertNotIn(manifest["id"].encode(), contents)
+        self.assertNotIn(b"attachment_file_root", contents)
+        self.assertNotIn(b"attachment_file_gc_cursor", contents)
+        self.assertNotIn(root_binding["id"].encode(), contents)
+        self.assertNotIn(str(self.attachment_root).encode(), contents)
+
+    def test_one_attachment_combines_legacy_bytea_with_file_chunks(self):
+        first, tail = b"legacy" * (CHUNK_SIZE // 6) + b"xy" * 2, b"file-backed-tail"
+        self.assertEqual(len(first), CHUNK_SIZE)
+        self.store.chunk_write("mixed", 0, first)
+        self.enable_file_chunks()
+        self.store.chunk_write("mixed", CHUNK_SIZE, tail)
+        self.store.put("attachment", {"id": "mixed", "storage": "chunks", "size": len(first) + len(tail),
+                                      "sha256": hashlib.sha256(first + tail).hexdigest()})
+        backup = self.root / "mixed.db"
+        self.assertEqual(create_postgres_backup(self.store, backup), {"attachment": 1})
+        target = Store(backup)
+        try:
+            rows = target.db.execute("SELECT data FROM attachment_chunks ORDER BY offset").fetchall()
+            self.assertEqual([row[0] for row in rows], [first, tail])
+        finally:
+            target.close()
+
+    def test_missing_and_same_length_corrupt_file_abort_backup_without_leftovers(self):
+        self.enable_file_chunks()
+        payloads = self.fixture()
+        path = next(self.attachment_root.rglob(hashlib.sha256(payloads[0]).hexdigest()))
+        destination = self.root / "corrupt-file.db"
+        source_manifests = self.store.list("attachment_chunk")
+        revision = self.store.meta("_entity_revision")
+        saved = path.read_bytes()
+        path.unlink()
+        with self.assertRaises(BackupError):
+            create_postgres_backup(self.store, destination)
+        self.assertFalse(destination.exists())
+        self.assertFalse(list(self.root.glob(".fountain-*")))
+        path.write_bytes(b"x" * len(saved))
+        path.chmod(0o600)
+        with self.assertRaises(BackupError):
+            create_postgres_backup(self.store, destination)
+        self.assertFalse(destination.exists())
+        self.assertFalse(list(self.root.glob(".fountain-*")))
+        self.assertEqual(self.store.list("attachment_chunk"), source_manifests)
+        self.assertEqual(self.store.meta("_entity_revision"), revision)
+
+    def test_file_backup_rejects_wrong_type_and_truncated_helper_results(self):
+        self.enable_file_chunks()
+        self.fixture()
+        destination = self.root / "invalid-helper.db"
+        with patch.object(self.store, "chunk_info", return_value=(CHUNK_SIZE, "text")):
+            with self.assertRaises(BackupError):
+                create_postgres_backup(self.store, destination)
+        with patch.object(self.store, "chunk_read_range", return_value=b"truncated"):
+            with self.assertRaises(BackupError):
+                create_postgres_backup(self.store, destination)
+        self.assertFalse(destination.exists())
+        self.assertFalse(list(self.root.glob(".fountain-*")))
+
+    def test_file_backup_fences_independent_writer_for_entire_snapshot(self):
+        self.enable_file_chunks()
+        self.test_independent_writer_waits_for_complete_snapshot()
 
 
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ import sqlite3
 import tempfile
 import uuid
 
-from .backup import BackupError, CHUNK_SIZE, DEFINITIONS, create_backup
+from .backup import BackupError, CHUNK_SIZE, DEFINITIONS, _attachments, create_backup
 from .core import APIError
 
 
@@ -25,6 +25,25 @@ def _json(value):
     return json.dumps(value, ensure_ascii=False, allow_nan=False)
 
 
+def _file_chunks(store, target):
+    # A root-enabled workspace may mix legacy BYTEA and file-backed chunks in
+    # one attachment. The common helpers resolve both under the workspace lock.
+    for identity, attachment in _attachments(target):
+        if attachment.get("storage") != "chunks":
+            continue
+        expected = 0
+        for offset, length, storage_type in store.chunk_list(identity):
+            if (type(offset) is not int or offset != expected or type(length) is not int
+                    or not 0 < length <= CHUNK_SIZE or storage_type != "blob"
+                    or store.chunk_info(identity, offset) != (length, "blob")):
+                raise BackupError("Finalized attachment has invalid chunk references")
+            data = store.chunk_read_range(identity, offset, 0, length)
+            if not isinstance(data, bytes) or len(data) != length:
+                raise BackupError("Finalized attachment chunk is missing or truncated")
+            target.execute("INSERT INTO attachment_chunks VALUES (?,?,?)", (identity, offset, data))
+            expected += length
+
+
 def _export(store, target):
     with store.transaction():
         # The shared workspace advisory lock fences all application writers until
@@ -32,11 +51,19 @@ def _export(store, target):
         for kind, identity, data, created, updated in _rows(store,
                 "SELECT kind,id,data,created_at,updated_at FROM fountain_private.entities "
                 "WHERE workspace_id=%s ORDER BY kind,id"):
+            if kind == "attachment_chunk":
+                continue
             target.execute("INSERT INTO entities VALUES (?,?,?,?,?)",
                            (kind, identity, _json(data), created, updated))
         for key, data in _rows(store,
                 "SELECT key,data FROM fountain_private.meta WHERE workspace_id=%s ORDER BY key"):
+            if key in ("attachment_file_root", "attachment_file_gc_cursor"):
+                continue
             target.execute("INSERT INTO meta VALUES (?,?)", (key, _json(data)))
+        if store._files is not None:
+            _file_chunks(store, target)
+            target.commit()
+            return
         # Incomplete/orphaned uploads are omitted exactly as create_backup prunes
         # them. Finalized chunks still pass its size, continuity and digest checks.
         for identity, offset, length, data in _rows(store,

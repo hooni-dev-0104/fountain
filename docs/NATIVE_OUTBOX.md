@@ -40,8 +40,8 @@ SQLite 플러그인이나 새로운 인증 토큰을 추가하지 않습니다. 
 
 ## 리소스 접근 검증 코드
 
-네이티브가 실제로 받은 정규 GET 작업공간·문서 공동 편집·DB 응답만으로
-비공개 접근 자료를 기록하는 코드를 추가했습니다. 현재 계정·로그인 구분값과
+네이티브가 실제로 받은 정규 GET 작업공간·문서 공동 편집·DB 응답과 성공한
+문서 operations POST 응답으로 비공개 접근 자료를 기록합니다. 현재 계정·로그인 구분값과
 쿠키 범위를 대조하며, 웹 화면에서 이 접근 자료를 만들어 넣을 수 없습니다.
 검증 수명은 로그인 만료와 24시간 중 짧은 쪽입니다. 내용이 같은 반복 응답은
 기한을 연장하지 않습니다. 별도의 검증 세대는 저장 이력과 구분합니다.
@@ -62,7 +62,7 @@ DB 담당자 변경은 행의 접근 범위를 바꿀 수 있으므로 접근 re
 비공개 접근 자료는 합계 16MiB, 개별 저장 레코드는 16MiB, 변경 묶음은 64MiB
 기술 한도를 적용합니다. 초과하면 자료를 지우거나 잘라내지 않고 확인을 요청합니다.
 
-이 단계의 검증은 소스 검토·일반 SQLite·JDK와 실제 HTTP/Chrome/IndexedDB를
+초기 리소스 접근 검증 단계는 소스 검토·일반 SQLite·JDK와 실제 HTTP/Chrome/IndexedDB를
 사용한 네이티브 모의 모델입니다. Swift 검증기나 Android SQLite의 실제 기기
 실행을 증명하지 않습니다. 기본 비활성 상태도 유지합니다. 자세한 근거는
 [검증 기록](research/native-resource-access-verification.json)에 있습니다.
@@ -79,6 +79,11 @@ DB 담당자 변경은 행의 접근 범위를 바꿀 수 있으므로 접근 re
 IndexedDB 및 모의 bridge 시험, 일반 SQLite 또는 JDK 시험은 iOS 파일 보호,
 Android 실제 connection 설정, Keychain/Keystore, OS 강제 종료·저장 공간 부족,
 WebView 데이터 제거 뒤 복구의 기기 실행 증거를 대신하지 않습니다.
+
+편집 POST 관찰의 선행 수정은 별도로 iOS Simulator·Android Emulator의 실제
+SQLite 검사 각각 4개를 통과했습니다. 합성 세션을 사용하는 native 컴포넌트
+검사이므로, 기본 활성 bridge의 전체 내구성 실행과는 구분합니다.
+[실행 근거와 남은 작업](research/native-operations-observer-verification.md).
 사용자가 설치·설정을 마쳐 기존 Xcode 라이선스·Android SDK 미설치 장애는 해소됐습니다. 라이선스 자동 수락이나 TLS 검증 완화는 하지 않습니다.
 
 기본 설정을 켜기 전 이러한 조건을 충족하고, 기기에서 저장 확인·강제 종료·

@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "date": "2026-10-17",
+  "scope": "native authoritative operation response observer prerequisite",
+  "fullDurableStorageActivation": false,
+  "releasedOutboxEnabled": {
+    "ios": false,
+    "android": false
+  },
+  "newDependencies": false,
+  "cloudDeploymentChanged": false,
+  "originalWorkspaceUsedAsFixture": false,
+  "sourceSHA256": {
+    "apps/mobile/ios/App/App/FountainOutbox.swift": "538d8ec21e1266d5ae61c2bbc520307fbe05b43169a64c3ac567e0a52b37b944",
+    "apps/mobile/ios/App/App/AppDelegate.swift": "d3d3f2cfb4dc9e69b0419be96970fb5d3b71891e3b72603933521334e5ec473e",
+    "apps/mobile/ios/App/AppTests/FountainNativeTests.swift": "51fab5c462cfeb834533533346d199766dc383579fc4396ee78236173c953803",
+    "apps/mobile/android/app/src/main/java/dev/fountain/workspace/NativeOutbox.java": "ba7ec8b5e309717559a65ecb9268ad2942787b2e023e4742bc6509e60080b582",
+    "apps/mobile/android/app/src/main/java/dev/fountain/workspace/OutboxPolicy.java": "15b2e2d832511dd3fece39635859b032f062f5ff2cdc86e0bc6f48f6d7344561",
+    "apps/mobile/android/app/src/main/java/dev/fountain/workspace/FountainNativePlugin.java": "a73d0a7967eb69db7b1b65a294e013a27655d489d6da60c0444c5172f79e0d77",
+    "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/OperationReplyProofDeviceTest.java": "245a3c73c894fe168ff773880f9aa7d60849aab4bf63823a1cd18642c6afdd20",
+    "apps/mobile/tests/android-outbox/OutboxPolicyFixture.java": "1f42f0c90803be15f2e3bfc8422ad4853c67d2eb42113ed79722394040bc54be",
+    "apps/mobile/tests/ios-outbox-observer.swift": "8a2fa59a5f014198439d9bff2af093076bfaecc44143d9cb1b4ea10d98004280",
+    "apps/mobile/tests/ios-outbox-observer.py": "a8315221802aabde2b0ecd9a606198585f51660f3d2b056122f1bf2bb4b24c44"
+  },
+  "verification": {
+    "swiftProductionMacOSSQLiteChecks": 75,
+    "pureJDKOutboxChecks": 149,
+    "pureJDKExistingBoundaryChecks": 195,
+    "portableIOSSQLiteTests": 22,
+    "androidActualSDKSQLite": {
+      "api": 36,
+      "passed": 4,
+      "failed": 0,
+      "syntheticNativeSession": true,
+      "actualGoTrueOrHTTPS": false,
+      "dedicatedAVD": "FountainRecoveryQA",
+      "rootOwnedEmulatorStopped": true
+    },
+    "iosActualSDKSQLite": {
+      "platform": "iOS Simulator",
+      "os": "27.0",
+      "passed": 4,
+      "failed": 0,
+      "skipped": 0,
+      "syntheticNativeSession": true,
+      "actualGoTrueOrHTTPS": false,
+      "runtimeWarnings": [],
+      "simulator": "Fountain QA",
+      "existingBootedSimulatorKept": true
+    },
+    "androidMainAndTestAPKBuilt": true,
+    "iosBuildForTestingSucceeded": true,
+    "independentScopedReview": "APPROVE",
+    "androidLint": {
+      "passed": true,
+      "counts": {
+        "Warning": 16
+      },
+      "ids": {
+        "ManifestOrder": 1,
+        "AndroidGradlePluginVersion": 1,
+        "GradleDependency": 2,
+        "DataExtractionRules": 1,
+        "ObsoleteSdkInt": 1,
+        "UnusedResources": 7,
+        "IconDipSize": 1,
+        "IconDuplicatesConfig": 1,
+        "IconLocation": 1
+      },
+      "dependencyManifestChanges": false,
+      "existingCapacitorTestArtifactsCachedDuringLint": true
+    }
+  },
+  "invariants": [
+    "Only canonical POST200 operation replies join existing canonical GET evidence.",
+    "Duplicate ACK IDs accepted, <=1000 canonical backend IDs; ACK is not authority.",
+    "Private cookie/current actor/workspace/binding/proof floors stay enforced.",
+    "Same-epoch lower sequence is refused even at higher global revision; new epoch may reset.",
+    "Non200 POST does not create read denial, purge input or borrow prior proof deadline.",
+    "Malformed200 is repairable invalid evidence; source input stays and fresh GET repairs it.",
+    "No released flag was enabled and no native IDB-eviction/durable-ACK end-to-end claim is made."
+  ],
+  "remaining": [
+    "Native-owned bounded canonical collector with post-admission provenance.",
+    "Atomic fresh baseline reconciliation and conflict-closure preservation.",
+    "Explicit upgrade and recovery promotion; complete local creation DAG.",
+    "Coldboot/login/post-ACK JS barriers and actual default-enabled lifecycle tests."
+  ]
+}

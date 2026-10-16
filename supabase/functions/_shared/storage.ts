@@ -45,10 +45,10 @@ const K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923
 const rotate=(v:number,n:number)=>(v>>>n)|(v<<(32-n));
 export class IncrementalSHA256 {
   private words=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
-  private bytes=0;private tail=new Uint8Array(0);
-  constructor(state?:HashState){if(state){exact(state,['words','bytes','tail']);check(Array.isArray(state.words)&&state.words.length===8&&state.words.every(v=>integer(v)&&v<=0xffffffff)&&integer(state.bytes)&&state.bytes<=MAX_FILE_SIZE);const tail=unbase64(state.tail);check(tail.length===state.bytes%64);this.words=[...state.words];this.bytes=state.bytes;this.tail=tail;}}
+  private bytes=0;private tail=new Uint8Array(0);private readonly maxBytes:number;
+  constructor(state?:HashState,maxBytes=MAX_FILE_SIZE){this.maxBytes=maxBytes;check(integer(maxBytes)&&maxBytes<=Math.floor(Number.MAX_SAFE_INTEGER/8)-128);if(state){exact(state,['words','bytes','tail']);check(Array.isArray(state.words)&&state.words.length===8&&state.words.every(v=>integer(v)&&v<=0xffffffff)&&integer(state.bytes)&&state.bytes<=maxBytes);const tail=unbase64(state.tail);check(tail.length===state.bytes%64);this.words=[...state.words];this.bytes=state.bytes;this.tail=tail;}}
   update(bytes:Uint8Array):void {
-    check(bytes instanceof Uint8Array&&this.bytes+bytes.length<=MAX_FILE_SIZE+128);this.bytes+=bytes.length;
+    check(bytes instanceof Uint8Array&&this.bytes+bytes.length<=this.maxBytes+128);this.bytes+=bytes.length;
     const pending=new Uint8Array(this.tail.length+bytes.length);pending.set(this.tail);pending.set(bytes,this.tail.length);
     const work=new Uint32Array(64);let offset=0;
     for(;offset+64<=pending.length;offset+=64){
@@ -60,7 +60,7 @@ export class IncrementalSHA256 {
     }this.tail=pending.slice(offset);
   }
   state():HashState{return {words:[...this.words],bytes:this.bytes,tail:base64(this.tail)};}
-  hex():string {const copy=new IncrementalSHA256(this.state()),bits=this.bytes*8,pad=new Uint8Array(1+(56-(this.bytes+1)%64+64)%64+8);pad[0]=128;const view=new DataView(pad.buffer);view.setUint32(pad.length-8,Math.floor(bits/4294967296));view.setUint32(pad.length-4,bits>>>0);copy.update(pad);return copy.words.map(v=>v.toString(16).padStart(8,'0')).join('');}
+  hex():string {const copy=new IncrementalSHA256(this.state(),this.maxBytes),bits=this.bytes*8,pad=new Uint8Array(1+(56-(this.bytes+1)%64+64)%64+8);pad[0]=128;const view=new DataView(pad.buffer);view.setUint32(pad.length-8,Math.floor(bits/4294967296));view.setUint32(pad.length-4,bits>>>0);copy.update(pad);return copy.words.map(v=>v.toString(16).padStart(8,'0')).join('');}
 }
 
 /** A quota snapshot is only a preflight. The domain RPC must reserve atomically. */

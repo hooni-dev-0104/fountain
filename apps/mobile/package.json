@@ -8,7 +8,8 @@
     "ios": "cap open ios",
     "android": "cap open android",
     "build": "node scripts/build.mjs",
-    "test": "node tests/transport.mjs && node tests/browser.mjs"
+    "test": "node tests/transport.mjs && node tests/browser.mjs",
+    "test:outbox": "node tests/outbox-bootstrap.mjs && node tests/outbox-browser.mjs"
   },
   "dependencies": {
     "@capacitor/core": "8.5.3"

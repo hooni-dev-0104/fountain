@@ -1,0 +1,36 @@
+/** Real Chrome bootstrap ordering with HTTP session proof and SQLite mock, not native SDK evidence. */
+import assert from 'node:assert/strict';
+import {createServer} from 'node:http';
+import {createRequire} from 'node:module';
+import {mkdtemp,readFile,rm} from 'node:fs/promises';
+import {homedir,tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {createHash} from 'node:crypto';
+import {SQLiteBridge} from './outbox-fixture.mjs';
+import {waitForAsync} from '../../../tests/async-browser.mjs';
+const require=createRequire(import.meta.url),{chromium}=require(process.env.FOUNTAIN_PLAYWRIGHT||join(homedir(),'.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'));
+const temporary=await mkdtemp(join(tmpdir(),'fountain-mobile-bootstrap-')),origin='https://bootstrap.example',profileId=origin+'|workspace|local|binding',fixture=new SQLiteBridge(join(temporary,'native.sqlite'),{origin,profileId});
+const profile={id:profileId,origin,workspaceId:'workspace',memberId:'local',cacheBinding:'binding',validUntil:Date.now()+3500000,session:{authenticated:true,required:false,mode:'local',cache_binding:'binding',workspace_id:'workspace',member:{id:'local',name:'네이티브 복원됨',role:'owner',active:true}},workspace:{pages:[],databases:[]},updatedAt:Date.now()};
+const payload=JSON.stringify({version:1,origin,mode:'active',changes:[{op:'put',bucket:'profiles',key:profileId,value:profile},{op:'put',bucket:'meta',key:'active',value:{id:'active',profileId}}]});await fixture.stageDelta({generation:1,lease:fixture.lease,txId:'seed',baseHead:0,part:0,bytesBase64:Buffer.from(payload).toString('base64')});await fixture.commitDelta({generation:1,lease:fixture.lease,txId:'seed',baseHead:0,digest:createHash('sha256').update(payload).digest('hex')});
+let server,browser,endpoint,enabled=true,timeout=false,storageFailure=false;const trace=[];
+const files={};for(const name of ['native-outbox.js','native-transport.js','bootstrap.js'])files['/'+name]=await readFile(new URL('../web/'+name,import.meta.url));files['/offline.js']=await readFile(new URL('../../../static/offline.js',import.meta.url));
+async function invoke(method,args){
+  if(method==='getConfiguration')return{origin,generation:1,outboxVersion:1,outboxEnabled:enabled};
+  if(method==='cancel')return{cancelled:true};
+  if(method==='request'){
+    assert.equal(args.path,'/api/session');trace.push('session');if(timeout)throw Object.assign(new Error('Fixture native timeout'),{code:'NATIVE_TIMEOUT'});
+    const response=await fetch(endpoint+'/session-proof'),bytes=Buffer.from(await response.arrayBuffer()),session=JSON.parse(bytes.toString());if(session.authenticated){fixture.profileId=profileId;fixture.identityState='verified';}return{generation:1,status:response.status,headers:{'Content-Type':'application/json'},bodyBase64:bytes.toString('base64')};
+  }
+  if(method==='outboxOpen'&&storageFailure)throw Object.assign(new Error('기기 보안 저장소를 열지 못했습니다.'),{code:'OUTBOX_STORAGE'});
+  trace.push(method);return fixture[method](args);
+}
+try{
+  server=createServer((req,res)=>{if(req.url==='/session-proof'){res.setHeader('Content-Type','application/json');res.end(JSON.stringify(profile.session));return;}if(files[req.url]){res.setHeader('Content-Type','application/javascript');res.end(files[req.url]);return;}if(req.url==='/app.js'){res.setHeader('Content-Type','application/javascript');res.end('window.controllerStarted=true;FountainOffline.getProfile().then(profile=>{window.restoredProfile=profile;window.controllerFinished=true;});');return;}res.setHeader('Content-Type','text/html');res.end('<!doctype html><main id="main"></main><div id="toast"></div><script defer src="/native-transport.js"></script><script defer src="/native-outbox.js"></script><script defer src="/bootstrap.js" data-assets="offline.js,app.js"></script>');});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));endpoint='http://127.0.0.1:'+server.address().port;
+  browser=await chromium.launch({channel:'chrome',headless:true});const context=await browser.newContext();await context.exposeBinding('fixtureBridge',async(_,method,args)=>{try{return{value:await invoke(method,args)};}catch(error){return{error:{message:error.message,code:error.code}};}});await context.addInitScript(()=>{const bridge=Object.fromEntries(['getConfiguration','configure','request','cancel','outboxOpen','stageDelta','commitDelta','readPage'].map(name=>[name,async args=>{const result=await window.fixtureBridge(name,args);if(result.error)throw Object.assign(new Error(result.error.message),{code:result.error.code});return result.value;}]));window.Capacitor={isNativePlatform:()=>true,isPluginAvailable:()=>true,registerPlugin:()=>bridge};});
+  const page=await context.newPage();trace.length=0;await page.goto(endpoint);await waitForAsync(page,()=>window.controllerFinished===true);assert.equal(trace[0],'session');assert.ok(trace.indexOf('readPage')>trace.indexOf('outboxOpen'));assert.equal(await page.evaluate(()=>window.restoredProfile.session.member.name),'네이티브 복원됨');assert.equal(await page.evaluate(()=>FountainNativeStorage.ready),true);
+  timeout=true;trace.length=0;fixture.rotateOwner();await page.reload();await waitForAsync(page,()=>window.controllerFinished===true);assert.equal(trace[0],'session');assert.equal(await page.evaluate(()=>window.restoredProfile.id),profileId,'timeout may use only the pre-existing verified native grant');
+  storageFailure=true;await page.reload();await page.waitForFunction(()=>document.querySelector('#main').innerText.includes('저장'));assert.equal(await page.evaluate(()=>!!window.controllerStarted),false,'storage503 never falls back to browser cache/controllers');
+  // The released capability stays off: no outbox open, hydration or schema migration occurs.
+  enabled=false;timeout=false;storageFailure=false;const fresh=await browser.newContext();await fresh.exposeBinding('fixtureBridge',async(_,method,args)=>{try{return{value:await invoke(method,args)};}catch(error){return{error:{message:error.message,code:error.code}};}});await fresh.addInitScript(()=>{const bridge=Object.fromEntries(['getConfiguration','configure','request','cancel','outboxOpen','stageDelta','commitDelta','readPage'].map(name=>[name,async args=>{const result=await window.fixtureBridge(name,args);if(result.error)throw Object.assign(new Error(result.error.message),{code:result.error.code});return result.value;}]));window.Capacitor={isNativePlatform:()=>true,isPluginAvailable:()=>true,registerPlugin:()=>bridge};});const disabled=await fresh.newPage();trace.length=0;await disabled.goto(endpoint);await waitForAsync(disabled,()=>window.controllerFinished===true);assert.equal(trace.includes('outboxOpen'),false);assert.equal(await disabled.evaluate(()=>!!window.FountainNativeStorage),false);assert.equal(await disabled.evaluate(async()=>{const databases=await indexedDB.databases();return databases.find(db=>db.name==='fountain-offline-v1').version;}),2);
+  console.log('PASS bootstrap: HTTP local no-cookie grant proof before hydrate/controllers, existing grant on timeout, storage-failure fence, default-disabled preserves browser cache schema');
+}finally{await browser?.close();if(server)await new Promise(resolve=>server.close(resolve));fixture.close();await rm(temporary,{recursive:true,force:true});}

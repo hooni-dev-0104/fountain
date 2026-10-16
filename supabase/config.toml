@@ -11,6 +11,12 @@ enabled = true
 verify_jwt = false
 entrypoint = "./functions/fountain-api/index.ts"
 
+[functions.fountain-worker]
+enabled = true
+# A short-lived private queue ticket is authenticated against server-only RPCs.
+verify_jwt = false
+entrypoint = "./functions/fountain-worker/index.ts"
+
 [api]
 enabled = true
 # Port to use for the API URL.

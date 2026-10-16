@@ -204,6 +204,12 @@ class Authorization:
             require(a.regular or any(a.can('page', page, 3) for page in self.store.list('page')), 'No document upload permission', 403)
             body['owner_id'] = a.member_id
             return
+        if parts[:2] == ['api', 'uploads']:
+            if path == '/api/uploads/cleanup':
+                a.require_admin(owner_only=True)
+            # FileStorage checks the upload's actor and original page on each
+            # operation, including the HTTP raw-body preflight.
+            return
         if parts[:2] == ['api', 'attachments'] and len(parts) in {3, 4}:
             self.attachment(parts[2], method == 'DELETE')
             return

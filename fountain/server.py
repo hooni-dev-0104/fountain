@@ -13,6 +13,8 @@ import logging
 import hmac
 import os
 import threading
+import re
+import sqlite3
 from contextlib import nullcontext
 import mimetypes
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -34,6 +36,36 @@ class Download:
     filename: str
     data: bytes | Path
     cleanup_dir: str | None = None
+    attachment_id: str | None = None
+
+
+@dataclass
+class AttachmentDownload:
+    filename: str
+    attachment_id: str
+    size: int
+    sha256: str | None = None
+
+
+def byte_range(value, size):
+    """One inclusive HTTP byte range, returned as Python's exclusive end."""
+    if not value:
+        return 0, size, False
+    if value.split('=', 1)[0].lower() != 'bytes':
+        return 0, size, False
+    match = re.fullmatch(r'bytes=([0-9]*)-([0-9]*)', value)
+    require(match is not None and any(match.groups()) and size > 0, 'Unsatisfiable byte range', 416)
+    first, last = match.groups()
+    # Bound decimal parsing even when the header is deliberately enormous.
+    require(len(first) <= 20 and len(last) <= 20, 'Unsatisfiable byte range', 416)
+    if not first:
+        suffix = int(last)
+        require(suffix > 0, 'Unsatisfiable byte range', 416)
+        return max(0, size - suffix), size, True
+    start = int(first)
+    end = min(size, int(last) + 1) if last else size
+    require(start < size and end > start, 'Unsatisfiable byte range', 416)
+    return start, end, True
 
 
 class Application:
@@ -41,6 +73,9 @@ class Application:
         self.store, self.workspace, self.static = store, Workspace(store), Path(static).resolve()
         from .auth import Auth
         self.auth = Auth(store)
+        from .attachments import FileStorage
+        self.files = FileStorage(store)
+        self.files.cleanup()
         from .collaboration import Collaboration
         self.collaboration = Collaboration(store, self.workspace)
         self.advanced = None
@@ -266,6 +301,29 @@ class Application:
             return 200, Download('fountain-backup.db', target, directory)
         if path == "/api/import" and method == "POST":
             return 201, w.import_data(body)
+        if path == '/api/uploads' and method == 'POST':
+            self.files.cleanup()
+            result = self.files.begin(body, access.member_id, access)
+            s.audit('upload.started', {'upload_id': result['id'], 'size': result['size']})
+            return 201, result
+        if path == '/api/uploads/cleanup' and method == 'POST':
+            return 200, self.files.cleanup()
+        if len(parts) >= 3 and parts[:2] == ['api', 'uploads']:
+            if len(parts) == 3 and method == 'GET':
+                return 200, self.files.status(parts[2], access.member_id, access)
+            if len(parts) == 3 and method == 'DELETE':
+                result = self.files.cancel(parts[2], access.member_id, access)
+                if result.get('cancelled'):
+                    s.audit('upload.cancelled', {'upload_id': parts[2]})
+                return 200, result
+            if len(parts) == 4 and parts[3] == 'chunks' and method == 'PUT':
+                return 200, self.files.append(parts[2], body.get('offset'), body.get('data'), access.member_id, access)
+            if len(parts) == 4 and parts[3] == 'complete' and method == 'POST':
+                previous = self.files.status(parts[2], access.member_id, access)
+                result = self.files.complete(parts[2], access.member_id, access)
+                if not previous['completed']:
+                    s.audit('upload.completed', {'attachment_id': result['id'], 'size': result['size']})
+                return 201, result
         if path == "/api/attachments" and method == "POST":
             attachment = w.attachment(body)
             return 201, {k: v for k, v in attachment.items() if k != "data"}
@@ -276,7 +334,9 @@ class Application:
         if len(parts) == 4 and parts[:2] == ['api', 'attachments'] and parts[3] == 'download' and method == 'GET':
             attachment = s.get('attachment', parts[2])
             require(attachment, 'Attachment not found', 404)
-            return 200, Download(attachment['name'], base64.b64decode(attachment['data']))
+            if attachment.get('storage') == 'chunks':
+                return 200, AttachmentDownload(attachment['name'], attachment['id'], attachment['size'], attachment.get('sha256'))
+            return 200, Download(attachment['name'], base64.b64decode(attachment['data']), attachment_id=attachment['id'])
         if len(parts) == 3 and parts[:2] == ['api', 'attachments'] and method == 'DELETE':
             require(s.get('attachment', parts[2]), 'Attachment not found', 404)
             require(not any(block.get('attachment_id') == parts[2] for page in s.list('page') + s.list('version') for block in page.get('blocks', [])), 'Attachment is still referenced by a document', 409)
@@ -284,6 +344,7 @@ class Application:
                 database = s.get('database', row.get('database_id')) or {}
                 file_fields = [prop['id'] for prop in database.get('properties', []) if prop.get('type') == 'files']
                 require(not any(parts[2] in (row.get('properties', {}).get(key) or []) for key in file_fields), 'Attachment is still referenced by a database row', 409)
+            s.db.execute('DELETE FROM attachment_chunks WHERE attachment_id=?', (parts[2],))
             s.delete('attachment', parts[2])
             return 200, {'deleted': True}
         if self.advanced:
@@ -322,6 +383,7 @@ def handler_for(application):
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
+            if self.close_connection: self.send_header('Connection', 'close')
             if getattr(self, '_cookie_header', None): self.send_header('Set-Cookie', self._cookie_header)
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("Referrer-Policy", "same-origin")
@@ -331,20 +393,67 @@ def handler_for(application):
 
         def send_download(self, download):
             try:
-                size = download.data.stat().st_size if isinstance(download.data, Path) else len(download.data)
-                self.send_response(200)
+                chunked = isinstance(download, AttachmentDownload)
+                size = download.size if chunked else download.data.stat().st_size if isinstance(download.data, Path) else len(download.data)
+                etag = '"' + download.sha256 + '"' if chunked and re.fullmatch('[0-9a-f]{64}', download.sha256 or '') else None
+                requested = self.headers.get('Range') if self.command == 'GET' else None
+                if self.headers.get('If-Range') and self.headers['If-Range'] != etag:
+                    requested = None
+                try:
+                    start, end, partial = byte_range(requested, size)
+                except APIError:
+                    self.send_response(416)
+                    self.send_header('Content-Range', f'bytes */{size}')
+                    self.send_header('Content-Length', '0')
+                    self.send_header('Cache-Control', 'no-store')
+                    self.send_header('Accept-Ranges', 'bytes')
+                    self.end_headers()
+                    return
+                cookie = self.headers.get('Cookie', '')
+                def authorize():
+                    with application.store.transaction():
+                        principal = application.auth.principal(cookie)
+                        require(principal is not None, 'Authentication required', 401)
+                        access = Access(application.store, principal)
+                        if download.attachment_id:
+                            Authorization(access).attachment(download.attachment_id)
+                        elif download.cleanup_dir:
+                            access.require_admin(owner_only=True)
+                authorize()
+                self.send_response(206 if partial else 200)
                 self.send_header('Content-Type', 'application/octet-stream')
                 self.send_header('Content-Disposition', "attachment; filename=download; filename*=UTF-8''" + quote(download.filename, safe=''))
-                self.send_header('Content-Length', str(size))
+                self.send_header('Content-Length', str(end - start))
                 self.send_header('Cache-Control', 'no-store')
                 self.send_header('X-Content-Type-Options', 'nosniff')
+                self.send_header('Accept-Ranges', 'bytes')
+                if etag: self.send_header('ETag', etag)
+                if partial: self.send_header('Content-Range', f'bytes {start}-{end - 1}/{size}')
                 self.end_headers()
                 if self.command != 'HEAD':
-                    source = download.data.open('rb') if isinstance(download.data, Path) else io.BytesIO(download.data)
-                    with source:
-                        shutil.copyfileobj(source, self.wfile, length=64 * 1024)
+                    try:
+                        if chunked:
+                            for piece in application.files.iter_bytes(download.attachment_id, start, end):
+                                authorize()
+                                self.wfile.write(piece)
+                        else:
+                            source = download.data.open('rb') if isinstance(download.data, Path) else io.BytesIO(download.data)
+                            with source:
+                                source.seek(start)
+                                remaining = end - start
+                                while remaining:
+                                    piece = source.read(min(remaining, 64 * 1024))
+                                    if not piece: raise OSError('Download ended before its declared length')
+                                    authorize()
+                                    self.wfile.write(piece)
+                                    remaining -= len(piece)
+                    except (APIError, OSError, sqlite3.Error):
+                        # Headers have already been sent. A revoked or broken
+                        # transfer closes rather than appending a JSON response.
+                        self.close_connection = True
+                        return
             finally:
-                if download.cleanup_dir:
+                if getattr(download, 'cleanup_dir', None):
                     shutil.rmtree(download.cleanup_dir)
 
         def stream_page(self, page_id, cookie):
@@ -407,6 +516,8 @@ def handler_for(application):
                 url = urlparse(self.path)
                 require(not url.scheme and not url.netloc, "Invalid request target")
                 path = unquote(url.path)
+                parts = path.strip('/').split('/')
+                raw_upload = self.command == 'PUT' and len(parts) == 4 and parts[:2] == ['api', 'uploads'] and parts[3] == 'chunks'
                 is_scim = path.startswith('/scim/v2/')
                 if is_scim:
                     token = os.environ.get('FOUNTAIN_SCIM_TOKEN')
@@ -417,10 +528,36 @@ def handler_for(application):
                 if self.command in {"POST", "PATCH", "PUT", "DELETE"}:
                     require(is_scim or self.headers.get("X-Fountain-Request") == "1", "Missing request verification header", 403)
                     require(self.headers.get("Transfer-Encoding") is None, "Transfer encoding is unsupported")
+                    if raw_upload:
+                        from .attachments import CHUNK_SIZE
+                        require(len(self.headers.get_all('Content-Length', [])) == 1, 'A single Content-Length is required', 411)
                     try: length = int(self.headers.get("Content-Length", "0"))
                     except ValueError: raise APIError(400, "Invalid Content-Length")
                     require(0 <= length <= MAX_BODY, "Request exceeds 10 MB", 413)
-                    if length:
+                    if raw_upload:
+                        require(0 < length <= CHUNK_SIZE, 'Invalid upload chunk length', 413)
+                        require(self.headers.get_content_type() == 'application/octet-stream', 'Expected application/octet-stream', 415)
+                        options = parse_qs(url.query, keep_blank_values=True)
+                        require(set(options) == {'offset'} and len(options['offset']) == 1
+                                and re.fullmatch('[0-9]{1,20}', options['offset'][0]) is not None, 'A single byte offset is required')
+                        cookie = self.headers.get('Cookie', '')
+                        # Reject unauthorized uploads before reading the network;
+                        # dispatch revalidates this cookie after obtaining writer.
+                        _, upload = application.dispatch('GET', '/api/uploads/' + parts[2], {}, {}, session_cookie=cookie)
+                        offset = int(options['offset'][0])
+                        require(not upload['completed'], 'Upload is already complete', 409)
+                        require(offset <= upload['offset'], 'Chunk would create a gap', 409)
+                        require(offset % CHUNK_SIZE == 0 and offset < upload['size']
+                                and length == min(CHUNK_SIZE, upload['size'] - offset), 'Incorrect chunk boundary or length')
+                        self.connection.settimeout(30)
+                        self.close_connection = True
+                        try:
+                            data = self.rfile.read(length)
+                        except TimeoutError:
+                            raise APIError(408, 'Upload chunk timed out')
+                        require(len(data) == length, 'Incomplete upload chunk')
+                        body = {'offset': offset, 'data': data}
+                    elif length:
                         require(self.headers.get_content_type() in ({"application/json", "application/scim+json"} if is_scim else {"application/json"}), "Expected application/json", 415)
                         try:
                             raw = self.rfile.read(length)
@@ -458,7 +595,7 @@ def handler_for(application):
                         return
                     status, payload = application.dispatch(method, path, body, parse_qs(url.query, keep_blank_values=True), principal=principal,
                         session_cookie=cookie if not is_scim and path != '/api/health' else _INTERNAL_PRINCIPAL)
-                    if isinstance(payload, Download):
+                    if isinstance(payload, (Download, AttachmentDownload)):
                         self.send_download(payload)
                     elif path.startswith(("/sites/", "/forms/")) and isinstance(payload, dict) and "_html" in payload:
                         self.send_bytes(status, payload["_html"].encode(), "text/html; charset=utf-8")

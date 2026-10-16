@@ -98,5 +98,11 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.request("DELETE", path)[0], 200)
         self.assertNotIn(row["id"], [r["id"] for r in self.request("GET", "/api/databases/projects")[1]["rows"]])
 
+    def test_analytics_counts_are_not_projected_as_row_records(self):
+        status, result = self.request('GET', '/api/analytics')
+        self.assertEqual(status, 200)
+        self.assertIs(type(result['rows']), int)
+        self.assertGreaterEqual(result['rows'], 3)
+
 
 if __name__ == "__main__": unittest.main()

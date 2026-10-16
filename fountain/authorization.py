@@ -285,7 +285,7 @@ class Authorization:
             key = parts[1]
             target_kind, target_key = ('page', 'page_id') if key == 'sites' else ('database', 'database_id')
             result[key] = [item for item in result.get(key, []) if a.can(target_kind, self.store.get(target_kind, item.get(target_key)), 4)]
-        if 'rows' in result and 'database' not in result:
+        if isinstance(result.get('rows'), list) and 'database' not in result:
             result['rows'] = [row_projection(row) for row in result['rows']]
         if 'database' in result and 'rows' in result:
             result = a.filter_database(result)

@@ -150,7 +150,7 @@ os._exit(9)
         self.assertNotIn('call.resolve(', delivery)
         receipt = SOURCE.split('if let receipt = try rows("SELECT digest,head', 1)[1].split('var bytes = Data()', 1)[0]
         self.assertIn('DELETE FROM staging WHERE tx_id=?', receipt)
-        self.assertIn('if !sameIdentity { _ = try self.advance() }', SOURCE)
+        self.assertTrue('if !sameIdentity { _ = try self.advance();' in SOURCE)
         self.assertIn('if item.bucket == "profiles" { try self.purgeProfile(item.profile) }', SOURCE)
         profile_lookup = SOURCE.split('private func availableProfile()', 1)[1].split('func ensureOwner', 1)[0]
         self.assertIn('do { return try verifiedProfile() }', profile_lookup)
@@ -183,6 +183,227 @@ os._exit(9)
         self.assertIn('previous != item.payload', SOURCE)
         self.assertIn('if op == "delete" { return profile }', parser)
         self.assertIn('SELECT count(*) FROM tombstones WHERE scope=?", [item.profile]', SOURCE)
+
+    def control(self, name):
+        found = self.db.execute(sql('SELECT value FROM control'), (name,)).fetchone()
+        return None if found is None else json.loads(found[0])
+
+    def set_control(self, name, value):
+        self.db.execute(CONTROL, (name, json.dumps(value, separators=(',', ':')).encode()))
+
+    def test_private_proof_refresh_rolls_back_and_never_advances_data_head(self):
+        proof = {'profileId': 'profile', 'kind': 'database', 'id': 'tasks',
+                 'accessRevision': 4, 'dataRevision': 20, 'rows': {'readable': 1},
+                 'observedAt': 100, 'validUntil': 200}
+        for commit in (False, True):
+            self.db.execute('BEGIN IMMEDIATE')
+            self.set_control('proofs:profile', {'database:tasks': proof})
+            self.set_control('proofEpoch', 1)
+            self.db.execute('COMMIT' if commit else 'ROLLBACK')
+            self.assertEqual(self.control('head'), 0)
+            self.assertEqual(self.control('lease'), 'owner')
+            self.assertEqual(self.control('proofEpoch'), 1 if commit else None)
+            self.assertEqual(self.db.execute('SELECT count(*) FROM records').fetchone()[0], 0)
+        with sqlite3.connect(self.path) as restarted:
+            self.assertEqual(json.loads(restarted.execute(sql('SELECT value FROM control'),
+                             ('proofs:profile',)).fetchone()[0])['database:tasks']['rows'], {'readable': 1})
+            # Bridge read queries only records, never private control/ledger rows.
+            self.assertEqual(restarted.execute(sql('SELECT rowid,bucket,key,length(value) FROM records'),
+                                              ('profile', 0)).fetchall(), [])
+
+    def test_lost_ack_receipt_proof_epoch_survives_refresh_and_restage(self):
+        self.db.execute('BEGIN IMMEDIATE')
+        self.record('drafts', ['profile|page', 'client'], value=b'{"draft":"kept"}')
+        self.set_control('head', 1)
+        self.db.execute(RECEIPT, ('accepted', 'same-digest', 1))
+        self.set_control('receiptProof:accepted', 7)
+        self.db.execute('COMMIT')
+        self.set_control('proofEpoch', 8)
+        self.set_control('stagedProof:accepted', 7)
+        self.db.execute(STAGE, ('accepted', 0, 'owner', 0, b'original-exact-bytes'))
+        accepted = self.db.execute(sql('SELECT digest,head FROM tx_receipts'), ('accepted',)).fetchone()
+        self.assertEqual(accepted, ('same-digest', 1))
+        self.assertEqual(self.control('receiptProof:accepted'), 7)
+        self.db.execute('BEGIN IMMEDIATE')
+        self.db.execute(sql('DELETE FROM staging WHERE tx_id='), ('accepted',))
+        self.db.execute('COMMIT')
+        self.assertEqual(self.control('proofEpoch'), 8)
+        self.assertEqual(self.control('head'), 1)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM records').fetchone()[0], 1)
+
+    def test_failed_access_overlay_preserves_staged_input_receipts_and_records(self):
+        self.record('snapshots', 'profile|page', value=b'{"snapshot":"original"}')
+        self.db.execute(STAGE, ('pending', 0, 'owner', 0, b'unsent-exact-bytes'))
+        self.set_control('stagedProof:pending', 2)
+        before = list(self.db.iterdump())
+        self.db.execute('BEGIN IMMEDIATE')
+        # Model the failure boundary inside production commit's transaction,
+        # before its head/receipt publication, without claiming Swift execution.
+        self.record('drafts', ['profile|page', 'new'], value=b'{"draft":"uncommitted"}')
+        self.set_control('head', 1)
+        self.db.execute(RECEIPT, ('pending', 'digest', 1))
+        self.set_control('receiptProof:pending', 2)
+        self.db.execute('ROLLBACK')
+        self.assertEqual(list(self.db.iterdump()), before)
+
+    def test_resource_proof_source_and_preflight_fences(self):
+        plugin = (APP / 'AppDelegate.swift').read_text()
+        observer = SOURCE.split('func observeResource(', 1)[1].split('func stage(', 1)[0]
+        canonical = SOURCE.split('static func canonicalResource(', 1)[1].split('private func proofs(', 1)[0]
+        self.assertIn('method == "GET"', canonical)
+        self.assertIn('!path.contains("?")', canonical)
+        self.assertIn('removingPercentEncoding', canonical)
+        self.assertIn('body["session_binding"] as? String == parts[3].removingPercentEncoding', observer)
+        self.assertIn('revision >= (knownFloor["data"] ?? 0)', observer)
+        self.assertIn('min(grant["validUntil"] as? Double ?? 0, now + 86_400_000)', observer)
+        self.assertNotIn('self.advance()', observer)
+        invalid = observer.split('catch {', 1)[1]
+        self.assertNotIn('purgeResource(', invalid)
+        self.assertNotIn('purgeProfile(', invalid)
+        preflight = SOURCE.split('private func accessIssues(', 1)[1].split('func commit(', 1)[0]
+        for required in ['value["workspace"]', '"local_dependency"', '"revision_changed"',
+                         '"epoch_changed"', 'authority["rows"]', 'authority["canCreateRow"]',
+                         'authority["relations"]', 'references(cached', 'operation["base_rows"]']:
+            self.assertIn(required, preflight)
+        read = SOURCE.split('func read(', 1)[1]
+        self.assertLess(read.index('try requireAccess(profile)'), read.index('var fragments:'))
+        self.assertIn('value["proofEpoch"]', read)
+        self.assertIn('let deadline = try requireAccess(profile)', read)
+        self.assertIn('readDeadline = deadline', read)
+        deadline = SOURCE.split('func deliveryDeadline()', 1)[1].split('func open()', 1)[0]
+        self.assertIn('guard let deadline = readDeadline', deadline)
+        self.assertNotIn('filter', deadline)
+        self.assertIn('"proofEpoch": proofEpoch', read)
+        commit = SOURCE.split('func commit(', 1)[1].split('func read(', 1)[0]
+        self.assertLess(commit.index('SELECT digest,head FROM tx_receipts'), commit.index('proofEpoch == (try self.proofEpoch())'))
+        self.assertLess(commit.index('try self.requireAccess(profile, overlay: changes)'), commit.index('let head = try self.advance()'))
+        self.assertIn('let cleanupOnly = changes.allSatisfy', commit)
+        self.assertIn('setControl("receiptProof:" + txID, proofEpoch)', commit)
+        stage = SOURCE.split('func stage(', 1)[1].split('private struct Change', 1)[0]
+        self.assertIn('original == proofEpoch', stage)
+        self.assertNotIn('self.proofEpoch()', stage)
+        self.assertIn('case .access: return "OUTBOX_ACCESS_REQUIRED"', SOURCE)
+        self.assertIn('Array(issues.prefix(100))', SOURCE)
+        self.assertIn('"accessIssuesTruncated": issues.count > 100', SOURCE)
+        self.assertIn('store.observedProofEpoch == startingProofEpoch', plugin)
+        self.assertIn('guard current(job), try cookies().active == job.sentCookie', plugin)
+        self.assertIn('if response.statusCode != 401 { try self.observeOutboxResource', plugin)
+        terminal = observer.split('return\n        }', 1)[1].split('do {', 1)[0]
+        self.assertIn('ledger[key]?["denied"]', terminal)
+        self.assertIn('SELECT count(*) FROM tombstones WHERE scope=?', terminal)
+        self.assertIn('throw FountainOutboxError.access', terminal)
+
+    def test_floor_and_proof_metadata_share_rollback_and_preserve_business_receipts(self):
+        self.db.execute(RECEIPT, ('already-accepted', 'digest', 0))
+        self.set_control('receiptProof:already-accepted', 2)
+        self.set_control('proofFloor:profile', {'access': 3, 'data': 90})
+        self.set_control('proofEpoch', 2)
+        for committed in (False, True):
+            self.db.execute('BEGIN IMMEDIATE')
+            self.set_control('proofFloor:profile', {'access': 3, 'data': 100})
+            self.set_control('proofs:profile', {'workspace:workspace': {'dataRevision': 100}})
+            self.set_control('proofEpoch', 3)
+            self.db.execute('COMMIT' if committed else 'ROLLBACK')
+            self.assertEqual(self.control('proofFloor:profile')['data'], 100 if committed else 90)
+            self.assertEqual(self.control('proofEpoch'), 3 if committed else 2)
+            self.assertEqual(self.control('head'), 0)
+            self.assertEqual(self.control('receiptProof:already-accepted'), 2)
+            self.assertEqual(self.db.execute(sql('SELECT digest,head FROM tx_receipts'),
+                                            ('already-accepted',)).fetchone(), ('digest', 0))
+        observer = SOURCE.split('func observeResource(', 1)[1].split('func stage(', 1)[0]
+        self.assertIn('setControl("proofFloor:" + profile', observer)
+        self.assertLess(observer.index('let knownFloor'), observer.index('var proposed = ledger'))
+        semantic = observer.split('if var old = ledger[key]', 1)[1].split('try transaction', 1)[0]
+        self.assertIn('deadline > now', semantic)
+        self.assertIn('>= deadline', semantic)
+        self.assertIn('"observedAt", "validUntil"', semantic)
+        self.assertIn('if try json(old) == json(semantic), access == knownFloor["access"]', semantic)
+        preflight = SOURCE.split('private func accessIssues(', 1)[1].split('func commit(', 1)[0]
+        self.assertIn('>= (currentFloor["access"] ?? 0)', preflight)
+        self.assertIn('>= (currentFloor["data"] ?? 0)', preflight)
+        self.assertIn('tombstones.contains(profile +', preflight)
+        workspace = preflight.split('if item.bucket == "profiles"', 1)[1].split('let pieces = item.resource', 1)[0]
+        self.assertIn('if let direct = ledger[proofKey(kind, id)]', workspace)
+        self.assertIn('direct["denied"]', workspace)
+        self.assertIn('direct["invalid"]', workspace)
+        self.assertIn('Self.hash(bytes) == authority["schemaDigest"] as? String', preflight)
+
+    def test_resource_denial_preserves_original_operation_and_draft_bytes_in_recovery(self):
+        values = [('operations', ['profile|page', 'client:1'], b'{"operation":{"text":"unsent"}}'),
+                  ('drafts', ['profile|page', 'client'], b'{"draft":{"blocks":[{"text":"kept"}]}}'),
+                  ('mutations', ['profile', 'edit'], b'{"operation":{"kind":"page.patch"}}')]
+        for bucket, key, value in values:
+            self.record(bucket, key, value=value)
+        self.record('transfers', 'profile|page|upload', value=b'{"name":"metadata"}')
+        self.record('drafts', ['profile|other', 'client'], 'profile|other', b'{"other":"kept"}')
+        original = list(self.db.iterdump())
+        for commit in (False, True):
+            self.db.execute('BEGIN IMMEDIATE')
+            rows = self.db.execute(sql('SELECT bucket,key,value FROM records WHERE resource_key='),
+                                   ('profile|page',)).fetchall()
+            for index, (bucket, key, value) in enumerate(rows):
+                self.db.execute(sql('INSERT INTO recovery(tx_id,position,bucket,key,profile_id,value) VALUES(?,?,?,?,?,?)'),
+                                ('denial', index, bucket, key, 'profile', value))
+            self.db.execute(sql('DELETE FROM records WHERE resource_key='), ('profile|page',))
+            self.db.execute('COMMIT' if commit else 'ROLLBACK')
+            if not commit:
+                self.assertEqual(list(self.db.iterdump()), original)
+        recovered = dict(self.db.execute('SELECT bucket,value FROM recovery'))
+        self.assertEqual(recovered['operations'], values[0][2])
+        self.assertEqual(recovered['drafts'], values[1][2])
+        self.assertEqual(self.db.execute('SELECT count(*) FROM records').fetchone()[0], 1)
+        self.assertEqual(self.db.execute(sql('SELECT rowid,bucket,key,length(value) FROM records'),
+                                        ('profile', 0)).fetchone()[1], 'drafts')
+        purge = SOURCE.split('private func purgeResource(', 1)[1].split('private func accessIssues(', 1)[0]
+        self.assertIn("bucket IN ('mutations','operations','drafts')", purge)
+        self.assertIn('else { payload = bytes }', purge)
+        self.assertLess(purge.index('INSERT INTO recovery('), purge.index('DELETE FROM records WHERE resource_key='))
+
+    def test_preflight_and_quarantine_stream_records_with_bounded_private_ledger(self):
+        for index in range(40):
+            self.record('drafts', ['profile|page', str(index)], value=b'x' * (64 * 1024))
+        query = sql('SELECT bucket,key,value FROM records WHERE profile_id=')
+        size = count = 0
+        for bucket, key, value in self.db.execute(query, ('profile',)):
+            count += 1
+            size = max(size, len(value))
+        self.assertEqual(count, 40)
+        self.assertEqual(size, 64 * 1024)
+        stream = SOURCE.split('private func eachRecord(', 1)[1].split('private func control(', 1)[0]
+        self.assertIn('sqlite3_step(prepared)', stream)
+        self.assertIn('size <= recordLimit', stream)
+        self.assertIn('try visit(', stream)
+        self.assertNotIn('result.append(', stream)
+        preflight = SOURCE.split('private func accessIssues(', 1)[1].split('func commit(', 1)[0]
+        self.assertIn('try eachRecord("SELECT bucket,key,value FROM records WHERE profile_id=?"', preflight)
+        self.assertNotIn('var records: [String: Change]', preflight)
+        self.assertIn('overlayByKey[bucket + "|" + encoded] != nil', preflight)
+        self.assertIn('issues.count <= 100', preflight)
+        self.assertIn('try inspect(canonical)', preflight)
+        self.assertIn('previous["properties"] = base["properties"]', preflight)
+        self.assertIn('if targetDB.isEmpty', preflight)
+        self.assertIn('for candidate in ledger.values', preflight)
+        self.assertIn('let target = database(candidateID)', preflight)
+        self.assertIn('try json(proposed).count <= recordLimit', SOURCE)
+        self.assertIn('SELECT coalesce(length(value),0) FROM control WHERE id=?', SOURCE)
+        observer = SOURCE.split('func observeResource(', 1)[1].split('func stage(', 1)[0]
+        self.assertIn('if fits { try self.setControl("proofs:" + profile, proposed) }', observer)
+        self.assertIn('if !fits { throw FountainOutboxError.access }', observer)
+        self.assertIn('ledger = [self.proofKey("workspace", "workspace"):', observer)
+
+    def test_capacity_floor_only_update_preserves_canonical_data_and_old_private_evidence(self):
+        ledger = {'database:tasks': {'dataRevision': 90, 'rows': {'old-scope': 1}}}
+        self.set_control('proofs:profile', ledger)
+        self.set_control('proofFloor:profile', {'access': 1, 'data': 90})
+        self.record('drafts', ['profile|page', 'client'], value=b'{"draft":"never evicted"}')
+        self.db.execute('BEGIN IMMEDIATE')
+        self.set_control('proofFloor:profile', {'access': 1, 'data': 100})
+        self.set_control('proofEpoch', 1)
+        self.db.execute('COMMIT')
+        self.assertEqual(self.control('proofs:profile'), ledger)
+        self.assertEqual(self.control('proofFloor:profile')['data'], 100)
+        self.assertEqual(self.control('head'), 0)
+        self.assertEqual(self.db.execute('SELECT count(*) FROM records').fetchone()[0], 1)
 
 
 if __name__ == '__main__':

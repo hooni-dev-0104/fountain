@@ -412,10 +412,11 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                 var result = try action(store)
                 result["generation"] = startingGeneration
                 let boundary = store.boundary
+                let startingProofEpoch = try store.proofEpoch()
                 var fragmentDeadline: Double?
                 if result["fragments"] != nil {
-                    guard let deadline = try store.open()["validUntil"] as? Double,
-                          deadline > Date().timeIntervalSince1970 * 1000 else { throw FountainOutboxError.blocked }
+                    let deadline = try store.deliveryDeadline()
+                    guard deadline > Date().timeIntervalSince1970 * 1000 else { throw FountainOutboxError.access }
                     fragmentDeadline = deadline
                 }
                 let deliveryResult = result
@@ -427,6 +428,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                           self.generation == startingGeneration, self.auth == startingAuth,
                           self.origin == startingOrigin, !self.storageFailed, !self.outboxFailed,
                           self.outbox === store, store.boundary == boundary,
+                          store.observedProofEpoch == startingProofEpoch,
                           fragmentDeadline == nil || fragmentDeadline! > Date().timeIntervalSince1970 * 1000,
                           let controller = self.bridge?.viewController as? FountainBridgeViewController,
                           controller.bundled(controller.webView?.url), let webView = controller.webView,
@@ -458,21 +460,20 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                   let encoded = call.getString("bytesBase64"), encoded.utf8.count <= 349_528,
                   let bytes = Data(base64Encoded: encoded) else { throw FountainOutboxError.invalid }
             let part = try self.integer(call, "part")
-            try store.stage(lease: lease, txID: tx, baseHead: self.integer(call, "baseHead"), part: part, bytes: bytes)
+            try store.stage(lease: lease, txID: tx, baseHead: self.integer(call, "baseHead"), proofEpoch: self.integer(call, "proofEpoch"), part: part, bytes: bytes)
             return ["part": part]
         }
     }
     @objc func commitDelta(_ call: CAPPluginCall) {
         outboxCall(call) { store in
             guard let lease = call.getString("lease"), let tx = call.getString("txId"), let digest = call.getString("digest") else { throw FountainOutboxError.invalid }
-            let head = try store.commit(lease: lease, txID: tx, baseHead: self.integer(call, "baseHead"), digest: digest)
-            return ["head": head, "txId": tx]
+            return try store.commit(lease: lease, txID: tx, baseHead: self.integer(call, "baseHead"), proofEpoch: self.integer(call, "proofEpoch"), digest: digest)
         }
     }
     @objc func readPage(_ call: CAPPluginCall) {
         outboxCall(call) { store in
             guard let lease = call.getString("lease") else { throw FountainOutboxError.invalid }
-            return try store.read(lease: lease, head: self.integer(call, "head"), cursor: call.getString("cursor"), byteLimit: self.integer(call, "byteLimit"))
+            return try store.read(lease: lease, head: self.integer(call, "head"), proofEpoch: self.integer(call, "proofEpoch"), cursor: call.getString("cursor"), byteLimit: self.integer(call, "byteLimit"))
         }
     }
 
@@ -488,6 +489,13 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         guard value.revoke == nil, !(try hasInvalidation(origin!)) else { try store.revoke(); throw FountainOutboxError.blocked }
         if body["authenticated"] as? Bool != true { try store.revoke(); return }
         try store.grant(body, sessionRef: outboxReference(value.active))
+    }
+
+    private func observeOutboxResource(_ job: FountainJob, response: HTTPURLResponse, data: Data) throws {
+        guard OUTBOX_ENABLED, FountainOutbox.canonicalResource(path: job.path, method: job.method) != nil else { return }
+        guard current(job), try cookies().active == job.sentCookie else { throw FountainOutboxError.stale }
+        try outboxStore().observeResource(path: job.path, method: job.method, status: response.statusCode,
+                                         data: data, sessionRef: outboxReference(job.sentCookie))
     }
 
     private func validOrigin(_ raw: String) throws -> String {
@@ -880,12 +888,16 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                         }
                     }
                     try self.observeOutboxSession(job, response: response, data: data)
+                    if response.statusCode != 401 { try self.observeOutboxResource(job, response: response, data: data) }
                     if job.mode == "download" {
                         guard (200..<300).contains(response.statusCode) else { throw FountainFailure.network }
                         self.export(job)
                     } else { self.resolve(job, response: response, data: data) }
                 } catch {
                     if let error = error as? FountainOutboxError, error == .storage { self.poisonOutbox() }
+                    if let error = error as? FountainOutboxError {
+                        job.callClosed = true; job.call.reject(error.message, error.code)
+                    }
                     self.end(job, failure: error as? FountainFailure ?? .storage)
                 }
             }

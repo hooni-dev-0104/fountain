@@ -290,6 +290,17 @@ class Application:
                 if parts[3] == "restore" and method == "POST": return 200, w.update_page(page_id, {"archived": False})
                 if parts[3] == "comments" and method == "POST": return 201, w.create_comment(page_id, body)
             if len(parts) == 6 and parts[3] == "versions" and parts[5] == "restore" and method == "POST":
+                version = s.get('version', parts[4])
+                require(version and version['page_id'] == page_id, 'Version not found', 404)
+                page = w.page(page_id)
+                require(not page.get('archived'), 'Page not found', 404)
+                require(not page.get('locked'), 'Page is locked', 423)
+                # dispatch already owns the workspace writer: compare the preview
+                # revision before restoring blocks or replacing their CRDT epoch.
+                w.check_revision(page, body.get('revision'))
+                for block in version.get('blocks', []) if isinstance(version.get('blocks'), list) else []:
+                    if isinstance(block, dict) and block.get('attachment_id'):
+                        Authorization(access).attachment(block['attachment_id'])
                 return 200, w.restore_version(page_id, parts[4])
         if len(parts) == 3 and parts[:2] == ["api", "comments"] and method == "PATCH":
             comment = s.get("comment", parts[2])

@@ -400,9 +400,16 @@ class Workspace:
             return {"page": page, "blocks": blocks, "revision": page["revision"]}
 
     def restore_version(self, page_id, version_id):
-        version = self.store.get("version", version_id)
-        require(version and version["page_id"] == page_id, "Version not found", 404)
-        return self.save_blocks(page_id, version["blocks"])
+        with self.store.transaction():
+            version = self.store.get("version", version_id)
+            require(version and version["page_id"] == page_id, "Version not found", 404)
+            title = text(version.get('title', self.page(page_id)['title']), 'title', 500)
+            # save_blocks records the current title/body and advances revision
+            # once. Restoring the saved title belongs to that same transaction.
+            restored = self.save_blocks(page_id, version["blocks"])
+            restored['page']['title'] = title
+            restored['page'] = self.store.put('page', restored['page'])
+            return restored
 
     def search(self, query):
         query = text(query, "query", 500).casefold()

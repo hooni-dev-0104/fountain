@@ -74,6 +74,12 @@ for(const accessFailure of [false,true]){
   await S.configure({origin:'https://another.example'});releaseStale();assert.equal(await staleBarrier,'AbortError','old auth barrier completion cannot escape configuration fence');
   assert.equal(recoveryNotices.length,staleNotices,'obsolete resource errors never reach the new account');
 }
+// Reconciliation pauses NEW business traffic, never an already-admitted write.
+const admitted=fixture(),A=admitted.transport;admitted.bridge.getConfiguration=async()=>({origin:'https://family.example',generation:1,outboxVersion:1,outboxEnabled:true});await A.initialize();admitted.context.FountainNativeStorage={refreshAuth:async()=>{}};
+let releaseAdmitted;admitted.setHandler(args=>args.path==='/api/sync'?new Promise(resolve=>releaseAdmitted=()=>resolve(response({applied:true},200,args.generation))):Promise.resolve(response({newWrite:true},200,args.generation)));
+const oldWrite=A.request('/api/sync',{method:'POST',body:'{"operations":[]}'});await until(()=>!!releaseAdmitted);const driver=A.outboxDriver(),cancelledBefore=admitted.cancellations.length;driver.pause();
+let newReturned=false;const newWrite=A.request('/api/pages/page/operations',{method:'POST',body:'{"operations":[]}'}).then(value=>{newReturned=true;return value;});await sleep(20);assert.equal(admitted.calls.length,1,'post-pause new POST stays outside the native wire');assert.equal(newReturned,false);assert.equal(admitted.cancellations.length,cancelledBefore,'pause never cancels a privately admitted POST');
+releaseAdmitted();assert.equal((await oldWrite).status,200,'the delayed admitted POST completes while producers remain paused');assert.equal(admitted.calls.length,1);driver.resume();assert.equal((await newWrite).status,200);assert.equal(admitted.calls.length,2);assert.equal(admitted.cancellations.length,cancelledBefore);
 const count=f.calls.length;await assert.rejects(T.request('/api/probe',{method:'POST',body:new Blob([new Uint8Array(10_000_001)])}),error=>error.name==='RangeError');assert.equal(f.calls.length,count);
 let release;f.setHandler(value=>value.path==='/api/slow'?new Promise(resolve=>release=resolve):Promise.resolve(response({ok:true})));
 const old=T.request('/api/slow').then(()=>false,error=>error.name);await until(()=>!!release);await T.request('/api/session',{method:'POST',body:'{}'});assert.equal(await old,'AbortError');release(response({stale:true}));assert.ok(f.cancellations.length);

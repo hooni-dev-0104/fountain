@@ -76,7 +76,7 @@
   }
   function create(bridge,{pollInterval=1000}={}) {
     let configuration={origin:null,generation:0,outboxVersion:0,outboxEnabled:false,recoveryVersion:0,recoveryEnabled:false},authGeneration=0,configurationFence=0,publicScopeEpoch=0,authTail=Promise.resolve(),serial=0;
-    const calls=new Map(),sources=new Set(),downloadLinks=new Map();
+    const calls=new Map(),sources=new Set(),sourceWake=new WeakMap(),downloadLinks=new Map();let outboxPaused=false,pauseGate=Promise.resolve(),releaseGate=null;
     const id=()=>`mobile_${Date.now().toString(36)}_${++serial}`;
     function configured(){if(!configuration.origin)throw new Error('먼저 HTTPS 서버 주소를 설정해 주세요.');}
     function announceScope(reason){publicScopeEpoch++;root.dispatchEvent(new CustomEvent('fountain-native-scope-changed',{detail:{scopeEpoch:publicScopeEpoch,reason}}));}
@@ -115,7 +115,8 @@
       const result=await bridge.configure({origin});if(fence!==configurationFence)throw abortError();return setConfiguration(result);
     }
     function apiURL(value){configured();return new URL(path(value),configuration.origin).href;}
-    function request(value,options={}) {
+    function request(value,options={}) {return exchange(value,options,false);}
+    function exchange(value,options={},internal=false) {
       path(value);configured();const method=String(options.method||'GET').toUpperCase();if(!methods.has(method))invalid();
       if(options.redirect&&options.redirect!=='error')invalid();
       const headers=Object.create(null);for(const [key,val] of new Headers(options.headers)){if(!requestHeaders.has(key))invalid();headers[key]=val;}
@@ -123,35 +124,62 @@
       if(method==='GET'&&options.body!=null)invalid();
       const transition=value==='/api/session'&&['POST','DELETE'].includes(method);
       if(transition){authGeneration++;cancelCalls();announceScope('authentication');}
-      const expected=scope();
-      const perform=async()=>{
+      const expected=scope(),priorAuth=authTail;
+      const perform=async body=>{
         if(!current(expected)||options.signal?.aborted)throw abortError();
-        const body=await bytes(options.body,REQUEST_LIMIT);if(!current(expected)||options.signal?.aborted)throw abortError();
         const result=await invoke('request',{path:value,method,headers,bodyBase64:base64(body),timeoutMs},expected,options.signal,timeoutMs);
         if(!Number.isInteger(result.status)||result.status<200||result.status>599||result.status>=300&&result.status<400&&result.status!==304)throw new TypeError('리디렉션 또는 잘못된 서버 응답을 거부했습니다.');
         const safe=new Headers();for(const [key,val] of Object.entries(result.headers||{}))if(responseHeaders.has(key.toLowerCase()))safe.set(key,String(val));
         const decoded=decode(result.bodyBase64,RESPONSE_LIMIT);
         if(result.status===401&&!transition)announceScope('unauthenticated');
-        if(value==='/api/session'&&['GET','POST','DELETE'].includes(method)&&root.FountainNativeStorage){
+        return new Response([204,205,304].includes(result.status)?null:decoded,{status:result.status,headers:safe});
+      };
+      const wire=async()=>{
+        const body=(await bytes(options.body,REQUEST_LIMIT)).slice();if(!current(expected)||options.signal?.aborted)throw abortError();
+        if(!internal&&value!=='/api/session'&&outboxPaused){let rejectAbort;const cancelled=new Promise((_,reject)=>{rejectAbort=()=>reject(abortError());});options.signal?.addEventListener('abort',rejectAbort,{once:true});try{if(options.signal?.aborted)throw abortError();await Promise.race([pauseGate,cancelled]);}finally{options.signal?.removeEventListener('abort',rejectAbort);}if(!current(expected)||options.signal?.aborted)throw abortError();}
+        if(!internal&&configuration.outboxEnabled&&value!=='/api/session'&&root.FountainNativeStorage&&!root.FountainNativeRecovery?.active)await root.FountainNativeStorage.refreshAuth();
+        return priorAuth.catch(()=>{}).then(()=>perform(body));
+      };
+      // Authentication serialization covers the private wire exchange only. Its storage barrier
+      // may itself issue authenticated canonical GETs through the same serialization queue.
+      const result=wire();if(transition)authTail=result.then(()=>{},()=>{});
+      return result.then(async response=>{
+        if(!internal&&root.FountainNativeStorage&&!root.FountainNativeRecovery?.active&&(value==='/api/session'||configuration.outboxEnabled&&response.ok&&(value==='/api/workspace'||/^\/api\/pages\/[^/?]+\/(collaboration|operations)$/.test(value)||/^\/api\/databases\/[^/?]+$/.test(value)))){
           try{await root.FountainNativeStorage.refreshAuth();}
           catch(error){
             if(!current(expected))throw abortError();
-            if(error?.code!=='OUTBOX_ACCESS_REQUIRED')throw error;
+            if(value!=='/api/session'||error?.code!=='OUTBOX_ACCESS_REQUIRED')throw error;
             // Resource recovery blocks cached business data, never the actual session response.
             root.dispatchEvent(new CustomEvent('fountain-native-error',{detail:{message:'미전송 내용을 보관했습니다. 기기 저장을 다시 사용하기 전에 접근 권한을 확인해 주세요.'}}));
           }
           if(!current(expected))throw abortError();
         }
-        return new Response([204,205,304].includes(result.status)?null:decoded,{status:result.status,headers:safe});
-      };
-      const result=authTail.catch(()=>{}).then(perform);
-      if(transition)authTail=result.then(()=>{},()=>{});
-      return result;
+        if(!current(expected)||options.signal?.aborted)throw abortError();return response;
+      });
+    }
+    function outboxDriver(){
+      return Object.freeze({
+        scope:()=>({...scope(),scopeEpoch:publicScopeEpoch}),current:expected=>current(expected)&&expected.scopeEpoch===publicScopeEpoch,
+        pause(){if(!outboxPaused)pauseGate=new Promise(resolve=>releaseGate=resolve);outboxPaused=true;},resume(){outboxPaused=false;releaseGate?.();releaseGate=null;for(const source of sources)sourceWake.get(source)?.();},
+        session:signal=>exchange('/api/session',{signal},true),
+        async canonical(descriptor,signal){
+          if(!descriptor||Object.keys(descriptor).sort().join(',')!=='id,kind'||typeof descriptor.id!=='string'||!descriptor.id||Array.from(descriptor.id).length>160)invalid();
+          const encoded=encodeURIComponent(descriptor.id);let route;
+          if(descriptor.kind==='workspace'&&descriptor.id==='workspace')route='/api/workspace';
+          else if(descriptor.kind==='page')route='/api/pages/'+encoded+'/collaboration';
+          else if(descriptor.kind==='database')route='/api/databases/'+encoded;
+          else if(descriptor.kind==='attachment')route='/api/attachments/'+encoded+'/metadata';else invalid();
+          const response=await exchange(route,{signal},true);
+          if(![200,403,404].includes(response.status)){const error=new Error('현재 문서 권한을 확인하지 못했습니다.');error.status=response.status;throw error;}
+          // Consume the protected native pipeline response, never forward its body as authority.
+          await response.json();return response.status;
+        }
+      });
     }
     function events(value) {
       path(value);configured();const match=value.match(/^\/api\/pages\/([^/?]+)\/events$/);if(!match)invalid();
       const target=new EventTarget(),expected=scope();let closed=false,running=false,timer,abort,paused=false;
-      const visible=()=>!closed&&!paused&&root.document.visibilityState==='visible'&&root.navigator.onLine&&current(expected);
+      const visible=()=>!closed&&!paused&&!outboxPaused&&root.document.visibilityState==='visible'&&root.navigator.onLine&&current(expected);
       const emit=(type,data)=>{if(visible())target.dispatchEvent(new MessageEvent(type,{data:JSON.stringify(data)}));};
       const failure=()=>{if(visible()){const event=new Event('error');target.dispatchEvent(event);if(typeof target.onerror==='function')target.onerror(event);}};
       async function poll() {
@@ -170,7 +198,7 @@
       const hide=()=>{paused=true;visibility();},show=()=>{paused=false;visibility();};
       target.close=()=>{if(closed)return;closed=true;clearTimeout(timer);abort?.abort();sources.delete(target);root.document.removeEventListener('visibilitychange',visibility);root.removeEventListener('online',visibility);root.removeEventListener('offline',visibility);root.removeEventListener('pagehide',hide);root.removeEventListener('pageshow',show);};
       Object.defineProperty(target,'readyState',{get:()=>closed?2:running?1:0});
-      root.document.addEventListener('visibilitychange',visibility);for(const name of ['online','offline'])root.addEventListener(name,visibility);root.addEventListener('pagehide',hide);root.addEventListener('pageshow',show);sources.add(target);queueMicrotask(poll);return target;
+      root.document.addEventListener('visibilitychange',visibility);for(const name of ['online','offline'])root.addEventListener(name,visibility);root.addEventListener('pagehide',hide);root.addEventListener('pageshow',show);sources.add(target);sourceWake.set(target,visibility);queueMicrotask(poll);return target;
     }
     function xhr(method,value) {
       path(value);configured();const expected=scope();if(method!=='PUT'||!/^\/api\/uploads\/[^/?]+\/chunks\?offset=(?:0|[1-9][0-9]*)$/.test(value))invalid();
@@ -222,7 +250,7 @@
       event.preventDefault();event.stopImmediatePropagation();const entry=downloadLinks.get(url.hash.slice('#fountain-download/'.length));if(!entry||!current(entry.scope))return;
       download(entry.path,anchor.download||'fountain-download').catch(error=>{if(error.name!=='AbortError')root.dispatchEvent(new CustomEvent('fountain-native-error',{detail:{message:error.message}}));});
     },true);
-    return Object.freeze({native:true,get origin(){return configuration.origin;},get generation(){return configuration.generation;},get outboxVersion(){return configuration.outboxVersion;},get outboxEnabled(){return configuration.outboxEnabled;},get recoveryVersion(){return configuration.recoveryVersion;},get recoveryEnabled(){return configuration.recoveryEnabled;},get scopeEpoch(){return publicScopeEpoch;},initialize,configure,apiURL,request,events,xhr,download,saveData,downloadURL,publicURL,publicShareURL:publicURL,appURL,shareURL});
+    return Object.freeze({native:true,get origin(){return configuration.origin;},get generation(){return configuration.generation;},get outboxVersion(){return configuration.outboxVersion;},get outboxEnabled(){return configuration.outboxEnabled;},get recoveryVersion(){return configuration.recoveryVersion;},get recoveryEnabled(){return configuration.recoveryEnabled;},get scopeEpoch(){return publicScopeEpoch;},initialize,configure,apiURL,request,outboxDriver,events,xhr,download,saveData,downloadURL,publicURL,publicShareURL:publicURL,appURL,shareURL});
   }
   root.FountainNativeTransport=Object.freeze({create,validateOrigin});
 })(globalThis);

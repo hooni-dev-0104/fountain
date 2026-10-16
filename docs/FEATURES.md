@@ -5,7 +5,7 @@
 | 영역 | 현재 동작 | 남은 차이 |
 | --- | --- | --- |
 | 플랫폼 | 웹·macOS arm64 Electron 실제 실행, Windows x64 portable 생성, iOS Simulator·Android Debug 실제 빌드·자체 native 연결 코드·격리 SDK 및 mock 통합 검증 | Windows 실행, 모바일 보안 저장소/전송 전체 흐름과 물리 기기 검증·영구 outbox 활성화(현재는 비활성 기반), 서명·배포·상시 HTTPS 서버; [플랫폼 안내](PLATFORMS.md) |
-| 클라우드 | Supabase 서울 원본 DB·강제 RLS·TLS·공유 파일 저장소·기존 자료/세션 이관·실제 5GB 저장소/백업 복원·두 서버 Chrome 동기화 검증 | 상시 HTTPS 서버 운영·Supabase Auth 연결·대용량 전체 HTTP 전송 성능; [연결 안내](SUPABASE.md) |
+| 클라우드 | Supabase Auth·Edge·비공개 Storage·Realtime 조합, 실제 계정 관리·9MiB 분할 백업/복원·두 Chrome 세션 편집/조회·Android/iOS 실제 로그인/동일 문서 조회 검증 | 공개 HTTPS·실사용 owner 연결·Cron/SCIM/백그라운드 서비스 권한·전체 운영 전환; [전환 범위](supabase-backend.md). 기존 Python/PostgreSQL 경로의 실제 5GB 검증은 별도 |
 | 문서 | 중첩 페이지·블록, 굵게·기울임·밑줄·취소선·코드·링크·색상, 문자 단위 공동 편집, 접속자·원격 커서·선택 영역, 내 작업 실행 취소·다시 실행, 자동 저장, 잠금·즐겨찾기·검색·휴지통 | 열·동기화 블록·모든 Notion 고급 블록 |
 | 이력 | 기한 없는 저장 버전, 제목·본문 변경 비교·읽기 전용 미리보기, 현재 revision 확인 후 원자적 복원 | 버전 이름·북마크·작성자 정밀 정보·DB 전체 복원·이력 페이지 나누기; [안내](VERSION_HISTORY.md) |
 | DB | 속성·행 편집·필터·정렬, 테이블·보드·달력·갤러리·차트·목록·타임라인, 하위 작업과 의존관계, 전체 하위 항목 복제·삭제 | 타임라인 직접 끌기·시간/월/년 확대, 날짜·시간 편집 UI, 분리된 시작/종료 속성, 상세 하위 항목 표시·필터, 복잡한 대시보드 |

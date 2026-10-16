@@ -4,21 +4,25 @@
 
 ## 현재 범위와 완료 기준
 
-2026-10-16 확인 시점의 Supabase 프로젝트는 `ehnovtfadpkwtubmwltl`이다. Edge 함수 `fountain-api` version 2가 배포됐고, private session vault와 Store snapshot RPC가 존재한다. 기존 데이터는 entities 153개·meta 6개이며 실사용 Auth 사용자·identity mapping은 각각 0개다. `fountain-files` 비공개 bucket 1개가 있고 검증 파일 정리 후 객체는 0개다. 이 수치는 관측 시점의 상태이며 계정 연결이나 운영 전환 완료를 의미하지 않는다.
+2026-10-16 확인 시점의 Supabase 프로젝트는 `ehnovtfadpkwtubmwltl`이다. `fountain-api` version 3에 문서·DB·공동 편집·동기화·첨부·presence/SSE·AI·계정·백업 handler가 연결됐다. 서비스 객체는 actor를 공유하지 않고 각 요청의 쿠키로 인증한다. 운영 원본은 entities 153개·meta 6개, 실사용 Auth 사용자·identity mapping은 0개다. `fountain-files`는 비공개 bucket이며 QA 정리 후 객체는 0개다. `/health`의 `ready:false`는 전체 전환이 아직 끝나지 않았다는 뜻이다.
 
-현재 Edge entry는 `application.ts`로 문서·데이터베이스·공동 편집·동기화·첨부·presence/SSE·AI·계정·백업 handler를 조합한다. 서비스는 actor를 공유하지 않으며 각 요청이 자신의 쿠키를 캡처해 재인가한다. 일부 SQL과 실제 사용자 연결 검증은 남아 있다. 라우트와 실제 클라우드 동작의 검증이 끝나기 전에는 HTTP 기능 완료로 세지 않는다. `/health`의 `ready:false`는 전환 상태 표시다. 기존 `/api/health`와도 다른 경로다.
+Auth/Vault·Store부터 계정 생성·관리·백업·분할 백업까지 migration 13개를 적용했다. 적용된 SQL은 `supabase/migrations`의 실제 버전 파일로만 보관하고 중복 초안은 제거했다. 공개 RPC는 service_role 전용이며, private 테이블은 강제 RLS와 직접 접근 거절을 유지한다. 익명·일반 로그인 역할의 실행 권한 거절, 연결되지 않은 세션의 백업/정리 거절 등 실제 PostgreSQL 검사 10개가 통과했다. 이 구조는 서버의 신뢰된 권한 검사이며 최종 사용자별 RLS를 사용한다는 뜻이 아니다.
 
-Auth/Vault·Store migration `20261016094842`·`20261016100057`은 적용됐고, 격리한 실제 Supabase Auth/Vault/Store QA 14개 검사가 통과한 뒤 fixture를 정리했다. 여기에는 실제 비밀번호 로그인, 신뢰된 기존 role 연결, 동시 CAS 단일 승자, receipt 정확 재시도, refresh lease 만료 후 재사용 금지, 폐기된 세션의 snapshot/ACK 거절이 포함된다. 이 근거는 기초 계층의 검증이며 실사용자 owner 연결이나 기존 전체 HTTP 기능의 배포 증거를 대신하지 않는다.
+기초 실제 클라우드 QA에서는 비밀번호 로그인·신뢰된 기존 역할 연결·동시 CAS·정확한 receipt 재시도·refresh lease·폐기된 세션 거절을 확인했다. 후속 문서·버전·typed row/수식·ACL·공동 편집/Undo·sync 10개 그룹, presence 6개, SSE 2개가 통과했다. 실제 비공개 Storage의 9MiB+123바이트 업로드·전체 SHA-256·청크 경계 Range·HEAD·416·다른 멤버 거절·물리 삭제, Realtime WebSocket 구독과 변경 알림도 확인했다. Realtime은 본문 없이 재조회를 깨운다.
 
-후속 실제 클라우드 검증에서 문서·버전·typed row/수식·ACL·공동 편집/Undo·sync receipt·마지막 로그인 가능한 소유자 보호 10개 그룹, presence 6개 그룹, SSE 2개 그룹이 통과했다. 9MiB+123바이트 파일을 세 청크로 비공개 Storage에 저장하고 전체 SHA-256·청크 경계의 Range·HEAD·416·다른 멤버의 접근 거절 및 실제 객체 삭제를 검증했다. 현대 서버 키로 실제 Realtime WebSocket을 구독하고 QA revision 변경의 알림 수신도 확인했다. Realtime은 본문 없이 재조회만 깨우며, 서버 전용 소켓의 URL·키를 renderer나 로그에 보내지 않는다.
+실제 `createApplication`을 통한 초기 owner 생성·가족 계정 생성·비밀번호 변경·연결 해제/재연결·마지막 로그인 가능한 owner 보호도 검증했다. 불확실한 비밀번호 변경 중 연결 해제는 409로 막히며 다른 작업공간 연결도 거절된다. 같은 Auth UUID를 유지하고 기존 세션을 폐기하는 동작을 확인했다. 서비스 키·JWT·refresh token은 renderer로 보내지 않는다.
 
-이 검증은 별도 nonce로 닫힌 일회용 함수 안에서 실제 모듈·GoTrue·PostgreSQL·Storage를 호출했다. 최종 웹 relay·설치 앱·실사용 계정의 종단 검증을 대신하지 않는다. QA 계정 2개·DB 행·Storage 객체를 모두 지웠고 검증 함수는 version 12의 404 응답으로 교체했다. 원본 6개 데이터 묶음의 fingerprint는 유지됐다. `fountain-api` version 2에서는 실제 익명/거절 경계 8개를 별도로 확인했다.
+큰 백업은 `POST /api/backup/jobs`로 시작하고, 저장된 작업을 `POST /api/backup/jobs/{id}/step`으로 진행한다. 같은 transaction ID는 원래 결과를 돌려주며, checkpoint·원본 snapshot·계획·게시 영수증은 서버가 보관한다. 준비된 파일은 `GET /api/backup?job_id={id}`의 최대 256KiB Range로 내려받는다. 현재 owner·세션·내보내기 정책과 전체 파일 SHA를 검사한다. 다른 owner 로그인 세션이라도 기존 작업을 조회·취소·다운로드할 수 없다. 원본 업로드와 백업이 공유하는 용량 예약은 일반 Store 변경이나 백업 파일에 노출되지 않는다.
 
-소스 회귀 실행은 Node runner 144개가 모두 통과했고, 내부 Python/SQLite oracle에는 별도 수백~수천 개의 비교가 있다. 기존 Python의 실제 PostgreSQL 전체 검사 481개도 통과했다. 로컬에 실제 TypeScript 컴파일러는 없으며 Node 구문 검사나 LSP 결과를 타입 검사 성공으로 취급하지 않는다. 실제 Deno bundle 배포와 HTTP 검증의 범위를 별도로 기록한다.
+실제 Supabase/Deno에서 문서 1,001개와 9MiB+123바이트 첨부를 포함한 백업을 160단계로 생성했다. 9,814,016바이트를 38개 Range로 전부 내려받아 SHA-256·SQLite 무결성·첨부 전체 바이트를 확인했고 기존 `fountain.backup restore`로 새 DB에 복원했다. 생성 단계의 처리 시간 합계는 약 501초였으며 단계 사이 조회·업로드·다운로드 시간은 별도다. 이는 CPU 측정값이나 5GB 성능 보증이 아니다. 로컬 writer는 100,002개 행·9MiB 원본의 바이트 일치와 단계별 예산, 별도 48MiB 작업을 검증했지만 실제 클라우드 5GB 전송은 아직 검증하지 않았다. 기존 동기식 작은 백업 경로와 새 분할 작업의 범위를 구분한다.
 
-계정 관리·초기 계정 생성·백업 SQL은 `supabase/schema/cloud-accounts.sql`, `cloud-bootstrap-create.sql`, `cloud-backup.sql`의 **미적용 초안**이다. 계정 변경의 미확정 외부 요청 중에는 연결 해제를 거절하고 전역 Auth UUID의 연결 차단을 보존한다. 백업 취소는 읽기를 종료하고 임시 파일을 한 번 정리한다. 단, 현 백업의 64MiB 상한만으로 Edge 실행 한도를 충족하지는 않는다. 48MiB 입력의 로컬 CPU 4.55초·권한 검사 3,109회가 확인되어 실제 한도 검증과 분할 처리 또는 보수적 거절이 남아 있다. 이 제한이 해결되기 전 대용량 백업 지원 완료를 주장하지 않는다.
+실제 Chrome 두 개의 독립 세션에서 같은 계정으로 로그인해 문서 수정→다른 세션 조회→원상 복원을 확인했다. 실제 백업 UI의 진행·취소·정리도 통과했다. iOS Simulator와 Android API 36의 네이티브 HTTPS 전송은 같은 계정으로 각각 로그인해 같은 비공개 페이지를 읽고 로그아웃했다. 두 세션의 binding은 달랐으며 Secure 쿠키를 유지했다. 이 검사는 로컬의 얇은 QA presentation proxy로 실제 Supabase를 호출한 결과이며, 공개 HTTPS 운영 주소·전체 제품 UI·네이티브 편집 전파나 물리 기기 검증을 대신하지 않는다. [네이티브 실행 범위](../apps/mobile/tests/native-cloud-validation.md).
 
-`deployment.setupEnabled`는 아직 false이며, 일반 가입·실사용자 계정 생성·초기 연결 코드 발급을 켜지 않았다. 계정 연결 화면은 기존 `/api/session` 안에서 명시적으로 동작하며 코드와 비밀번호를 영구 저장하지 않는다. 정적 웹 배포물 15개와 공개 HTML relay는 생성·로컬 검증했지만 호스팅 배포와 정확한 HTTPS origin 연결은 남아 있다. localhost:8787은 기존 동작 보존용 불변 Python 릴리스를 계속 제공하며 새 클라우드의 운영 전환으로 안내하지 않는다.
+모든 검증은 격리한 workspace에서 수행했다. 검증 계정 2개·DB 행·세션 vault·백업 작업·Storage 객체를 정리했고 검증 함수는 version 19의 404 응답으로 교체했다. 기존 nonce가 거절되는 것과 임시 비밀번호 파일 삭제도 확인했다. 원본 6개 데이터 묶음의 fingerprint와 이전 portable 백업은 유지했다. 배포한 `fountain-api` version 3의 익명/거절 경계 8개도 통과했다. [실행 증거와 제한](research/cloud-backup-verification.json).
+
+Node source runner 147개가 실패·skip 없이 통과했고 내부 Python/SQLite oracle도 실행됐다. 기존 Python의 실제 PostgreSQL 전체 검사 481개는 Python 소스 변경 없이 유지되는 별도 근거다. 실제 TypeScript 컴파일러 검사는 아직 없으며 Node 구문 검사나 LSP를 타입 검사 성공으로 취급하지 않는다. 실제 Deno bundle·HTTP 실행과 구분한다. Advisors의 WARN/ERROR는 없었다. private 접근을 의도적으로 모두 막는 RLS 테이블의 [정책 없음 INFO](https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy)와 사용되지 않은 보존/receipt 인덱스 2개의 [INFO](https://supabase.com/docs/guides/database/database-linter?lint=0005_unused_index)는 그대로 유지했다.
+
+`deployment.setupEnabled`는 false이고 web origin도 비어 있다. 실사용 계정·초기 연결 코드·공개 HTTPS 호스트를 아직 활성화하지 않았다. 정적 웹 배포물은 16개 allowlist 파일이며 모바일에는 19개 public asset을 복사해 두 플랫폼의 SHA 38개를 비교했다. localhost:8787은 기존 동작 보존용 불변 Python 미리보기이며 새 클라우드 운영 전환이 아니다. Supabase Cron·SCIM과 로그인한 사람 없이 동작할 제한된 백그라운드 정리 권한은 다음 구현 범위다. 현재 owner 요청으로 실행되는 정리를 가짜 owner 세션으로 예약 실행하지 않는다.
 
 [라우트 인벤토리](../supabase/tests/route-inventory.json)는 현재 Python 라우트의 **method/path 201개 행**을 기록한다. HEAD와 기존 suffix alias도 별도 행이다. 각 행에는 인증 경계, 익명 접근 여부, handler/domain/module, 실제 Python AST 분기의 근거와 cloud 상태가 있다. `public`은 익명 인증 경계를 뜻하며 단순히 게시된 콘텐츠라는 뜻이 아니다.
 

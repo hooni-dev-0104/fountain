@@ -1,0 +1,134 @@
+{
+  "observedAt": "2026-10-16T14:26:21.102426+00:00",
+  "scope": "isolated real-cloud application and native bridge verification",
+  "productionCutover": false,
+  "sourceCommit": "1d71c4c1deabbba3018b8566a3b26611d3762787",
+  "sourceSHA256": {
+    "supabase/functions/_shared/backup-jobs.ts": "be37c60cfd765abed418fc5fbb1cc1db3ca9a2908b44e9ec5f21ad42bdd9d657",
+    "supabase/functions/_shared/sqlite-backup-resumable.ts": "282f9b471f17f8f5488836a4c6af8924d100fb60df36769425c7c10c00f149a2",
+    "supabase/functions/_shared/application.ts": "479723e49e0afbb4f18ec6f392e40082de33f64f545fc4fc29d9fcb657f7e839",
+    "static/backup.js": "c0548d859efdc96005f0fcc0abf9778ee1078e788722547116a9cd198d9f6f0a",
+    "static/sw.js": "dd3d1110eb030c24eacc95f5394331198d1a906619867ef2f6444f3d3d733ef2",
+    "apps/mobile/web/native-transport.js": "7b9607c061f0b797c488c4d6b584b6bd0795af8558adad302ca3742b04793079"
+  },
+  "mainFunction": {
+    "version": 3,
+    "ready": false,
+    "setupEnabled": false,
+    "webOrigins": [],
+    "bundleSHA256": "3d9328a67b4e146700e91111ca32fae291da6e4d08926d9aa26fb3948f630466",
+    "actualBoundaryChecks": 8
+  },
+  "actualBackup": {
+    "actualCloud": true,
+    "bytes": 9814016,
+    "sha256": "011dc929f88c03511381cb224ab2660ef8e0aa538d2fc7584c28c152c855ada4",
+    "sqlite": "ok",
+    "attachmentBytes": 9437307,
+    "attachmentSHA": "26dc3ec53c8f17a90c1ac8ef7c59813fe269a6f65e48d9ab9fdd7d20aedbe15f",
+    "sourceRows": 1020,
+    "legacyRestoreValidated": true,
+    "restoredPages": 1001,
+    "restoredIntegrity": "ok",
+    "generationSteps": 160,
+    "sourceRowsIncludingMetaAndChunks": 1028,
+    "downloadRanges": 38,
+    "maxRangeBytes": 262144,
+    "generationStepWallSecondsTotal": 501.437,
+    "generationStepWallSecondsMax": 6.067,
+    "cpuTimeMeasured": false
+  },
+  "actualJobBoundaries": {
+    "actualSupabase": true,
+    "createIdempotent": true,
+    "oldReceiptAfterReadyExact": true,
+    "replayDidNotRegressReady": true,
+    "rangeRequiredAndBounded": true,
+    "separateOwnerLoginCannotReadCancelDownload": true,
+    "parallelStepStatuses": [
+      202,
+      202
+    ],
+    "parallelProgressRows": 256,
+    "secondaryJobCleanup": true
+  },
+  "actualBrowser": {
+    "actualChrome": true,
+    "actualSupabase": true,
+    "twoSessions": true,
+    "sameAccountData": true,
+    "backupUIProgressCancel": true,
+    "qaProxyOnly": true,
+    "productionHTTPS": false,
+    "requests": 20,
+    "errors": []
+  },
+  "actualNativeSession": {
+    "actualNativeHTTPS": true,
+    "actualSupabaseApplication": true,
+    "sameAccountOwner": true,
+    "distinctSessionBindings": true,
+    "samePrivatePageTitle": true,
+    "bothLoggedOut": true,
+    "pageMutations": 0,
+    "backupAttachmentJobOperations": 0,
+    "productionNamespaceOperations": 0,
+    "platforms": [
+      "android",
+      "ios"
+    ],
+    "osSaveClaim": false,
+    "fullProductUIClaim": false
+  },
+  "regression": {
+    "sourceRunnerPass": 147,
+    "sourceRunnerFail": 0,
+    "sourceRunnerSkip": 0,
+    "actualSQLDenialChecks": 10,
+    "mobileAssetCopyHashes": 38,
+    "nativeExistingBackupTests": {
+      "android": 7,
+      "ios": 11
+    },
+    "actualNativeCloudLoginReadLogoutTests": {
+      "android": 1,
+      "ios": 1
+    }
+  },
+  "cleanup": {
+    "protectedAuthMarkersVerified": true,
+    "deletedDisposableAuthUsers": 2,
+    "qaEntities": 0,
+    "qaMeta": 0,
+    "qaVault": 0,
+    "qaJobs": 0,
+    "storageObjects": 0,
+    "backupReservedBytes": 0,
+    "verifierVersion": 19,
+    "verifierRetired404": true,
+    "formerNonceRejected404": true,
+    "privateCredentialConfigRemoved": true,
+    "nativeTemporaryPasswordInputsRemoved": true
+  },
+  "originalData": {
+    "entities": 153,
+    "meta": 6,
+    "realUserMappings": 0,
+    "sixCollectionFingerprintsUnchanged": true,
+    "portableBeforeCloudBackupPreserved": true
+  },
+  "advisors": {
+    "warning": 0,
+    "error": 0,
+    "info": "Private deny-all RLS tables and two unused retention/receipt indexes intentionally retained"
+  },
+  "remaining": [
+    "Public HTTPS frontend and exact origin",
+    "Real owner onboarding",
+    "Trusted Supabase Cron/service/SCIM/background GC",
+    "Full legacy-route and five-platform production cutover",
+    "Full 5GB cloud backup and physical-device validation",
+    "Actual TypeScript typecheck",
+    "AI provider configuration; Google AI Pro subscription not integrated"
+  ]
+}

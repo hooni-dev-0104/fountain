@@ -94,6 +94,16 @@ try {
   await action(page, 'share');
   assert.equal(await page.locator('#share-url').inputValue(), origin + '/#page/' + document.id);
   await page.keyboard.press('Escape');
+  // A bundled desktop adapter can explicitly lack a public frontend address.
+  // Keep ACL management usable without presenting a local-only copied link.
+  await page.evaluate(() => { window.__previousShareTransport = FountainTransport; window.FountainTransport = Object.freeze({ ...FountainTransport, shareURL: () => null }); });
+  await action(page, 'share');
+  assert.equal(await page.locator('#share-url').inputValue(), '');
+  assert.equal(await page.locator('#share-url').getAttribute('placeholder'), '공유 웹 주소를 연결해 주세요.');
+  assert.equal(await page.locator('[data-action="copy-link"]').isDisabled(), true);
+  assert.equal(await page.locator('#permissions-form').isVisible(), true);
+  await page.keyboard.press('Escape');
+  await page.evaluate(() => { window.FountainTransport = window.__previousShareTransport; delete window.__previousShareTransport; });
   const bytes = Buffer.alloc(4 * 1024 * 1024 + 117, 43);
   bytes[bytes.length - 1] = 7;
   await page.locator('#attachment-input').setInputFiles({ name: 'transport-chunks.bin', mimeType: 'application/octet-stream', buffer: bytes });

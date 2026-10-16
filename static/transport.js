@@ -43,5 +43,10 @@
     localPath('/' + route, 'app');
     return root.location.origin + '/#' + route;
   }
-  root.FountainTransport = Object.freeze({ origin: root.location.origin, native: false, apiURL, request, events, xhr, publicURL: path => localPath(path, 'public'), appURL, downloadURL: apiURL });
+  function shareURL(route = 'home') {
+    const value = appURL(route);
+    // The packaged desktop origin serves local UI only; it is not a public link.
+    return root.location.origin === 'https://fountain.desktop.invalid' ? null : value;
+  }
+  root.FountainTransport = Object.freeze({ origin: root.location.origin, native: false, apiURL, request, events, xhr, publicURL: path => localPath(path, 'public'), appURL, shareURL, downloadURL: apiURL });
 })(globalThis);

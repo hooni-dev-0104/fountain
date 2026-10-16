@@ -1,0 +1,244 @@
+{
+  "schema": "fountain.rea-database-research.v1",
+  "researched_at": "2026-10-16",
+  "target": {
+    "url": "https://www.notion.so/_assets/94168-34f2bc3c0226c22a.js",
+    "discovery_url": "https://www.notion.so/login",
+    "path": "94168-34f2bc3c0226c22a.js",
+    "bytes": 20176,
+    "sha256": "0d5907a1bd661dffe1bdaa007c7a6aafdc484b108f373068a130a12fd45c1311",
+    "acquisition": "Reused identical official public asset fetched in the same research session; fresh requests returned HTTP 503.",
+    "previous_manifest": "docs/research/rea-notion-evidence.json"
+  },
+  "runtime": {
+    "node": "24.14.1",
+    "npm": "11.11.0",
+    "rea": "4.1.0"
+  },
+  "commands": {
+    "analysis": "npm --cache /tmp/fountain-rea-research/npm-cache exec --yes --package=rea-agents@4.1.0 -- rea analyze-javascript-application /tmp/fountain-rea-databases/target --json > /tmp/fountain-rea-databases/application-evidence.json 2> /tmp/fountain-rea-databases/analysis-stderr.log",
+    "exit_code": 0
+  },
+  "evidence": {
+    "evidence_id": "ev_84d74f2b59307c19f4d8f3e91f7c30fd2d4a69849da5d2b230a371b7a78a4d0a",
+    "authority": "shipped-artifact",
+    "confidence": "derived",
+    "operation": "analyze_javascript_application",
+    "root_artifact_sha256": "5cc05e84a927bd3d4578f96187a62157f844657ae0a5abe280d4db8beb22a714",
+    "graph_id": "jag_7d76719f6bb7af5859953c8ae3189215d05b77c74224315906f0743fc534a653",
+    "statistics": {
+      "relevant_files": 1,
+      "nested_asar_containers": 0,
+      "text_bytes_read": 20176,
+      "invalid_utf8_files": 0,
+      "parsed_javascript_files": 1,
+      "visited_ast_nodes": 3858,
+      "findings": 47,
+      "modules": 13,
+      "parse_failures": 0,
+      "truncated_scopes": 0
+    },
+    "graph_coverage": {
+      "status": "complete",
+      "truncated": false,
+      "omitted_count": 0,
+      "limits": []
+    },
+    "semantic_coverage": {
+      "status": "unknown",
+      "truncated": false,
+      "omitted_nodes": 0,
+      "omitted_relations": 0,
+      "unknown_count": 416
+    },
+    "recovered_module": {
+      "node_id": "jag_node_6a2f89b61cc4ed6dc8a69c28a3530b4f4559dff2a3c694028310d335a9219f62",
+      "identity": {
+        "strategy": "artifact-local-key",
+        "stability": "artifact-version",
+        "artifact_sha256": "0d5907a1bd661dffe1bdaa007c7a6aafdc484b108f373068a130a12fd45c1311",
+        "namespace": "rspackChunknotion_next:module",
+        "key": "832375"
+      },
+      "properties": {
+        "path": "94168-34f2bc3c0226c22a.js",
+        "bundler": "rspack",
+        "runtime": "rspackChunknotion_next",
+        "chunk_keys": [
+          "94168"
+        ],
+        "module_key": "832375",
+        "factory_require_name": "o",
+        "runtime_entry": false,
+        "source_sha256": "b0e35cf0cbbb0de96188c89505e82079581dc8d947577e0593b8dbec04ecc2e9",
+        "structural_fingerprint_sha256": "cb28521cea8968c28000a598b6c8a1ef1d2f001254c269435af10e6cb4d0d6dc",
+        "structural_fingerprint_algorithm": "babel-ast-v1",
+        "exports": []
+      },
+      "authority": "ast-static-analysis",
+      "location": {
+        "kind": "source-range",
+        "source": "94168-34f2bc3c0226c22a.js",
+        "start": {
+          "line": 1,
+          "column": 13754
+        },
+        "end": {
+          "line": 1,
+          "column": 19847
+        }
+      }
+    },
+    "limitations": [
+      "CommonJS and ESM binding relationships were recovered from inert syntax and resolved only within the inventoried artifact container.",
+      "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
+      "Static imports, entrypoints, workers, endpoints, and storage relationships do not prove runtime execution.",
+      "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
+      "Webpack/Rspack factories were recovered from AST literals; REA did not invoke push handlers or bundle bootstrap code."
+    ]
+  },
+  "direct_source_inspections": [
+    {
+      "value": "collection_view",
+      "authority": "direct-source-inspection",
+      "location": {
+        "source": "94168-34f2bc3c0226c22a.js",
+        "start": {
+          "line": 1,
+          "column": 14672
+        },
+        "end": {
+          "line": 1,
+          "column": 14689
+        }
+      },
+      "within_rea_module_key": "832375",
+      "meaning": "Identifier presence only; does not establish behavior."
+    },
+    {
+      "value": "workflow_automation_run",
+      "authority": "direct-source-inspection",
+      "location": {
+        "source": "94168-34f2bc3c0226c22a.js",
+        "start": {
+          "line": 1,
+          "column": 15717
+        },
+        "end": {
+          "line": 1,
+          "column": 15742
+        }
+      },
+      "within_rea_module_key": "832375",
+      "meaning": "Identifier presence only; does not establish behavior."
+    },
+    {
+      "value": "automation_action",
+      "authority": "direct-source-inspection",
+      "location": {
+        "source": "94168-34f2bc3c0226c22a.js",
+        "start": {
+          "line": 1,
+          "column": 15853
+        },
+        "end": {
+          "line": 1,
+          "column": 15872
+        }
+      },
+      "within_rea_module_key": "832375",
+      "meaning": "Identifier presence only; does not establish behavior."
+    },
+    {
+      "value": "automation",
+      "authority": "direct-source-inspection",
+      "location": {
+        "source": "94168-34f2bc3c0226c22a.js",
+        "start": {
+          "line": 1,
+          "column": 19593
+        },
+        "end": {
+          "line": 1,
+          "column": 19605
+        }
+      },
+      "within_rea_module_key": "832375",
+      "meaning": "Identifier presence only; does not establish behavior."
+    }
+  ],
+  "network_attempts": [
+    {
+      "url": "https://www.notion.so/login",
+      "http_status": 503,
+      "curl_exit_code": 56
+    },
+    {
+      "url": "https://app.notion.com/login",
+      "http_status": 503,
+      "curl_exit_code": 56
+    },
+    {
+      "url": "https://www.notion.so/_assets/app-a1d8962bf251e2d3.js",
+      "http_status": 503,
+      "curl_exit_code": 56
+    },
+    {
+      "url": "https://www.notion.so/_assets/29013-c582a878291fd719.js",
+      "http_status": 503,
+      "curl_exit_code": 56
+    }
+  ],
+  "raw_evidence": {
+    "retained_in_repository": false,
+    "bytes": 9004067,
+    "sha256": "c81e70bd0e26f3752686a94d5e5bbc77590357257bcd2bb5e4cc130c5b916795"
+  },
+  "official_documentation": [
+    {
+      "url": "https://www.notion.com/help/tasks-and-dependencies",
+      "authority": "vendor-documentation",
+      "topics": [
+        "subitem display/filter/duplicate/delete",
+        "dependency date shifting modes",
+        "avoid weekends"
+      ]
+    },
+    {
+      "url": "https://www.notion.com/help/database-automations",
+      "authority": "vendor-documentation",
+      "topics": [
+        "recurring frequency/time/start/end/timezone",
+        "recurring cannot mix triggers or use Edit property",
+        "automation-to-automation suppression"
+      ]
+    },
+    {
+      "url": "https://www.notion.com/help/timelines",
+      "authority": "vendor-documentation",
+      "topics": [
+        "date range required",
+        "separate start/end properties",
+        "resizing/scales/table visibility"
+      ]
+    }
+  ],
+  "limits": {
+    "per_download_max_bytes": 8388608,
+    "total_asset_budget_bytes": 20971520,
+    "analyzed_bytes": 20176
+  },
+  "not_recovered": [
+    "view rendering algorithms",
+    "subitem permission enforcement",
+    "dependency date shifting algorithm",
+    "recurring scheduler implementation",
+    "server data or paid-plan authorization"
+  ],
+  "notes": [
+    "REA identifies the containing factory; literal values were independently read from the inert source and are not REA semantic facts.",
+    "Metadata is a projection, not a complete authenticated REA Evidence record.",
+    "No target code was executed.",
+    "No proprietary JavaScript is committed."
+  ]
+}

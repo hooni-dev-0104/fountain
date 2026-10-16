@@ -1,0 +1,26 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "",
+  "buildCommand": "node build.mjs",
+  "outputDirectory": "dist",
+  "functions": {"api/public-relay.mjs": {"maxDuration": 30}},
+  "rewrites": [
+    {"source": "/sites/:slug", "destination": "/api/public-relay?kind=sites&slug=:slug"},
+    {"source": "/forms/:slug", "destination": "/api/public-relay?kind=forms&slug=:slug"},
+    {"source": "/api/:path((?!public-relay(?:/|$)).*)", "destination": "https://ehnovtfadpkwtubmwltl.supabase.co/functions/v1/fountain-api/api/:path"},
+    {"source": "/scim/:path*", "destination": "https://ehnovtfadpkwtubmwltl.supabase.co/functions/v1/fountain-api/scim/:path*"},
+    {"source": "/health", "destination": "https://ehnovtfadpkwtubmwltl.supabase.co/functions/v1/fountain-api/health"}
+  ],
+  "headers": [
+    {"source": "/:path*", "headers": [
+      {"key": "Cache-Control", "value": "no-store"},
+      {"key": "CDN-Cache-Control", "value": "no-store"},
+      {"key": "Vercel-CDN-Cache-Control", "value": "no-store"},
+      {"key": "x-vercel-enable-rewrite-caching", "value": "0"},
+      {"key": "X-Content-Type-Options", "value": "nosniff"},
+      {"key": "Referrer-Policy", "value": "same-origin"},
+      {"key": "Content-Security-Policy", "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"}
+    ]}
+  ]
+}

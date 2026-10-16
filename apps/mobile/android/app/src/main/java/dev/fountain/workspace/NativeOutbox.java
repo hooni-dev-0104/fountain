@@ -234,9 +234,10 @@ final class NativeOutbox implements AutoCloseable {
     }
     /** Native-only caller has already checked origin/auth/sent cookie under its owner lock. */
     void observe(String method, String path, int status, byte[] raw, String cookie, boolean blocked, String owner) throws Exception {
+        String[] resource = OutboxPolicy.observedResource(method, path, status); if (resource == null) return;
         retentionGate();
-        String[] resource = OutboxPolicy.canonicalResource(method, path); if (resource == null) return;
-        if (status != 200 && status != 403 && status != 404) return;
+        // A write denial does not establish a loss of read permission.
+        boolean operationReply = "POST".equals(method);
         JSONObject grant = verified(cookie, blocked); if (grant == null) throw new AccessRequired();
         String kind = resource[0], id = resource[1], profile = grant.getString("profileId"), key = proofKey(kind, id);
         if (status == 200 && !kind.equals("workspace") && tombstone("resource", profile + (kind.equals("database") ? "|database|" : "|") + OutboxPolicy.encode(id))) throw new AccessRequired();
@@ -253,7 +254,14 @@ final class NativeOutbox implements AutoCloseable {
         long now = System.currentTimeMillis();
         if (status == 200) {
             try {
-                JSONObject body = new JSONObject(OutboxPolicy.utf8(raw)); envelope(body, profile);
+                if (operationReply) NativePolicy.require(raw != null && raw.length <= OutboxPolicy.RECORD);
+                JSONObject body = new JSONObject(OutboxPolicy.utf8(raw));
+                if (operationReply) {
+                    JSONArray acknowledgement = body.getJSONArray("ack"); NativePolicy.require(acknowledgement.length() <= 1000);
+                    // Repeated IDs are legitimate ACKs, never identity authority.
+                    for (int i = 0; i < acknowledgement.length(); i++) OutboxPolicy.acknowledgement(acknowledgement.get(i));
+                }
+                envelope(body, profile);
                 long access = number(body, "access_revision"), data = number(body, "data_revision");
                 if (!OutboxPolicy.freshRevisions(access, data, floorAccess, floorData)) throw new AccessRequired();
                 if (previous != null && previous.has("accessRevision") && !OutboxPolicy.freshRevisions(access, data, previous.getLong("accessRevision"), previous.getLong("dataRevision"))) throw new AccessRequired();
@@ -266,6 +274,8 @@ final class NativeOutbox implements AutoCloseable {
                 } else if (kind.equals("page")) {
                     JSONObject page = body.getJSONObject("page"); NativePolicy.require(id.equals(identity(page, "id")));
                     long accessLevel = level(body); NativePolicy.require(level(page) == accessLevel);
+                    if (operationReply && previous != null && previous.opt("denied") != Boolean.TRUE
+                        && identity(body, "epoch").equals(previous.opt("epoch")) && number(body, "seq") < previous.getLong("seq")) throw new AccessRequired();
                     proof.put("accessLevel", accessLevel).put("locked", flag(page, "locked")).put("archived", flag(page, "archived"))
                         .put("epoch", identity(body, "epoch")).put("seq", number(body, "seq"));
                 } else {
@@ -282,6 +292,9 @@ final class NativeOutbox implements AutoCloseable {
             } catch (AccessRequired stale) { throw stale; }
             catch (Exception invalid) { malformed = true; }
         }
+        // A malformed successful write requires a fresh canonical read. Keep all
+        // input and revision floors, but never retain a partially built proof.
+        if (operationReply && malformed) proof = null;
         if (proof == null) {
             proof = new JSONObject().put("profileId", profile).put("kind", kind).put("id", id).put("denied", true).put("observedAt", now)
                 .put("terminal", status == 403 || status == 404)

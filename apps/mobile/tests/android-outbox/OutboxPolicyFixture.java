@@ -40,6 +40,21 @@ public final class OutboxPolicyFixture {
             equal(OutboxPolicy.canonicalResource("GET", path), null);
         }
         equal(OutboxPolicy.canonicalResource("POST", "/api/pages/p/collaboration"), null);
+        equal(Arrays.equals(OutboxPolicy.canonicalResource("POST", "/api/pages/%EA%B0%80%EC%A1%B1%20%7C%20%25/operations"), new String[]{"page", "가족 | %"}), true);
+        equal(Arrays.equals(OutboxPolicy.canonicalResource("POST", "/api/pages/%252F/operations"), new String[]{"page", "%2F"}), true);
+        for (String path : new String[]{"/api/workspace", "/api/databases/d", "/api/pages/p/operations?", "/api/pages/p/operations?x=y", "/api/pages/p/operations#x", "/api/pages/p/operations/", "/api/pages//operations", "/api/pages/a/b/operations", "/api/pages/a%2Fb/operations", "/api/pages/%2e%2e/operations", "/api/pages/%70/operations"})
+            equal(OutboxPolicy.canonicalResource("POST", path), null);
+        equal(OutboxPolicy.acknowledgement("client_1-a:1"), "client_1-a:1");
+        equal(OutboxPolicy.acknowledgement("a".repeat(80) + ":9007199254740991"), "a".repeat(80) + ":9007199254740991");
+        for (Object value : new Object[]{1, true, "", "a:0", "a:01", "a:-1", "a:9007199254740992", "a:10000000000000000", "a:1.0", "a:1:2", "한글:1", "a".repeat(81) + ":1", "a:1\n"})
+            reject(() -> OutboxPolicy.acknowledgement(value));
+        equal(Arrays.equals(OutboxPolicy.observedResource("POST", "/api/pages/p/operations", 200), new String[]{"page", "p"}), true);
+        for (int status : new int[]{201, 204, 301, 400, 401, 403, 404, 409, 423, 500})
+            equal(OutboxPolicy.observedResource("POST", "/api/pages/p/operations", status), null);
+        for (int status : new int[]{200, 403, 404})
+            equal(Arrays.equals(OutboxPolicy.observedResource("GET", "/api/pages/p/collaboration", status), new String[]{"page", "p"}), true);
+        for (int status : new int[]{201, 401, 409, 500})
+            equal(OutboxPolicy.observedResource("GET", "/api/pages/p/collaboration", status), null);
         equal(OutboxPolicy.freshRevisions(100,100,100,100), true);
         equal(OutboxPolicy.freshRevisions(99,101,100,100), false);
         equal(OutboxPolicy.freshRevisions(101,99,100,100), false);

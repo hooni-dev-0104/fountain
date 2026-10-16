@@ -101,13 +101,18 @@ final class OutboxPolicy {
         return !rest.isEmpty() && (!rest.contains("|") || rest.startsWith("database|") && rest.length() > 9 && rest.indexOf('|', 9) < 0);
     }
     static String[] canonicalResource(String method, String path) throws Exception {
-        if (!"GET".equals(method) || path == null || path.contains("?") || path.contains("#")) return null;
-        if (path.equals("/api/workspace")) return new String[]{"workspace", "workspace"};
+        if (path == null || path.contains("?") || path.contains("#")) return null;
+        boolean read = "GET".equals(method), write = "POST".equals(method);
+        if (!read && !write) return null;
+        if (read && path.equals("/api/workspace")) return new String[]{"workspace", "workspace"};
         String kind, encoded;
-        if (path.startsWith("/api/pages/") && path.endsWith("/collaboration")) {
+        if (read && path.startsWith("/api/pages/") && path.endsWith("/collaboration")) {
             if (path.length() <= 25) return null;
             kind = "page"; encoded = path.substring(11, path.length() - 14);
-        } else if (path.startsWith("/api/databases/")) { kind = "database"; encoded = path.substring(15); }
+        } else if (write && path.startsWith("/api/pages/") && path.endsWith("/operations")) {
+            if (path.length() <= 22) return null;
+            kind = "page"; encoded = path.substring(11, path.length() - 11);
+        } else if (read && path.startsWith("/api/databases/")) { kind = "database"; encoded = path.substring(15); }
         else return null;
         if (encoded.isEmpty() || encoded.contains("/")) return null;
         // Exactly one decode. Percent-containing resource IDs stay literal.
@@ -115,6 +120,19 @@ final class OutboxPolicy {
         text(identity, 1000);
         if (identity.contains("/") || identity.contains("\\") || identity.equals(".") || identity.equals("..") || !encode(identity).equals(encoded)) return null;
         return new String[]{kind, identity};
+    }
+    static String[] observedResource(String method, String path, int status) throws Exception {
+        if (!("GET".equals(method) && (status == 200 || status == 403 || status == 404))
+            && !("POST".equals(method) && status == 200)) return null;
+        return canonicalResource(method, path);
+    }
+    static String acknowledgement(Object value) {
+        NativePolicy.require(value instanceof String);
+        String identity = (String) value;
+        NativePolicy.require(identity.matches("[A-Za-z0-9_-]{1,80}:[1-9][0-9]{0,15}"));
+        int separator = identity.indexOf(':');
+        NativePolicy.require(Long.parseLong(identity.substring(separator + 1)) <= SAFE);
+        return identity;
     }
     static boolean freshRevisions(long access, long data, long previousAccess, long previousData) {
         return access >= previousAccess && data >= previousData;

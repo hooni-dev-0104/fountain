@@ -643,7 +643,7 @@ public class FountainNativePlugin extends Plugin {
                 recovery.observe(method,path,response.status,response.status==200?new JSONObject(OutboxPolicy.utf8(response.body)):new JSONObject()); }
             return;
         }
-        if (!OUTBOX_ENABLED || OutboxPolicy.canonicalResource(method, path) == null || !(response.status == 200 || response.status == 403 || response.status == 404)) return;
+        if (!OUTBOX_ENABLED || OutboxPolicy.observedResource(method, path, response.status) == null) return;
         synchronized (lock) {
             check(operation); if (!Objects.equals(sentCookie, activeCookie)) throw new NativeOutbox.AccessRequired();
             try {

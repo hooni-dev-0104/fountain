@@ -7,7 +7,8 @@ import type {Entity, StoreReader} from './access.ts';
 export class Authorization {
   access: Access;
   store: StoreReader;
-  constructor(access: Access) { this.access = access; this.store = access.store; }
+  private ownerAccounts: 'legacy-credentials'|'cloud-commit';
+  constructor(access: Access, options: {ownerAccounts?:'legacy-credentials'|'cloud-commit'} = {}) { this.access = access; this.store = access.store; this.ownerAccounts=options.ownerAccounts??'legacy-credentials'; }
   owned(kind: string, identity: unknown): Entity {
     require(valid_id(identity), 'Invalid resource ID');
     const item = this.store.get(kind, identity);
@@ -15,6 +16,28 @@ export class Authorization {
     return item;
   }
   manage_database(identity: unknown): Entity { return this.access.require_resource('database', identity, 4); }
+  schema_references(database: Entity, properties: Entity[]): void {
+    const previous=new Map((get(database,'properties',[]) as Entity[]).map(prop=>[prop.id,prop]));
+    const promoted=properties.filter(prop=>['files','relation'].includes(prop.type)&&(previous.get(prop.id)?.type!==prop.type||prop.type==='relation'&&get(previous.get(prop.id),'database_id')!==get(prop,'database_id')));
+    if(!promoted.length)return;
+    // Evaluate every new reference against the ORIGINAL stored schema. Putting
+    // the replacement first would manufacture its own attachment-read authority.
+    for(const row of this.store.list('row')){
+      if(get(row,'database_id')!==database.id)continue;
+      for(const prop of promoted){
+        const values=get(get(row,'properties',{}),prop.id);
+        if(values===null)continue;
+        require(Array.isArray(values)&&values.length<=1000&&values.every(valid_id),'Promoted reference properties must contain resource ID lists');
+        for(const id of values){
+          if(prop.type==='files')this.attachment(id);
+          else{
+            const target=this.access.require_resource('row',id);
+            require(!truth(get(prop,'database_id'))||get(target,'database_id')===prop.database_id,'Relation target row not found in target database');
+          }
+        }
+      }
+    }
+  }
   relation_values(database: Entity, body: Entity, existing: Entity | null = null): void {
     const values = get(body, 'properties', get(body, 'values', {}));
     if (!is_object(values)) return;
@@ -44,7 +67,9 @@ export class Authorization {
     const role = get(body, 'role', get(existing, 'role', 'member'));
     if (!a.owner) require(role !== 'owner' && (!existing || get(existing, 'role') !== 'owner'), 'Only owners can manage owner membership', 403);
     if (existing && get(existing, 'role') === 'owner' && (method === 'DELETE' || role !== 'owner' || get(body, 'active') === false)) {
-      const required = this.store.meta('auth_accounts_required', false);
+      // CloudStore never reads password hashes. Its SQL commit checks the final
+      // owner set against actual mapped, active Supabase Auth accounts atomically.
+      const required = this.ownerAccounts==='cloud-commit' ? false : this.store.meta('auth_accounts_required', false);
       const other = this.store.list('member').filter(member => member.id !== identity && get(member, 'role') === 'owner' && get(member, 'active', true) === true && (!truth(required) || this.store.get('credential', member.id)));
       require(other, 'Cannot remove or deactivate the last active owner', 409);
     }

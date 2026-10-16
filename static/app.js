@@ -106,9 +106,9 @@ async function ensureMutations() {
   closeMutations();state.mutationProfileId=profile.id;
   const controller=new FountainMutations.Controller({profile,
     onChange:()=>{if(state.mutations!==controller)return;clearTimeout(state.mutationRefreshTimer);state.mutationRefreshTimer=setTimeout(()=>refreshMutationUI(controller).catch(error=>{if(state.mutations===controller)toast(error.message);}),80);},
-    onDenied:detail=>{
+    onDenied:async detail=>{
       if(state.mutations!==controller)return;
-      if(detail.kind==='session'){closeDocument();closeMutations();if(detail.switched){state.offlineProfile=null;boot();}else renderLogin(false);return;}
+      if(detail.kind==='session'){if(!await suspendLoginInput(state.offlineProfile))return;if(detail.switched||state.session?.mode==='local'&&state.session.required===false){state.offlineProfile=null;await boot();}else renderLogin(false);return;}
       closeDeniedResource(detail);refreshMutationUI(controller).catch(()=>{});
     },
     onError:error=>{if(state.mutations===controller&&error.status)toast(error.message);}
@@ -281,19 +281,22 @@ function renderRecoveryImport(view) {
     panel.innerHTML+=`<div class="recovery-import-heading"><strong>${esc(view.fileName||'복구 파일')} 미리보기</strong><span>${prepared.kind==='body'?'본문을 복구 내용으로 복사':'변경을 새 복구 항목으로 보관'}</span></div><div class="recovery-import-summary">${Object.entries(prepared.summary||{}).filter(([,count])=>count).map(([key,count])=>`<span>${esc(labels[key]||key)} ${esc(count)}</span>`).join('')}</div>${prepared.warnings?.length?`<ul class="recovery-import-warnings">${prepared.warnings.map(warning=>`<li>${esc(warning)}</li>`).join('')}</ul>`:''}<div class="recovery-import-items">${(prepared.items||[]).slice(0,view.itemLimit||30).map(item=>`<article class="recovery-import-item"><strong>${esc(recoveryItemTitle(item))}</strong><div class="recovery-import-pair${item.kind==='body'?' recovery-import-body':''}">${item.kind==='body'?'':`<section><h4>현재 내용</h4>${recoveryPreviewValue(item.before,item)}</section>`}<section><h4>${item.kind==='body'?'가져올 복구 내용':'가져올 내용'}</h4>${recoveryPreviewValue(item.after,item)}</section></div>${item.deleteRows?.length?`<div class="recovery-delete-range"><strong>현재 삭제 범위 ${item.deleteRows.length}개</strong><ul>${item.deleteRows.slice(0,100).map(row=>`<li>${esc(recoveryRowName(row,item))}</li>`).join('')}</ul></div>`:''}</article>`).join('')}</div>${prepared.items?.length>(view.itemLimit||30)?'<button class="outline-btn" data-action="recovery-preview-more">미리보기 더 보기</button>':''}<div class="recovery-import-confirm"><p>가져오기는 이 로그인에 적용 전 상태로 보관합니다. 현재 문서나 서버 내용을 바로 변경하지 않습니다.</p><button class="solid-btn" data-action="confirm-recovery-import" ${view.staging?'disabled':''}>${view.staging?'복구 내용을 보관하는 중…':'확인하고 복구 대기열에 가져오기'}</button></div>`;
   }
   const target=$('#recovery-target-page',view.modal);if(target)target.disabled=prepared?.kind==='typed'||!!view.staging;
-  const retry=$('[data-action="prepare-recovery-import"]',view.modal);if(retry)retry.disabled=!view.rawText||view.busy||view.staging;
+  const retry=$('[data-action="prepare-recovery-import"]',view.modal);if(retry)retry.disabled=!(view.rawText||view.archiveId||view.memoryId)||view.busy||view.staging;
 }
 function invalidateRecoveryPrepared(view) {
   if(view.prepared?.token)view.scope.controller.discardPrepared?.(view.prepared.token);
   view.prepared=null;view.result=null;view.error=null;view.itemLimit=30;
 }
 async function prepareRecoveryImport(view=state.recoveryImport) {
-  if(!recoveryImportCurrent(view)||!view.rawText)return;
+  if(!recoveryImportCurrent(view)||!(view.rawText||view.archiveId||view.memoryId))return;
   invalidateRecoveryPrepared(view);const sequence=++view.sequence;view.staging=false;view.busy=true;renderRecoveryImport(view);
   const current=()=>recoveryImportCurrent(view,sequence);
   try{
     const targetPageId=$('#recovery-target-page',view.modal)?.value||undefined;
-    let prepared;try{prepared=await view.scope.controller.prepareImport(view.rawText,{isCurrent:current});}catch(error){if(error.code!=='TARGET_PAGE_REQUIRED'||!targetPageId||!current())throw error;prepared=await view.scope.controller.prepareImport(view.rawText,{targetPageId,isCurrent:current});}
+    let prepared;
+    if(view.archiveId)prepared=await view.scope.controller.prepareArchivedRecovery(view.archiveId,{isCurrent:current});
+    else if(view.memoryId){const entry=authenticationMemory().find(value=>value.profile.id===view.memoryId);if(!entry)throw new Error('현재 계정의 마지막 입력을 다시 확인해 주세요.');prepared=await view.scope.controller.prepareImport(JSON.stringify(authenticationMemoryFile(entry)),{targetPageId:entry.lastEdits.pageId,isCurrent:current});}
+    else try{prepared=await view.scope.controller.prepareImport(view.rawText,{isCurrent:current});}catch(error){if(error.code!=='TARGET_PAGE_REQUIRED'||!targetPageId||!current())throw error;prepared=await view.scope.controller.prepareImport(view.rawText,{targetPageId,isCurrent:current});}
     if(!current()){view.scope.controller.discardPrepared?.(prepared.token);return;}
     view.prepared=prepared;
   }catch(error){if(current())view.error=recoveryImportError(error);}
@@ -301,7 +304,7 @@ async function prepareRecoveryImport(view=state.recoveryImport) {
 }
 async function readRecoveryFile(file) {
   const view=state.recoveryImport;if(!file||!recoveryImportCurrent(view))return;
-  invalidateRecoveryPrepared(view);const sequence=++view.sequence;view.rawText=null;view.fileName=file.name;view.busy=false;view.staging=false;
+  invalidateRecoveryPrepared(view);const sequence=++view.sequence;view.rawText=null;view.archiveId=null;view.memoryId=null;view.fileName=file.name;view.busy=false;view.staging=false;
   if(file.size>16*1024*1024){view.error='복구 JSON은 최대 16 MiB까지 선택할 수 있습니다.';renderRecoveryImport(view);return;}
   view.busy=true;renderRecoveryImport(view);
   try{const text=await file.text();if(!recoveryImportCurrent(view,sequence))return;view.rawText=text;view.busy=false;await prepareRecoveryImport(view);}catch(error){if(recoveryImportCurrent(view,sequence)){view.busy=false;view.error=recoveryImportError(error);renderRecoveryImport(view);}}
@@ -320,6 +323,61 @@ async function confirmRecoveryImport() {
 }
 function nativeRecoveryAvailable() {
   return globalThis.FountainTransport?.native===true&&globalThis.FountainNativeRecovery?.available===true;
+}
+function authenticationReadableBlocks(text) {
+  const blocks=[],prefix='auth-readable-'+uid();
+  for(let start=0;start<text.length;){let end=Math.min(text.length,start+32000);if(end<text.length&&/[\uD800-\uDBFF]/.test(text[end-1]))end--;blocks.push({id:prefix+'-'+blocks.length,type:'code',language:'text',text:text.slice(start,end),parent_id:null});start=end;}
+  return blocks;
+}
+function authenticationInput(profile) {
+  if(!profile||state.offlineProfile?.id!==profile.id||state.route!=='page'||!state.page)return null;
+  const channel=state.channel;readBlocks();
+  const pending=state.titlePending||state.titleSavingInput;
+  let title=pending?.id===state.page.id?{title:pending.title,basePage:structuredClone(pending.basePage)}:undefined;
+  let changed=false,blocks=state.blocks;
+  try{changed=!!channel&&(channel.pending.size>0||FountainCollaboration.canonical(FountainCollaboration.normalizeBlocks(blocks))!==FountainCollaboration.canonical(FountainCollaboration.normalizeBlocks(channel.base.blocks||[])));}
+  catch{changed=true;blocks=authenticationReadableBlocks($$('#blocks .block-content').map(element=>element.innerText).join('\n\n'));state.authRetentionError='편집 한도를 넘은 입력은 원문 조각으로 보관했습니다. 같은 계정으로 로그인해 복구 내용을 확인해 주세요.';}
+  if(title&&Array.from(title.title).length>500){blocks=[...(changed?blocks:[]),...authenticationReadableBlocks('입력한 제목:\n'+title.title)];title=undefined;changed=true;state.authRetentionError='긴 제목은 원문 조각으로 보관했습니다. 같은 계정으로 로그인해 복구 내용을 확인해 주세요.';}
+  const draft=changed?{epoch:channel?.base.epoch,seq:channel?.base.seq,reason:'auth_suspended',blocks:structuredClone(blocks),ops:[...(channel?.pending.values()||[])].map(value=>structuredClone(value))}:undefined;
+  return title||draft?{pageId:state.page.id,...(title?{title}:{}),...(draft?{draft}:{})}:null;
+}
+async function suspendLoginInput(profile=state.offlineProfile) {
+  if(state.nativeRecoveryPaused||state.authSuspending)return false;
+  let lastEdits;const generation=(state.bootGeneration||0)+1;state.bootGeneration=generation;state.authSuspending=true;
+  try{lastEdits=authenticationInput(profile);}
+  catch{if(profile&&state.offlineProfile?.id===profile.id&&state.page)lastEdits={pageId:state.page.id,draft:{reason:'auth_suspended',blocks:authenticationReadableBlocks($$('#blocks .block-content').map(element=>element.innerText).join('\n\n'))}};state.authRetentionError='마지막 입력을 다시 확인해야 합니다. 앱을 닫지 말고 같은 계정으로 로그인해 주세요.';}
+  finally{closeDocument();closeMutations();closeModal();state.loaded=false;document.body.classList.add('login-mode');$('#sidebar').replaceChildren();$('#topbar').replaceChildren();$('#main').innerHTML='<div class="loading">로그인 상태를 확인하고 있습니다…</div>';}
+  try{
+    const result=profile?await FountainOffline.suspendProfile(profile,{lastEdits}):{profileId:null,lastEditsSaved:false,reason:'missing'};
+    if(lastEdits&&!result.lastEditsSaved&&result.reason!=='revoked'){state.authRecoveryMemory||=new Map();state.authRecoveryMemory.set(profile.id,{profile:structuredClone(profile),lastEdits,recoveryId:uid()});state.authRetentionError='마지막 입력을 아직 저장하지 못했습니다. 앱을 닫지 말고 같은 계정으로 다시 로그인해 주세요.';}
+  }catch(error){
+    if(lastEdits){state.authRecoveryMemory||=new Map();state.authRecoveryMemory.set(profile.id,{profile:structuredClone(profile),lastEdits,recoveryId:uid()});}
+    state.authRetentionError='마지막 입력을 아직 저장하지 못했습니다. 앱을 닫지 말고 같은 계정으로 다시 로그인해 주세요.';
+  }finally{state.authSuspending=false;}
+  return generation===state.bootGeneration;
+}
+function authenticationMemory() {
+  const current=state.offlineProfile;
+  return current?[...(state.authRecoveryMemory?.values()||[])].filter(value=>value.profile.origin===current.origin&&value.profile.workspaceId===current.workspaceId&&value.profile.memberId===current.memberId):[];
+}
+function authenticationMemoryFile({profile,lastEdits,recoveryId}) {
+  const {pageId,draft,title}=lastEdits,records=[];
+  if(title)records.push({id:recoveryId,profileId:profile.id,resourceKey:profile.id+'|'+encodeURIComponent(pageId),operation:{id:recoveryId,kind:'page.patch',target_id:pageId,depends_on:[],body:{title:title.title},base:{fields:{title:title.basePage?.title??null}}}});
+  return {format:'fountain-recovery-v2',origin:profile.origin,workspace_id:profile.workspaceId,member_id:profile.memberId,source_binding:profile.cacheBinding,records,localPages:[],drafts:draft?[{page_id:pageId,draft}]:[]};
+}
+function renderRecoveryArchives(view) {
+  if(!recoveryImportCurrent(view))return;
+  const panel=$('#recovery-archives',view.modal);if(!panel)return;
+  const memory=authenticationMemory();
+  panel.innerHTML='<h3>이전 로그인에서 보관한 편집</h3><p>같은 계정의 기록을 현재 권한으로 확인합니다. 선택만으로 서버에 반영하지 않습니다.</p>'+(view.archivesError?`<p role="status">${esc(view.archivesError)}</p>`:view.archivesBusy?'<p role="status">보관 기록을 확인하고 있습니다…</p>':'')+(view.archives||[]).map(item=>`<div class="history-item"><div>보관한 편집 · ${Object.values(item.counts||{}).reduce((sum,count)=>sum+(Number.isSafeInteger(count)?count:0),0)}개<small>${date(item.createdAt)}</small></div><button class="outline-btn" data-action="prepare-archived-recovery" data-id="${esc(item.id)}">내용 확인</button></div>`).join('')+memory.map(value=>`<div class="history-item"><div>아직 저장하지 못한 마지막 입력<small>복구를 마칠 때까지 앱을 닫지 마세요.</small></div><button class="outline-btn" data-action="prepare-memory-recovery" data-id="${esc(value.profile.id)}">내용 확인</button></div>`).join('')+(!view.archivesBusy&&!view.archivesError&&!view.archives?.length&&!memory.length?'<p class="muted">이 계정에서 보관한 이전 편집이 없습니다.</p>':'')+(view.archivesNext?'<button class="outline-btn" data-action="more-archive-recovery">보관 기록 더 보기</button>':'');
+}
+async function loadRecoveryArchives(view,more=false) {
+  if(!recoveryImportCurrent(view)||view.archivesBusy)return;
+  if(state.offline){view.archivesError='연결한 뒤 같은 계정의 보관 기록을 확인할 수 있습니다.';renderRecoveryArchives(view);return;}
+  const sequence=view.archiveSequence=(view.archiveSequence||0)+1;view.archivesBusy=true;view.archivesError=null;renderRecoveryArchives(view);
+  try{const result=await view.scope.controller.recoveryArchives({cursor:more?view.archivesNext:null,limit:20});if(!recoveryImportCurrent(view)||view.archiveSequence!==sequence)return;view.archives=more?[...(view.archives||[]),...result.items]:result.items;view.archivesNext=result.next;}
+  catch(error){if(recoveryImportCurrent(view)&&view.archiveSequence===sequence)view.archivesError=error.message;}
+  finally{if(recoveryImportCurrent(view)&&view.archiveSequence===sequence){view.archivesBusy=false;renderRecoveryArchives(view);}}
 }
 async function prepareNativeRecovery() {
   if(!nativeRecoveryAvailable())throw new Error('이 앱에서는 보관 내용 복구를 사용할 수 없습니다.');
@@ -363,8 +421,8 @@ async function openMutationQueue() {
   const scope={controller:state.mutations,profileId:state.offlineProfile?.id,binding:state.session?.cache_binding,memberId:state.session?.member?.id,workspaceId:state.workspace?.workspace_id,route:state.route,routeId:state.route==='page'?state.page?.id:state.route==='database'?state.database?.id:null};
   if(!scope.controller||!scope.profileId)throw new Error('로그인한 뒤 기기 저장 내용을 확인해 주세요.');
   const pages=(state.workspace?.pages||[]).filter(page=>resourceLevel(page)>=3&&!page.locked&&!page.archived);if(scope.route==='page'&&pageEditable()&&!pages.some(page=>page.id===scope.routeId))pages.unshift(state.page);
-  openModal('기기 저장과 동기화',`<p>${nativeCacheOnly()?'연결이 끊기면 변경을 앱 캐시에 보관합니다. 캐시를 지우거나 앱을 삭제하면 미전송 변경을 잃을 수 있으니 먼저 동기화하거나 복구 내용을 내려받으세요.':'연결이 끊겨도 변경을 이 기기에 보관합니다.'} 서버에서도 같은 값이 바뀌면 자동으로 덮어쓰지 않고 여기서 확인합니다.</p><div class="mutation-toolbar"><button class="solid-btn" id="sync-now" data-action="sync-now">지금 동기화</button><button class="outline-btn" data-action="export-mutations">전체 복구 내용 내려받기</button>${nativeRecoveryAvailable()?'<button class="outline-btn" data-action="native-recovery">앱 보관 내용 찾기</button>':''}</div><section class="recovery-import-panel" aria-label="복구 JSON 가져오기"><h3>복구 JSON 가져오기</h3><p>내려받은 복구 파일을 먼저 검토하세요. 가져온 항목은 자동으로 서버에 반영하지 않습니다.</p><label class="recovery-file-label">복구 파일 · 최대 16 MiB<input id="recovery-import-file" type="file" accept=".json,application/json" aria-label="복구 JSON 파일"></label><div class="recovery-import-controls"><label>본문 복구 위치<select id="recovery-target-page" aria-label="본문 복구 위치"><option value="">문서를 선택하세요</option>${pages.map(page=>`<option value="${esc(page.id)}" ${scope.route==='page'&&scope.routeId===page.id?'selected':''}>${esc(page.title||'제목 없음')}</option>`).join('')}</select></label><button class="outline-btn" data-action="prepare-recovery-import" disabled>미리보기 다시 확인</button></div><div id="recovery-import-preview" aria-live="polite"></div></section><div id="mutation-queue-list" aria-live="polite"></div>`,'mutation-modal');
-  const view={scope,modal:$('.mutation-modal'),sequence:0,rawText:null,prepared:null};state.recoveryImport=view;
+  openModal('기기 저장과 동기화',`<p>${nativeCacheOnly()?'연결이 끊기면 변경을 앱 캐시에 보관합니다. 캐시를 지우거나 앱을 삭제하면 미전송 변경을 잃을 수 있으니 먼저 동기화하거나 복구 내용을 내려받으세요.':'연결이 끊겨도 변경을 이 기기에 보관합니다.'} 서버에서도 같은 값이 바뀌면 자동으로 덮어쓰지 않고 여기서 확인합니다.</p><div class="mutation-toolbar"><button class="solid-btn" id="sync-now" data-action="sync-now">지금 동기화</button><button class="outline-btn" data-action="export-mutations">전체 복구 내용 내려받기</button>${nativeRecoveryAvailable()?'<button class="outline-btn" data-action="native-recovery">앱 보관 내용 찾기</button>':''}</div><section id="recovery-archives" class="recovery-import-panel" aria-label="이전 로그인 편집 복구"></section><section class="recovery-import-panel" aria-label="복구 JSON 가져오기"><h3>복구 JSON 가져오기</h3><p>내려받은 복구 파일을 먼저 검토하세요. 가져온 항목은 자동으로 서버에 반영하지 않습니다.</p><label class="recovery-file-label">복구 파일 · 최대 16 MiB<input id="recovery-import-file" type="file" accept=".json,application/json" aria-label="복구 JSON 파일"></label><div class="recovery-import-controls"><label>본문 복구 위치<select id="recovery-target-page" aria-label="본문 복구 위치"><option value="">문서를 선택하세요</option>${pages.map(page=>`<option value="${esc(page.id)}" ${scope.route==='page'&&scope.routeId===page.id?'selected':''}>${esc(page.title||'제목 없음')}</option>`).join('')}</select></label><button class="outline-btn" data-action="prepare-recovery-import" disabled>미리보기 다시 확인</button></div><div id="recovery-import-preview" aria-live="polite"></div></section><div id="mutation-queue-list" aria-live="polite"></div>`,'mutation-modal');
+  const view={scope,modal:$('.mutation-modal'),sequence:0,rawText:null,prepared:null};state.recoveryImport=view;loadRecoveryArchives(view);
   try{const records=await scope.controller.records();if(!recoveryImportCurrent(view))return;state.mutationRecords=records;renderMutationQueue();}catch(error){if(recoveryImportCurrent(view)){view.error=recoveryImportError(error);renderRecoveryImport(view);}}
 }
 async function syncMutations() {
@@ -596,13 +654,13 @@ document.addEventListener('selectionchange',()=>{
   if(document.activeElement?.closest?.('.block-content')){state.richSelection=richSelection();const selected=selectedTextPosition();if(!state.composition&&state.expectedSelection&&FountainCollaboration.canonical(selected)!==FountainCollaboration.canonical(state.expectedSelection))state.channel?.breakHistory();state.expectedSelection=selected;}
 });
 window.addEventListener('fountain-offline-profile-changed',async()=>{
-  if(state.nativeRecoveryPaused)return;
+  if(state.nativeRecoveryPaused||state.authSuspending)return;
   const generation=state.bootGeneration,current=await FountainOffline.getProfile().catch(()=>null);
   if(state.nativeRecoveryPaused||generation!==state.bootGeneration)return;
-  if(state.offlineProfile&&current?.id!==state.offlineProfile.id||current&&current.session.cache_binding!==state.session?.cache_binding){closeDocument();closeMutations();state.offlineProfile=null;state.page=null;state.blocks=[];$('#main').innerHTML='<div class="loading">로그인 계정을 확인하는 중…</div>';boot();}
+  if(state.offlineProfile&&current?.id!==state.offlineProfile.id||current&&current.session.cache_binding!==state.session?.cache_binding){if(!await suspendLoginInput(state.offlineProfile))return;state.offlineProfile=null;state.page=null;state.blocks=[];await boot();}
 });
 window.addEventListener('fountain-offline-profile-cleared',event=>{
-  if(state.loaded&&state.offlineProfile?.id===event.detail?.profileId)renderLogin();
+  if(state.loaded&&state.offlineProfile?.id===event.detail?.profileId)renderLogin(false);
 });
 window.addEventListener('fountain-offline-resource-purged',event=>{
   if(state.nativeRecoveryPaused)return;
@@ -782,8 +840,9 @@ async function openDocument(id,detail,cachedSnapshot) {
       patchPageMetadataUI();
     },onHistory:history=>{if(state.channel===channel)refreshHistoryControls(history);},onStatus:documentStatus,onDraft:drafts=>{if(state.channel===channel){state.recoveryDrafts=drafts;renderRecoveryDrafts();}},
     onError:error=>{if(state.channel===channel)toast(error.message);},
-    onDenied:({status,message,switched})=>{
+    onDenied:async({status,message,switched})=>{
       if(state.channel!==channel&&state.channel!==null)return;
+      if(status===401){if(!await suspendLoginInput(state.offlineProfile))return;if(switched||state.session?.mode==='local'&&state.session.required===false){state.offlineProfile=null;await boot();}else renderLogin(false);return;}
       closeDocument();state.page=null;state.blocks=[];state.dirty=false;
       if(switched){state.offlineProfile=null;boot();return;}
       if(status===401)renderLogin(false);else{$('#main').innerHTML=`<div class="empty"><h2>이 문서에 접근할 수 없습니다.</h2><p>${esc(message)}</p><button class="outline-btn" data-action="home">홈으로 돌아가기</button></div>`;if(state.workspace)state.workspace.pages=state.workspace.pages.filter(page=>page.id!==id);renderSidebar();renderTopbar('접근 권한 없음');}
@@ -1413,17 +1472,19 @@ async function saveTitle() {
   const pending = state.titlePending;
   if (!pending) return;
   state.titlePending = null;
+  state.titleSavingInput=pending;
+  const binding=state.session?.cache_binding,profileId=state.offlineProfile?.id;
   state.titleSaving = (async () => {
     try {
       if (state.page?.id === pending.id) await updatePage({title:pending.title},pending.basePage);
       else if(state.mutations){await state.mutations.patchPage(pending.id,{title:pending.title},{basePage:pending.basePage});if(!state.offline)await syncMutations();}else await api('/pages/' + pending.id, {title:pending.title}, 'PATCH');
     } catch (error) {
-      state.titlePending ||= pending;
+      if(binding===state.session?.cache_binding&&profileId===state.offlineProfile?.id&&!state.authSuspending)state.titlePending ||= pending;
       throw error;
     }
   })();
   try { await state.titleSaving; }
-  finally { state.titleSaving = null; }
+  finally { state.titleSaving = null;if(state.titleSavingInput===pending)state.titleSavingInput=null; }
 }
 async function updatePage(patch,basePage=structuredClone(state.pageViewBasis||state.page)) {
   const scope={pageId:state.page?.id,controller:state.mutations,profileId:state.offlineProfile?.id,binding:state.session?.cache_binding};
@@ -1537,6 +1598,8 @@ async function doAction(target,grouped=false) {
     case'native-recovery':if(!nativeRecoveryAvailable())throw new Error('이 앱에서는 보관 내용 복구를 사용할 수 없습니다.');await FountainNativeRecovery.open();break;
     case'reload-after-native-recovery':location.reload();break;
     case'prepare-recovery-import':await prepareRecoveryImport();break;
+    case'prepare-archived-recovery':case'prepare-memory-recovery':{const view=state.recoveryImport;if(!recoveryImportCurrent(view)||view.staging)break;invalidateRecoveryPrepared(view);view.rawText=null;view.archiveId=a==='prepare-archived-recovery'?id:null;view.memoryId=a==='prepare-memory-recovery'?id:null;view.fileName='이전 로그인에서 보관한 편집';await prepareRecoveryImport(view);break;}
+    case'more-archive-recovery':await loadRecoveryArchives(state.recoveryImport,true);break;
     case'confirm-recovery-import':await confirmRecoveryImport();break;
     case'recovery-preview-more':if(recoveryImportCurrent(state.recoveryImport)){state.recoveryImport.itemLimit=(state.recoveryImport.itemLimit||30)+30;renderRecoveryImport(state.recoveryImport);}break;
     case'sync-now':await syncMutations();renderMutationQueue();break;
@@ -1580,10 +1643,15 @@ async function doAction(target,grouped=false) {
     case'close-modal':closeModal();
     break;
     case'logout':{
-      closeDocument();closeMutations();await window.FountainOffline?.clearActiveProfile();state.offlineProfile=null;
-      localStorage.setItem(logoutPendingKey(),JSON.stringify({mode:state.session?.mode||'accounts'}));
-      try{await api('/session',{},'DELETE');localStorage.removeItem(logoutPendingKey());state.session=await api('/session');}
-      catch(error){if(error.status)throw error;}
+      const actor=state.offlineProfile;if(actor&&state.authRecoveryMemory)for(const [key,value] of state.authRecoveryMemory)if(value.profile.origin===actor.origin&&value.profile.workspaceId===actor.workspaceId&&value.profile.memberId===actor.memberId)state.authRecoveryMemory.delete(key);
+      const binding=actor?.cacheBinding||state.session?.cache_binding,generation=state.bootGeneration;
+      closeDocument();closeMutations();await window.FountainOffline?.clearActiveProfile(actor);
+      const active=await window.FountainOffline?.getProfile();if(active&&active.id!==actor?.id){if(generation===state.bootGeneration)await boot();break;}
+      state.offlineProfile=null;
+      const marker=JSON.stringify({mode:state.session?.mode||'accounts',binding,nonce:uid()}),clearMarker=()=>{if(localStorage.getItem(logoutPendingKey())===marker)localStorage.removeItem(logoutPendingKey());};
+      localStorage.setItem(logoutPendingKey(),marker);
+      try{await api('/session',binding?{cache_binding:binding}:{},'DELETE');clearMarker();state.session=await api('/session');}
+      catch(error){if(error.status===409||error.code==='STALE_REQUEST'){clearMarker();await boot();break;}if(error.status)throw error;}
       closeModal();if(state.session?.required||localStorage.getItem(logoutPendingKey()))renderLogin();else await boot();break;
     }
     case'add-page':openModal('새로운 페이지',`<p>작은 아이디어가 시작되는 빈 페이지를 만드세요.</p><form id="page-form" class="form-grid" data-parent="${esc(target.dataset.parent||'')}">${field('페이지 이름','title','무엇을 기록할까요?')}${field('아이콘','icon','🌿','text','📄')}<div class="form-actions"><button class="solid-btn">페이지 만들기</button></div></form>`);
@@ -2139,28 +2207,38 @@ window.addEventListener('beforeunload',event=> {
     event.preventDefault(); event.returnValue='';
   }
 });
-function renderLogin(purge=true) {
+function renderLogin(preserve=true) {
   if(state.nativeRecoveryPaused)return;
-  closeDocument();closeMutations();if(purge&&state.offlineProfile)window.FountainOffline?.clearProfile(state.offlineProfile).catch(()=>{});state.offlineProfile=null;state.offline=false;
+  if(preserve)return suspendLoginInput().then(current=>{if(current)renderLogin(false);});
+  closeDocument();closeMutations();state.offlineProfile=null;state.offline=false;
   state.loaded=false;
   state.workspace=null;state.page=null;state.blocks=[];state.database=null;state.rows=[];state.dirty=false;state.titlePending=null;clearTimeout(state.saveTimer);clearTimeout(state.titleTimer);
   $('#sidebar').innerHTML='';
   $('#topbar').innerHTML='';
   $('#main').innerHTML=`<div class="login-wrap"><div class="brand"><span class="brand-mark">f</span>fountain</div><h1>우리 가족의 작은 작업실</h1><p>가족과 나누는 문서, 아이디어, 일상.<br>${state.session?.mode==='accounts'?'내 이메일과 비밀번호로 로그인하세요.':'공유 암호를 입력하고 함께 시작하세요.'}</p><form class="form-grid" id="login-form">${state.session?.mode==='accounts'?'<label>이메일<input name="email" type="email" required autocomplete="username" autofocus placeholder="name@example.com"></label><label>비밀번호<input name="password" type="password" required autocomplete="current-password" placeholder="계정 비밀번호"></label>':'<label>공유 암호<input name="token" type="password" required autocomplete="current-password" autofocus placeholder="가족 공유 암호"></label>'}<button class="solid-btn">워크스페이스 열기</button><div id="login-error" role="alert"></div></form><small class="muted">Fountain · 구독 없이, 함께 쓰는 공간</small></div>`;
   document.body.classList.add('login-mode');
+  if(state.authRetentionError&&$('#login-error'))$('#login-error').textContent=state.authRetentionError;
 }
 async function boot() {
   if(state.nativeRecoveryPaused)return;
   const generation=(state.bootGeneration||0)+1;state.bootGeneration=generation;
   const cachedIdentity=await window.FountainOffline?.getProfile().catch(()=>null);
   if(state.nativeRecoveryPaused||generation!==state.bootGeneration)return;
+  let renewLegacyLocal=false;
   try {
     document.body.classList.remove('login-mode');
-    if(localStorage.getItem(logoutPendingKey())){const record=JSON.parse(localStorage.getItem(logoutPendingKey()));try{await api('/session',{},'DELETE');localStorage.removeItem(logoutPendingKey());}catch(error){if(!error.status){state.session={mode:['accounts','family','local'].includes(record.mode)?record.mode:'accounts',required:true,authenticated:false};renderLogin();return;}throw error;}}
-    const session=await api('/session');if(generation!==state.bootGeneration)return;if(state.offlineProfile&&state.offlineProfile.session.cache_binding!==session.cache_binding){closeDocument();closeMutations();state.offlineProfile=null;}state.session=session;
-    if(!state.session.authenticated&&state.session.required){if(cachedIdentity)await FountainOffline.clearProfile(cachedIdentity);if(generation!==state.bootGeneration)return;renderLogin(false);return;}
+    if(localStorage.getItem(logoutPendingKey())){const marker=localStorage.getItem(logoutPendingKey()),record=JSON.parse(marker),clearMarker=()=>{if(localStorage.getItem(logoutPendingKey())===marker)localStorage.removeItem(logoutPendingKey());};if(!record.binding){clearMarker();renewLegacyLocal=record.mode==='local'&&!cachedIdentity;if(!cachedIdentity&&record.mode!=='local'){state.session={mode:['accounts','family'].includes(record.mode)?record.mode:'accounts',required:true,authenticated:false};renderLogin(false);return;}}else try{await api('/session',{cache_binding:record.binding},'DELETE');clearMarker();}catch(error){if(error.status===409){clearMarker();}else if(!error.status){state.session={mode:['accounts','family','local'].includes(record.mode)?record.mode:'accounts',required:true,authenticated:false};renderLogin();return;}else throw error;}}
+    let session=await api('/session');if(generation!==state.bootGeneration)return;
+    if(renewLegacyLocal&&session.mode==='local'&&session.authenticated===true&&session.required===false&&session.member?.id==='local'){await api('/session/renew-local',{cache_binding:session.cache_binding});if(generation!==state.bootGeneration)return;session=await api('/session');if(generation!==state.bootGeneration)return;}
+    if(session.authenticated&&state.offlineProfile&&(state.offlineProfile.session.cache_binding!==session.cache_binding||state.offlineProfile.memberId!==session.member?.id)){if(!await suspendLoginInput(state.offlineProfile))return;state.offlineProfile=null;return boot();}state.session=session;
+    if(!state.session.authenticated&&state.session.required){if(await suspendLoginInput(state.offlineProfile||cachedIdentity))renderLogin(false);return;}
     state.offline=false;await refreshWorkspace();
-    await cacheProfile();if(generation!==state.bootGeneration)return;
+    try{await cacheProfile();}catch(error){
+      if(error.fountainCode!=='PROFILE_SUSPENDED')throw error;
+      if(session.mode!=='local'||session.required!==false){renderLogin(false);return;}
+      await api('/session/renew-local',{cache_binding:session.cache_binding});if(generation!==state.bootGeneration)return;
+      state.session=await api('/session');if(generation!==state.bootGeneration)return;await refreshWorkspace();await cacheProfile();
+    }if(generation!==state.bootGeneration)return;
     await ensureMutations();if(generation!==state.bootGeneration)return;
     state.loaded=true;
     const [route,id]=location.hash.slice(1).split('/');

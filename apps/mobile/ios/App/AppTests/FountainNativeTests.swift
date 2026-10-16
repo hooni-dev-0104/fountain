@@ -360,4 +360,56 @@ final class FountainNativeTests: XCTestCase {
         XCTAssertTrue(files().isEmpty); XCTAssertEqual(try Data(contentsOf: original), source)
     }
 
+    @MainActor func testActualSupabaseOwnerSessionAndPrivatePage() async throws {
+        let manager = FileManager.default
+        let cache = try manager.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let inputURL = cache.appendingPathComponent("fountain-cloud-native-qa.json")
+        try XCTSkipUnless(manager.fileExists(atPath: inputURL.path), "Opt-in private disposable cloud input required")
+        let attributes = try manager.attributesOfItem(atPath: inputURL.path)
+        XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+        XCTAssertLessThanOrEqual((attributes[.size] as? NSNumber)?.intValue ?? Int.max, 16384)
+        let inputData = try Data(contentsOf: inputURL); try manager.removeItem(at: inputURL)
+        guard let input = try JSONSerialization.jsonObject(with: inputData) as? [String: String],
+              input["origin"] == "https://127.0.0.1:61603", input["workspaceId"] == "fountain-qa-cloud-accounts-75254a74761a4888",
+              let email = input["email"], let password = input["password"] else { throw NSError(domain: "CloudQAInput", code: 1) }
+        _ = try await webView()
+        for _ in 0..<100 {
+            if (try? await script("return !!globalThis.Capacitor?.isPluginAvailable('FountainNative');")) as? Bool == true { break }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        let configured = try await script("const p=Capacitor.registerPlugin('FountainNative');globalThis.__cloudQA=p;return await p.configure({origin:'https://127.0.0.1:61603'});") as! [String: Any]
+        let generation = configured["generation"] as! Int
+        XCTAssertEqual(configured["outboxEnabled"] as? Bool, false)
+        func request(_ method: String, _ path: String, _ body: [String: String]? = nil) async throws -> [String: Any] {
+            let raw = try body.map { try JSONSerialization.data(withJSONObject: $0).base64EncodedString() } ?? ""
+            let value = try await script("return await __cloudQA.request({id:crypto.randomUUID(),generation,method,path,headers:body?{'Content-Type':'application/json'}:{},bodyBase64:body,timeoutMs:45000});", arguments: ["generation": generation, "method": method, "path": path, "body": raw]) as! [String: Any]
+            XCTAssertEqual(value["status"] as? Int, 200, "Actual cloud response")
+            let headers = value["headers"] as? [String: String] ?? [:]
+            XCTAssertFalse(headers.keys.contains { $0.lowercased() == "set-cookie" })
+            guard let encoded = value["bodyBase64"] as? String, let bytes = Data(base64Encoded: encoded), let decoded = try JSONSerialization.jsonObject(with: bytes) as? [String: Any] else { throw NSError(domain: "CloudQAResponse", code: 1) }
+            return decoded
+        }
+        var authenticated = false
+        do {
+            let login = try await request("POST", "/api/session", ["email": email, "password": password]); authenticated = true
+            XCTAssertEqual(login["authenticated"] as? Bool, true); XCTAssertEqual(login["mode"] as? String, "accounts")
+            let current = try await request("GET", "/api/session"), member = current["member"] as! [String: Any]
+            XCTAssertEqual(current["authenticated"] as? Bool, true); XCTAssertEqual(current["workspace_id"] as? String, input["workspaceId"])
+            XCTAssertEqual(member["id"] as? String, "local"); XCTAssertEqual(member["role"] as? String, "owner"); XCTAssertEqual(member["active"] as? Bool, true)
+            XCTAssertEqual(current["cache_binding"] as? String, login["cache_binding"] as? String)
+            let page = try await request("GET", "/api/pages/qa-accounts-private"), detail = page["page"] as! [String: Any]
+            XCTAssertEqual(detail["id"] as? String, "qa-accounts-private"); XCTAssertEqual(detail["access_level"] as? Int, 4)
+            let after = try await request("GET", "/api/session"), afterMember = after["member"] as! [String: Any]
+            XCTAssertEqual(after["workspace_id"] as? String, input["workspaceId"]); XCTAssertEqual(afterMember["id"] as? String, "local"); XCTAssertEqual(afterMember["role"] as? String, "owner"); XCTAssertEqual(after["cache_binding"] as? String, current["cache_binding"] as? String)
+            var evidence: [String: Any] = ["platform": "ios", "actualNativeHTTPS": true, "actualSupabase": true, "memberId": "local", "role": "owner", "workspaceId": input["workspaceId"]!, "pageId": "qa-accounts-private", "bindingSHA256": FountainOutbox.hash(Data((current["cache_binding"] as! String).utf8)), "titleSHA256": FountainOutbox.hash(Data((detail["title"] as! String).utf8)), "outboxEnabled": false]
+            _ = try await request("DELETE", "/api/session"); authenticated = false
+            let ended = try await request("GET", "/api/session"); XCTAssertEqual(ended["authenticated"] as? Bool, false); evidence["logoutVerified"] = true
+            let result = cache.appendingPathComponent("fountain-cloud-native-result.json")
+            try JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys]).write(to: result, options: [.atomic, .completeFileProtection]); try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: result.path)
+        } catch {
+            if authenticated { _ = try? await request("DELETE", "/api/session") }
+            throw error
+        }
+    }
+
 }

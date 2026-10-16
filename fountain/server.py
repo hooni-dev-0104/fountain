@@ -134,10 +134,13 @@ class Application:
             or re.fullmatch(r'/api/databases/[^/]+', path) is not None)
         with self.store.lock:
             inference = method == 'POST' and path == '/api/ai'
-            # Claim the SQLite writer before authentication and ACL reads. A
+            # Claim the workspace writer before authentication and ACL reads. A
             # process-local lock alone cannot fence logout in another server.
             claiming = (method in {'POST', 'PATCH', 'PUT', 'DELETE'} and not inference
-                        or canonical_snapshot or method == 'GET' and path.endswith('/collaboration'))
+                        or method == 'GET' and path != '/api/backup')
+            # SQLite's backup API cannot copy its own open write transaction.
+            # Backup downloads recheck owner/session before headers and each
+            # bounded piece; generation itself does not expose private bytes.
             with self.store.transaction() if claiming else nullcontext():
                 context = self._request_context(principal, session_cookie)
                 access = context['access']

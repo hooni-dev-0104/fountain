@@ -15,6 +15,7 @@ import {createActivity} from './activity.ts';
 import {createRealtime} from './realtime.ts';
 import {createAI} from './ai.ts';
 import {createAccounts} from './accounts.ts';
+import {createGrantAdmin} from './grant-admin.ts';
 import {createBackup,createBackupProvider} from './backup.ts';
 import {createBackupJobs,createBackupJobProvider,createBackupSourceRangeReader,collectBackupJobGarbage} from './backup-jobs.ts';
 import {HttpError,jsonResponse,readJSON} from './http.ts';
@@ -42,6 +43,8 @@ export function createApplication(config:Config):(request:Request)=>Promise<Resp
       }
       const accounts=createAccounts({...connection,authorize}),accountResponse=await accounts.handle(current,path,context);
       if(accountResponse)return accountResponse;
+      const grantResponse=await createGrantAdmin({...connection,authorize,origins:config.origins}).handle(current,path,context);
+      if(grantResponse)return grantResponse;
       const jobConfig={provider:backupJobProvider,storage,authorize,readSourceRange};
       if(path==='/api/backup/jobs'&&current.method==='POST')await collectBackupJobGarbage(jobConfig,context,1);
       const jobResponse=await createBackupJobs(jobConfig).handle(current,path,context);

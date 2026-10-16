@@ -74,3 +74,45 @@ store=memoryStore();globalThis.FountainOffline=store;local=new crdt.DocumentChan
 await local.receive({...snapshot('old',1,'OLD'),access_revision:5,access_level:1});await local.receive({...snapshot('old',1,'OLD'),access_revision:4,access_level:3},'ack');assert.equal(local.base.access_level,1);local.close();
 delete globalThis.FountainOffline;if(originalNavigator)Object.defineProperty(globalThis,'navigator',originalNavigator);
 console.log('PASS: immutable recovery slots, operation-only crash recovery, retry all pending after storage failure, ACL generation fence');
+
+// A local page survives editing and reopening while online, without any GET,
+// SSE or operation POST before its durable page.create receipt is applied.
+Object.defineProperty(globalThis,'navigator',{value:{onLine:true},configurable:true});
+const priorSource=globalThis.EventSource,priorTransport=globalThis.FountainTransport;
+let eventConnections=0,creationPending=true;
+globalThis.EventSource=function(){};
+globalThis.FountainTransport={events:()=>{eventConnections++;return {addEventListener(){},close(){}};}};
+store=memoryStore();store.getLocalPage=async()=>({localOnly:creationPending});globalThis.FountainOffline=store;
+const localSnapshot={epoch:'local-create-epoch',seq:0,state:crdt.seedState([]),blocks:[],page:{id:'p',revision:0,locked:false},access_level:4,session_binding:'binding'};
+let remoteSnapshot=structuredClone(localSnapshot);const requests=[];
+const fetcher=async(path,body)=>{
+  requests.push({path,body});
+  if(body){remoteSnapshot.state=crdt.applyOperations(remoteSnapshot.state,body.ops);remoteSnapshot.blocks=crdt.project(remoteSnapshot.state);remoteSnapshot.seq+=body.ops.length;return {...structuredClone(remoteSnapshot),ack:body.ops.map(op=>op.id)};}
+  return structuredClone(remoteSnapshot);
+};
+local=new crdt.DocumentChannel({pageId:'p',profile,fetcher,deferRemote:true});
+await local.open(localSnapshot,{cached:true});
+local.submit([{type:'block.insert',block_id:'offline-block',fields:{block_type:'paragraph'}},
+  {type:'text.insert',block_id:'offline-block',fields:{after_id:null,text:'새 페이지의 미전송 본문'}}]);
+await local.persistence;
+await local.flush();await local.reconnect();local.connectEvents();local.retry();await local.onlineHandler();
+assert.equal(requests.length,0);assert.equal(eventConnections,0);
+assert.equal(await local.resumeRemote(),false);
+assert.ok(store.operations.size>0);local.close();
+local=new crdt.DocumentChannel({pageId:'p',profile,fetcher,deferRemote:true});
+await local.open(localSnapshot,{cached:true});
+assert.equal(crdt.project(local.state)[0].text,'새 페이지의 미전송 본문');
+assert.equal(requests.length,0);assert.equal(await local.resumeRemote(),false);
+await assert.rejects(local.fetch('/pages/p/collaboration'),error=>error.status===425);
+creationPending=false;
+assert.deepEqual(await Promise.all([local.resumeRemote(),local.resumeRemote()]),[true,true]);
+assert.equal(requests.filter(request=>!request.body).length,1);
+assert.equal(eventConnections,1);assert.equal(local.remoteDeferred,false);
+assert.equal(local.pending.size,0);assert.equal(store.operations.size,0);
+assert.equal(remoteSnapshot.blocks[0].text,'새 페이지의 미전송 본문');
+assert.equal((await store.getDrafts('key')).filter(record=>!['pending','basis'].includes(record.draft.reason)).length,0);
+local.close();delete globalThis.FountainOffline;
+if(priorSource===undefined)delete globalThis.EventSource;else globalThis.EventSource=priorSource;
+if(priorTransport===undefined)delete globalThis.FountainTransport;else globalThis.FountainTransport=priorTransport;
+if(originalNavigator)Object.defineProperty(globalThis,'navigator',originalNavigator);
+console.log('PASS: local page remote gate across open, queue, flush, online, retry, restart and applied creation ACK');

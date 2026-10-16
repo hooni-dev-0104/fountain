@@ -133,9 +133,9 @@
   function randomClient(){const bytes=new Uint8Array(16);crypto.getRandomValues(bytes);return 'tab_'+[...bytes].map(value=>value.toString(16).padStart(2,'0')).join('');}
   const stripEpoch=entry=>{const value=clone(entry);delete value._epoch;return value;};
   class DocumentChannel {
-    constructor({pageId,profile,fetcher,onChange=()=>{},onStatus=()=>{},onDenied=()=>{},onDraft=()=>{},onError=()=>{}}){
+    constructor({pageId,profile,fetcher,deferRemote=false,onChange=()=>{},onStatus=()=>{},onDenied=()=>{},onDraft=()=>{},onError=()=>{}}){
       this.pageId=pageId;this.profile=profile;this.clientId=randomClient();this.fetcher=fetcher;this.onChange=onChange;this.onStatus=onStatus;this.onDenied=onDenied;this.onDraft=onDraft;this.onError=onError;this.offline=globalThis.FountainOffline;
-      this.key=this.offline?.key(profile,pageId);this.pending=new Map();this.base=null;this.state=null;this.clock=0;this.closed=false;this.persistence=Promise.resolve();this.delay=500;this.recovering=false;this.retiredEpochs=new Set();
+      this.key=this.offline?.key(profile,pageId);this.pending=new Map();this.base=null;this.state=null;this.clock=0;this.closed=false;this.persistence=Promise.resolve();this.delay=500;this.recovering=false;this.retiredEpochs=new Set();this.remoteDeferred=deferRemote===true;
       this.onlineHandler=()=>this.reconnect();this.offlineHandler=()=>{this.source?.close();this.setStatus('offline');};
       globalThis.addEventListener('online',this.onlineHandler);globalThis.addEventListener('offline',this.offlineHandler);
       this.profileCleared=event=>{if(!this.closed&&event.detail?.profileId===this.profile.id){this.close();this.onDenied({status:401,message:'로그인이 종료되었습니다.'});}};
@@ -146,8 +146,8 @@
       if(this.broadcast)this.broadcast.onmessage=event=>{if(event.data?.key===this.key&&event.data.client!==this.clientId&&!this.closed)this.importPending().then(()=>this.flush()).catch(error=>this.onError(error));};
       const expires=profile.validUntil||Date.parse(profile.session?.expires_at);if(Number.isFinite(expires))this.expiryTimer=setTimeout(()=>this.deny(401,'오프라인 저장 기한이 만료되었습니다. 다시 로그인해 주세요.'),Math.max(0,Math.min(2147483647,expires-Date.now())));
     }
-    setStatus(status){this.status=status;if(!this.closed)this.onStatus({status,pending:this.pending.size,durable:this.durable!==false});}
-    async fetch(path,body){if(this.fetcher)return this.fetcher(path,body);const response=await FountainTransport.request('/api'+path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});const data=await response.json();if(!response.ok){const error=new Error(data.error||'문서를 동기화하지 못했습니다.');error.status=response.status;throw error;}return data;}
+    setStatus(status){this.status=status;if(!this.closed)this.onStatus({status,pending:this.pending.size,durable:this.durable!==false,deferred:this.remoteDeferred});}
+    async fetch(path,body){check(!this.remoteDeferred,'새 페이지가 서버에 생성될 때까지 기기에 보관합니다.',425);if(this.fetcher)return this.fetcher(path,body);const response=await FountainTransport.request('/api'+path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});const data=await response.json();if(!response.ok){const error=new Error(data.error||'문서를 동기화하지 못했습니다.');error.status=response.status;throw error;}return data;}
     async open(snapshot,{cached=false}={}){
       if(this.offline&&this.key)this.previousCached=await this.offline.getSnapshot(this.key);
       if(this.closed)return this;
@@ -155,7 +155,8 @@
       await this.importPending(false);await this.rebuild('open');
       if(this.closed)return this;
       if(this.offline&&this.key)await this.offline.saveSnapshot(this.key,this.base);
-      if(cached){this.setStatus('offline');if(navigator.onLine)this.reconnect();}else{this.setStatus(this.pending.size?'pending':'synced');this.connectEvents();this.flush();}
+      if(this.remoteDeferred)this.setStatus(navigator.onLine?'waiting':'offline');
+      else if(cached){this.setStatus('offline');if(navigator.onLine)this.reconnect();}else{this.setStatus(this.pending.size?'pending':'synced');this.connectEvents();this.flush();}
       const drafts=this.offline&&this.key?await this.offline.getDrafts(this.key):[];if(drafts.length&&!this.closed)this.onDraft(drafts.filter(record=>!['pending','basis'].includes(record.draft.reason)));return this;
     }
     async importPending(rebuild=true){
@@ -288,6 +289,7 @@
     }
     submitPrepared(operations){return this.queue(operations);}
     async flush(){
+      if(this.remoteDeferred){await this.persistence;this.setStatus(navigator.onLine?'waiting':'offline');return;}
       if(this.closed||this.flushing)return this.flushing;clearTimeout(this.flushTimer);
       this.flushing=(async()=>{
         await this.persistence.catch(()=>this.persistPending());await this.importPending();if(this.closed||!this.pending.size)return;
@@ -310,15 +312,25 @@
       })().catch(error=>{if(!this.closed){this.onError(error);this.setStatus('error');}}).finally(()=>{this.flushing=null;});return this.flushing;
     }
     connectEvents(){
-      if(this.closed||typeof EventSource==='undefined'||!navigator.onLine)return;this.source?.close();
+      if(this.closed||this.remoteDeferred||typeof EventSource==='undefined'||!navigator.onLine)return;this.source?.close();
       this.source=FountainTransport.events('/api/pages/'+encodeURIComponent(this.pageId)+'/events');
       this.source.addEventListener('snapshot',event=>{try{const data=JSON.parse(event.data);this.receive(data).then(()=>this.flush()).catch(error=>this.onError(error));}catch(error){this.onError(error);}});
       this.source.addEventListener('denied',event=>{let data;try{data=JSON.parse(event.data);}catch{data={status:403,error:'문서 접근 권한이 변경되었습니다.'};}this.deny(data.status,data.error);});
       this.source.onerror=()=>{this.source?.close();if(!this.closed){this.setStatus('offline');this.retry();}};
     }
-    retry(){clearTimeout(this.retryTimer);if(this.closed)return;this.retryTimer=setTimeout(()=>this.reconnect(),this.delay);this.delay=Math.min(10000,this.delay*2);}
+    retry(){clearTimeout(this.retryTimer);if(this.closed||this.remoteDeferred)return;this.retryTimer=setTimeout(()=>this.reconnect(),this.delay);this.delay=Math.min(10000,this.delay*2);}
+    async resumeRemote(){
+      if(this.closed)return false;if(!this.remoteDeferred)return true;if(this.resuming)return this.resuming;
+      this.resuming=(async()=>{
+        // Only an applied creation receipt changes this durable marker. An
+        // online event alone must never turn a local page into a remote GET.
+        const local=this.offline&&this.key?await this.offline.getLocalPage?.(this.key):null;
+        if(this.closed||local?.localOnly!==false)return false;
+        this.remoteDeferred=false;await this.reconnect();return true;
+      })().finally(()=>{this.resuming=null;});return this.resuming;
+    }
     async reconnect(){
-      if(this.closed)return;if(!navigator.onLine){this.setStatus('offline');return;}
+      if(this.closed)return;if(this.remoteDeferred){this.setStatus(navigator.onLine?'waiting':'offline');return;}if(!navigator.onLine){this.setStatus('offline');return;}
       try{await this.persistence.catch(()=>this.persistPending());const snapshot=await this.fetch('/pages/'+encodeURIComponent(this.pageId)+'/collaboration');await this.importPending(false);await this.receive(snapshot,'reconnect');this.connectEvents();await this.flush();}catch(error){if([401,403,404].includes(error.status))await this.deny(error.status,error.message);else{this.setStatus('offline');this.retry();}}
     }
     async deny(status,message){if(this.closed)return;this.close();this.onDenied({status,message});if(this.offline){if(status===401)await this.offline.clearProfile(this.profile).catch(()=>{});else if(this.key)await this.offline.purgeResource(this.key).catch(()=>{});}}

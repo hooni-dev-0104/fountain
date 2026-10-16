@@ -5,9 +5,10 @@
   const PAUSED = new Set(['conflict', 'denied', 'invalid', 'paused']);
   const PAGE_FIELDS = ['title', 'icon', 'cover', 'favorite'];
   const ROW_FIELDS = ['parent_row_id', 'depends_on'];
+  const preparedImports = new WeakMap();
   const copy = value => structuredClone(value);
   const own = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
-  const uuid = () => crypto.randomUUID ? crypto.randomUUID() : [...crypto.getRandomValues(new Uint8Array(16))].map(value => value.toString(16).padStart(2, '0')).join('');
+  const uuid = () => { if(crypto.randomUUID)return crypto.randomUUID();const bytes=crypto.getRandomValues(new Uint8Array(16));bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;const hex=[...bytes].map(value=>value.toString(16).padStart(2,'0')).join('');return [hex.slice(0,8),hex.slice(8,12),hex.slice(12,16),hex.slice(16,20),hex.slice(20)].join('-'); };
   function canonical(value) {
     if (Array.isArray(value)) return '[' + value.map(canonical).join(',') + ']';
     if (value && typeof value === 'object') return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + canonical(value[key])).join(',') + '}';
@@ -31,9 +32,10 @@
       require(profile?.id && globalThis.FountainOffline && globalThis.FountainTransport, '오프라인 저장소와 연결 프로필이 필요합니다.');
       this.profile = copy(profile); this.offline = FountainOffline; this.transport = FountainTransport;
       this.onChange = onChange; this.onDenied = onDenied; this.onError = onError;
+      preparedImports.set(this,new Map()); this.importBusy=0; this.importResume=false; this.importResumeAt=Infinity; this.scheduled=false; this.scheduledAt=0;
       this.closed = false; this.writing = 0; this.requests = new Set(); this.workspaceSource = copy(profile.workspace || {}); this.pages = new Map(); this.delay = 1000;
       this.online = () => this.sync().catch(error => this.report(error));
-      this.queueChanged = event => { if (!this.closed && event.detail?.profileId === this.profile.id && !this.writing) { this.changed({ reason: 'queue' }).catch(error => this.report(error)); this.schedule(); } };
+      this.queueChanged = event => { if (!this.closed && event.detail?.profileId === this.profile.id && !this.writing) { this.changed({ reason: event.detail?.recoveryImport ? 'recovery-import' : 'queue' }).catch(error => this.report(error)); if(!event.detail?.recoveryImport)this.schedule(); } };
       this.profileCleared = event => { if (!this.closed && event.detail?.profileId === this.profile.id) { this.close(); this.denied({ status: 401, kind: 'session', message: '로그인이 종료되었습니다.' }); } };
       this.profileChanged = async () => { const current = await this.offline.getProfile().catch(() => null); if (!this.closed && current?.id !== this.profile.id) { this.close(); this.denied({ status: 401, kind: 'session', switched: true, message: '다른 로그인으로 전환되었습니다.' }); } };
       addEventListener('online', this.online); addEventListener('fountain-offline-mutations-changed', this.queueChanged);
@@ -82,8 +84,9 @@
     async records() { await this.guard(); return this.offline.listMutations(this.profile); }
     async changed(detail = {}) { if (this.closed) return; const records = await this.records(); if (!this.closed) { try { this.onChange({ ...detail, records }); } catch (error) { this.report(error); } } }
     schedule(delay = 180) {
-      clearTimeout(this.timer); if (this.closed || !navigator.onLine) return;
-      this.timer = setTimeout(async () => { try { if ((await this.records()).some(record => ACTIVE.has(record.status))) await this.sync(); } catch (error) { this.report(error); } }, delay);
+      clearTimeout(this.timer); this.scheduled=false; if (this.closed || !navigator.onLine) return;
+      if(this.importBusy){this.importResume=true;this.importResumeAt=Math.min(this.importResumeAt,Date.now()+delay);return;}
+      this.scheduled=true; this.scheduledAt=Date.now()+delay; this.timer = setTimeout(async () => { this.scheduled=false; try { if ((await this.records()).some(record => ACTIVE.has(record.status))) await this.sync(); } catch (error) { this.report(error); } }, delay);
     }
     retry() { if (!this.closed) { this.schedule(this.delay); this.delay = Math.min(30000, this.delay * 2); } }
     async canonicalDatabase(id) {
@@ -341,6 +344,7 @@
       return selected;
     }
     sync() {
+      if(this.importBusy){this.importResume=true;this.importResumeAt=Math.min(this.importResumeAt,Date.now());return Promise.resolve({paused:true});}
       if (this.syncing) return this.syncing.then(async result => {
         if (!this.closed && navigator.onLine && (await this.records()).some(record => ACTIVE.has(record.status))) return this.sync();
         return result;
@@ -386,10 +390,187 @@
       while (changed) { changed = false; for (const record of records) if (!ids.has(record.id) && dependencies(record.operation).some(value => ids.has(value))) { ids.add(record.id); changed = true; } }
       return records.filter(record => ids.has(record.id));
     }
-    async export(id) {
-      const records = await this.records(), selected = id ? this.closure(records, id) : records, pages = [];
-      for (const record of selected) if (record.operation.kind === 'page.create') { const local = await this.localPage(record.operation.target_id); if (local) pages.push({ ...local, operations: await this.offline.pendingOperations(record.resourceKey), drafts: await this.offline.getDrafts(record.resourceKey) }); }
-      return { format: 'fountain-mutation-recovery-v1', workspace_id: this.profile.workspaceId, member_id: this.profile.memberId, exported_at: new Date().toISOString(), records: copy(selected), localPages: pages };
+    async export(id) { return this.exportV2(id); }
+    async exportV2(id) {
+      const records = await this.records(), selected = id ? this.closure(records,id) : records, localPages = [], drafts = [];
+      for (const record of selected) if (record.operation.kind === 'page.create') { const local=await this.localPage(record.operation.target_id); if(local)localPages.push({...local,operations:await this.offline.pendingOperations(record.resourceKey),drafts:await this.offline.getDrafts(record.resourceKey)}); }
+      for(const {key,snapshot} of await this.offline.listSnapshots(this.profile))if(snapshot.page?.id&&!localPages.some(local=>local.metadata.page.id===snapshot.page.id)&&(!id||selected.some(record=>record.operation.kind.startsWith('page.')&&record.operation.target_id===snapshot.page.id)))for(const record of await this.offline.getDrafts(key))if(!['pending','basis'].includes(record.draft.reason))drafts.push({page_id:snapshot.page.id,draft:copy(record.draft)});
+      await this.guard();return {format:'fountain-recovery-v2',origin:this.transport.origin||this.profile.origin,workspace_id:this.profile.workspaceId,member_id:this.profile.memberId,source_binding:this.profile.cacheBinding,exported_at:new Date().toISOString(),records:copy(selected),localPages,drafts};
+    }
+    importCurrent(isCurrent) {
+      if (this.closed || isCurrent && !isCurrent()) { const error = failure('가져오기 미리보기가 닫혔습니다.', 409, 'STALE_REQUEST'); error.name = 'AbortError'; throw error; }
+    }
+    discardPrepared(token) { preparedImports.get(this)?.delete(typeof token === 'object' ? token.token : token); }
+    importFingerprint(value, spec) {
+      if (spec.kind === 'metadata') return canonical(value);
+      if (spec.kind === 'workspace') return canonical({ teamspaces: value.teamspaces, pages: (value.pages || []).filter(page => spec.pageIds.includes(page.id)) });
+      if (spec.kind === 'page') return canonical({ page: Object.fromEntries(['id','title','icon','cover','favorite','parent_id','teamspace_id','access_level','locked','archived','revision'].map(key => [key,value.page?.[key] ?? null])), epoch: value.epoch, seq: value.seq, blocks: value.blocks, access_level: value.access_level });
+      const ids = new Set(spec.rowIds); for (const id of spec.deleteIds) for (const row of subtree(value.rows, id)) ids.add(row.id);
+      return canonical({ database: Object.fromEntries(Object.entries(value.database).filter(([key]) => !['created_at','updated_at'].includes(key))), rows: value.rows.filter(row => ids.has(row.id)).sort((a,b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0) });
+    }
+    async importRead(path, kind, id, isCurrent) {
+      this.importCurrent(isCurrent); const value = await this.request(path); this.importCurrent(isCurrent);
+      if (kind === 'metadata') require(value.id === id && value.status === 'complete' && Number.isSafeInteger(value.size) && value.size >= 0, '첨부 파일의 현재 정보를 확인할 수 없습니다.', 409);
+      else require(this.bound(value) && (kind === 'workspace' || kind === 'database' ? kind === 'workspace' || value.database?.id === id : value.page?.id === id), '현재 로그인과 복구 대상이 일치하지 않습니다.', 403, 'SESSION_CHANGED');
+      return value;
+    }
+    planRowOperation(original, snapshot, virtual) {
+      const operation = copy(original), row = snapshot.rows.find(value => value.id === operation.target_id);
+      if (operation.kind === 'row.create') {
+        require(snapshot.database.can_create_row ?? snapshot.database.access_level >= 3, '새 항목을 만들 권한이 없습니다.', 403);
+        require(!row, '같은 ID의 항목이 이미 있습니다.', 409, 'UNSUPPORTED_RECOVERY');
+        operation.base = { schema: this.schema(snapshot.database, operation.body.properties || {}) };
+      } else {
+        require(row && (row.access_level ?? snapshot.database.access_level) >= 3, '항목을 편집할 권한이 없습니다.', row ? 403 : 404);
+        if (operation.kind === 'row.patch') operation.base = { schema: this.schema(snapshot.database, operation.body.properties || {}), properties: Object.fromEntries(Object.keys(operation.body.properties || {}).map(key => [key, copy(row.properties[key] ?? null)])), fields: Object.fromEntries(ROW_FIELDS.filter(key => own(operation.body, key)).map(key => [key, copy(row[key] ?? (key === 'depends_on' ? [] : null))])) };
+        else { const replacement = this.deleteOperation(operation.database_id, operation.target_id, snapshot, virtual); operation.base_rows = replacement.base_rows; operation.depends_on = [...new Set([...(operation.depends_on || []), ...replacement.depends_on])]; }
+      }
+      require((operation.depends_on || []).length <= 50, '연결된 복구 변경은 한 항목당 50개까지 준비할 수 있습니다.');
+      return operation;
+    }
+    async prepareImport(text, { targetPageId, isCurrent } = {}) {
+      require(globalThis.FountainRecovery && this.offline.stageRecoveryImport, '복구 파일 가져오기를 지원하지 않는 저장소입니다.', 409, 'UNSUPPORTED_RECOVERY');
+      this.importCurrent(isCurrent); if(this.scheduled){this.importResume=true;this.importResumeAt=Math.min(this.importResumeAt,this.scheduledAt);} clearTimeout(this.timer); this.scheduled=false; this.importBusy++;
+      try {
+        const source = FountainRecovery.parse(text, { origin: this.transport.origin || this.profile.origin, workspaceId: this.profile.workspaceId, memberId: this.profile.memberId });
+        if (source.kind === 'body') require(targetPageId, '본문을 복사할 현재 문서를 선택해 주세요.', 400, 'TARGET_PAGE_REQUIRED');
+        const digest=source.kind==='body'?FountainCollaboration.sha256(canonical({sourceDigest:source.digest,targetPageId})):source.digest;
+        await this.authenticate(); this.importCurrent(isCurrent);
+        const reads = new Map(), specs = new Map();
+        const read = async (kind, id) => {
+          if(kind==='page'){
+            const page=workspace.pages?.find(page=>page.id===id);require(page,'현재 읽을 수 있는 문서가 아닙니다.',404);
+            specs.get('/workspace').pageIds.push(id);
+            return {page:copy(page),blocks:copy(page.blocks||[]),access_level:page.access_level,workspace_id:this.profile.workspaceId,current_member_id:this.profile.memberId,session_binding:this.profile.cacheBinding};
+          }
+          const path = kind === 'workspace' ? '/workspace' : kind === 'database' ? '/databases/' + encodeURIComponent(id) : kind === 'page' ? '/pages/' + encodeURIComponent(id) + '/collaboration' : '/attachments/' + encodeURIComponent(id) + '/metadata';
+          if (!reads.has(path)) { require(reads.size < 5000, '복구 파일이 참조하는 리소스가 너무 많습니다.'); reads.set(path, this.importRead(path, kind, id, isCurrent)); specs.set(path, { path, kind, id, rowIds: [], deleteIds: [], pageIds: [] }); }
+          return reads.get(path);
+        };
+        const workspace = await read('workspace'); this.importCurrent(isCurrent);
+        const databaseIds = [...new Set(source.records.map(record => record.operation.database_id).filter(Boolean))];
+        const databases = new Map(await Promise.all(databaseIds.map(async id => [id, await read('database', id)]))); this.importCurrent(isCurrent);
+        const used = new Set(), newId = () => { let id; for (let attempts = 0; attempts < 10; attempts++) { id = uuid(); if (!used.has(id) && !source.records.some(record => record.operation.id === id || record.operation.target_id === id)) { used.add(id); return id; } } throw failure('새 복구 식별자를 만들 수 없습니다.', 409); };
+        const opIds = new Map(source.records.map(record => [record.operation.id, newId()])), pages = new Map(), rows = new Map(), createRecords = new Map();
+        const rowKey = (databaseId,id) => canonical([databaseId,id]);
+        for (const record of source.records) {
+          const operation = record.operation;
+          if (operation.kind === 'page.create') { require(!pages.has(operation.target_id), '새 문서가 중복되어 있습니다.'); pages.set(operation.target_id,newId()); createRecords.set(canonical(['page',operation.target_id]),record); }
+          if (operation.kind === 'row.create') { const key=rowKey(operation.database_id,operation.target_id); require(!rows.has(key), '새 항목이 중복되어 있습니다.'); rows.set(key,newId()); createRecords.set(canonical(['row',operation.database_id,operation.target_id]),record); }
+        }
+        const warnings = [...source.warnings], extraEdges = new Map();
+        const edge = (record, dependency) => { if (!extraEdges.has(record.operation.id)) extraEdges.set(record.operation.id, []); if (dependency) extraEdges.get(record.operation.id).push(dependency.operation.id); };
+        const requireRow = async (databaseId,id,record) => {
+          identity(id); const creating=createRecords.get(canonical(['row',databaseId,id]));
+          if (creating) { edge(record,creating); return rows.get(rowKey(databaseId,id)); }
+          if (!databases.has(databaseId)) databases.set(databaseId,await read('database',databaseId));
+          const snapshot=databases.get(databaseId); require(snapshot.rows.some(row=>row.id===id),'참조한 원래 항목이 파일이나 현재 서버에 없습니다.',404);
+          specs.get('/databases/'+encodeURIComponent(databaseId)).rowIds.push(id); return id;
+        };
+        for (const record of source.records) {
+          const operation=record.operation,body=operation.body;
+          if (operation.kind==='page.create'&&body.parent_id) {
+            const creating=createRecords.get(canonical(['page',body.parent_id]));
+            if (creating) edge(record,creating); else { const parent=await read('page',body.parent_id); require(parent.access_level>=3&&!parent.page.locked&&!parent.page.archived,'상위 문서를 편집할 권한이 없습니다.',403); }
+          } else if (operation.kind==='page.patch'&&!pages.has(operation.target_id)) { const page=await read('page',operation.target_id); require(page.access_level>=3&&!page.page.locked&&!page.page.archived,'문서를 편집할 권한이 없습니다.',403); }
+          else if (operation.kind==='page.patch') edge(record,createRecords.get(canonical(['page',operation.target_id])));
+          if (operation.database_id) {
+            const db=databases.get(operation.database_id),spec=specs.get('/databases/'+encodeURIComponent(operation.database_id));
+            if (operation.kind!=='row.create') await requireRow(operation.database_id,operation.target_id,record);
+            if (body.parent_row_id) await requireRow(operation.database_id,body.parent_row_id,record);
+            for (const id of body.depends_on||[]) await requireRow(operation.database_id,id,record);
+            this.schema(db.database,body.properties||{});
+            for (const [id,value] of Object.entries(body.properties||{})) {
+              const property=db.database.properties.find(property=>property.id===id); require(property&&!['formula','rollup'].includes(property.type),'삭제되었거나 계산된 속성은 가져올 수 없습니다.');
+              if (property.type==='relation'&&value!==null) for (const target of value) await requireRow(property.database_id||operation.database_id,target,record);
+              if (property.type==='files'&&value!==null) for (const attachment of value) await read('metadata',identity(attachment));
+            }
+            if (operation.kind==='row.delete'&&!rows.has(rowKey(operation.database_id,operation.target_id))) spec.deleteIds.push(operation.target_id);
+          }
+        }
+        const ordered=FountainRecovery.topological(source.records,extraEdges),virtual=[],mutations=[],localPages=[],drafts=[],items=[];
+        const mappedBody = operation => {
+          const body=copy(operation.body);
+          if (operation.kind.startsWith('page.')) { if (body.parent_id) body.parent_id=pages.get(body.parent_id)||body.parent_id; return body; }
+          if (body.parent_row_id) body.parent_row_id=rows.get(rowKey(operation.database_id,body.parent_row_id))||body.parent_row_id;
+          if (body.depends_on) body.depends_on=body.depends_on.map(id=>rows.get(rowKey(operation.database_id,id))||id);
+          for (const property of databases.get(operation.database_id).database.properties) if (property.type==='relation'&&Array.isArray(body.properties?.[property.id])) body.properties[property.id]=body.properties[property.id].map(id=>rows.get(rowKey(property.database_id||operation.database_id,id))||id);
+          return body;
+        };
+        const pageValues=new Map();let bodyBudget=Math.max(0,FountainRecovery.MAX_RGA_POINTS-(source.summary.replayedCodePoints||0)),deferredBodies=0,deferredBlocks=0,deferredCodePoints=0;
+        for (const record of ordered) {
+          const original=record.operation,body=mappedBody(original),target=original.kind.startsWith('page.')?(pages.get(original.target_id)||original.target_id):(rows.get(rowKey(original.database_id,original.target_id))||original.target_id);
+          let bodyDeferred=false,preservedBlocks=0,preservedCodePoints=0;
+          let operation={id:opIds.get(original.id),kind:original.kind,target_id:target,body,depends_on:[...new Set([...(original.depends_on||[]),...(extraEdges.get(original.id)||[])].filter(id=>opIds.has(id)).map(id=>opIds.get(id)))]},before=null,after=null,deleteRows;
+          if (original.kind==='page.create') {
+            require(this.profile.session.member.role!=='guest','게스트는 새 문서를 만들 수 없습니다.',403);
+            require(!workspace.pages.some(page=>page.id===target),'새 문서 식별자가 이미 사용 중입니다.',409);
+            let parent=body.parent_id&&(pageValues.get(body.parent_id)||(await read('page',body.parent_id)).page);
+            if(parent)body.teamspace_id=parent.teamspace_id??null;
+            else if(own(original.body,'teamspace_id')){require(body.teamspace_id===null||workspace.teamspaces?.some(space=>space.id===body.teamspace_id),'원래 팀스페이스가 없거나 새 문서를 만들 권한이 없습니다.',403);}
+            else body.teamspace_id=workspace.teamspaces?.find(space=>space.id==='general')?.id??workspace.teamspaces?.[0]?.id??null;
+            operation.document_epoch=newId();body.id=target;body.permissions={default:'private',inherit:false,members:{},groups:{}};
+            warnings.push('새 문서 사본은 과거 공유 설정을 가져오지 않고 비공개로 만듭니다.');
+            const page={id:target,...copy(body),owner_id:this.profile.memberId,access_level:4,revision:0,locked:false,archived:false,favorite:false,blocks:[]};
+            pageValues.set(target,page);after=copy(page);
+            const snapshot={epoch:operation.document_epoch,seq:0,state:FountainCollaboration.seedState([]),blocks:[],page:copy(page),access_level:4,access_revision:workspace.access_revision||0,data_revision:0,workspace_id:this.profile.workspaceId,current_member_id:this.profile.memberId,session_binding:this.profile.cacheBinding};
+            const oldBody=source.localPages.find(page=>page.page_id===original.target_id).blocks;
+            for (const block of oldBody) if (block.attachment_id) await read('metadata',identity(block.attachment_id));
+            preservedCodePoints=FountainRecovery.bodyCodePoints(oldBody);preservedBlocks=oldBody.length;bodyDeferred=preservedCodePoints>bodyBudget;
+            const built=bodyDeferred?{blocks:FountainRecovery.remapBlocks(oldBody,{newId}),operations:[]}:FountainRecovery.buildBody(oldBody,{newId,clientId:'recovery_'+newId().replace(/-/g,''),epoch:operation.document_epoch}),resourceKey=this.offline.key(this.profile,target);
+            if(bodyDeferred){deferredBodies++;deferredBlocks+=preservedBlocks;deferredCodePoints+=preservedCodePoints;warnings.push('새 문서 본문은 한 번에 자동 구성할 수 있는 문자·서식 작업 범위를 넘어 읽을 수 있는 복구 초안으로 모두 보관합니다. 비공개 문서를 생성한 뒤 별도 본문 복구가 필요하며 원문은 내보낼 수 있습니다.');}else bodyBudget-=preservedCodePoints;
+            localPages.push({resourceKey,metadata:{page:copy(page),initial_epoch:operation.document_epoch,create_operation_id:operation.id,localOnly:true},snapshot,operations:built.operations,drafts:[{clientId:newId(),draft:bodyDeferred?{epoch:operation.document_epoch,blocks:built.blocks,reason:'imported_large_body',imported:true,source_digest:source.digest,createdAt:new Date().toISOString()}:{epoch:operation.document_epoch,ops:built.operations.map(({_epoch,...op})=>op),blocks:built.blocks,reason:'pending',createdAt:new Date().toISOString()}}]});
+            after.blocks=copy(built.blocks);
+          } else if (original.kind.startsWith('row.')) {
+            operation.database_id=original.database_id;const snapshot=this.projectDatabase(databases.get(original.database_id),virtual);
+            before=copy(snapshot.rows.find(row=>row.id===target)||null);
+            operation=this.planRowOperation(operation,snapshot,virtual);
+            if (operation.kind==='row.create') operation.body.id=target;
+            if (operation.kind==='row.delete') { deleteRows=copy(subtree(snapshot.rows,target));warnings.push('항목 삭제는 미리보기에 표시된 현재 하위 항목 전체에 적용됩니다.'); }
+            virtual.push({id:operation.id,operation,status:'pending',createdAt:Date.now()});after=copy(this.projectDatabase(databases.get(original.database_id),virtual).rows.find(row=>row.id===target)||null);
+            specs.get('/databases/'+encodeURIComponent(original.database_id)).rowIds.push(target);
+          } else {
+            let page=pageValues.get(target);if(!page) page=copy((await read('page',target)).page);
+            require(page.access_level>=3&&!page.locked&&!page.archived,'문서를 편집할 권한이 없습니다.',403);before=copy(page);
+            operation.base={fields:Object.fromEntries(Object.keys(body).map(key=>[key,copy(page[key]??null)]))};Object.assign(page,copy(body));pageValues.set(target,page);after=copy(page);
+          }
+          require(operation.depends_on.length<=50,'한 변경에 연결된 복구 작업이 너무 많습니다.');
+          if(!original.kind.startsWith('row.')) virtual.push({id:operation.id,operation,status:'pending',createdAt:Date.now()});
+          const resourceKey=operation.database_id?this.offline.databaseKey(this.profile,operation.database_id):this.offline.key(this.profile,target);mutations.push({resourceKey,operation});
+          const schema=operation.database_id?databases.get(operation.database_id).database.properties:null,titleProperty=schema?.find(property=>property.type==='title');
+          const rowTitle=titleProperty&&(after?.properties?.[titleProperty.id]??before?.properties?.[titleProperty.id]);
+          const title=schema?(typeof rowTitle==='string'&&rowTitle?rowTitle:operation.kind==='row.delete'?'항목 삭제':operation.kind==='row.create'?'새 항목':'항목 변경'):(body.title||after?.title||before?.title||target);
+          items.push({kind:operation.kind,targetId:target,...(schema?{databaseId:operation.database_id,...(titleProperty?{titlePropertyId:titleProperty.id}:{}),propertyLabels:Object.fromEntries(schema.map(property=>[property.id,property.name||property.id]))}:{}),title,before,after,...(bodyDeferred?{bodyDeferred,preservedBlocks,preservedCodePoints}:{}),...(deleteRows?{deleteRows}:{})});
+        }
+        for (const entry of source.drafts) {
+          const target=source.kind==='body'?targetPageId:pages.get(entry.page_id)||entry.page_id;identity(target);
+          let page=pageValues.get(target);if(!page) page=(await read('page',target)).page;
+          require(page.access_level>=3&&!page.locked&&!page.archived,'본문을 복사할 문서를 편집할 권한이 없습니다.',403);
+          for (const block of entry.draft.blocks) if (block.attachment_id) await read('metadata',identity(block.attachment_id));
+          const built={blocks:FountainRecovery.remapBlocks(entry.draft.blocks,{newId})};
+          const draft={blocks:built.blocks,reason:entry.draft.reason,imported:true,source_digest:source.digest,createdAt:new Date().toISOString()};
+          drafts.push({resourceKey:this.offline.key(this.profile,target),clientId:newId(),draft});
+          items.push({kind:'body',targetId:target,title:page.title||target,before:null,after:copy(built.blocks)});
+        }
+        const workspaceSpec=specs.get('/workspace');workspaceSpec.pageIds=[...new Set([...workspaceSpec.pageIds,...pages.values(),...source.records.filter(record=>record.operation.kind==='page.create').map(record=>record.operation.body.parent_id).filter(id=>id&&!pages.has(id))])];
+        const proofs=[];for(const [path,promise] of reads){const value=await promise;this.importCurrent(isCurrent);const spec=specs.get(path);proofs.push({...spec,fingerprint:this.importFingerprint(value,spec)});}
+        const summary={...source.summary,deferredBodies,deferredBlocks,deferredCodePoints,createdPages:mutations.filter(record=>record.operation.kind==='page.create').length,createdRows:mutations.filter(record=>record.operation.kind==='row.create').length,updatedPages:mutations.filter(record=>record.operation.kind==='page.patch').length,updatedRows:mutations.filter(record=>record.operation.kind==='row.patch').length,deletedRows:mutations.filter(record=>record.operation.kind==='row.delete').length};
+        const token=newId(),publicValue={token,digest,kind:source.kind,summary,warnings:[...new Set(warnings)],items,source:source.source};
+        this.importCurrent(isCurrent);await this.guard();this.importCurrent(isCurrent);
+        preparedImports.get(this).clear();preparedImports.get(this).set(token,{digest,proofs,bundle:{digest,mutations,localPages,drafts},role:this.profile.session.member.role});
+        return copy(publicValue);
+      } finally { this.importBusy--; if(!this.importBusy&&this.importResume){this.importResume=false;const delay=Math.max(0,this.importResumeAt-Date.now());this.importResumeAt=Infinity;this.schedule(delay);} }
+    }
+    async importPrepared(prepared, { isCurrent } = {}) {
+      this.importCurrent(isCurrent);if(this.scheduled){this.importResume=true;this.importResumeAt=Math.min(this.importResumeAt,this.scheduledAt);}clearTimeout(this.timer);this.scheduled=false;this.importBusy++;
+      try {
+        const saved=preparedImports.get(this).get(prepared?.token);require(saved&&saved.digest===prepared.digest,'가져오기 미리보기를 다시 열어 주세요.',409,'IMPORT_PREVIEW_STALE');
+        await this.authenticate();this.importCurrent(isCurrent);require(this.profile.session.member.role===saved.role,'권한이 바뀌었습니다. 미리보기를 다시 확인해 주세요.',409,'IMPORT_PREVIEW_STALE');
+        for(const proof of saved.proofs){const value=await this.importRead(proof.path,proof.kind,proof.id,isCurrent);require(this.importFingerprint(value,proof)===proof.fingerprint,'복구 대상의 현재 내용이나 권한이 바뀌었습니다. 미리보기를 다시 확인해 주세요.',409,'IMPORT_PREVIEW_STALE');}
+        this.importCurrent(isCurrent);
+        const result=await this.write(()=>{this.importCurrent(isCurrent);return this.offline.stageRecoveryImport(this.profile,copy(saved.bundle),{isCurrent:()=>!this.closed&&(!isCurrent||isCurrent())});});
+        this.importCurrent(isCurrent);preparedImports.get(this).delete(prepared.token);await this.changed({reason:'recovery-import'});return result;
+      } finally { this.importBusy--; if(!this.importBusy&&this.importResume){this.importResume=false;const delay=Math.max(0,this.importResumeAt-Date.now());this.importResumeAt=Infinity;this.schedule(delay);} }
     }
     async drop(id) {
       require(!this.syncing, '동기화 중인 변경은 완료 뒤 정리해 주세요.', 409);
@@ -430,13 +611,7 @@
           }
         } else if (original.kind.startsWith('row.')) {
           const snapshot = this.projectDatabase(databases.get(original.database_id), virtual), row = snapshot.rows.find(value => value.id === original.target_id);
-          if (original.kind === 'row.create') { require(!row, '같은 ID의 항목이 이미 있습니다. 자동으로 ID를 바꾸지 않습니다.', 409, 'UNSUPPORTED_RECOVERY'); operation.base = { schema: this.schema(snapshot.database, original.body.properties || {}) }; }
-          else if (original.kind === 'row.patch') {
-            require(row, '항목이 없어 재적용할 수 없습니다.', 404, 'UNSUPPORTED_RECOVERY');
-            operation.base = { schema: this.schema(snapshot.database, original.body.properties || {}), properties: Object.fromEntries(Object.keys(original.body.properties || {}).map(key => [key, copy(row.properties[key] ?? null)])), fields: Object.fromEntries(ROW_FIELDS.filter(key => own(original.body, key)).map(key => [key, copy(row[key] ?? (key === 'depends_on' ? [] : null))])) };
-          } else {
-            const replacement = this.deleteOperation(original.database_id, original.target_id, snapshot, virtual); operation.base_rows = replacement.base_rows; operation.depends_on = [...new Set([...operation.depends_on, ...replacement.depends_on])].slice(-50);
-          }
+          Object.assign(operation,this.planRowOperation(operation,snapshot,virtual));
         } else {
           const page = copy(pageValues.get(original.target_id)); for (const previous of virtual) if (ACTIVE.has(previous.status) && previous.operation.kind === 'page.patch' && previous.operation.target_id === original.target_id) Object.assign(page, previous.operation.body);
           operation.base = { fields: Object.fromEntries(Object.keys(original.body).map(key => [key, copy(page[key] ?? null)])) };
@@ -447,7 +622,7 @@
       await this.changed({ reason: 'reapplied' }); this.schedule(); return { operations: fresh.map(record => record.operation) };
     }
     close() {
-      if (this.closed) return; this.closed = true; clearTimeout(this.timer);
+      if (this.closed) return; this.closed = true; preparedImports.get(this)?.clear(); clearTimeout(this.timer);
       for (const request of this.requests) request.abort(); this.requests.clear();
       removeEventListener('online', this.online); removeEventListener('fountain-offline-mutations-changed', this.queueChanged);
       removeEventListener('fountain-offline-profile-cleared', this.profileCleared); removeEventListener('fountain-offline-profile-changed', this.profileChanged);

@@ -71,6 +71,19 @@
       for(const row of await request(store.index('profileId').getAll(profileId)))store.delete(row.key);
     });
   }
+  function actorPrefix(detail) {
+    const id=detail?.profileId,prefix=typeof id==='string'?id.split('|').slice(0,3).join('|')+'|':null;
+    return typeof id==='string'&&id.split('|').length===4&&detail?.scope==='actor'&&detail.actorPrefix===prefix&&id.startsWith(SERVER_ORIGIN+'|')?prefix:null;
+  }
+  async function purgeActor(prefix) {
+    return transaction('readwrite',store=>new Promise((resolve,reject)=> {
+      const cursor=store.index('profileId').openCursor(IDBKeyRange.bound(prefix,prefix+'\uffff'));
+      cursor.onerror=()=>reject(cursor.error); cursor.onsuccess=()=> {
+        if(!cursor.result){resolve();return;}
+        store.delete(cursor.result.value.key);cursor.result.continue();
+      };
+    }));
+  }
   class UploadManager {
     constructor( {
       scope,isCurrent,onChange=()=> {
@@ -78,14 +91,10 @@
       }
     }) {
       this.scope=clone(scope); this.scopeId=scopeIdentity(scope); this.profileId=profileIdentity(scope); this.resourceKey=this.scopeId; this.isCurrent=isCurrent; this.onChange=onChange; this.onComplete=onComplete; this.onDenied=onDenied; this.jobs=new Map(); this.closed=false; this.generation=0; this.profileCleared=event=> {
-        if(event.detail?.profileId===this.profileId) {
-          this.dispose(); purgeProfile(this.profileId).catch(()=> {
-          });
-        }
+        const prefix=actorPrefix(event.detail);if(event.detail?.profileId===this.profileId||prefix&&this.profileId.startsWith(prefix))this.dispose();
       }; this.profileChanged=async()=> {
         const current=await FountainOffline.getProfile().catch(()=>null); if(!this.closed&&current?.id!==this.profileId) {
-          this.dispose(); purgeProfile(this.profileId).catch(()=> {
-          });
+          this.dispose();
         }
       }; this.resourcePurged=event=> {
         if(event.detail?.key===this.resourceKey) {
@@ -129,9 +138,9 @@
       const generation=this.generation; await this.authorized(); if(!this.liveJob(job)||!this.current()||generation!==this.generation&&job.status!=='paused')throw abortError('전송 상태가 변경되어 저장을 중지했습니다.'); const record= {
         key:this.scopeId+'|'+identifier(job.id),id:job.id,profileId:this.profileId,scopeId:this.scopeId,pageId:this.scope.pageId,name:job.name,size:job.size,lastModified:job.lastModified,fingerprint:clone(job.fingerprint),offset:job.offset,expiresAt:job.expiresAt,publicationVersion:job.publicationVersion||0,publication:clone(job.publication||null)
       }; await transaction('readwrite',async store=> {
-        if(!this.liveJob(job)||generation!==this.generation&&job.status!=='paused')return; const previous=await request(store.get(record.key)); if(!this.liveJob(job)||generation!==this.generation&&job.status!=='paused')return; if(!previous||previous.offset<=record.offset)store.put(record);
+        if(!this.liveJob(job)||!this.current()||generation!==this.generation&&job.status!=='paused')return; const previous=await request(store.get(record.key)); if(!this.liveJob(job)||!this.current()||generation!==this.generation&&job.status!=='paused')return; if(!previous||previous.offset<=record.offset)store.put(record);
       }); const active=await FountainOffline.getProfile(); if(!this.liveJob(job)||active?.id!==this.profileId) {
-        await this.remove(job.id); throw abortError('취소되었거나 로그인 계정이 변경되어 전송 정보를 정리했습니다.');
+        throw abortError('로그인 계정이 변경되어 전송을 중지했습니다. 원래 전송 정보는 보관했습니다.');
       }
       if(!this.current()||generation!==this.generation)throw abortError('전송이 일시 중지되었습니다. 원본 파일을 선택해 이어 보낼 수 있습니다.');
     }
@@ -238,13 +247,19 @@
       const accepted=await this.onComplete(attachment,this.scope,current,publication); if(!this.current()||generation!==this.generation||accepted!==true)throw abortError(); await this.remove(job.id); job.status='done'; job.message='문서에 파일을 추가했습니다.'; job.file=null; job.loaded=0; this.emit(); return attachment;
     }
     async fail(job,failure,generation) {
-      if(generation!==undefined&&generation!==this.generation)return null; job.loaded=0; if(failure.name==='AbortError') {
+      if(!this.current()||generation!==undefined&&generation!==this.generation)return null; job.loaded=0; if(failure.name==='AbortError') {
         if(!['cancelled','done','paused'].includes(job.status)) {
           job.status=job.file?'paused':'reselect'; job.message='전송을 일시 중지했습니다. 원본 파일을 선택해 이어 보낼 수 있습니다.';
         }
         this.emit(); return;
       }
-      job.status='error'; job.message=failure.message||'파일 전송을 완료하지 못했습니다.'; if([401,403,404,410].includes(failure.status)) {
+      if(failure.status===401) {
+        const notify=this.isCurrent(this.scope);
+        if(FountainOffline.suspendProfile)await FountainOffline.suspendProfile({workspaceId:this.scope.workspaceId,memberId:this.scope.memberId,cacheBinding:this.scope.binding}).catch(()=>{});
+        this.dispose(); if(notify&&this.isCurrent(this.scope))this.onDenied({status:401,message:failure.message,scope:this.scope});
+        return null;
+      }
+      job.status='error'; job.message=failure.message||'파일 전송을 완료하지 못했습니다.'; if([403,404,410].includes(failure.status)) {
         await this.remove(job.id); job.file=null; job.status='denied'; if(!this.closed)this.onDenied( {
           status:failure.status,message:job.message,scope:this.scope
         });
@@ -282,13 +297,9 @@
     }).catch(()=> {
     });
   }); globalThis.addEventListener('fountain-offline-profile-cleared',event=> {
-    if(event.detail?.profileId)purgeProfile(event.detail.profileId).catch(()=> {
-    });
-  }); globalThis.addEventListener('fountain-offline-profile-changed',async()=> {
-    const current=await FountainOffline.getProfile().catch(()=>null); if(!current)return; await transaction('readwrite',async store=> {
-      for(const record of await request(store.getAll()))if(record.profileId!==current.id)store.delete(record.key);
-    }).catch(()=> {
-    });
+    const prefix=actorPrefix(event.detail);
+    if(prefix)purgeActor(prefix).catch(()=>{});
+    else if(event.detail?.profileId)purgeProfile(event.detail.profileId).catch(()=>{});
   }); globalThis.FountainUploads=Object.freeze( {
     UploadManager,CHUNK_SIZE,MAX_SIZE,fingerprint,sameFingerprint
   });

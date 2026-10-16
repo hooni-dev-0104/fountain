@@ -57,6 +57,8 @@ public final class OutboxPolicyFixture {
         equal(Arrays.equals(OutboxPolicy.recoveryProfile("https://fixture.invalid","https://fixture.invalid|w|member|old-binding","w","member"),new String[]{"w","member","old-binding"}),true);
         for(String source:new String[]{"https://other.invalid|w|member|old", "https://fixture.invalid|other|member|old", "https://fixture.invalid|w|other|old", "https://fixture.invalid|w|member|", "https://fixture.invalid|w|member|%ZZ", "https://fixture.invalid|w|member|%6Fld"})equal(OutboxPolicy.recoveryProfile("https://fixture.invalid",source,"w","member"),null);
         String unicode="abc🏠def";int end=OutboxPolicy.recoverySlice(unicode,0,4);equal(end,3);equal(unicode.substring(end),"🏠def");
+        equal(OutboxPolicy.actorPrefix("https://fixture.invalid","https://fixture.invalid|w%25|member%7Cname|old-binding"),"https://fixture.invalid|w%25|member%7Cname|");
+        for(String profile:new String[]{"https://other.invalid|w|m|b","https://fixture.invalid|w|m|","https://fixture.invalid|w|m|%62","https://fixture.invalid|w|m|%ZZ","https://fixture.invalid|w|m|b|page"})equal(OutboxPolicy.actorPrefix("https://fixture.invalid",profile),null);
         System.out.println("Android outbox pure JDK checks passed: " + checks + " (no Android SDK/device claim)");
     }
 }

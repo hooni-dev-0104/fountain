@@ -59,10 +59,14 @@ run_test nativeReadOnlyRecoveryAndSystemSave
 run_test privateFamilyLoginPersists
 "$ADB" -s "$FOUNTAIN_ANDROID_QA_SERIAL" shell am force-stop dev.fountain.workspace
 run_test privateFamilyRestoresAndLogsOut
+"$ADB" -s "$FOUNTAIN_ANDROID_QA_SERIAL" shell am instrument -w \
+  -e class dev.fountain.workspace.AuthRetentionDeviceTest \
+  dev.fountain.workspace.test/androidx.test.runner.AndroidJUnitRunner > "$QA/auth-retention.log" 2>&1
+if ! rg -q 'OK \(5 tests\)' "$QA/auth-retention.log"; then cat "$QA/auth-retention.log"; exit 1; fi
 node - "$ROOT" <<'JS'
 const fs=require('node:fs'),root=process.argv[2];globalThis.FountainCollaboration=require(root+'/static/collaboration.js');
 const R=require(root+'/static/recovery-import.js'),text=fs.readFileSync(root+'/.data/android-qa/saved-recovery.json','utf8'),raw=JSON.parse(text);
 const parsed=R.parse(text,{origin:raw.origin,workspaceId:raw.workspace_id,memberId:raw.member_id});
 if(parsed.records.length||parsed.drafts.length!==1||!parsed.drafts[0].draft.blocks.some(block=>block.text==='Android 실제 미전송 원문 🏠'))throw Error('Actual Android OS export failed the web parser round trip');
-console.log('PASS actual Android SDK/API36 WebView bridge, native HTTPS, SQLite readonly/source SHA, OS picker cancel/save, Unicode web parser, private family cookie process restart/logout');
+console.log('PASS actual Android SDK/API36 WebView bridge, native HTTPS, SQLite readonly/source SHA, OS picker cancel/save, Unicode web parser, private family cookie process restart/logout, five actual SQLite auth-retention policy tests');
 JS

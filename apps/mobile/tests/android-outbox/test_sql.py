@@ -97,7 +97,7 @@ os._exit(9)
         self.assertIn('private static final boolean OUTBOX_ENABLED = false;', plugin)
         self.assertIn('result.put("outboxEnabled", OUTBOX_ENABLED)', plugin)
         self.assertIn('if (!OUTBOX_ENABLED)', plugin)
-        self.assertIn('if (OUTBOX_ENABLED && !recoveryMode) try { durableOutbox().revoke(); }', plugin)
+        self.assertIn('if (OUTBOX_ENABLED && !recoveryMode) try { NativeOutbox storage=durableOutbox();storage.revoke();if(explicitNativeActor!=null)storage.eraseActor(explicitNativeActor); }', plugin)
         self.assertIn('if (OUTBOX_ENABLED && !recoveryMode && session && response.status == 200)', plugin)
         logout = plugin.split('if (operation.logout) {', 1)[1].split('} else {', 1)[0]
         self.assertIn('exchange(operation, operation.origin, path, "DELETE", headers, body, null, null)', logout)
@@ -109,7 +109,8 @@ os._exit(9)
         self.assertIn('authGeneration == expectedAuth', plugin)
         self.assertIn('storage.boundary() == expectedBoundary', plugin)
         self.assertIn('outbox == storage', plugin)
-        self.assertLess(plugin.index('durableOutbox().revoke();'), plugin.index('NativePolicy.invalidateSession(origin,'))
+        invalidate = plugin.split('private NativePolicy.SessionInvalidation invalidateSession(String explicitNativeActor)', 1)[1].split('private ', 1)[0]
+        self.assertLess(invalidate.index('storage.revoke();'), invalidate.index('NativePolicy.invalidateSession(origin,'))
         source = (SOURCE / 'NativeOutbox.java').read_text()
         self.assertLess(source.index('SELECT digest,head FROM tx_receipts'), source.index('base == head()'))
         receipt = source.split('SELECT digest,head FROM tx_receipts', 1)[1].split('long base =', 1)[0]
@@ -117,6 +118,53 @@ os._exit(9)
         self.assertIn('db.disableWriteAheadLogging()', source)
         self.assertNotIn('java.time', source)
         self.assertNotIn('java.util.Base64', source)
+
+    def test_native_actor_erase_queries_are_exact_atomic_and_keep_unknown_sources(self):
+        prefix = 'https://fixture.invalid|workspace%25_|member%7Cname|'
+        own = prefix + 'binding-a'
+        foreign = 'https://fixture.invalid|workspace%25_|different-member|binding-a'
+        other_workspace = 'https://fixture.invalid|other-workspace|member%7Cname|binding-a'
+        for index, profile in enumerate([own, prefix + 'binding-b', foreign, other_workspace]):
+            self.db.execute('INSERT INTO records VALUES(?,?,?,?,?,?)', ('quarantine', 'drafts', str(index), profile, profile + '|page', bytes([index, 255])))
+        self.db.execute("INSERT INTO staging VALUES('owned',0,0,'old',?)", (b'owned last copy',))
+        self.db.execute("INSERT INTO staging VALUES('unknown',0,0,'old',?)", (b'opaque last copy',))
+        self.db.execute("INSERT INTO control VALUES('staging-owner:owned',?)", (own,))
+        self.db.execute("INSERT INTO recovery VALUES('owned','fixture',?)", (b'owned raw',))
+        self.db.execute("INSERT INTO recovery VALUES('unknown','legacy',?)", (b'unknown raw',))
+        self.db.execute("INSERT INTO control VALUES('recovery-owner:owned',?)", (own,))
+        queries = [production_sql('INSERT OR IGNORE INTO tombstones(kind,id) SELECT'),
+                   production_sql('DELETE FROM records WHERE substr(profile_id'),
+                   production_sql('DELETE FROM staging WHERE tx_id IN'),
+                   production_sql('DELETE FROM recovery WHERE id IN')]
+        original = self.db.execute('SELECT * FROM records ORDER BY key').fetchall()
+        for commit in (False, True):
+            self.db.execute('BEGIN IMMEDIATE')
+            for query in queries:
+                self.db.execute(query, (len(prefix), prefix))
+            self.db.execute('COMMIT' if commit else 'ROLLBACK')
+            if not commit:
+                self.assertEqual(self.db.execute('SELECT * FROM records ORDER BY key').fetchall(), original)
+                self.assertEqual(self.db.execute('SELECT count(*) FROM staging').fetchone()[0], 2)
+            else:
+                self.assertEqual({row[0] for row in self.db.execute('SELECT profile_id FROM records')}, {foreign, other_workspace})
+                self.assertEqual(self.db.execute('SELECT tx_id,data FROM staging').fetchall(), [('unknown', b'opaque last copy')])
+                self.assertEqual(self.db.execute('SELECT id,payload FROM recovery').fetchall(), [('unknown', b'unknown raw')])
+
+    def test_native_suspension_cannot_be_a_renderer_archive_erase(self):
+        source = (SOURCE / 'NativeOutbox.java').read_text()
+        revoke = source.split('void revoke()', 1)[1].split('String nativeActor', 1)[0]
+        self.assertIn('suspendProfile(', revoke)
+        for table in ('records', 'recovery', 'staging', 'tx_receipts'):
+            self.assertNotIn('DELETE FROM ' + table, revoke)
+        change = source.split('private void change(', 1)[1].split('JSObject commit', 1)[0]
+        self.assertIn('suspendProfile(profile); return;', change)
+        self.assertIn('if(whole){suspendProfile(owner);return;}', change)
+        self.assertNotIn('purge("profile"', change)
+        self.assertIn('if(!mode.equals("quarantine"))', change)
+        plugin = (SOURCE / 'FountainNativePlugin.java').read_text()
+        mutation = plugin.split('if (mutation) {', 1)[1].split('Operation operation =', 1)[0]
+        self.assertLess(mutation.index('nativeActor(activeCookie!=null?activeCookie:revokeCookie)'), mutation.index('authGeneration++'))
+        self.assertIn('catch(NativeOutbox.AccessRequired recoveryRequired)', plugin)
 
     def test_recovery_existing_only_read_only_and_text_bound_pagination(self):
         source = (SOURCE / 'NativeRecovery.java').read_text()

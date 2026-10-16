@@ -1,0 +1,65 @@
+{
+  "date": "2026-10-16",
+  "scope": "page saved-version preview,comparison and guarded title/body restore",
+  "python_full": {
+    "count": 449,
+    "skipped": 0,
+    "actual_supabase": true,
+    "seconds": 205.138
+  },
+  "additional_postgres_http": {
+    "count": 2,
+    "skipped": 0,
+    "seconds": 19.966,
+    "isolated_namespaces_cleaned": 2,
+    "cases": [
+      "cross-server stale409 leaves page/privateCRDT/versions/audit/counters unchanged; current revision restores title+body once",
+      "title write fault rolls back real PostgreSQL transaction on both servers"
+    ]
+  },
+  "comparator": {
+    "independent_reconstruction_vectors": 1200,
+    "large_text_bytes": 4194304,
+    "node_heap_limit_mib": 64,
+    "unicode_lis_semantic_defaults_and_shared_budget": "passed"
+  },
+  "chrome_versions": "passed: readonly/no-document-write/no-queue/no-file-download/no-history-cache; XSS; preview/confirmation; stale409; restore SSE before delayedHTTP; modal/page/account/ACL/epoch scopes; two real account old401 JSON/revalidation races; lock and access changes; coarse comparison",
+  "web_regressions": [
+    "baseline browser isolated fixture",
+    "offline SW/cache allowlist",
+    "mutations",
+    "Undo",
+    "AI",
+    "accounts"
+  ],
+  "mobile_mock": "public bundle sync and native adapter contract+real HTTP/Chrome passed; not native SDK execution",
+  "visual": {
+    "score": 94,
+    "verdict": "pass",
+    "viewport_modal_count": 1,
+    "mobile_viewport_width": 390,
+    "mobile_modal_width": 370
+  },
+  "reviews": {
+    "backend_and_comparator": "APPROVE after semantic-default mark normalization",
+    "ui_privacy_and_races": "APPROVE after common API late401 scope checks"
+  },
+  "restore_policy": {
+    "preview_access_level": 3,
+    "restore_access_level": 4,
+    "restored_fields": [
+      "title",
+      "blocks"
+    ],
+    "other_metadata_preserved": true,
+    "revision_increments": 1,
+    "legacy_missing_revision_supported": true
+  },
+  "remaining": [
+    "named/bookmarked versions",
+    "precise version authorship metadata",
+    "database-wide restore",
+    "paginated history"
+  ],
+  "native_sdk_verified": false
+}

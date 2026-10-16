@@ -340,6 +340,100 @@ class PostgresHTTPTests(unittest.TestCase):
         self.assertEqual(self.request("GET", download, server=1, cookie=self.family)[0], 404)
         self.assertEqual(self.ok("GET", download, server=1), content)
 
+    def test_saved_version_title_body_restore_revision_conflict_across_servers(self):
+        page = self.page()
+        path = "/api/pages/" + page["id"]
+        self.ok("PUT", path + "/blocks", {"revision": 0,
+            "blocks": [{"id": "text", "text": "복원 전 본문"}]})
+        base = self.ok("GET", path + "/collaboration")
+        operation = {"id": "restore-preview:1", "client": "restore-preview", "clock": 1,
+                     "type": "text.insert", "block_id": "text", "after_id": None, "text": "추적된 "}
+        self.ok("POST", path + "/operations", {"epoch": base["epoch"], "ops": [operation]})
+        preview = self.ok("GET", path)
+        version = next(item for item in preview["versions"] if item["revision"] == 0)
+        restore_path = path + "/versions/" + version["id"] + "/restore"
+        self.ok("PATCH", path, {"revision": preview["page"]["revision"], "title": "다른 서버의 새 제목",
+            "icon": "🌙", "cover": "https://fixture.invalid/cover", "favorite": True},
+            server=1, cookie=self.owner_b)
+        remote = dict(operation, id="restore-preview:2", clock=2, text="원격 변경 ")
+        self.ok("POST", path + "/operations", {"epoch": base["epoch"], "ops": [remote]},
+                server=1, cookie=self.owner_b)
+
+        def snapshot():
+            with self.store.transaction():
+                return ({kind: self.store.list(kind) for kind in ("page", "collaboration", "version", "audit")},
+                        self.store.meta("_entity_revision"), self.store.meta("access_revision"))
+
+        before = snapshot()
+        current = self.store.get("page", page["id"])
+        document = self.store.get("collaboration", page["id"])
+        self.assertTrue(document["state"]["history"]["ops"])
+        self.assertEqual(document["op_owners"], {operation["id"]: "local", remote["id"]: "local"})
+        self.assertEqual(self.request("POST", restore_path, {"revision": preview["page"]["revision"]})[0], 409)
+        self.assertEqual(snapshot(), before)
+
+        restored = self.ok("POST", restore_path, {"revision": current["revision"]},
+                           server=1, cookie=self.owner_b)
+        self.assertEqual(restored["revision"], current["revision"] + 1)
+        self.assertEqual(restored["page"]["title"], page["title"])
+        self.assertEqual(restored["blocks"], version["blocks"])
+        for field in ("icon", "cover", "favorite", "parent_id", "permissions", "owner_id"):
+            self.assertEqual(restored["page"][field], current[field])
+        versions = self.store.list("version")
+        self.assertEqual(len(versions), len(before[0]["version"]) + 1)
+        prior_current = next(item for item in versions
+                             if item["page_id"] == page["id"] and item["revision"] == current["revision"])
+        self.assertEqual((prior_current["title"], prior_current["blocks"]), (current["title"], current["blocks"]))
+        self.assertIsNone(self.store.get("collaboration", page["id"]))
+        canonical = self.ok("GET", path + "/collaboration")
+        self.assertNotEqual(canonical["epoch"], base["epoch"])
+        self.assertEqual((canonical["page"]["title"], canonical["page"]["revision"], canonical["blocks"]),
+                         (page["title"], current["revision"] + 1, version["blocks"]))
+
+    def test_saved_version_title_write_failure_rolls_back_real_postgres_transaction(self):
+        from fountain.core import APIError
+
+        page = self.page()
+        path = "/api/pages/" + page["id"]
+        self.ok("PUT", path + "/blocks", {"revision": 0,
+            "blocks": [{"id": "text", "text": "현재 본문"}]})
+        version = next(item for item in self.store.list("version") if item["page_id"] == page["id"])
+        self.ok("PATCH", path, {"revision": 1, "title": "실패해도 유지할 현재 제목"})
+        base = self.ok("GET", path + "/collaboration")
+        operation = {"id": "restore-rollback:1", "client": "restore-rollback", "clock": 1,
+                     "type": "text.insert", "block_id": "text", "after_id": None, "text": "보존할 추적 변경 "}
+        self.ok("POST", path + "/operations", {"epoch": base["epoch"], "ops": [operation]})
+
+        def snapshot(store):
+            with store.transaction():
+                return ({kind: store.list(kind) for kind in ("page", "collaboration", "version", "audit")},
+                        store.meta("_entity_revision"), store.meta("access_revision"))
+
+        target_store = self.servers[1].application.store
+        before = snapshot(self.store)
+        self.assertEqual(snapshot(target_store), before)
+        current = self.store.get("page", page["id"])
+        document = self.store.get("collaboration", page["id"])
+        self.assertTrue(document["state"]["history"]["ops"])
+        self.assertEqual(document["op_owners"], {operation["id"]: "local"})
+        original, page_writes = target_store.put, []
+
+        def write(kind, value):
+            if kind == "page" and value["id"] == page["id"]:
+                page_writes.append(value["title"])
+                if len(page_writes) == 2:
+                    raise APIError(409, "Injected restore title failure")
+            return original(kind, value)
+
+        restore_path = path + "/versions/" + version["id"] + "/restore"
+        with patch.object(target_store, "put", side_effect=write):
+            self.assertEqual(self.request("POST", restore_path, {"revision": current["revision"]},
+                                          server=1, cookie=self.owner_b)[0], 409)
+        self.assertEqual(page_writes, [current["title"], page["title"]])
+        self.assertEqual(snapshot(self.store), before)
+        self.assertEqual(snapshot(target_store), before)
+        self.assertEqual(self.store.get("collaboration", page["id"]), document)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -24,7 +24,7 @@ node --check static/app.js
 
 개인·가족용으로 앱 안의 모든 기능을 무료로 사용합니다. 결제나 플랜 제한이 없습니다. 실제 구현 범위와 Notion과의 차이는 [기능 현황](docs/FEATURES.md), 역공학 근거는 [REA 조사](docs/research/notion-rea.md)에 있습니다.
 
-목표 플랫폼은 웹·macOS·Windows·iOS·Android이며 같은 계정의 기기들은 하나의 원본 서버와 동기화합니다. **웹과 macOS arm64 데스크톱 앱의 실제 실행을 확인했습니다.** Windows x64 portable 폴더도 만들었지만 Windows 실행은 미검증이며, iOS·Android는 프로젝트와 연결 코드를 생성한 SDK 빌드 전 단계입니다. 실행·패키징은 [데스크톱 안내](apps/desktop/README.md), 남은 SDK 준비와 검증은 [모바일 안내](apps/mobile/README.md), 공통 계정/서버와 무료 저장소 제약은 [플랫폼 설계](docs/PLATFORMS.md)에 있습니다.
+목표 플랫폼은 웹·macOS·Windows·iOS·Android이며 같은 계정의 기기들은 하나의 원본 서버와 동기화합니다. macOS arm64 설치 앱에서는 Supabase 직접 연결과 별도 QA 공간의 실제 로그인·문서 편집·두 앱 사이 동기화·첨부 전송을 확인했습니다. Windows x64 portable 폴더는 생성·파일 검사를 통과했으나 Windows 실행은 미검증입니다. iOS·Android는 SDK 빌드와 Supabase 직접 경로의 익명 요청 검사까지 통과했으며, 그 경로에서 실제 로그인·편집 전파는 남았습니다. 실행·패키징은 [데스크톱 안내](apps/desktop/README.md), SDK 검증 범위는 [모바일 안내](apps/mobile/README.md), 공통 계정/서버와 무료 저장소 제약은 [플랫폼 설계](docs/PLATFORMS.md)에 있습니다.
 
 모바일 미전송 편집은 현재 앱 캐시에 보관합니다. [SQLite 저장소 개발 상태](docs/NATIVE_OUTBOX.md)에서 기본 비활성 설정과 실기기 검증·이관 조건을 확인할 수 있습니다.
 
@@ -53,7 +53,7 @@ python3 -m fountain.server --host 0.0.0.0 --port 8787 \
 
 AI는 기본 비활성 상태이며 무료 로컬 모델 또는 호환 API를 명시적으로 설정할 수 있습니다. Gemini Pro 구독 연동 검토와 API 과금 구분은 [AI 안내](docs/AI.md)에 있습니다. `.env.example`은 설정 설명이며 서버가 자동으로 읽지는 않습니다.
 
-현재 미리보기는 서울 Supabase PostgreSQL을 공통 원본으로 사용합니다. 기존 자료·계정·작업공간·로그인 상태를 보존해 이관했고 SQLite 원본과 전환 전후 백업도 남겼습니다. 새 첨부 청크는 서버 디스크에 저장하며 실제 5GB 저장소 읽기·범위 다운로드·백업 복원을 검증했습니다. 연결 옵션·무료 용량·검증 범위는 [Supabase 안내](docs/SUPABASE.md)에 있습니다. 기본 SQLite 실행과 현재 클라우드 자료를 여는 명령을 구분해 사용하세요.
+현재 8787 미리보기는 Python과 서울 Supabase PostgreSQL을 사용하는 호환 실행 상태로 보존했습니다. SQLite 원본과 전환 전후 백업도 남아 있습니다. 별도로 Supabase Edge Functions·Auth·PostgreSQL·Storage를 사용하는 백엔드와 앱의 직접 연결을 구현하고 QA 공간에서 검증하고 있습니다. 원본 작업공간의 운영 계정 연결·공개 웹 호스팅·전환은 아직 완료하지 않았습니다. 기존 서버 디스크 기반 5GB 파일 검증을 Supabase Storage의 실제 5GB 전송 증거로 보지 않습니다. 연결 옵션·무료 용량·검증 범위는 [Supabase 안내](docs/SUPABASE.md), 이번 앱 실행 결과는 [데스크톱 클라우드 검증](docs/research/desktop-cloud-verification.md)에 있습니다.
 
 전체 백업은 설정 → 가져오기 / 내보내기 → 전체 백업 다운로드에서 받을 수 있습니다. 댓글·문서 이력·첨부·설정이 포함되고 로그인 세션·임시 클립보드는 제외됩니다. JSON은 문서와 데이터베이스의 이동용 내보내기입니다.
 

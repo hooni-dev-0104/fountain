@@ -1,0 +1,389 @@
+{
+  "version": 1,
+  "observedAt": "2026-10-16T18:42:32.798901+00:00",
+  "goalComplete": false,
+  "scope": "bundled desktop Supabase transport and isolated real-cloud account/data verification",
+  "sources": {
+    "apps/desktop/build.mjs": "adff4041580174516c7eb57045528867098c61b134493b223afaa1beb8d36363",
+    "apps/desktop/pack.cjs": "3d582c703aeebc3138023c3928822c4222f25afa1ec3b5838655e358c6811a9f",
+    "apps/desktop/src/cloud.cjs": "991f75ae4c811bc0e80540b27b6610b71372c86b99777ec4fbd907eae6219aea",
+    "apps/desktop/src/main.cjs": "3340fa7453c5fc9b87bcc9e7c648d06e49a83eb624e7c1217004d629d7c29194",
+    "static/transport.js": "f569f88f813db3ea4960850c9452515470e40f845e8208fc1b8541a5d9753654",
+    "static/app.js": "791ed3d71624ebfaaaa647c588de5c92fef26e1743c2dc6a9674efd0003efa75",
+    "tests/desktop/cloud.test.cjs": "2e2b8852d61fcf6533a1a9bc56caaf3a417dadaebbd87408d26f799784d83104",
+    "tests/desktop/electron-cloud-smoke.mjs": "b30b4b9e54969169ff6b747efd2e58e685096ddc20cb99f1c7feca2885155715",
+    "tests/desktop/electron-cloud-auth.mjs": "dcc30be2e893a20047ec949eeb6e5c0384014da469969b145f725633c072a498",
+    "supabase/tests/live-desktop-entry.template.ts": "43cf9ddb87527e26c50006f7076c89a6984d3794a7133fd8d4bf0f0682663792",
+    "supabase/tests/desktop-entry.mjs": "cdd16b603d4bdf4a4f75d112f74f384b9099b6a0ca6ca98626f510c8c60d5316"
+  },
+  "architecture": {
+    "electron": "44.8.0",
+    "publicAssets": 14,
+    "assetBytes": 617247,
+    "manifestSHA256": "3f390037265e2af8ac8d592c4dddf66af1e4074d632e8aa920876ea7c9d8cd95",
+    "uiOrigin": "https://fountain.desktop.invalid",
+    "privateNetworkSession": true,
+    "workspacePreload": false,
+    "rendererNode": false,
+    "backendProcessOnDevice": false,
+    "newDependencies": 0,
+    "contentLength": "validate inbound; Chromium calculates outbound from bounded bytes",
+    "uploadChunkBytes": 4194304,
+    "uploadEndToEndStreaming": false,
+    "downloadStreaming": true,
+    "immediateRendererHeaderWaitAbortVerified": false
+  },
+  "verification": {
+    "desktopNodeTests": 48,
+    "sealedEntryNodeTests": 11,
+    "legacyElectronRemoteChecks": 14,
+    "legacyElectronSecurityChecks": 5,
+    "actualChromeTransportRegressionPassed": true,
+    "nodeSyntaxPassed": true,
+    "actualTypecheck": false,
+    "sourceAnonymous": {
+      "actualElectron": true,
+      "packaged": false,
+      "observed": [
+        {
+          "round": 1,
+          "actualAnonymousSupabase": true,
+          "bundledUIOrigin": true,
+          "workerReady": true,
+          "workspacePreload": false,
+          "rendererNode": false,
+          "privateNetworkAuthCookies": 0,
+          "publicShareAddress": null,
+          "requests": [
+            {
+              "path": "/functions/v1/fountain-api/api/session",
+              "status": 200
+            },
+            {
+              "path": "/functions/v1/fountain-api/api/session",
+              "status": 200
+            }
+          ]
+        },
+        {
+          "round": 2,
+          "actualAnonymousSupabase": true,
+          "bundledUIOrigin": true,
+          "workerReady": true,
+          "workspacePreload": false,
+          "rendererNode": false,
+          "privateNetworkAuthCookies": 0,
+          "publicShareAddress": null,
+          "requests": [
+            {
+              "path": "/functions/v1/fountain-api/api/session",
+              "status": 200
+            },
+            {
+              "path": "/functions/v1/fountain-api/api/session",
+              "status": 200
+            }
+          ]
+        }
+      ],
+      "sourceBootAndRestart": true,
+      "anonymousOnly": true,
+      "loginOrEditingVerified": false,
+      "remoteAuthUsersCreated": 0,
+      "cloudWrites": 0
+    },
+    "macPackagedAnonymous": {
+      "actualElectron": true,
+      "packaged": true,
+      "observed": [
+        {
+          "round": 1,
+          "actualAnonymousSupabase": true,
+          "bundledUIOrigin": true,
+          "workerReady": true,
+          "workspacePreload": false,
+          "rendererNode": false,
+          "privateNetworkAuthCookies": 0,
+          "publicShareAddress": null,
+          "requests": [
+            {
+              "path": "/functions/v1/fountain-api/api/session",
+              "status": 200
+            },
+            {
+              "path": "/functions/v1/fountain-api/api/session",
+              "status": 200
+            }
+          ]
+        },
+        {
+          "round": 2,
+          "actualAnonymousSupabase": true,
+          "bundledUIOrigin": true,
+          "workerReady": true,
+          "workspacePreload": false,
+          "rendererNode": false,
+          "privateNetworkAuthCookies": 0,
+          "publicShareAddress": null,
+          "requests": [
+            {
+              "path": "/functions/v1/fountain-api/api/session",
+              "status": 200
+            },
+            {
+              "path": "/functions/v1/fountain-api/api/session",
+              "status": 200
+            }
+          ]
+        }
+      ],
+      "sourceBootAndRestart": true,
+      "anonymousOnly": true,
+      "loginOrEditingVerified": false,
+      "remoteAuthUsersCreated": 0,
+      "cloudWrites": 0
+    },
+    "authenticatedMac": {
+      "checks": [
+        "actual UI connects signed bootstrap owner through Supabase Auth and private native cookie",
+        "same account in two isolated desktop profiles has distinct session bindings",
+        "actual Supabase document create edit CRDT save and reload",
+        "two-way document synchronization through real cloud SSE",
+        "renderer XHR uploads two real Storage chunks and downloads identical bytes",
+        "referenced attachment deletion is rejected; Root owns exact QA Storage cleanup",
+        "real app relaunch and same-server reconnect preserve private login and document",
+        "real logout clears native cookie without ending the other device session"
+      ],
+      "actualSupabaseAuth": true,
+      "actualPostgres": true,
+      "actualStorage": true,
+      "sameAccountIsolatedProfiles": 2,
+      "distinctBindings": true,
+      "uiCookieHidden": true,
+      "httpOnlySecurePrivateCookie": true,
+      "relaunchAndReconnect": true,
+      "automaticSelectedServerRestartCoveredBy": "anonymous product smoke; authenticated QA deliberately opens settings before installing private test retarget",
+      "privilegedTestRetarget": true,
+      "testFunction": "fountain-verify v44",
+      "productionApiVersion": 9,
+      "originalWorkspaceUsed": false,
+      "uploadBytes": 4194421,
+      "uploadSHA256": "f2fe9cb309033e9921a6a92041e65e7fa481b1c250a25f69ecfd34c298b8971a",
+      "storageChunks": 2,
+      "referencedAttachmentDeleteStatus": 409,
+      "twoWaySynchronization": true,
+      "eventSourceConnection200Observed": true,
+      "sseVsReconnectSnapshotDeliveryIsolated": false,
+      "transient503ObservedBeforeSuccessfulEventSourceConnection": true,
+      "postLogout401Expected": true,
+      "uiCreatedNewProviderUser": false,
+      "bootstrapNote": "An earlier native-length investigation created the QA owner through the same sealed real application; successful UI setup resumed the signed existing owner. New-provider-user creation via UI was not proved."
+    }
+  },
+  "artifactInspection": {
+    "version": 1,
+    "observedAt": "2026-10-16T18:38:56.002Z",
+    "node": "v24.14.1",
+    "asarVersion": "4.3.1",
+    "readOnlyInspection": true,
+    "checks": {
+      "allPassed": true,
+      "noUnapprovedPrivateDataOrSourceMapFiles": true,
+      "currentSourceAndMacAndWindowsBundleMatch": true,
+      "windowsExecutionClaimed": false
+    },
+    "source": {
+      "assetFiles": 14,
+      "assetBytes": 617247,
+      "manifestSHA256": "3f390037265e2af8ac8d592c4dddf66af1e4074d632e8aa920876ea7c9d8cd95",
+      "assetSHA256": {
+        "app.js": "791ed3d71624ebfaaaa647c588de5c92fef26e1743c2dc6a9674efd0003efa75",
+        "backup.js": "c0548d859efdc96005f0fcc0abf9778ee1078e788722547116a9cd198d9f6f0a",
+        "collaboration.js": "f08ee824aa340e481b033fbfcb7c2b29a25393f559e36476bac9b932b0a0c3a5",
+        "index.html": "c0c53caa8524fd050de617e7fea7b2863d8773dc2eb33ed2c75084f2ca735b15",
+        "mutations.js": "11e45ad39476a2a530fa083af7e1d314013d7be52b135d68afd114cdca0d5b90",
+        "offline.js": "68eb866807f6791aac95e39900a905c575bf0b6c738307c1a79203ce0bb437db",
+        "presence.js": "d96cdcf62db278b104d30964ec3f93c42a8cfea5175af3c792438abc74986189",
+        "public.js": "2d3a139d0c21d8dec8e518ebad474035c20b851936aaba7a82140d4e56c13bc9",
+        "recovery-import.js": "22eb1d697123de4bf04e72bf0b7e74652ffaccdf434fe9d6421fa9c3dd959fc0",
+        "style.css": "f0de02a936925a40b355f97e004aa699729bcee3d3727c1b6333ffdba8bcd216",
+        "sw.js": "dd3d1110eb030c24eacc95f5394331198d1a906619867ef2f6444f3d3d733ef2",
+        "transport.js": "f569f88f813db3ea4960850c9452515470e40f845e8208fc1b8541a5d9753654",
+        "uploads.js": "d1aa2da0439c8e21597dc41953c0582ac9341d694299d9486fe4991e725bb513",
+        "version-diff.js": "bb17e720430a7657de62639ebe484c90ca3a4e9f0caab9b77258caa2034699a2"
+      },
+      "runtimeSHA256": {
+        "src/cloud.cjs": "991f75ae4c811bc0e80540b27b6610b71372c86b99777ec4fbd907eae6219aea",
+        "src/config.cjs": "f4b7ba6d7566c5d75a2d17c45cdabbb70773504cd5fa7d0df804b101bafbe8d4",
+        "src/main.cjs": "3340fa7453c5fc9b87bcc9e7c648d06e49a83eb624e7c1217004d629d7c29194",
+        "src/security.cjs": "e1fcd5f4087768e100cd2ee332351195daaa326ed7ba4a887005f9a5112e153b",
+        "src/setup-preload.cjs": "ede1f7c839f3f1cc7433b39b81667115141e9f1f796a0bec917932665b939c2a",
+        "ui/setup.css": "b52bd28a79c34ae5d1ac8ce705f0661c638f467af3f0375cc227fa1e0459ff80",
+        "ui/setup.html": "e6ac929f5d3a6533ca7074bc00adfe5ab3d151a7b419604e128fed62bf996b70",
+        "ui/setup.js": "01de69ceb9461141c84b025b67793c6ec788a70bcfe32661d428a8f06f30e7f3"
+      },
+      "packageSHA256": "545c9cfc997e62498671292ad59086abb93cd39272feecbf30a3b35c3ac4e08f"
+    },
+    "artifacts": {
+      "mac": {
+        "asarFiles": 10,
+        "asarDirectories": 8,
+        "asarBytes": 62080,
+        "asarSHA256": "9e0b2c4f772c1d7518a291fe33a1d1eb2a0b0693073ff88546b8878a19f9d429",
+        "runtimeFiles": 8,
+        "runtimeExactSourceMatch": true,
+        "packageMetadataAllowedPrune": true,
+        "packagedPackageSHA256": "95198e8be749cdc77e235cff3a3161f817c34ba9e75609f3930ca7443d655d76",
+        "publicDependencyLock": {
+          "bytes": 24094,
+          "packages": 51,
+          "sha256": "8407368548234668e6ac0031693f03b0b0dd6d3cfebfd7261df853151e43d412"
+        },
+        "noBundleDuplicate": true,
+        "noUnapprovedFiles": true,
+        "normalPublicFiles": 14,
+        "normalManifestFiles": 1,
+        "normalBundleBytes": 619982,
+        "manifestSHA256": "3f390037265e2af8ac8d592c4dddf66af1e4074d632e8aa920876ea7c9d8cd95",
+        "matchesCurrentSourceAndBundle": true,
+        "executable": {
+          "architecture": "arm64",
+          "bytes": 33968,
+          "sha256": "12aa325561098c5dc5b175e465225b1b61e8f4090ce6d5dade89887e0eec8ab7"
+        },
+        "executionVerifiedByThisInspection": false,
+        "packageTree": {
+          "regularFiles": 272,
+          "directories": 311,
+          "symlinksNotFollowed": 14,
+          "regularFileBytes": 301409532
+        }
+      },
+      "windows": {
+        "asarFiles": 10,
+        "asarDirectories": 8,
+        "asarBytes": 62080,
+        "asarSHA256": "9e0b2c4f772c1d7518a291fe33a1d1eb2a0b0693073ff88546b8878a19f9d429",
+        "runtimeFiles": 8,
+        "runtimeExactSourceMatch": true,
+        "packageMetadataAllowedPrune": true,
+        "packagedPackageSHA256": "95198e8be749cdc77e235cff3a3161f817c34ba9e75609f3930ca7443d655d76",
+        "publicDependencyLock": {
+          "bytes": 24094,
+          "packages": 51,
+          "sha256": "8407368548234668e6ac0031693f03b0b0dd6d3cfebfd7261df853151e43d412"
+        },
+        "noBundleDuplicate": true,
+        "noUnapprovedFiles": true,
+        "normalPublicFiles": 14,
+        "normalManifestFiles": 1,
+        "normalBundleBytes": 619982,
+        "manifestSHA256": "3f390037265e2af8ac8d592c4dddf66af1e4074d632e8aa920876ea7c9d8cd95",
+        "matchesCurrentSourceAndBundle": true,
+        "executable": {
+          "architecture": "x86_64",
+          "bytes": 247033344,
+          "sha256": "e117e1d8987c83745bf714a1e504afd8fd29458084d16db28f7c96e3c671fd48"
+        },
+        "executionVerifiedByThisInspection": false,
+        "packageTree": {
+          "regularFiles": 88,
+          "directories": 3,
+          "symlinksNotFollowed": 0,
+          "regularFileBytes": 386818594
+        }
+      }
+    }
+  },
+  "archives": [
+    {
+      "file": "Fountain-macOS-arm64.zip",
+      "bytes": 127594039,
+      "sha256": "5cf700cf14b7ab70bff14770454011480acd1298fb6de21d0ad440fb7c2d6977",
+      "latestAsarAndManifest": true
+    },
+    {
+      "file": "Fountain-win32-x64.zip",
+      "bytes": 158661227,
+      "sha256": "29516a916175fcbe9d1cca49ae0f7925810711c49415835b02863dfbb8bd2b9b",
+      "latestAsarAndManifest": true
+    }
+  ],
+  "failureFoundAndFixed": {
+    "problem": "manual Content-Length extra header rejected by Electron",
+    "nativeAB": [
+      {
+        "manualHeader": true,
+        "networkError": "net::ERR_INVALID_ARGUMENT"
+      },
+      {
+        "manualHeader": false,
+        "actualAuthStatus": 200
+      }
+    ],
+    "regression": "two targeted tests RED before one-line production deletion, 48 desktop tests PASS afterwards",
+    "officialReference": "https://www.electronjs.org/docs/latest/api/client-request#requestsetheadername-value"
+  },
+  "cleanup": {
+    "auth": {
+      "status": 200,
+      "protectedMarkersVerified": true,
+      "present": 1,
+      "deleted": 1
+    },
+    "ownedStorageObjectsDeleted": 2,
+    "storageObjectsRemaining": 0,
+    "qaRowsAcross29TablesRemaining": 0,
+    "qaAuthUsersRemaining": 0,
+    "allAuthSessionsRemaining": 0,
+    "qaMappingsRemaining": 0,
+    "cronJobs": 0,
+    "verifier": {
+      "version": 46,
+      "inert404": true,
+      "bundleSHA256": "899a20d70086b8d5ff4518f5b4936396d936dd48a40b0b12e5ee286324f6fbd1",
+      "retirement": {
+        "checks": [
+          {
+            "path": "wire",
+            "oldNonceStatus": 404
+          },
+          {
+            "path": "cleanup-check",
+            "oldNonceStatus": 404
+          },
+          {
+            "path": "cleanup",
+            "oldNonceStatus": 404
+          }
+        ],
+        "retired": true
+      }
+    },
+    "privateNoncePasswordSessionInputRemoved": true,
+    "temporaryElectronProfilesRemoved": true
+  },
+  "preserved": {
+    "apiVersion": 9,
+    "apiBundleSHA256": "6e6071ea9ac9239f657eb9ec76d45c505438b68418d9c4876033ea11506dba52",
+    "workerVersion": 3,
+    "maintenanceVersion": 3,
+    "migrations": 25,
+    "originalEntities": 153,
+    "originalMeta": 6,
+    "sixBusinessAndSessionFingerprintsMatch": true,
+    "localhost8787RootStatus": 200,
+    "actualProductionCutover": false
+  },
+  "notVerified": [
+    "Windows execution",
+    "5GB actual Supabase transfer",
+    "worker-backed desktop backup through actual cloud",
+    "actual-cloud forms/sites desktop popups",
+    "frame-level SSE as sole path for each UI update",
+    "new provider user creation through desktop UI",
+    "public HTTPS frontend and original owner onboarding",
+    "direct iOS/Android authenticated editing and full five-platform propagation",
+    "external IdP and full original paid-feature parity"
+  ]
+}

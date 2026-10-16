@@ -1,0 +1,234 @@
+"""Portable backup checks against a disposable real PostgreSQL namespace."""
+import hashlib
+import os
+from pathlib import Path
+import sqlite3
+import tempfile
+import threading
+import unittest
+from unittest.mock import patch
+import uuid
+
+from fountain.backup import BackupError, CHUNK_SIZE, inspect_backup, restore_backup
+from fountain.core import Store
+from fountain.postgres import PostgresStore
+from fountain.postgres_backup import create_postgres_backup
+
+
+class BackupDestinationTests(unittest.TestCase):
+    def test_existing_file_and_symlink_are_rejected_without_database_access(self):
+        with tempfile.TemporaryDirectory() as directory:
+            existing = Path(directory) / "existing.db"
+            existing.write_bytes(b"keep existing bytes")
+            link = Path(directory) / "link.db"
+            link.symlink_to(existing)
+            for destination in (existing, link):
+                with self.assertRaises(BackupError):
+                    create_postgres_backup(None, destination)
+            self.assertEqual(existing.read_bytes(), b"keep existing bytes")
+            with self.assertRaises(BackupError):
+                create_postgres_backup(None, Path(directory) / "missing" / "snapshot.db")
+
+
+@unittest.skipUnless(os.environ.get("FOUNTAIN_TEST_POSTGRES_DSN"),
+                     "Real PostgreSQL backup verification requires FOUNTAIN_TEST_POSTGRES_DSN")
+class PostgresBackupTests(unittest.TestCase):
+    def setUp(self):
+        self.namespace = uuid.uuid4().hex
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.stores = []
+        self.addCleanup(self.temp.cleanup)
+        self.addCleanup(self.cleanup_workspace)
+        self.store = self.open_store()
+
+    def open_store(self, namespace=None):
+        store = PostgresStore(os.environ["FOUNTAIN_TEST_POSTGRES_DSN"],
+                              workspace_id=namespace or self.namespace)
+        self.stores.append(store)
+        return store
+
+    def cleanup_workspace(self):
+        try:
+            for namespace, store in {s.workspace_id: s for s in self.stores}.items():
+                with store.transaction():
+                    for table in ("attachment_chunks", "entities", "meta"):
+                        store._execute(f"DELETE FROM fountain_private.{table} WHERE workspace_id=%s", (namespace,))
+        finally:
+            for store in self.stores:
+                store.close()
+
+    def fixture(self):
+        payloads = [b"\x00\xff" * (CHUNK_SIZE // 2), "가족 파일😀".encode() * 7000]
+        digest = hashlib.sha256(b"".join(payloads)).hexdigest()
+        self.store.put("page", {"id": "page", "title": "가족 문서"})
+        self.store.put("member", {"id": "member", "name": "가족"})
+        self.store.put("credential", {"id": "member", "salt": "restore-salt", "password_hash": "restore-hash"})
+        self.store.put("attachment", {"id": "file", "storage": "chunks", "size": sum(map(len, payloads)), "sha256": digest})
+        offset = 0
+        for data in payloads:
+            self.store.chunk_write("file", offset, data)
+            offset += len(data)
+        self.store.chunk_write("unfinished", 0, b"unfinished-byte-marker")
+        for kind in ("session", "clipboard", "upload", "presence"):
+            self.store.put(kind, {"id": "private-" + kind, "secret": "private-byte-marker-" + kind})
+        self.store.set_meta("local_cache_binding", "private-browser-binding")
+        self.store.set_meta("workspace_id", self.namespace)
+        self.store.set_meta("settings", {"family": [1, True, None, "우리집"]})
+        return payloads
+
+    def test_real_export_restore_bytes_timestamps_revision_and_private_absence(self):
+        payloads = self.fixture()
+        other = self.open_store(uuid.uuid4().hex)
+        other.put("page", {"id": "other-workspace", "title": "not part of this backup"})
+        revision = self.store.meta("_entity_revision")
+        backup, restored = self.root / "snapshot.db", self.root / "restored.db"
+        counts = create_postgres_backup(self.store, backup)
+        self.assertEqual(counts, {"attachment": 1, "credential": 1, "member": 1, "page": 1})
+        self.assertEqual(inspect_backup(backup), counts)
+        self.assertEqual(restore_backup(backup, restored), counts)
+        self.assertEqual(backup.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(self.store.meta("_entity_revision"), revision)
+        target = Store(restored)
+        try:
+            for kind in counts:
+                self.assertEqual(target.list(kind), self.store.list(kind))
+            self.assertEqual(target.meta("_entity_revision"), revision)
+            self.assertEqual(target.meta("workspace_id"), self.namespace)
+            self.assertEqual(target.meta("settings"), self.store.meta("settings"))
+            self.assertIsNone(target.meta("local_cache_binding"))
+            self.assertIsNone(target.get("page", "other-workspace"))
+            rows = target.db.execute("SELECT data FROM attachment_chunks WHERE attachment_id='file' ORDER BY offset").fetchall()
+            self.assertEqual([row[0] for row in rows], payloads)
+            self.assertEqual(target.db.execute("SELECT count(*) FROM attachment_chunks WHERE attachment_id='unfinished'").fetchone()[0], 0)
+        finally:
+            target.close()
+        contents = backup.read_bytes()
+        for kind in ("session", "clipboard", "upload", "presence"):
+            self.assertNotIn(("private-byte-marker-" + kind).encode(), contents)
+            self.assertIsNotNone(self.store.get(kind, "private-" + kind))
+        self.assertNotIn(b"private-browser-binding", contents)
+        self.assertNotIn(b"unfinished-byte-marker", contents)
+        self.assertFalse(list(self.root.glob(".fountain-*")))
+
+    def test_independent_writer_waits_for_complete_snapshot(self):
+        self.fixture()
+        writer = self.open_store()
+        attempted, complete = threading.Event(), threading.Event()
+        errors, threads = [], []
+        import fountain.postgres_backup as module
+        original = module._rows
+        def change():
+            attempted.set()
+            try:
+                with writer.transaction():
+                    writer.put("page", {"id": "page", "title": "after snapshot"})
+                    writer.set_meta("settings", {"after": True})
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                complete.set()
+        def rows(store, statement, **options):
+            yield from original(store, statement, **options)
+            if "FROM fountain_private.entities " in statement:
+                thread = threading.Thread(target=change, daemon=True)
+                threads.append(thread)
+                thread.start()
+                self.assertTrue(attempted.wait(5))
+                self.assertFalse(complete.wait(0.25), "Writer entered a locked backup snapshot")
+        backup = self.root / "consistent.db"
+        before_revision = self.store.meta("_entity_revision")
+        try:
+            with patch.object(module, "_rows", side_effect=rows):
+                create_postgres_backup(self.store, backup)
+        finally:
+            for thread in threads:
+                thread.join(15)
+        self.assertTrue(complete.is_set())
+        if errors: raise errors[0]
+        target = Store(backup)
+        try:
+            self.assertEqual(target.get("page", "page")["title"], "가족 문서")
+            self.assertEqual(target.meta("settings"), {"family": [1, True, None, "우리집"]})
+            self.assertEqual(target.meta("_entity_revision"), before_revision)
+        finally:
+            target.close()
+        self.assertEqual(self.store.get("page", "page")["title"], "after snapshot")
+
+    def test_failed_export_and_validation_remove_all_temporary_files(self):
+        self.fixture()
+        destination = self.root / "failed.db"
+        import fountain.postgres_backup as module
+        with patch.object(module, "_export", side_effect=sqlite3.OperationalError("private-driver-details")):
+            with self.assertRaises(BackupError) as caught:
+                create_postgres_backup(self.store, destination)
+        self.assertNotIn("private-driver-details", str(caught.exception))
+        self.assertFalse(destination.exists())
+        self.assertFalse(list(self.root.iterdir()))
+        attachment = self.store.get("attachment", "file")
+        attachment["sha256"] = "0" * 64
+        self.store.put("attachment", attachment)
+        with self.assertRaises(BackupError):
+            create_postgres_backup(self.store, destination)
+        self.assertFalse(list(self.root.iterdir()))
+        self.assertIsNotNone(self.store.get("page", "page"))
+
+    def test_publication_race_never_overwrites_another_file(self):
+        self.store.put("page", {"id": "page"})
+        destination = self.root / "racing.db"
+        original = os.link
+        def racing_link(source, target):
+            Path(target).write_bytes(b"created concurrently")
+            return original(source, target)
+        with patch("fountain.backup.os.link", side_effect=racing_link):
+            with self.assertRaises(BackupError):
+                create_postgres_backup(self.store, destination)
+        self.assertEqual(destination.read_bytes(), b"created concurrently")
+        self.assertEqual(list(self.root.iterdir()), [destination])
+
+    def test_corrupt_oversized_finalized_chunk_is_bounded_and_rejected(self):
+        data = b"x" * (CHUNK_SIZE + 1)
+        self.store.put("attachment", {"id": "oversized", "storage": "chunks", "size": len(data),
+                                      "sha256": hashlib.sha256(data).hexdigest()})
+        # Bypass the adapter's normal write limit to exercise corrupt-source
+        # defense. The exporter must never fetch the oversized BYTEA in full.
+        with self.store.transaction():
+            self.store._execute('INSERT INTO fountain_private.attachment_chunks '
+                                '(workspace_id,attachment_id,"offset",data) VALUES (%s,%s,0,%s)',
+                                (self.namespace, "oversized", data))
+        import fountain.postgres_backup as module
+        original = module._rows
+        observed = []
+        def rows(store, statement, **options):
+            for row in original(store, statement, **options):
+                if "substring(c.data" in statement:
+                    observed.append((row[-2], len(row[-1])))
+                yield row
+        with patch.object(module, "_rows", side_effect=rows):
+            with self.assertRaises(BackupError):
+                create_postgres_backup(self.store, self.root / "oversized.db")
+        self.assertEqual(observed, [(CHUNK_SIZE + 1, CHUNK_SIZE)])
+        self.assertFalse(list(self.root.iterdir()))
+
+    def test_server_cursors_bound_batches_and_protect_snapshot_files(self):
+        self.fixture()
+        import fountain.postgres_backup as module
+        original = module._rows
+        batches = []
+        def rows(store, statement, **options):
+            directories = list(self.root.glob(".fountain-postgres-backup-*"))
+            self.assertEqual(len(directories), 1)
+            self.assertEqual(directories[0].stat().st_mode & 0o777, 0o700)
+            self.assertEqual((directories[0] / "workspace.db").stat().st_mode & 0o777, 0o600)
+            batches.append(options.get("batch_size", 128))
+            for row in original(store, statement, **options):
+                if "substring(c.data" in statement:
+                    self.assertLessEqual(len(row[-1]), CHUNK_SIZE)
+                yield row
+        with patch.object(module, "_rows", side_effect=rows):
+            create_postgres_backup(self.store, self.root / "bounded.db")
+        self.assertEqual(batches, [128, 128, 1])
+
+
+if __name__ == "__main__":
+    unittest.main()

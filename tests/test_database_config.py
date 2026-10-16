@@ -87,6 +87,19 @@ class DatabaseConfigurationTests(unittest.TestCase):
         factory.return_value.close.assert_called_once()
         server.assert_not_called()
 
+    def test_private_config_reuses_the_migrated_namespace_without_manual_entry(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'connection.json'
+            path.write_text(json.dumps({'database_dsn': 'private-test-dsn', 'workspace_id': 'migrated-family'}))
+            path.chmod(0o600)
+            arguments = ['fountain.server', '--database', 'postgres', '--database-config', str(path)]
+            with (patch('sys.argv', arguments), patch('fountain.server.create_server') as factory,
+                  patch('fountain.server.logging.basicConfig'), contextlib.redirect_stdout(io.StringIO())):
+                factory.return_value.serve_forever.side_effect = KeyboardInterrupt
+                main()
+            self.assertEqual(factory.call_args.kwargs['workspace_id'], 'migrated-family')
+            factory.return_value.application.store.close.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main()

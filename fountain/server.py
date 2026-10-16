@@ -800,7 +800,6 @@ def main():
     if not 1 <= args.gc_limit <= 10000: parser.error('--gc-limit must be between 1 and 10000')
     database_url = None
     if args.database == 'postgres':
-        if not args.workspace_id: parser.error('--workspace-id is required for PostgreSQL')
         if args.data != '.data/fountain.db': parser.error('--data is for SQLite mode')
         database_url = os.environ.get('FOUNTAIN_DATABASE_URL', '')
         if args.database_config:
@@ -813,8 +812,11 @@ def main():
                     config = json.loads(content)
                     require(isinstance(config, dict), 'Database configuration must be an object')
                     database_url = config.get('database_dsn')
+                    if not args.workspace_id:
+                        args.workspace_id = config.get('workspace_id')
             except (OSError, ValueError, APIError) as error:
                 parser.error('Unable to read the private database configuration')
+        if not args.workspace_id: parser.error('--workspace-id is required for PostgreSQL (or workspace_id in the private configuration)')
         if not isinstance(database_url, str) or not database_url.strip():
             parser.error('Set FOUNTAIN_DATABASE_URL or --database-config for PostgreSQL')
     elif args.database_config or args.workspace_id or args.attachment_root:

@@ -56,7 +56,9 @@ class CollaborationTests(unittest.TestCase):
     def test_metadata_preserves_epoch_legacy_save_and_restore_replace_it(self):
         base = self.call('GET', '/collaboration')
         self.call('PATCH', '', {'title': '새 제목'})
-        self.assertEqual(self.call('GET', '/collaboration')['epoch'], base['epoch'])
+        metadata = self.call('GET', '/collaboration')
+        self.assertEqual(metadata['epoch'], base['epoch'])
+        self.assertGreater(metadata['access_revision'], base['access_revision'])
         self.call('PUT', '/blocks', {'blocks': [{'id': 'text', 'text': '교체'}]})
         newer = self.call('GET', '/collaboration')
         self.assertNotEqual(newer['epoch'], base['epoch'])
@@ -108,6 +110,16 @@ class CollaborationTests(unittest.TestCase):
         with self.assertRaises(APIError) as error:
             self.call('POST', '/operations', {'epoch': base['epoch'], 'ops': []})
         self.assertEqual(error.exception.status, 409)
+
+    def test_permission_generation_advances_without_changing_document_sequence(self):
+        self.store.put('member', {'id': 'reader', 'role': 'member', 'name': '독자'})
+        base = self.call('GET', '/collaboration')
+        self.call('PATCH', '/permissions', {'permissions': {'default': 'private', 'members': {'reader': 'view'}}})
+        snapshot = self.call('GET', '/collaboration')
+        self.assertEqual(snapshot['seq'], base['seq'])
+        self.assertEqual(snapshot['page']['revision'], base['page']['revision'])
+        self.assertGreater(snapshot['access_revision'], base['access_revision'])
+        self.assertEqual(self.call('GET', '/collaboration', principal=self.store.get('member', 'reader'))['access_level'], 1)
 
     def test_deleted_text_redacted_and_workspace_namespace_persistent(self):
         base = self.call('GET', '/collaboration')
@@ -230,7 +242,10 @@ class CollaborationStreamTests(unittest.TestCase):
 
     def test_live_metadata_permission_downgrade_and_revocation(self):
         response = self.stream()
-        self.assertEqual(self.event(response)[1]['access_level'], 3)
+        initial = self.event(response)[1]
+        self.assertEqual(initial['access_level'], 3)
+        self.assertEqual(initial['current_member_id'], 'family')
+        self.assertEqual(initial['session_binding'], self.app.auth.session_info(self.cookie)['cache_binding'])
         page = self.app.workspace.page('stream')
         page['permissions']['members']['family'] = 'view'
         page['title'] = '권한 변경'

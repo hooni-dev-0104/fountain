@@ -84,6 +84,14 @@ class Application:
                         status, payload = self._dispatch(method, path, body, query, access)
                         if method in {'POST', 'PATCH', 'PUT', 'DELETE'} and (path.startswith('/api/members') or path.startswith('/scim/v2/Users') or path.startswith('/api/accounts')):
                             require(not self.auth.accounts_required or self.auth._owners(), 'Cannot remove the last active owner account', 409)
+                        if method in {'POST', 'PATCH', 'PUT', 'DELETE'} and (
+                                path.endswith('/permissions') or path.startswith(('/api/members', '/api/groups', '/api/teamspaces', '/api/accounts', '/scim/v2/'))
+                                or method == 'PATCH' and path.startswith('/api/pages/')):
+                            self.store.set_meta('access_revision', self.store.meta('access_revision', 0) + 1)
+                        if isinstance(payload, dict) and (path == '/api/workspace' or path.endswith(('/collaboration', '/operations'))):
+                            payload['current_member_id'] = access.member_id
+                            if session_cookie is not _INTERNAL_PRINCIPAL:
+                                payload['session_binding'] = self.auth.session_info(session_cookie)['cache_binding']
                         return status, authority.project(path, payload)
                     finally:
                         AUDIT_ACTOR.reset(token)
@@ -346,7 +354,10 @@ def handler_for(application):
                 with application.store.transaction():
                     principal = application.auth.principal(cookie)
                     require(principal is not None, 'Authentication required', 401)
-                    return application.collaboration.snapshot(page_id, Access(application.store, principal))
+                    current = application.collaboration.snapshot(page_id, Access(application.store, principal))
+                    current['current_member_id'] = principal['id']
+                    current['session_binding'] = application.auth.session_info(cookie)['cache_binding']
+                    return current
 
             current = snapshot()
             self.send_response(200)

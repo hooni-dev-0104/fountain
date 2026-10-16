@@ -25,6 +25,7 @@ class Collaboration:
                 'state': crdt.public_state(document['state']),
                 'page': page, 'blocks': page.get('blocks', []),
                 'access_level': access.level('page', page),
+                'access_revision': self.store.meta('access_revision', 0),
                 'workspace_id': self.store.meta('workspace_id')}
 
     def snapshot(self, page_id, access):

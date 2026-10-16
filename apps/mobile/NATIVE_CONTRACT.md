@@ -34,7 +34,50 @@ Use a private cookie jar, never shared WebView/browser/system account caches.
 - `saveData({id,filename,bodyBase64,generation})` -> `{saved,generation}`.
   Decode at most 8MiB for local JSON/CSV/Markdown/recovery exports; use the same
   protected temporary-file OS export flow and generation fences as download.
-  Larger exports fail explicitly, never navigate or silently truncate.
+Larger exports fail explicitly, never navigate or silently truncate.
+
+## Explicit archive recovery
+
+Configuration also advertises `recoveryVersion:1, recoveryEnabled:true`,
+independently of `outboxEnabled:false`. Old bridges without this capability
+do not expose the recovery UI. Normal boot opens no SQLite.
+
+- `recoveryInventory({id,generation,cursor:null|string,limit:1..100})` returns
+  `{generation,inventoryToken,items,next}`. Each item contains only a random
+  handle, category, recordCount, byteLength and needs_check/blocked state.
+- `recoveryExport({id,generation,inventoryToken,handles,phase,exportToken?})`
+  accepts `prepare`, `save` and `cancel`. Prepare returns bounded metadata:
+  `{generation,exportToken,readyCount,blockedCount,files,warnings}`; files contain
+  name, byteLength and format. Save requires the same selection/token and returns
+  `{generation,saved,filesSaved}` after explicit OS save. Counts are source records.
+  Cancel with an exportToken discards that preparation only; without one it closes
+  the inventory. Cancel never deletes original SQL or resumes ordinary outbox.
+
+The explicit inventory first arms recovery mode, then fetches the actual native
+HTTPS session. Recovery mode blocks ordinary business writes and bypasses the
+destructive ordinary-store grant/revoke handlers. Session login/logout remains
+available through the existing secure-cookie flow; recovery-mode logout/account
+change invalidates capabilities and private temporary outputs, preserving SQL.
+
+Only an existing private database is opened READONLY/query-only. Actor filtering
+precedes metadata delivery. Prepare/save recheck source SHA/head/fingerprint,
+current native session and current page/database/row/reference/attachment access.
+Unverified local creation graphs and unknown unsafe fields remain blocked in SQL.
+No path, SQL, credentials, permission setter or original body crosses the bridge.
+
+Inventory expires within five minutes; prepared authority within two minutes or
+the earlier session/resource deadline. Selection is at most 100; source/file at
+most 16MiB; total prepared files at most 64MiB. Output streams in <=256KiB writes
+through the native OS exporter, leaving the separate JS saveData 8MiB limit intact.
+Sanitized v2 files use the existing explicit preview/paused importer. Ordered
+readable JSON parts preserve safe overflow without partial typed replay.
+
+The app durably captures the current body/title before closing controllers and
+hiding prior document/navigation content. Timer, cached navigation, late boot and
+network callbacks cannot restart editing or reveal that content during recovery.
+Closing the panel requires an explicit app reopen to resume. This does not resolve
+the ordinary auth-expiry retention and local-dependency activation prerequisites.
+See [user flow and limits](../../docs/NATIVE_RECOVERY.md).
 
 ## Sessions and races
 

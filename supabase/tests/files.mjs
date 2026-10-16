@@ -4,7 +4,7 @@ import {createServer} from 'node:http';
 import {once} from 'node:events';
 import {createHash,randomBytes} from 'node:crypto';
 import {test} from 'node:test';
-import {StoreError,canonicalJSON,normalizeSelection} from '../functions/_shared/store.ts';
+import {CloudStore,StoreError,canonicalJSON,normalizeSelection} from '../functions/_shared/store.ts';
 import {createFiles} from '../functions/_shared/files.ts';
 import {createStorage,CHUNK_SIZE} from '../functions/_shared/storage.ts';
 import {storeContext} from '../functions/_shared/transaction.ts';
@@ -17,7 +17,7 @@ const key=(kind,id)=>JSON.stringify([kind,id]);
 class MemoryProvider {
   constructor(){
     this.records=new Map();this.metadata=new Map([['workspace_id',context.workspaceId],['settings',{name:'가족'}],['seeded',true],['access_revision',2],['null-value',null],['literal-missing',{$fountainMissing:true}]]);
-    this.revision=7;this.receipts=new Map();this.requests=[];this.snapshotRequests=[];this.active=new Map([[context.sessionHash,clone(context)],[second.sessionHash,clone(second)]]);this.failAfterAck=false;this.corruptAck=false;this.beforeCommit=null;this.failAt=-1;
+    this.revision=7;this.receipts=new Map();this.requests=[];this.snapshotRequests=[];this.active=new Map([[context.sessionHash,clone(context)],[second.sessionHash,clone(second)]]);this.failAfterAck=false;this.corruptAck=false;this.beforeCommit=null;this.failAt=-1;this.retiredStorageIds=new Set();
     this.seed('member',{id:'alice',name:'가족',email:'alice@test.test',role:'owner',active:true});
     this.seed('member',{id:'bob',name:'가족2',email:'bob@test.test',role:'member',active:true});
     this.seed('group',{id:'family',members:['alice']});this.seed('teamspace',{id:'general',visibility:'open'});
@@ -53,6 +53,7 @@ class MemoryProvider {
     for(const change of request.changes){
       if(index++===this.failAt)throw error('INJECTED_SQL_FAILURE',503);
       if(change.op==='put'){
+        if(['upload','attachment','attachment_cloud'].includes(change.kind)&&this.retiredStorageIds.has(change.data.storage_id??change.id))throw error('STORAGE_ID_RETIRED');
         const previous=records.get(key(change.kind,change.id));
         if((previous?.createdAt??null)!==change.previousCreatedAt)throw error('REVISION_CONFLICT');
         records.set(key(change.kind,change.id),{kind:change.kind,id:change.id,data:clone(change.data),createdAt:change.data.created_at,updatedAt:change.data.updated_at});steps++;
@@ -71,7 +72,7 @@ async function fixture(t,options={}){
  const provider=new MemoryProvider();provider.records.delete(key('attachment','inline'));
  provider.seed('page',{id:'page',owner_id:'bob',title:'공유문서',permissions:{default:'private',inherit:false,members:{alice:'edit',bob:'view'},groups:{}},blocks:[]});
  let time=Date.parse('2026-10-16T00:00:00.123Z');
- const objects=new Map(),calls=[],io={onUpload:null,beforeUpload:null,loseACK:false,loseDeleteACK:false,deleteStatus:200,readMode:null};
+ const objects=new Map(),calls=[],backupPins=new Set(),fenceCalls=[],io={onUpload:null,beforeUpload:null,beforeDelete:null,loseACK:false,loseDeleteACK:false,deleteStatus:200,readMode:null};
  const server=createServer(async(req,res)=>{try{
   assert.equal(req.headers.apikey,serviceKey);assert.equal(req.headers.authorization,undefined);
   const path=new URL(req.url,'http://fixture').pathname;calls.push([req.method,path]);
@@ -80,19 +81,31 @@ async function fixture(t,options={}){
   const upload='/storage/v1/object/'+bucket+'/',read='/storage/v1/object/authenticated/'+bucket+'/';
   if(req.method==='POST'&&path.startsWith(upload)){const chunks=[];for await(const bytes of req)chunks.push(bytes);const id=path.slice(upload.length);if(io.beforeUpload)await io.beforeUpload(id);if(objects.has(id))return json(400,{error:'Duplicate'});objects.set(id,Buffer.concat(chunks));if(io.onUpload)await io.onUpload(id);if(io.loseACK){io.loseACK=false;req.socket.destroy();return;}return json(200,{Key:id});}
   if(req.method==='GET'&&path.startsWith(read)){if(io.readMode==='unavailable')return json(503,{message:'unavailable'});const bytes=objects.get(path.slice(read.length));if(!bytes)return json(404,{message:'PRIVATE '+serviceKey});const data=Buffer.from(bytes);if(io.readMode==='corrupt')data[0]^=1;res.writeHead(200,{'Content-Length':String(data.length)});res.end(data);return;}
-  if(req.method==='DELETE'&&path==='/storage/v1/object/'+bucket){if(io.deleteStatus!==200)return json(io.deleteStatus,{message:serviceKey});let text='';for await(const bytes of req)text+=bytes;for(const id of JSON.parse(text).prefixes)objects.delete(id);if(io.loseDeleteACK){io.loseDeleteACK=false;req.socket.destroy();return;}return json(200,[]);}
+  if(req.method==='DELETE'&&path==='/storage/v1/object/'+bucket){if(io.beforeDelete)await io.beforeDelete();if(io.deleteStatus!==200)return json(io.deleteStatus,{message:serviceKey});let text='';for await(const bytes of req)text+=bytes;for(const id of JSON.parse(text).prefixes)objects.delete(id);if(io.loseDeleteACK){io.loseDeleteACK=false;req.socket.destroy();return;}return json(200,[]);}
   json(404,{});
  }catch{if(!res.headersSent){res.writeHead(500);res.end();}else res.destroy();}});
  server.listen(0,'127.0.0.1');await once(server,'listening');const origin='http://127.0.0.1:'+server.address().port;
  t.after(async()=>{server.closeAllConnections();server.close();await once(server,'close');});
  const storage=createStorage({supabaseUrl:origin,serviceKey,bucket,workspaceId:context.workspaceId,maxObjectBytes:50_000_000});
  const auth=ctx=>{const principal=provider.authorize(ctx);return {hash:ctx.sessionHash,userId:ctx.userId,authSessionId:ctx.authSessionId,cacheBinding:ctx.cacheBinding,profile:{workspaceId:ctx.workspaceId,authSessionActive:true,member:principal},expiresAt:time+3600_000};};
- let current=context;const files=createFiles({provider,storage,authorize:async()=>auth(current),clock:()=>time,...options});
- return {provider,storage,files,auth:()=>auth(current),alice:()=>auth(context),bob:()=>auth(second),setActor:ctx=>{current=ctx;},objects,calls,io,clock:ms=>{time+=ms;},raw:(kind,id)=>provider.records.get(key(kind,id))?.data,seed:(kind,value)=>{provider.seed(kind,value);provider.revision++;}};
+ const fenceGarbage=async(initial,id,items)=>{provider.authorize(storeContext(initial));fenceCalls.push({id,items:clone(items)});if(backupPins.has(id))throw error('STORAGE_STILL_REFERENCED');const gc=provider.records.get(key('upload_gc',id))?.data;assert(gc&&!gc.pending);assert.deepEqual(items,gc.cloud_chunks.slice(0,100));provider.retiredStorageIds.add(id);};
+ let current=context;const files=createFiles({provider,storage,authorize:async()=>auth(current),clock:()=>time,fenceGarbage,...options});
+ return {provider,storage,files,auth:()=>auth(current),alice:()=>auth(context),bob:()=>auth(second),setActor:ctx=>{current=ctx;},objects,calls,io,backupPins,fenceCalls,fenceGarbage,clock:ms=>{time+=ms;},raw:(kind,id)=>provider.records.get(key(kind,id))?.data,seed:(kind,value)=>{provider.seed(kind,value);provider.revision++;}};
 }
 const rejected=(promise,status)=>assert.rejects(promise,e=>e.status===status&&!e.message.includes(serviceKey));
 async function upload(f,bytes,name='가족 파일 😀.bin',page_id='page'){const item=await f.files.begin(f.auth(),{name,size:bytes.length,page_id});for(let offset=0;offset<bytes.length;offset+=CHUNK_SIZE)await f.files.append(f.auth(),item.id,offset,bytes.subarray(offset,offset+CHUNK_SIZE));return item;}
 const req=(path,method='GET',body,headers={})=>new Request('https://app.test'+path,{method,...(body===undefined?{}:{body}),headers});
+
+test('manual GC keeps bytes and reservation while a materialized backup pins them (SQL pins modeled)',async t=>{
+ const f=await fixture(t,{quotaBytes:4}),item=await upload(f,Buffer.from('safe'));f.io.deleteStatus=503;await f.files.cancel(f.auth(),item.id);f.io.deleteStatus=200;f.backupPins.add(item.id);const deletes=f.calls.filter(([verb])=>verb==='DELETE').length;
+ await rejected(f.files.garbageCollect(f.auth(),item.id),409);assert.equal(f.objects.size,1);assert.equal(f.raw('upload_gc',item.id).reserved_bytes,4);assert.equal(f.calls.filter(([verb])=>verb==='DELETE').length,deletes);
+ f.backupPins.delete(item.id);assert.equal((await f.files.garbageCollect(f.auth(),item.id)).removed,true);assert.equal(f.objects.size,0);
+});
+test('permanent SQL retirement fences a new reference after the final read gate and before physical DELETE (trigger modeled)',async t=>{
+ const f=await fixture(t),item=await upload(f,Buffer.from('safe'));f.io.deleteStatus=503;await f.files.cancel(f.auth(),item.id);f.io.deleteStatus=200;let blocked=false;
+ f.io.beforeDelete=async()=>{const store=await CloudStore.open(f.provider,storeContext(f.auth()),{ids:{attachment_cloud:['attempted-relink']}},options);store.put('attachment_cloud',{id:'attempted-relink',storage_id:item.id,name:'ref',size:4,cloud_chunks:clone(f.raw('upload_gc',item.id).cloud_chunks)});await assert.rejects(store.commit(),e=>e.code==='STORAGE_ID_RETIRED');blocked=true;};
+ assert.equal((await f.files.garbageCollect(f.auth(),item.id)).removed,true);assert.equal(blocked,true);assert(f.fenceCalls.length>=1);assert.equal(f.objects.size,0);assert.equal(f.raw('attachment_cloud','attempted-relink'),undefined);
+});
 
 test('resumable domain publishes exact bytes once, metadata stays private, GET/stream gates create no SQL receipts',async t=>{
  const f=await fixture(t),bytes=randomBytes(CHUNK_SIZE+17),item=await upload(f,bytes);
@@ -268,7 +281,7 @@ test('normal cleanup rotates durably past more than four unknown quarantines and
   let data='';for await(const piece of request)data+=piece;assert(data.length<100);
   // New domain instance for EVERY HTTP invocation proves progress is durable,
   // rather than relying on an Edge worker's memory or a process-local cursor.
-  const restarted=createFiles({provider:f.provider,storage:f.storage,authorize:async()=>f.auth(),clock:options.clock,quotaBytes:24});
+  const restarted=createFiles({provider:f.provider,storage:f.storage,authorize:async()=>f.auth(),clock:options.clock,quotaBytes:24,fenceGarbage:f.fenceGarbage});
   const result=await restarted.handle(new Request('https://app.test/api/uploads/cleanup',{method:'POST',body:data,headers:{'Content-Type':'application/json'}}),'/api/uploads/cleanup',f.auth());response.writeHead(result.status,Object.fromEntries(result.headers));response.end(Buffer.from(await result.arrayBuffer()));
  }catch(error){response.writeHead(error.status??500);response.end('{}');}});server.listen(0,'127.0.0.1');await once(server,'listening');t.after(async()=>{server.closeAllConnections();server.close();await once(server,'close');});
  for(let round=0;round<3;round++){

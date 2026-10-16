@@ -14,7 +14,7 @@ import {createTransactions,storeContext} from './transaction.ts';
 import {createStorage,StorageError,checkQuota,CHUNK_SIZE,MAX_FILE_SIZE} from './storage.ts';
 import type {ChunkManifest,AttachmentManifest} from './storage.ts';
 import {jsonResponse,readBytes,readJSON} from './http.ts';
-type Config={provider:StoreProvider;storage:ReturnType<typeof createStorage>;authorize:()=>Promise<AuthContext>;clock?:()=>number;quotaBytes?:number;verifyChunks?:number};
+type Config={provider:StoreProvider;storage:ReturnType<typeof createStorage>;authorize:()=>Promise<AuthContext>;fenceGarbage?:(initial:AuthContext,id:string,items:ChunkManifest[])=>Promise<void>;clock?:()=>number;quotaBytes?:number;verifyChunks?:number};
 const TTL=86400_000,HASH=/^[a-f0-9]{64}$/;
 const integer=(v:unknown):v is number=>Number.isSafeInteger(v)&&(v as number)>=0;
 async function hash(data:Uint8Array):Promise<string>{return [...new Uint8Array(await crypto.subtle.digest('SHA-256',data))].map(v=>v.toString(16).padStart(2,'0')).join('');}
@@ -155,6 +155,10 @@ export function createFiles(config:Config){
     }
     const batch=starting.cloud_chunks.slice(0,100),fingerprint=canonicalJSON(starting.cloud_chunks);
     require(batch.length>0,'Invalid empty cleanup claim',409);
+    // A live backup can pin bytes outside the entity Store. SQL also retires
+    // this physical ID permanently, closing the final-read -> DELETE relink gap.
+    require(typeof config.fenceGarbage==='function','File cleanup authorization is unavailable',503);
+    await config.fenceGarbage(initial,id,clone(batch));
     const unreferenced=()=>view(initial,(s,a)=>{const item=s.get('upload_gc',id);require(item&&(a.owner||item.owner_id===a.member_id),'Upload cleanup not found',404);return !item.pending&&gcUnreferenced(s,id)&&canonicalJSON(item.cloud_chunks)===fingerprint;});
     await config.storage.removeChunks(batch,async()=>{require(await unreferenced(),'Attachment is still referenced',409);},unreferenced);
     return (await execute(initial,s=>{const item=s.get('upload_gc',id);if(!item)return {id,removed:true};const a=new Access(s,s.principal);require(a.owner||item.owner_id===a.member_id,'Upload cleanup not found',404);require(!item.pending&&gcUnreferenced(s,id)&&canonicalJSON(item.cloud_chunks)===fingerprint,'Upload cleanup changed',409);item.cloud_chunks.splice(0,batch.length);if(!item.cloud_chunks.length){s.delete('upload_gc',id);return {id,removed:true};}s.put('upload_gc',item);return {id,removed:false};})).value;

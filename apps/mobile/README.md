@@ -27,6 +27,7 @@ npm run --prefix apps/mobile android
 ```sh
 xcodebuild -project apps/mobile/ios/App/App.xcodeproj -scheme FountainQA \
   -configuration Debug -sdk iphonesimulator \
+  -destination "platform=iOS Simulator,name=Fountain QA" \
   CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- \
   -derivedDataPath .data/ios-build build-for-testing
 ```

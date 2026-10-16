@@ -2,3 +2,37 @@
 .native-configuration h1{color:#363632}
 .native-configuration>p{color:#64675e}
 .native-configuration label{color:#4f554a}
+/* Independent recovery panel also works before the application controller starts. */
+.native-recovery-entry{margin:0 24px 24px}
+.native-recovery-dialog{width:min(620px,calc(100% - 32px));max-height:calc(100dvh - 32px);padding:0;overflow:auto;overscroll-behavior:contain;border:1px solid #e2e4dc;border-radius:16px;background:#fff;color:#373630;box-shadow:0 24px 90px #1d30252b}
+.native-recovery-dialog::backdrop{background:#28382e66}
+.native-recovery-body{padding:28px;overflow-wrap:anywhere}
+.native-recovery-body header{position:sticky;top:0;z-index:1;background:#fff;padding:8px 0;display:flex;align-items:flex-start;justify-content:space-between;gap:20px}
+.native-recovery-body h2{margin:0;font-size:22px;line-height:1.4;letter-spacing:-.6px}
+.native-recovery-close{flex:none;padding:6px 8px;color:#5d645a}
+.native-recovery-description{margin:15px 0 20px;line-height:1.8;color:#62665c}
+.native-recovery-account{padding:12px 14px;background:#f2f5ef;border-radius:8px;font-size:13px;line-height:1.6;color:#44583f}
+.native-recovery-account-actions{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 20px}
+.native-recovery-account-actions button,.native-recovery-body>.outline-btn{padding:8px 11px;border:1px solid #dedfd6;font-size:12px}
+.native-recovery-list{display:grid;gap:9px}
+.native-recovery-item{display:flex;align-items:center;gap:13px;padding:15px;border:1px solid #e6e7df;border-radius:9px;cursor:pointer}
+.native-recovery-item input{width:18px;height:18px;flex:none;accent-color:#4c6e56}
+.native-recovery-item strong{display:block;font-size:14px;font-weight:600}
+.native-recovery-item small{display:block;margin-top:4px;color:#676d61;font-size:12px;line-height:1.6}
+.native-recovery-item:has(input:disabled){background:#f7f7f3;cursor:default}
+.native-recovery-actions{display:flex;gap:14px;align-items:center;justify-content:space-between;margin-top:20px}
+.native-recovery-actions>span{font-size:12px;color:#636b5f}
+.native-recovery-body .solid-btn{background:#4c6e56;color:#fff;padding:11px 16px;font-weight:500;line-height:1.5}
+.native-recovery-body button:disabled{opacity:.55;cursor:default}
+.native-recovery-summary{margin-top:24px;padding:19px;background:#f5f6f0;border:1px solid #e1e5d9;border-radius:10px}
+.native-recovery-summary h3{margin:0 0 12px;font-size:16px}
+.native-recovery-summary p{font-size:13px;line-height:1.8}
+.native-recovery-summary .native-recovery-file{padding:8px 0;border-bottom:1px solid #e0e4d7}
+.native-recovery-warning{color:#675d36}
+.native-recovery-status{min-height:22px;margin:18px 0 0;font-size:13px;line-height:1.8;color:#54604e}
+.native-recovery-status[role=alert]{color:#9a3f36}
+.native-recovery-login{margin:18px 0;padding:18px;background:#f7f7f3;border-radius:10px}
+.native-recovery-login label{color:#4f554a;font-size:13px}
+.native-recovery-login input{width:100%;margin-top:7px;padding:11px;background:white}
+.native-recovery-login .solid-btn{margin-top:5px}
+@media(max-width:480px){.native-recovery-dialog{width:calc(100% - 20px);max-height:calc(100dvh - 20px);border-radius:13px}.native-recovery-body{padding:21px 18px}.native-recovery-body h2{font-size:20px}.native-recovery-description{font-size:13px}.native-recovery-actions{align-items:stretch;flex-direction:column;gap:9px}.native-recovery-actions>span{align-self:flex-start}.native-recovery-item{padding:13px}.native-recovery-summary{padding:16px}}

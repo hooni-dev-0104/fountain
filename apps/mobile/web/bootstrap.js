@@ -2,8 +2,8 @@
 (async function () {
   'use strict';
   const assets=(document.currentScript?.dataset.assets||'').split(',').filter(Boolean);
-  const main=document.getElementById('main');
-  function error(message){main.replaceChildren();const paragraph=document.createElement('p');paragraph.className='empty';paragraph.textContent=message;main.append(paragraph);}
+  const main=document.getElementById('main');let recovery=null;
+  function error(message){main.replaceChildren();const paragraph=document.createElement('p');paragraph.className='empty';paragraph.textContent=message;main.append(paragraph);if(recovery?.available){const action=document.createElement('button');action.type='button';action.className='solid-btn native-recovery-entry';action.textContent='보관된 기록 복구';action.addEventListener('click',()=>recovery.open());main.append(action);}}
   try {
     if(!globalThis.Capacitor?.isNativePlatform()||!Capacitor.isPluginAvailable('FountainNative'))throw new Error('이 번들은 Fountain 네이티브 앱에서 열어 주세요.');
     const bridge=Capacitor.registerPlugin('FountainNative'),transport=FountainNativeTransport.create(bridge);
@@ -20,6 +20,7 @@
       form.addEventListener('submit',async event=>{event.preventDefault();submit.disabled=true;try{await transport.configure({origin:input.value});resolve();}catch(failure){status.textContent=failure.message;}finally{submit.disabled=false;}});
       panel.append(heading,description,form);main.append(panel);input.focus();
     });
+    if(globalThis.FountainNativeRecoveryPanel){recovery=FountainNativeRecoveryPanel.create({bridge,transport});globalThis.FountainNativeRecovery=recovery;}
     const load=async name=>{if(!/^[a-z][a-z0-9.-]*\.js$/.test(name))throw new Error('앱 자산 목록이 올바르지 않습니다.');await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='/'+name;script.onload=resolve;script.onerror=()=>reject(new Error('앱 파일을 열지 못했습니다.'));document.body.append(script);});};
     for(const name of assets.filter(name=>name!=='app.js'))await load(name);
     if(transport.outboxEnabled===true&&transport.outboxVersion===1){
@@ -29,5 +30,5 @@
       await storage.initialize();globalThis.FountainNativeStorage=storage;
     }
     await load('app.js');
-  }catch(failure){error(failure.message||'앱을 시작하지 못했습니다.');}
+  }catch(failure){error(/^(OUTBOX_|RECOVERY_)/.test(failure.code||'')?'기기 저장 기록을 아직 열지 못했습니다. 현재 계정과 접근 권한을 확인해 복구할 수 있습니다.':failure.message||'앱을 시작하지 못했습니다.');}
 })();

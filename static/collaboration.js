@@ -147,7 +147,7 @@
       const expires=profile.validUntil||Date.parse(profile.session?.expires_at);if(Number.isFinite(expires))this.expiryTimer=setTimeout(()=>this.deny(401,'오프라인 저장 기한이 만료되었습니다. 다시 로그인해 주세요.'),Math.max(0,Math.min(2147483647,expires-Date.now())));
     }
     setStatus(status){this.status=status;if(!this.closed)this.onStatus({status,pending:this.pending.size,durable:this.durable!==false});}
-    async fetch(path,body){if(this.fetcher)return this.fetcher(path,body);const response=await fetch('/api'+path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json','X-Fountain-Request':'1'},...(body?{body:JSON.stringify(body)}:{})});const data=await response.json();if(!response.ok){const error=new Error(data.error||'문서를 동기화하지 못했습니다.');error.status=response.status;throw error;}return data;}
+    async fetch(path,body){if(this.fetcher)return this.fetcher(path,body);const response=await FountainTransport.request('/api'+path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});const data=await response.json();if(!response.ok){const error=new Error(data.error||'문서를 동기화하지 못했습니다.');error.status=response.status;throw error;}return data;}
     async open(snapshot,{cached=false}={}){
       if(this.offline&&this.key)this.previousCached=await this.offline.getSnapshot(this.key);
       if(this.closed)return this;
@@ -311,7 +311,7 @@
     }
     connectEvents(){
       if(this.closed||typeof EventSource==='undefined'||!navigator.onLine)return;this.source?.close();
-      this.source=new EventSource('/api/pages/'+encodeURIComponent(this.pageId)+'/events');
+      this.source=FountainTransport.events('/api/pages/'+encodeURIComponent(this.pageId)+'/events');
       this.source.addEventListener('snapshot',event=>{try{const data=JSON.parse(event.data);this.receive(data).then(()=>this.flush()).catch(error=>this.onError(error));}catch(error){this.onError(error);}});
       this.source.addEventListener('denied',event=>{let data;try{data=JSON.parse(event.data);}catch{data={status:403,error:'문서 접근 권한이 변경되었습니다.'};}this.deny(data.status,data.error);});
       this.source.onerror=()=>{this.source?.close();if(!this.closed){this.setStatus('offline');this.retry();}};

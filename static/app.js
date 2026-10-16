@@ -51,9 +51,9 @@ function pruneAdministrativeControls() {
 }
 async function api(path, body, method) {
   const requestBinding=state.session?.cache_binding;
-  const response = await fetch('/api' + path, {
+  const response = await FountainTransport.request('/api' + path, {
     method:method || (body ? 'POST':'GET'),headers: {
-      'Content-Type':'application/json','X-Fountain-Request':'1'
+      'Content-Type':'application/json'
     }, ...(body ? {
       body:JSON.stringify(body)
     }
@@ -69,7 +69,7 @@ async function api(path, body, method) {
     error.status = response.status;
     error.data=data;
     if(response.status===401&&path!=='/session'){
-      const session=await fetch('/api/session').then(result=>result.json()).catch(()=>null);
+      const session=await FountainTransport.request('/api/session').then(result=>result.json()).catch(()=>null);
       if(session)state.session=session;
       closeModal();renderLogin();
     }
@@ -288,7 +288,7 @@ async function warmOfflinePages() {
     if(generation!==state.bootGeneration||state.offlineProfile?.id!==profile.id)return;
     const key=FountainOffline.key(profile,id);
     try{
-      const response=await fetch('/api/pages/'+encodeURIComponent(id)+'/collaboration');
+      const response=await FountainTransport.request('/api/pages/'+encodeURIComponent(id)+'/collaboration');
       if(generation!==state.bootGeneration||state.offlineProfile?.id!==profile.id)return;
       if([403,404].includes(response.status)){await FountainOffline.purgeResource(key);continue;}
       if(!response.ok)continue;const snapshot=await response.json();
@@ -446,7 +446,7 @@ function blockHTML(b,i) {
   else if(type==='bullet')marker='<span class="block-marker">•</span>';
   else if(type==='numbered')marker=`<span class="block-marker">${i+1}.</span>`;
   else if(type==='toggle')marker=`<button class="block-marker" data-action="toggle-block" data-id="${esc(b.id)}">▸</button>`;
-  return `<div class="block ${b.checked?'checked':''}" data-id="${esc(b.id)}" data-type="${esc(type)}" style="--block-depth:${blockDepth(b)}" draggable="${pageEditable()}">${pageEditable()?`<span class="block-handle"><button data-action="block-menu" data-id="${esc(b.id)}" aria-label="블록 메뉴">⠿</button></span>`:''}${type==='file'?`<a class="outline-btn attachment-link" href="/api/attachments/${esc(encodeURIComponent(b.attachment_id||''))}/download" download="${esc(b.text||'첨부 파일')}">📎 ${esc(b.text||'첨부 파일')}<span class="muted small">${Number.isFinite(b.size)?(b.size/1000).toLocaleString('ko-KR',{maximumFractionDigits:1})+' KB':''} ↓</span></a>`:type==='divider'?'<hr>':marker+`<div class="block-content" contenteditable="${pageEditable()}" role="textbox" aria-multiline="true" data-placeholder="글을 쓰거나 ‘/’로 명령어를 입력하세요">${richTextHTML(b)}</div>`}</div>`;
+  return `<div class="block ${b.checked?'checked':''}" data-id="${esc(b.id)}" data-type="${esc(type)}" style="--block-depth:${blockDepth(b)}" draggable="${pageEditable()}">${pageEditable()?`<span class="block-handle"><button data-action="block-menu" data-id="${esc(b.id)}" aria-label="블록 메뉴">⠿</button></span>`:''}${type==='file'?`<a class="outline-btn attachment-link" href="${esc(FountainTransport.downloadURL('/api/attachments/'+encodeURIComponent(b.attachment_id||'')+'/download'))}" download="${esc(b.text||'첨부 파일')}">📎 ${esc(b.text||'첨부 파일')}<span class="muted small">${Number.isFinite(b.size)?(b.size/1000).toLocaleString('ko-KR',{maximumFractionDigits:1})+' KB':''} ↓</span></a>`:type==='divider'?'<hr>':marker+`<div class="block-content" contenteditable="${pageEditable()}" role="textbox" aria-multiline="true" data-placeholder="글을 쓰거나 ‘/’로 명령어를 입력하세요">${richTextHTML(b)}</div>`}</div>`;
 }
 function editorPlainText(element) {
   let last=element;while(last.lastChild)last=last.lastChild;
@@ -797,7 +797,7 @@ async function openPermissions(kind,id) {
   const rows=(items,key)=>items.map(item=>`<label class="settings-item"><span><strong>${esc(item.name||item.email||item.id)}</strong><small>${esc(item.email||'')}${item.id===result.owner_id?' · 소유자':''}</small></span><select data-acl-kind="${key}" data-acl-id="${esc(item.id)}" aria-label="${esc(item.name||item.email||item.id)} 공유 권한" ${!manage||item.id===result.owner_id?'disabled':''}>${accessChoices.map(([value,label])=>`<option value="${value}" ${(item.id===result.owner_id?'full':(acl[key]?.[item.id]??''))===value?'selected':''}>${label}</option>`).join('')}</select></label>`).join('');
   const database=kind==='databases'?(state.database?.id===id?state.database:state.workspace.databases.find(d=>d.id===id)):null;
   const policy=result.row_permissions||database?.row_permissions||{mode:'all',allow_create:true,edit_assigned:true};
-  openModal(kind==='pages'?'페이지 공유 및 권한':'데이터베이스 공유 및 권한',`<p>링크를 전달해도 아래에서 허용한 사람만 열 수 있습니다. 워크스페이스 소유자는 모든 문서에 접근할 수 있습니다. 그 외 멤버의 명시적 차단은 그룹과 상위 페이지의 허용보다 우선합니다.</p><div style="display:flex;gap:8px;margin-bottom:20px"><input id="share-url" style="flex:1;min-width:0" readonly value="${esc(location.origin+'/#'+(kind==='pages'?'page':'database')+'/'+id)}"><button class="outline-btn" data-action="copy-link">${icon('link')}링크 복사</button></div>${!manage?'<div class="info-box">현재 공유 설정을 볼 수 있습니다. 소유자 또는 전체 권한을 가진 사람만 변경할 수 있습니다.</div>':''}<form id="permissions-form" data-kind="${kind}" data-id="${esc(id)}" class="form-grid" style="margin-top:18px"><label>기본 공유 범위<select name="default" ${!manage?'disabled':''}><option value="private" ${acl.default==='private'?'selected':''}>지정·상속된 사람만 · 비공개</option><option value="workspace" ${acl.default==='workspace'?'selected':''}>워크스페이스 멤버 · 편집 (게스트 제외)</option></select></label><label style="display:flex;align-items:center"><input name="inherit" type="checkbox" style="width:auto" ${acl.inherit!==false?'checked':''} ${!manage?'disabled':''}>${kind==='pages'?'상위 페이지와 팀스페이스 권한 상속':'팀스페이스 권한 상속'}</label><div><strong class="small">가족 멤버</strong><div class="settings-list">${rows(result.members||[],'members')}</div></div>${result.groups?.length?`<div><strong class="small">그룹</strong><div class="settings-list">${rows(result.groups,'groups')}</div></div>`:''}${database?`<div style="border-top:1px solid var(--line);padding-top:15px"><strong class="small">항목별 접근</strong><label style="margin-top:12px">보여줄 항목<select name="row_mode" ${!manage?'disabled':''}><option value="all" ${policy.mode!=='assigned'?'selected':''}>접근 가능한 모든 항목</option><option value="assigned" ${policy.mode==='assigned'?'selected':''}>내가 담당자인 항목만</option></select></label><label style="margin-top:12px">담당자 속성<select name="property_id" ${!manage?'disabled':''}><option value="">선택하세요</option>${(database.properties||[]).filter(p=>p.type==='person').map(p=>`<option value="${esc(p.id)}" ${policy.property_id===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label><label style="display:flex;align-items:center;margin-top:12px"><input type="checkbox" name="edit_assigned" style="width:auto" ${policy.edit_assigned!==false?'checked':''} ${!manage?'disabled':''}>담당 항목 편집 허용</label><label style="display:flex;align-items:center;margin-top:12px"><input type="checkbox" name="allow_create" style="width:auto" ${policy.allow_create!==false?'checked':''} ${!manage?'disabled':''}>새 항목 생성 허용</label></div>`:''}${manage?'<div class="form-actions"><button class="solid-btn">공유 설정 저장</button></div>':''}</form>`);
+  openModal(kind==='pages'?'페이지 공유 및 권한':'데이터베이스 공유 및 권한',`<p>링크를 전달해도 아래에서 허용한 사람만 열 수 있습니다. 워크스페이스 소유자는 모든 문서에 접근할 수 있습니다. 그 외 멤버의 명시적 차단은 그룹과 상위 페이지의 허용보다 우선합니다.</p><div style="display:flex;gap:8px;margin-bottom:20px"><input id="share-url" style="flex:1;min-width:0" readonly value="${esc(FountainTransport.appURL((kind==='pages'?'page':'database')+'/'+encodeURIComponent(id)))}"><button class="outline-btn" data-action="copy-link">${icon('link')}링크 복사</button></div>${!manage?'<div class="info-box">현재 공유 설정을 볼 수 있습니다. 소유자 또는 전체 권한을 가진 사람만 변경할 수 있습니다.</div>':''}<form id="permissions-form" data-kind="${kind}" data-id="${esc(id)}" class="form-grid" style="margin-top:18px"><label>기본 공유 범위<select name="default" ${!manage?'disabled':''}><option value="private" ${acl.default==='private'?'selected':''}>지정·상속된 사람만 · 비공개</option><option value="workspace" ${acl.default==='workspace'?'selected':''}>워크스페이스 멤버 · 편집 (게스트 제외)</option></select></label><label style="display:flex;align-items:center"><input name="inherit" type="checkbox" style="width:auto" ${acl.inherit!==false?'checked':''} ${!manage?'disabled':''}>${kind==='pages'?'상위 페이지와 팀스페이스 권한 상속':'팀스페이스 권한 상속'}</label><div><strong class="small">가족 멤버</strong><div class="settings-list">${rows(result.members||[],'members')}</div></div>${result.groups?.length?`<div><strong class="small">그룹</strong><div class="settings-list">${rows(result.groups,'groups')}</div></div>`:''}${database?`<div style="border-top:1px solid var(--line);padding-top:15px"><strong class="small">항목별 접근</strong><label style="margin-top:12px">보여줄 항목<select name="row_mode" ${!manage?'disabled':''}><option value="all" ${policy.mode!=='assigned'?'selected':''}>접근 가능한 모든 항목</option><option value="assigned" ${policy.mode==='assigned'?'selected':''}>내가 담당자인 항목만</option></select></label><label style="margin-top:12px">담당자 속성<select name="property_id" ${!manage?'disabled':''}><option value="">선택하세요</option>${(database.properties||[]).filter(p=>p.type==='person').map(p=>`<option value="${esc(p.id)}" ${policy.property_id===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label><label style="display:flex;align-items:center;margin-top:12px"><input type="checkbox" name="edit_assigned" style="width:auto" ${policy.edit_assigned!==false?'checked':''} ${!manage?'disabled':''}>담당 항목 편집 허용</label><label style="display:flex;align-items:center;margin-top:12px"><input type="checkbox" name="allow_create" style="width:auto" ${policy.allow_create!==false?'checked':''} ${!manage?'disabled':''}>새 항목 생성 허용</label></div>`:''}${manage?'<div class="form-actions"><button class="solid-btn">공유 설정 저장</button></div>':''}</form>`);
 }
 
 async function openSettings(tab='members') {
@@ -1253,7 +1253,7 @@ async function doAction(target) {
     case'automation-runs':await openAutomationRuns(id);break;
     case'automation-settings':await openSettings('automations');break;
     case'toggle-automation':{const automation=state.advanced.automations.find(item=>item.id===id);await api('/automations/'+encodeURIComponent(id),{enabled:automation.enabled===false},'PATCH');await openSettings('automations');toast(automation.enabled===false?'자동화를 사용하도록 설정했습니다.':'자동화를 일시 중지했습니다.');break;}
-    case'fill-form':window.open('/forms/'+encodeURIComponent(id),'_blank','noopener');
+    case'fill-form':window.open(FountainTransport.publicURL('/forms/'+encodeURIComponent(id)),'_blank','noopener');
     break;
     case'site-link': {
       const site=state.advanced.sites.find(s=>s.id===id);
@@ -1261,7 +1261,7 @@ async function doAction(target) {
         toast('먼저 사이트를 게시해 주세요.');
         break;
       }
-      window.open('/sites/'+encodeURIComponent(site.slug),'_blank','noopener');
+      window.open(FountainTransport.publicURL('/sites/'+encodeURIComponent(site.slug)),'_blank','noopener');
       break;
     }
     case'add-row':if(!state.database) {
@@ -1318,7 +1318,7 @@ async function doAction(target) {
     break;
     case'new-property':openModal('데이터베이스 속성 추가',form(field('속성 이름','name','마감일')+`<label>속성 종류<select name="type"><option value="text">텍스트</option><option value="number">숫자</option><option value="status">상태</option><option value="select">선택</option><option value="date">날짜</option><option value="person">사람</option><option value="checkbox">체크박스</option><option value="multi_select">다중 선택</option><option value="files">파일 ID 목록</option><option value="url">URL</option><option value="email">이메일</option><option value="relation">관계형</option><option value="formula">수식</option><option value="rollup">롤업</option></select></label>`+field('선택 항목 (쉼표로 구분)','options','시작 전, 진행 중, 완료')+field('수식','expression',"prop('estimate') * 2")+`<label>관계형 대상 데이터베이스<select name="database_id">${state.workspace.databases.map(d=>`<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('')}</select></label><label>롤업에 사용할 관계 속성<select name="relation_property"><option value="">관계 속성을 선택하세요</option>${state.database.properties.filter(p=>p.type==='relation').map(p=>`<option value="${esc(p.id)}">${esc(p.name)} (${esc(p.id)})</option>`).join('')}</select></label>`+field('롤업 대상 속성 ID','target_property','estimate')+`<label>롤업 집계<select name="aggregation"><option value="sum">합계</option><option value="count">개수</option><option value="average">평균</option><option value="min">최솟값</option><option value="max">최댓값</option></select></label>`,'property-form'));
     break;
-    case'backup':{if(state.workspace.settings?.disable_export)throw new Error('워크스페이스에서 내보내기를 제한했습니다.');const link=document.createElement('a');link.href='/api/backup';link.download='fountain-backup.sqlite';link.click();break;}
+    case'backup':{if(state.workspace.settings?.disable_export)throw new Error('워크스페이스에서 내보내기를 제한했습니다.');const link=document.createElement('a');link.href=FountainTransport.downloadURL('/api/backup');link.download='fountain-backup.sqlite';link.click();break;}
     case'export': {
       const data=await api('/export?format='+target.dataset.format);
       download(data.filename,data.content,data.mime);

@@ -17,7 +17,7 @@ if (form) {
     const status = document.querySelector('#form-status');
     button.disabled = true;
     try {
-      const response = await fetch(`/api/forms/${encodeURIComponent(form.dataset.formId)}/submit`, {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Fountain-Request': '1'}, body: JSON.stringify({answers: answers()})});
+      const response = await FountainTransport.request(`/api/forms/${encodeURIComponent(form.dataset.formId)}/submit`, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({answers: answers()})});
       const result = await response.json();
       if (!response.ok) throw Error(result.message || result.error);
       form.reset(); visibility(); status.textContent = '응답이 제출되었습니다.';

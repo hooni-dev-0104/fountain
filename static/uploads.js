@@ -137,9 +137,9 @@
     }
     async json(job,path,body,method) {
       if(!this.current())throw abortError(); await this.authorized(); if(!this.current())throw abortError(); const controller=new AbortController(); job.controller=controller; try {
-        const response=await fetch('/api'+path, {
+        const response=await FountainTransport.request('/api'+path, {
           method:method||(body?'POST':'GET'),signal:controller.signal,headers: {
-            'Content-Type':'application/json','X-Fountain-Request':'1'
+            'Content-Type':'application/json'
           },...(body? {
             body:JSON.stringify(body)
           }
@@ -192,7 +192,7 @@
     }
     chunk(job,offset,generation) {
       const blob=job.file.slice(offset,Math.min(job.size,offset+CHUNK_SIZE)); return new Promise((resolve,reject)=> {
-        const xhr=new XMLHttpRequest(); job.xhr=xhr; xhr.open('PUT','/api/uploads/'+encodeURIComponent(job.id)+'/chunks?offset='+offset); xhr.setRequestHeader('Content-Type','application/octet-stream'); xhr.setRequestHeader('X-Fountain-Request','1'); xhr.timeout=45000; xhr.upload.onprogress=event=> {
+        const xhr=FountainTransport.xhr('PUT','/api/uploads/'+encodeURIComponent(job.id)+'/chunks?offset='+offset); job.xhr=xhr; xhr.setRequestHeader('Content-Type','application/octet-stream'); xhr.timeout=45000; xhr.upload.onprogress=event=> {
           if(!this.current()||generation!==this.generation) {
             xhr.abort(); return;
           }

@@ -74,6 +74,10 @@ function nativeOutboxBlockedNotice(){
   const status=$('#save-status');if(status)status.textContent='기기 기록 확인 필요 · 원본 보관됨';
   if(!document.querySelector('.native-outbox-blocked')){const action=document.createElement('button');action.className='solid-btn native-outbox-blocked';action.textContent='보관된 기록 확인하고 계속';action.addEventListener('click',()=>FountainNativeRecovery.open());document.body.append(action);}
 }
+function clearNativeLogoutView(){
+  state.bootGeneration=(state.bootGeneration||0)+1;closeDocument();closeMutations();closeModal();state.page=null;state.blocks=[];state.database=null;state.rows=[];state.loaded=false;state.offlineProfile=null;
+  $('#main').innerHTML='<div class="loading">로그아웃을 마무리하고 있습니다…</div>';$('#sidebar').replaceChildren();$('#topbar').replaceChildren();
+}
 window.addEventListener('fountain-native-outbox-resume',event=>{
   const detail=event.detail,paused=state.nativeOutboxPause;if(!paused||state.nativeOutboxResuming||detail.owner!==paused.owner||detail.token!==paused.token)return;
   const current=()=>state.nativeOutboxPause===paused&&FountainTransport.origin===paused.origin&&FountainTransport.generation===paused.generation&&FountainTransport.scopeEpoch===paused.scopeEpoch;
@@ -81,7 +85,11 @@ window.addEventListener('fountain-native-outbox-resume',event=>{
     const resuming={owner:paused.owner,token:paused.token};state.nativeOutboxResuming=resuming;
     try{
       if(!current()||detail.blocked){if(current())nativeOutboxBlockedNotice();return;}
-      if(paused.loaded&&detail.reconciled){
+      if(detail.terminal===true&&FountainNativeStorage?.identityState==='blocked'){
+        // The exact own-profile erase was acknowledged. Its blocked header is a
+        // terminal logout boundary, not permission to read the erased cache.
+        clearNativeLogoutView();
+      }else if(paused.loaded&&detail.reconciled){
         const fresh=await detail.readCurrent?.(paused.id&&paused.resourceKind?{kind:paused.resourceKind,id:paused.id}:null);if(!current())return;
         const same=fresh?.profile?.id===paused.profile?.id;
         const snapshot=fresh?.snapshot;
@@ -1919,7 +1927,11 @@ async function doAction(target,grouped=false) {
       const actor=state.offlineProfile;if(actor&&state.authRecoveryMemory)for(const [key,value] of state.authRecoveryMemory)if(value.profile.origin===actor.origin&&value.profile.workspaceId===actor.workspaceId&&value.profile.memberId===actor.memberId)state.authRecoveryMemory.delete(key);
       const binding=actor?.cacheBinding||state.session?.cache_binding,generation=state.bootGeneration;
       closeDocument();closeMutations();await window.FountainOffline?.clearActiveProfile(actor);
-      const active=await window.FountainOffline?.getProfile();if(active&&active.id!==actor?.id){if(generation===state.bootGeneration)await boot();break;}
+      // Acknowledged native revocation intentionally forbids another cache read.
+      // The original binding still fences the server DELETE against a new login.
+      const terminalNative=FountainTransport.native&&FountainTransport.outboxEnabled&&actor&&typeof binding==='string'&&binding&&FountainNativeStorage?.identityState==='blocked';
+      if(terminalNative)clearNativeLogoutView();
+      const active=terminalNative?null:await window.FountainOffline?.getProfile();if(active&&active.id!==actor?.id){if(generation===state.bootGeneration)await boot();break;}
       state.offlineProfile=null;
       const marker=JSON.stringify({mode:state.session?.mode||'accounts',binding,nonce:uid()}),clearMarker=()=>{if(localStorage.getItem(logoutPendingKey())===marker)localStorage.removeItem(logoutPendingKey());};
       localStorage.setItem(logoutPendingKey(),marker);

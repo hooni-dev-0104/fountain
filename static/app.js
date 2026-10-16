@@ -1,4 +1,5 @@
 'use strict';
+const logoutPendingKey=()=>FountainTransport.native?'fountain-logout-pending:'+encodeURIComponent(FountainTransport.origin):'fountain-logout-pending';
 const $ = (s, root = document) => root.querySelector(s);
 const $$ = (s, root = document) => [...root.querySelectorAll(s)];
 const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ( {
@@ -1231,6 +1232,7 @@ async function showAI() {
   openModal('✦ Fountain AI',`<p>아이디어의 시작부터 문서의 마무리까지, AI와 함께해 보세요.</p><form class="form-grid" id="ai-form"><label>작업<select name="action"><option value="summarize">페이지 요약</option><option value="write">초안 작성</option><option value="translate">번역</option><option value="answer">워크스페이스 질문</option></select></label><label>요청<textarea name="prompt" placeholder="어떤 도움이 필요한가요? 예: 이 문서를 세 문장으로 요약해 주세요."></textarea></label><button class="solid-btn">✦ 실행하기</button></form><div id="ai-output" aria-live="polite"></div><div class="info-box" style="margin-top:20px">공급자 연결 상태에 따라 실행 가능한 작업이 달라집니다. 민감한 정보는 전송 전에 확인하세요.</div>`);
 }
 function download(filename,content,mime='text/plain') {
+  if(FountainTransport.native){FountainTransport.saveData(filename,content,mime).catch(error=>{if(error.name!=='AbortError')toast(error.message);});return;}
   const url=URL.createObjectURL(new Blob([content], {
     type:mime
   }));
@@ -1344,10 +1346,10 @@ async function doAction(target,grouped=false) {
     break;
     case'logout':{
       closeDocument();closeMutations();await window.FountainOffline?.clearActiveProfile();state.offlineProfile=null;
-      localStorage.setItem('fountain-logout-pending',JSON.stringify({mode:state.session?.mode||'accounts'}));
-      try{await api('/session',{},'DELETE');localStorage.removeItem('fountain-logout-pending');state.session=await api('/session');}
+      localStorage.setItem(logoutPendingKey(),JSON.stringify({mode:state.session?.mode||'accounts'}));
+      try{await api('/session',{},'DELETE');localStorage.removeItem(logoutPendingKey());state.session=await api('/session');}
       catch(error){if(error.status)throw error;}
-      closeModal();if(state.session?.required||localStorage.getItem('fountain-logout-pending'))renderLogin();else await boot();break;
+      closeModal();if(state.session?.required||localStorage.getItem(logoutPendingKey()))renderLogin();else await boot();break;
     }
     case'add-page':openModal('새로운 페이지',`<p>작은 아이디어가 시작되는 빈 페이지를 만드세요.</p><form id="page-form" class="form-grid" data-parent="${esc(target.dataset.parent||'')}">${field('페이지 이름','title','무엇을 기록할까요?')}${field('아이콘','icon','🌿','text','📄')}<div class="form-actions"><button class="solid-btn">페이지 만들기</button></div></form>`);
     break;
@@ -1619,7 +1621,7 @@ async function doAction(target,grouped=false) {
     break;
     case'new-property':openModal('데이터베이스 속성 추가',form(field('속성 이름','name','마감일')+`<label>속성 종류<select name="type"><option value="text">텍스트</option><option value="number">숫자</option><option value="status">상태</option><option value="select">선택</option><option value="date">날짜</option><option value="person">사람</option><option value="checkbox">체크박스</option><option value="multi_select">다중 선택</option><option value="files">파일 ID 목록</option><option value="url">URL</option><option value="email">이메일</option><option value="relation">관계형</option><option value="formula">수식</option><option value="rollup">롤업</option></select></label>`+field('선택 항목 (쉼표로 구분)','options','시작 전, 진행 중, 완료')+field('수식','expression',"prop('estimate') * 2")+`<label>관계형 대상 데이터베이스<select name="database_id">${state.workspace.databases.map(d=>`<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('')}</select></label><label>롤업에 사용할 관계 속성<select name="relation_property"><option value="">관계 속성을 선택하세요</option>${state.database.properties.filter(p=>p.type==='relation').map(p=>`<option value="${esc(p.id)}">${esc(p.name)} (${esc(p.id)})</option>`).join('')}</select></label>`+field('롤업 대상 속성 ID','target_property','estimate')+`<label>롤업 집계<select name="aggregation"><option value="sum">합계</option><option value="count">개수</option><option value="average">평균</option><option value="min">최솟값</option><option value="max">최댓값</option></select></label>`,'property-form'));
     break;
-    case'backup':{if(state.workspace.settings?.disable_export)throw new Error('워크스페이스에서 내보내기를 제한했습니다.');const link=document.createElement('a');link.href=FountainTransport.downloadURL('/api/backup');link.download='fountain-backup.sqlite';link.click();break;}
+    case'backup':{if(state.workspace.settings?.disable_export)throw new Error('워크스페이스에서 내보내기를 제한했습니다.');if(FountainTransport.native){await FountainTransport.download('/api/backup','fountain-backup.sqlite');break;}const link=document.createElement('a');link.href=FountainTransport.downloadURL('/api/backup');link.download='fountain-backup.sqlite';link.click();break;}
     case'export': {
       const data=await api('/export?format='+target.dataset.format);
       download(data.filename,data.content,data.mime);
@@ -1904,7 +1906,7 @@ async function boot() {
   const cachedIdentity=await window.FountainOffline?.getProfile().catch(()=>null);
   try {
     document.body.classList.remove('login-mode');
-    if(localStorage.getItem('fountain-logout-pending')){const record=JSON.parse(localStorage.getItem('fountain-logout-pending'));try{await api('/session',{},'DELETE');localStorage.removeItem('fountain-logout-pending');}catch(error){if(!error.status){state.session={mode:['accounts','family','local'].includes(record.mode)?record.mode:'accounts',required:true,authenticated:false};renderLogin();return;}throw error;}}
+    if(localStorage.getItem(logoutPendingKey())){const record=JSON.parse(localStorage.getItem(logoutPendingKey()));try{await api('/session',{},'DELETE');localStorage.removeItem(logoutPendingKey());}catch(error){if(!error.status){state.session={mode:['accounts','family','local'].includes(record.mode)?record.mode:'accounts',required:true,authenticated:false};renderLogin();return;}throw error;}}
     const session=await api('/session');if(generation!==state.bootGeneration)return;if(state.offlineProfile&&state.offlineProfile.session.cache_binding!==session.cache_binding){closeDocument();closeMutations();state.offlineProfile=null;}state.session=session;
     if(!state.session.authenticated&&state.session.required){if(cachedIdentity)await FountainOffline.clearProfile(cachedIdentity);if(generation!==state.bootGeneration)return;renderLogin(false);return;}
     state.offline=false;await refreshWorkspace();
@@ -1919,7 +1921,7 @@ async function boot() {
   catch(e) {
     if(generation!==state.bootGeneration||e.code==='STALE_REQUEST')return;
     if(e.code==='SESSION_CHANGED'){boot();return;}
-    if(!e.status&&(e instanceof TypeError||e.name==='NetworkError')){
+    if(!e.status&&(e instanceof TypeError||e.name==='NetworkError'||e.name==='TimeoutError')){
       const profile=await window.FountainOffline?.getProfile().catch(()=>null);
       if(profile){state.offlineProfile=profile;state.session=profile.session;state.serverWorkspace=profile.workspace;state.workspace=profile.workspace;state.offline=true;await ensureMutations();await cachedResourceIds();state.loaded=true;renderSidebar();const [route,id]=location.hash.slice(1).split('/');await navigate(['page','database'].includes(route)&&id?route:'home',id?decodeURIComponent(id):undefined);return;}
     }

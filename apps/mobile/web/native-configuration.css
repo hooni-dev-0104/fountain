@@ -1,0 +1,4 @@
+/* Scope contrast adjustments to the native server setup screen. */
+.native-configuration h1{color:#363632}
+.native-configuration>p{color:#64675e}
+.native-configuration label{color:#4f554a}

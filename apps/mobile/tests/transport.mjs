@@ -93,4 +93,15 @@ let chunkResolve;f.setHandler(value=>new Promise(resolve=>chunkResolve=()=>resol
 let lateChunk;f.setHandler(value=>new Promise(resolve=>lateChunk=()=>resolve(response({},200,value.generation))));const cancelled=T.xhr('PUT','/api/uploads/file/chunks?offset=0');cancelled.setRequestHeader('Content-Type','application/octet-stream');let callbacks=0;cancelled.onload=()=>callbacks++;cancelled.upload.onprogress=()=>callbacks++;cancelled.send(new Blob(['tiny']));await until(()=>!!lateChunk);cancelled.abort();lateChunk();await sleep(20);assert.equal(callbacks,0);
 assert.ok(scopeNotices.some(event=>event.reason==='authentication'));assert.ok(scopeNotices.some(event=>event.reason==='configuration'));assert.ok(scopeNotices.every(event=>Number.isSafeInteger(event.scopeEpoch)&&Object.keys(event).every(key=>['scopeEpoch','reason'].includes(key))));
 const temporary=await mkdtemp(join(tmpdir(),'fountain-mobile-build-'));try{const output=join(temporary,'www'),result=await build(output),files=await readdir(output),html=await readFile(join(output,'index.html'),'utf8');assert.ok(files.includes('capacitor.js'));assert.ok(files.includes('native-transport.js'));assert.ok(!files.includes('transport.js'));assert.match(html,/Content-Security-Policy/);assert.match(html,/connect-src 'self'/);assert.ok(!html.includes('src="/app.js"'));assert.ok(!files.some(name=>/\.db$|\.json$|\.env|node_modules|supabase/i.test(name)));assert.ok(result.assets.length>5);}finally{await rm(temporary,{recursive:true,force:true});}
+
+// A Supabase API origin is not a public frontend for cross-device document links.
+const shareFixture=fixture(),share=shareFixture.transport;await share.initialize();
+assert.equal(share.shareURL('page/family'),'https://family.example/#page/family');
+for(const origin of ['https://ehnovtfadpkwtubmwltl.supabase.co','https://ehnovtfadpkwtubmwltl.supabase.co:443']){
+ await share.configure({origin});assert.equal(share.shareURL('page/family'),null);
+ for(const route of ['page/%2fescape','api/session','page/id#fragment'])assert.throws(()=>share.shareURL(route));
+}
+for(const origin of ['https://ehnovtfadpkwtubmwltl.supabase.co:8443','https://ehnovtfadpkwtubmwltl.supabase.co.example']){
+ await share.configure({origin});assert.equal(share.shareURL('page/family'),origin+'/#page/family');
+}
 console.log('PASS native transport: strict paths/headers/bytes, real Response, redirects, cancel/auth/config fences, serial foreground polls, acknowledged chunks and public-only bundle');

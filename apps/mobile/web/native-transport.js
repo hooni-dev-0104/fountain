@@ -199,6 +199,10 @@
     function appURL(route='home') {
       configured();if(typeof route!=='string'||! /^(home|page\/[^/]+|database\/[^/]+)$/.test(route)||/[\\\u0000-\u0020\u007f#?]/.test(route))invalid();path('/'+route,'app');return configuration.origin+'/#'+route;
     }
+    function shareURL(route='home') {
+      const value=appURL(route),backend=new URL(configuration.origin);
+      return !backend.port&&/^[a-z0-9]{20}\.supabase\.co$/.test(backend.hostname)?null:value;
+    }
     root.document.addEventListener('click',event=>{
       const anchor=event.target.closest?.('a');if(!anchor)return;
       let url;try{url=new URL(anchor.href);}catch{return;}
@@ -206,7 +210,7 @@
       event.preventDefault();event.stopImmediatePropagation();const entry=downloadLinks.get(url.hash.slice('#fountain-download/'.length));if(!entry||!current(entry.scope))return;
       download(entry.path,anchor.download||'fountain-download').catch(error=>{if(error.name!=='AbortError')root.dispatchEvent(new CustomEvent('fountain-native-error',{detail:{message:error.message}}));});
     },true);
-    return Object.freeze({native:true,get origin(){return configuration.origin;},get generation(){return configuration.generation;},get outboxVersion(){return configuration.outboxVersion;},get outboxEnabled(){return configuration.outboxEnabled;},get recoveryVersion(){return configuration.recoveryVersion;},get recoveryEnabled(){return configuration.recoveryEnabled;},get scopeEpoch(){return publicScopeEpoch;},initialize,configure,apiURL,request,events,xhr,download,saveData,downloadURL,publicURL,appURL});
+    return Object.freeze({native:true,get origin(){return configuration.origin;},get generation(){return configuration.generation;},get outboxVersion(){return configuration.outboxVersion;},get outboxEnabled(){return configuration.outboxEnabled;},get recoveryVersion(){return configuration.recoveryVersion;},get recoveryEnabled(){return configuration.recoveryEnabled;},get scopeEpoch(){return publicScopeEpoch;},initialize,configure,apiURL,request,events,xhr,download,saveData,downloadURL,publicURL,appURL,shareURL});
   }
   root.FountainNativeTransport=Object.freeze({create,validateOrigin});
 })(globalThis);

@@ -3,6 +3,7 @@ const {app,BrowserWindow,Menu,ipcMain,session,dialog}=require('electron');
 const path=require('node:path');const {pathToFileURL}=require('node:url');
 const {normalizeServer,sameOrigin,downloadAllowed,resourceAllowed,partitionFor,popupAllowed,isSetupSender}=require('./security.cjs');
 const config=require('./config.cjs');
+const cloud=require('./cloud.cjs');
 app.setName('Fountain');app.enableSandbox();
 if(process.env.FOUNTAIN_DESKTOP_USER_DATA){
   if(!path.isAbsolute(process.env.FOUNTAIN_DESKTOP_USER_DATA))throw new Error('Desktop user data must be absolute');
@@ -13,6 +14,7 @@ let setupWindow=null,remoteWindow=null,server=null,lastError='',switching=false;
 let connectionQueue=Promise.resolve();
 const secured=new WeakSet();
 const remoteWindows=new Set();
+const cloudConnections=new WeakMap(),cloudClients=new Set();
 const preferences={nodeIntegration:false,nodeIntegrationInWorker:false,nodeIntegrationInSubFrames:false,contextIsolation:true,sandbox:true,
   webSecurity:true,allowRunningInsecureContent:false,experimentalFeatures:false,webviewTag:false,navigateOnDragDrop:false,devTools:false};
 function secureSession(value,origin=null){
@@ -48,8 +50,24 @@ function guardWindow(window,allowed,popupOrigin=null){
   });
 }
 function guardRemoteWindow(window,origin){
+  const selected=window.webContents.session,client=cloudConnections.get(selected)?.client;
   remoteWindows.add(window);guardWindow(window,url=>sameOrigin(url,origin),origin);
-  window.on('closed',()=>remoteWindows.delete(window));
+  window.on('closed',()=>{
+    remoteWindows.delete(window);
+    if(client&&![...remoteWindows].some(other=>!other.isDestroyed()&&other.webContents.session===selected))client.suspend();
+  });
+}
+async function cloudConnection(normalized){
+  const partitions=cloud.cloudPartitions(normalized),selected=session.fromPartition(partitions.frontend);
+  let connection=cloudConnections.get(selected);if(connection)return connection;
+  const network=session.fromPartition(partitions.network);
+  secureSession(selected,cloud.UI_ORIGIN+'/');secureSession(network);
+  network.webRequest.onBeforeRequest({urls:['<all_urls>']},(details,callback)=>callback({cancel:!cloud.networkAllowed(details.url,normalized)}));
+  const bundleRoot=app.isPackaged?path.join(process.resourcesPath,'bundle'):path.join(__dirname,'..','bundle');
+  const client=await cloud.createCloudClient({server:normalized,bundleRoot,fetch:(target,options)=>network.fetch(target,options)});
+  selected.protocol.handle('https',request=>client.handle(request));
+  connection={session:selected,client,origin:cloud.UI_ORIGIN+'/',url:cloud.UI_ORIGIN+'/#home'};
+  cloudConnections.set(selected,connection);cloudClients.add(client);return connection;
 }
 function showSetup(message=''){
   lastError=message;
@@ -73,7 +91,9 @@ function openServer(address){
   connectionQueue=next.catch(()=>{});return next;
 }
 async function transitionServer(address){
-  const normalized=normalizeServer(address),selected=session.fromPartition(partitionFor(normalized));secureSession(selected,normalized);
+  const normalized=normalizeServer(address),connection=cloud.isCloudServer(normalized)?await cloudConnection(normalized):null;
+  const selected=connection?.session??session.fromPartition(partitionFor(normalized)),displayOrigin=connection?.origin??normalized;
+  secureSession(selected,displayOrigin);
   switching=true;
   try{
   if(remoteWindow&&!remoteWindow.isDestroyed()&&!await closeForSwitch(remoteWindow))return false;
@@ -82,13 +102,14 @@ async function transitionServer(address){
   // settings request; the final window and next-start config stay consistent.
   config.saveConfig(app.getPath('userData'),normalized);
   const window=new BrowserWindow({width:1360,height:940,minWidth:760,minHeight:560,title:'Fountain',webPreferences:{...preferences,session:selected}});
-  remoteWindow=window;server=normalized;guardRemoteWindow(window,normalized);
+  remoteWindow=window;server=normalized;guardRemoteWindow(window,displayOrigin);
   window.on('closed',()=>{if(remoteWindow===window)remoteWindow=null;});
-  window.webContents.on('render-process-gone',()=>showSetup('화면을 다시 열어 주세요.'));
+  window.webContents.on('render-process-gone',()=>{connection?.client.suspend();showSetup('화면을 다시 열어 주세요.');});
   window.webContents.on('did-fail-load',(_event,code,_description,_url,isMainFrame)=>{
-    if(isMainFrame&&code!==-3)showSetup('서버에 연결할 수 없습니다. 주소와 서버 상태를 확인한 뒤 다시 연결해 주세요.');
+    if(isMainFrame&&code!==-3){connection?.client.suspend();showSetup('서버에 연결할 수 없습니다. 주소와 서버 상태를 확인한 뒤 다시 연결해 주세요.');}
   });
-  window.loadURL(normalized).catch(()=>{});
+  connection?.client.resume();
+  window.loadURL(connection?.url??normalized).catch(()=>{});
   if(setupWindow&&!setupWindow.isDestroyed())setupWindow.close();
   return true;
   }finally{switching=false;}
@@ -103,6 +124,7 @@ ipcMain.handle('desktop:server:save',(event,value)=>{
 app.on('certificate-error',(event,_contents,_url,_error,_certificate,callback)=>{event.preventDefault();callback(false);});
 app.on('web-contents-created',(_event,contents)=>contents.on('will-attach-webview',event=>event.preventDefault()));
 app.on('open-url',event=>event.preventDefault());
+app.on('will-quit',()=>{for(const client of cloudClients)client.suspend();});
 app.on('window-all-closed',()=>{if(!switching&&process.platform!=='darwin')app.quit();});
 app.on('activate',()=>{if(!BrowserWindow.getAllWindows().length){if(server)openServer(server).catch(()=>showSetup('서버에 연결할 수 없습니다.'));else showSetup();}});
 app.whenReady().then(()=>{

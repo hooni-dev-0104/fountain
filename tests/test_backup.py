@@ -24,18 +24,20 @@ class BackupTests(unittest.TestCase):
         self.temp.cleanup()
 
     def test_complete_backup_excludes_sessions_and_preserves_all_other_entities(self):
-        kinds = ["comment", "version", "form", "settings", "audit", "attachment", "site", "automation", "member"]
+        kinds = ["comment", "version", "form", "settings", "audit", "attachment", "site", "automation", "member", 'collaboration']
         for kind in kinds:
             self.store.put(kind, {"id": "fixture-" + kind, "content": {"한글": "가족 데이터"}})
         self.store.put("session", {"id": "secret-session", "expires_at": "future"})
         self.store.put("clipboard", {"id": "temporary-clipboard", "html": "private clipboard"})
         self.store.set_meta("family", {"name": "우리집", "settings": [1, 2, 3]})
+        self.store.set_meta('local_cache_binding', 'old-browser-cache-binding')
         backup, restored = self.root / "snapshot.db", self.root / "restored.db"
         counts = create_backup(self.source, backup)
         self.assertNotIn("session", counts)
         self.assertNotIn("clipboard", counts)
         self.assertNotIn(b"secret-session", backup.read_bytes())
         self.assertNotIn(b"private clipboard", backup.read_bytes())
+        self.assertNotIn(b'old-browser-cache-binding', backup.read_bytes())
         self.assertIsNotNone(self.store.get("session", "secret-session"))
         self.assertEqual(restore_backup(backup, restored), counts)
         restored_store = Store(restored)
@@ -45,6 +47,8 @@ class BackupTests(unittest.TestCase):
             self.assertEqual(restored_store.meta("family"), self.store.meta("family"))
             self.assertEqual(restored_store.list("session"), [])
             self.assertEqual(restored_store.list("clipboard"), [])
+            self.assertIsNone(restored_store.meta('local_cache_binding'))
+            self.assertEqual(restored_store.meta('workspace_id'), self.store.meta('workspace_id'))
         finally:
             restored_store.close()
         self.assertEqual(inspect_backup(backup), counts)

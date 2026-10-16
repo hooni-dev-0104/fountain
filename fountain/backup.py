@@ -109,6 +109,7 @@ def _copy(source_path, destination_path):
                 _inspect(target)
                 target.execute("PRAGMA secure_delete=ON")
                 target.execute("DELETE FROM entities WHERE kind IN (?,?)", PRIVATE_KINDS)
+                target.execute("DELETE FROM meta WHERE key = 'local_cache_binding'")
                 target.commit()
                 target.execute("VACUUM")
                 counts = _inspect(target)

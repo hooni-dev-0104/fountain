@@ -109,6 +109,13 @@ try {
   assert.equal(await rejected(page, profile => FountainOffline.updateMutation(profile, 'tab-a:1', { status: 'pending' }), fixture.profile, 'InvalidStateError'), true);
   const freshOp = operation('reapply:new-id', '새 기준으로 재적용'); freshOp.base.properties.name = '원격 최신값';
   await page.evaluate(({ profile, key, op }) => FountainOffline.putMutation(profile, key, op), { profile: fixture.profile, key: databaseKey, op: freshOp });
+  assert.equal(await rejected(page, profile => FountainOffline.acknowledgeMutations(profile, ['tab-b:1']), fixture.profile, 'InvalidStateError'), true);
+  await page.evaluate(profile => FountainOffline.updateMutation(profile, 'tab-b:1', { status: 'applied',
+    result: { id: 'tab-b:1', status: 'applied', resource_id: 'row-a', data_revision: 9 } }), fixture.profile);
+  assert.equal(await rejected(page, profile => FountainOffline.acknowledgeMutations(profile, ['tab-b:1']), fixture.profile, 'InvalidStateError'), true, 'a stale canonical snapshot must not erase applied recovery data');
+  assert.equal((await page.evaluate(profile => FountainOffline.listMutations(profile), fixture.profile)).find(record => record.id === 'tab-b:1').status, 'applied');
+  await page.evaluate(({ key, value }) => FountainOffline.saveDatabase(key, { ...value, data_revision: 9,
+    rows: [{ id: 'row-a', properties: { name: '둘째 탭' } }] }), { key: databaseKey, value: snapshot });
   await Promise.all([
     page.evaluate(profile => FountainOffline.acknowledgeMutations(profile, ['tab-b:1']), fixture.profile),
     second.evaluate(({ profile, key, op }) => FountainOffline.putMutation(profile, key, op), { profile: fixture.profile, key: databaseKey, op: operation('tab-b:2', 'ACK와 동시에 새 편집') }),
@@ -144,12 +151,21 @@ try {
   assert.equal((await page.evaluate(key => FountainOffline.getLocalPage(key), localKey)).initial_epoch, 'local-epoch');
   assert.equal((await page.evaluate(key => FountainOffline.getSnapshot(key), localKey)).epoch, 'local-epoch');
   assert.equal((await page.evaluate(profile => FountainOffline.listLocalPages(profile), fixture.profile)).length, 1);
+  await page.evaluate(({ key, metadata }) => FountainOffline.saveLocalPage(key, { ...metadata, localOnly: false }), { key: localKey, metadata: local.metadata });
+  assert.equal((await page.evaluate(key => FountainOffline.getLocalPage(key), localKey)).localOnly, true, 'plain metadata writes cannot bypass pending page creation');
+  assert.equal(await rejected(page, profile => FountainOffline.updateMutation(profile, 'page-create:1', { status: 'applied',
+    result: { id: 'wrong-operation', status: 'applied', resource_id: 'local-page', data_revision: 10 } }), fixture.profile, 'TypeError'), true);
   await page.evaluate(async ({ profile, key, metadata }) => {
-    await FountainOffline.updateMutation(profile, 'page-create:1', { status: 'applied', result: { resource_id: 'local-page', revision: 0 } });
+    await FountainOffline.updateMutation(profile, 'page-create:1', { status: 'applied', result: { id: 'page-create:1', status: 'applied', resource_id: 'local-page', revision: 0, data_revision: 10 } });
     if ((await FountainOffline.getLocalPage(key)).localOnly !== false) throw new Error('applied status and local-page confirmation must be atomic');
+  }, { profile: fixture.profile, key: localKey, metadata: local.metadata });
+  assert.equal(await rejected(page, profile => FountainOffline.acknowledgeMutations(profile, ['page-create:1']), fixture.profile, 'InvalidStateError'), true);
+  assert.equal(await rejected(page, ({ key, snapshot }) => FountainOffline.saveSnapshot(key, { ...snapshot, current_member_id: 'wrong-member' }), { key: localKey, snapshot: local.snapshot }), true);
+  await page.evaluate(async ({ profile, key, metadata, snapshot }) => {
+    await FountainOffline.saveSnapshot(key, { ...snapshot, workspace_id: profile.workspaceId, current_member_id: profile.memberId, session_binding: profile.cacheBinding, data_revision: 10 });
     await FountainOffline.acknowledgeMutations(profile, ['page-create:1']);
     await FountainOffline.saveLocalPage(key, { ...metadata, localOnly: true, title: '늦은 탭 메타데이터' });
-  }, { profile: fixture.profile, key: localKey, metadata: local.metadata });
+  }, { profile: fixture.profile, key: localKey, metadata: local.metadata, snapshot: local.snapshot });
   assert.equal((await page.evaluate(key => FountainOffline.getLocalPage(key), localKey)).localOnly, false, 'late tab cannot restore local-only state after create ACK');
   await page.evaluate(async ({ profile, key, local }) => {
     await FountainOffline.saveSnapshot(key, { ...local.snapshot, seq: 5, page: { ...local.snapshot.page, revision: 5 } });
@@ -160,6 +176,54 @@ try {
   await page.evaluate(key => FountainOffline.deleteLocalPage(key), localKey);
   assert.equal(await page.evaluate(key => FountainOffline.getLocalPage(key), localKey), null);
   assert.ok(await page.evaluate(key => FountainOffline.getSnapshot(key), localKey), 'removing staging metadata must preserve synced document state');
+  stage = 'atomic reapply keeps document identity and discard fences every tab';
+  const retryKey = await page.evaluate(profile => FountainOffline.key(profile, 'retry-page'), fixture.profile);
+  const retry = structuredClone(local);
+  retry.metadata = { ...retry.metadata, id: 'retry-page', initial_epoch: 'retry-epoch', create_operation_id: 'retry-create:1' };
+  retry.snapshot = { ...retry.snapshot, epoch: 'retry-epoch', page: { ...retry.snapshot.page, id: 'retry-page' } };
+  retry.operation = { ...retry.operation, id: 'retry-create:1', target_id: 'retry-page', document_epoch: 'retry-epoch' };
+  const followup = { id: 'retry-title:1', kind: 'page.patch', target_id: 'retry-page', depends_on: ['retry-create:1'],
+    body: { title: '보관한 제목' }, base: { fields: { title: '기기 문서' } } };
+  await page.evaluate(async ({ profile, key, retry, followup }) => {
+    await FountainOffline.stageLocalPage(profile, key, retry);
+    await FountainOffline.putMutation(profile, key, followup);
+    await FountainOffline.putOperations(key, [{ id: 'document:1', text: '재시도에도 보존할 본문', _epoch: 'retry-epoch' }]);
+    await FountainOffline.saveDraft(key, 'tab', { reason: 'pending', blocks: [{ text: '재시도에도 보존할 본문' }] });
+    await FountainOffline.updateMutation(profile, retry.operation.id, { status: 'denied' });
+    await FountainOffline.updateMutation(profile, followup.id, { status: 'deferred' });
+  }, { profile: fixture.profile, key: retryKey, retry, followup });
+  const replacements = [{ previousId: retry.operation.id, operation: { ...retry.operation, id: 'retry-create:2' } },
+    { previousId: followup.id, operation: { ...followup, id: 'retry-title:2', depends_on: ['retry-create:2'] } }];
+  assert.equal(await rejected(page, ({ profile, replacements }) => FountainOffline.replaceMutations(profile, replacements.slice(0, 1)), { profile: fixture.profile, replacements }, 'ConstraintError'), true);
+  const invalidReplacements = structuredClone(replacements); invalidReplacements[1].operation.depends_on = ['retry-create:1'];
+  assert.equal(await rejected(page, ({ profile, replacements }) => FountainOffline.replaceMutations(profile, replacements), { profile: fixture.profile, replacements: invalidReplacements }, 'InvalidStateError'), true);
+  assert.equal((await page.evaluate(key => FountainOffline.getLocalPage(key), retryKey)).create_operation_id, 'retry-create:1', 'partial replacement failure must roll back the creation marker');
+  assert.equal((await page.evaluate(profile => FountainOffline.listMutations(profile), fixture.profile)).some(record => record.id === 'retry-create:2'), false);
+  await page.evaluate(({ profile, replacements }) => FountainOffline.replaceMutations(profile, replacements), { profile: fixture.profile, replacements });
+  const retriedMetadata = await page.evaluate(key => FountainOffline.getLocalPage(key), retryKey);
+  assert.equal(retriedMetadata.create_operation_id, 'retry-create:2');
+  assert.equal(retriedMetadata.initial_epoch, 'retry-epoch');
+  assert.equal(retriedMetadata.localOnly, true);
+  assert.equal((await page.evaluate(key => FountainOffline.pendingOperations(key), retryKey))[0].text, '재시도에도 보존할 본문');
+  assert.equal((await page.evaluate(key => FountainOffline.getDrafts(key), retryKey)).length, 1);
+  assert.equal(await rejected(page, profile => FountainOffline.discardMutations(profile, ['retry-create:2']), fixture.profile, 'ConstraintError'), true);
+  await page.evaluate(profile => FountainOffline.discardMutations(profile, ['retry-create:2', 'retry-title:2']), fixture.profile);
+  assert.equal(await page.evaluate(key => FountainOffline.getLocalPage(key), retryKey), null);
+  assert.equal(await rejected(second, ({ key, snapshot }) => FountainOffline.saveSnapshot(key, snapshot), { key: retryKey, snapshot: retry.snapshot }), true, 'another tab cannot recreate an explicitly discarded page');
+  assert.deepEqual(await page.evaluate(async key => {
+    const db = await new Promise(resolve => { const opening = indexedDB.open('fountain-offline-v1'); opening.onsuccess = () => resolve(opening.result); });
+    try {
+      const tx = db.transaction(['operations', 'drafts'], 'readonly');
+      return await Promise.all(['operations', 'drafts'].map(name => new Promise(resolve => { const result = tx.objectStore(name).index('key').count(key); result.onsuccess = () => resolve(result.result); })));
+    } finally { db.close(); }
+  }, retryKey), [0, 0], 'discard must remove actual document records as well as hiding reads');
+  const receiptSource = operation('after-source:1', '삭제보다 먼저 적용할 변경');
+  const receiptDelete = { id: 'after-delete:1', kind: 'row.delete', target_id: 'row-a', database_id: 'migration-page',
+    body: {}, depends_on: [], base_rows: { 'row-a': { updated_at: 'before', after_operation: receiptSource.id } } };
+  await page.evaluate(({ profile, key, operations }) => FountainOffline.putMutations(profile, key, operations), {
+    profile: fixture.profile, key: databaseKey, operations: [receiptSource, receiptDelete] });
+  assert.equal(await rejected(page, profile => FountainOffline.discardMutations(profile, ['after-source:1']), fixture.profile, 'ConstraintError'), true, 'receipt references are dependencies even when not repeated in depends_on');
+  await page.evaluate(profile => FountainOffline.discardMutations(profile, ['after-source:1', 'after-delete:1']), fixture.profile);
   stage = 'typed database purge and late-write fence';
   const otherKey = await page.evaluate(profile => FountainOffline.databaseKey(profile, 'other-db'), fixture.profile);
   const otherSnapshot = { ...snapshot, database: { id: 'other-db', name: '다른 DB' } };

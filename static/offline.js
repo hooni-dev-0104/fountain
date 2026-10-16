@@ -153,6 +153,12 @@
   function saveSnapshot(resourceKey, snapshot) {
     const value = copy(snapshot);
     return scoped(resourceKey, 'snapshots', 'readwrite', async (store, profile) => {
+      if (value && (value.workspace_id !== undefined && value.workspace_id !== profile.workspaceId
+          || value.current_member_id !== undefined && value.current_member_id !== profile.memberId
+          || value.session_binding !== undefined && value.session_binding !== profile.cacheBinding
+          || value.page?.id !== undefined && value.page.id !== decodeURIComponent(resourceKey.split('|')[4]))) {
+        throw new DOMException('Page snapshot identity does not match', 'SecurityError');
+      }
       const previous = (await request(store.get(resourceKey)))?.snapshot;
       if (previous && value) {
         const previousAccess = Number.isSafeInteger(previous.access_revision) ? previous.access_revision : 0;
@@ -328,8 +334,13 @@
   }
   const MUTATION_STATUSES = new Set(['pending', 'deferred', 'conflict', 'denied', 'invalid', 'paused', 'applied']);
   const PAUSED_MUTATIONS = new Set(['conflict', 'denied', 'invalid', 'paused']);
+  function appliedResult(record) {
+    return record.status === 'applied' && record.result?.id === record.id
+      && record.result.status === 'applied' && record.result.resource_id === record.operation.target_id
+      && Number.isSafeInteger(record.result.data_revision) && record.result.data_revision >= 0;
+  }
   async function confirmLocalPage(tx, record) {
-    if (record.operation.kind !== 'page.create') return;
+    if (record.operation.kind !== 'page.create' || !appliedResult(record)) return;
     const local = await request(tx.objectStore('localPages').get(record.resourceKey));
     if (local?.metadata.create_operation_id === record.id) {
       local.metadata.localOnly = false;
@@ -352,6 +363,7 @@
       if ((PAUSED_MUTATIONS.has(previous.status) && ['pending', 'deferred'].includes(status))
           || previous.status === 'applied' && status !== 'applied') throw new DOMException('Reapply requires a new mutation ID', 'InvalidStateError');
       const updated = { ...previous, ...changes, status, updatedAt: Date.now() };
+      if (status === 'applied' && !appliedResult(updated)) throw new TypeError('An applied result must match its mutation and resource');
       store.put(updated);
       if (status === 'applied') await confirmLocalPage(tx, updated);
     });
@@ -365,6 +377,15 @@
         const record = await request(store.get([current.id, id]));
         if (!record) continue;
         await permittedResource(tx, current, record.resourceKey);
+        if (!appliedResult(record)) throw new DOMException('Only applied mutations can be acknowledged', 'InvalidStateError');
+        const kind = resourceType(current, record.resourceKey);
+        const cached = await request(tx.objectStore(kind === 'database' ? 'databaseSnapshots' : 'snapshots').get(record.resourceKey));
+        const snapshot = cached?.snapshot;
+        if (!snapshot || snapshot.workspace_id !== current.workspaceId || snapshot.current_member_id !== current.memberId
+            || snapshot.session_binding !== current.cacheBinding || !Number.isSafeInteger(snapshot.data_revision)
+            || snapshot.data_revision < record.result.data_revision) {
+          throw new DOMException('Cache the canonical snapshot before acknowledging a mutation', 'InvalidStateError');
+        }
         await confirmLocalPage(tx, record);
         store.delete([current.id, id]);
       }
@@ -376,6 +397,81 @@
     await profileScoped(profile, 'readwrite', (tx, current) => { tx.objectStore('mutations').delete([current.id, id]); });
     mutationsChanged(namespace(profile));
   }
+  function completeClosure(records, ids) {
+    if (records.some(record => !ids.has(record.id) && [...(record.operation.depends_on || []),
+      ...Object.values(record.operation.base_rows || {}).map(base => base?.after_operation)].some(id => ids.has(id)))) {
+      throw new DOMException('Include every dependent mutation before replacing or discarding changes', 'ConstraintError');
+    }
+  }
+  async function replaceMutations(profile, replacements) {
+    if (!Array.isArray(replacements) || !replacements.length || replacements.length > 1000) throw new TypeError('Mutation replacements required');
+    const values = copy(replacements), pages = [];
+    await profileScoped(profile, 'readwrite', async (tx, current) => {
+      const store = tx.objectStore('mutations');
+      const records = await request(store.index('profileId').getAll(current.id));
+      const previousIds = new Set(values.map(value => value.previousId));
+      const nextIds = new Set(values.map(value => value.operation?.id));
+      if (previousIds.size !== values.length || nextIds.size !== values.length) throw new TypeError('Replacement IDs must be unique');
+      completeClosure(records, previousIds);
+      for (const value of values) {
+        const previous = records.find(record => record.id === value.previousId), operation = value.operation;
+        if (!previous || previous.status === 'applied' || !operation || previousIds.has(operation.id)
+            || records.some(record => record.id === operation.id)
+            || operation.kind !== previous.operation.kind || operation.target_id !== previous.operation.target_id
+            || operation.database_id !== previous.operation.database_id
+            || (operation.depends_on || []).some(id => previousIds.has(id))
+            || Object.values(operation.base_rows || {}).some(base => previousIds.has(base?.after_operation))) {
+          throw new DOMException('Reapply requires fresh IDs and matching resources for the complete dependency group', 'InvalidStateError');
+        }
+        await permittedResource(tx, current, previous.resourceKey);
+        if (operation.kind === 'page.create') {
+          const local = await request(tx.objectStore('localPages').get(previous.resourceKey));
+          if (!local || local.metadata.localOnly !== true || local.metadata.create_operation_id !== previous.id
+              || operation.document_epoch !== local.metadata.initial_epoch) throw new DOMException('Page creation identity changed', 'InvalidStateError');
+          local.metadata.create_operation_id = operation.id;
+          local.updatedAt = Date.now();
+          tx.objectStore('localPages').put(local);
+          pages.push(previous.resourceKey);
+        }
+        await writeMutations(tx, current, previous.resourceKey, [operation]);
+        store.delete([current.id, previous.id]);
+      }
+    });
+    mutationsChanged(namespace(profile));
+    for (const key of pages) localPagesChanged(key);
+    return { operationIds: values.map(value => value.operation.id) };
+  }
+  async function discardMutations(profile, ids) {
+    if (!Array.isArray(ids) || !ids.length || !ids.every(id => typeof id === 'string')) throw new TypeError('Mutation IDs required');
+    const selected = new Set(ids), pages = [];
+    await profileScoped(profile, 'readwrite', async (tx, current) => {
+      const store = tx.objectStore('mutations');
+      const records = await request(store.index('profileId').getAll(current.id));
+      completeClosure(records, selected);
+      for (const record of records.filter(record => selected.has(record.id))) {
+        if (record.status === 'applied') throw new DOMException('Applied changes require a canonical snapshot acknowledgement', 'InvalidStateError');
+        if (record.operation.kind === 'page.create') {
+          const local = await request(tx.objectStore('localPages').get(record.resourceKey));
+          if (local?.metadata.localOnly === true) {
+            if (records.some(other => other.resourceKey === record.resourceKey && !selected.has(other.id))) throw new DOMException('Include every change to this local page', 'ConstraintError');
+            tx.objectStore('meta').put({ id: 'revoked-resource:' + record.resourceKey, revokedAt: Date.now() });
+            tx.objectStore('snapshots').delete(record.resourceKey);
+            tx.objectStore('localPages').delete(record.resourceKey);
+            for (const name of ['operations', 'drafts']) await removeIndexed(tx.objectStore(name), record.resourceKey, 'key');
+            if (Array.isArray(current.workspace?.pages)) {
+              current.workspace.pages = current.workspace.pages.filter(page => page.id !== record.operation.target_id);
+              tx.objectStore('profiles').put(current);
+            }
+            pages.push(record.resourceKey);
+          }
+        }
+        store.delete([current.id, record.id]);
+      }
+    });
+    mutationsChanged(namespace(profile));
+    for (const key of pages) { resourcePurged(key); localPagesChanged(key); }
+    return { droppedIds: [...selected] };
+  }
   async function writeLocalPage(tx, profile, resourceKey, metadata) {
     if (!matches(profile, resourceKey)) throw new DOMException('A page key is required', 'SecurityError');
     await permittedResource(tx, profile, resourceKey);
@@ -385,7 +481,7 @@
     const previous = await request(store.get(resourceKey));
     if (previous && (previous.metadata.initial_epoch !== metadata.initial_epoch || previous.metadata.create_operation_id !== metadata.create_operation_id)) throw new DOMException('Local page creation IDs are immutable', 'ConstraintError');
     const value = copy(metadata);
-    if (previous?.metadata.localOnly === false) value.localOnly = false;
+    value.localOnly = previous?.metadata.localOnly === false ? false : true;
     store.put({ key: resourceKey, resourceKey, profileId: profile.id, metadata: value, updatedAt: Date.now() });
   }
   async function saveLocalPage(resourceKey, metadata) {
@@ -430,9 +526,9 @@
     mutationsChanged(namespace(profile));
     localPagesChanged(resourceKey);
   }
-  function removeIndexed(store, profileId) {
+  function removeIndexed(store, value, index = 'profileId') {
     return new Promise((resolve, reject) => {
-      const cursor = store.index('profileId').openCursor(IDBKeyRange.only(profileId));
+      const cursor = store.index(index).openCursor(IDBKeyRange.only(value));
       cursor.onerror = () => reject(cursor.error);
       cursor.onsuccess = () => {
         if (!cursor.result) { resolve(); return; }
@@ -549,7 +645,7 @@
   globalThis.FountainOffline = Object.freeze({ available: !!globalThis.indexedDB,
     key, databaseKey, saveProfile, getProfile, saveSnapshot, getSnapshot, listSnapshots,
     saveDatabase, getDatabase, listDatabases, putMutation, putMutations, listMutations, pendingMutations,
-    updateMutation, acknowledgeMutations, removeMutation, stageLocalPage,
+    updateMutation, acknowledgeMutations, removeMutation, replaceMutations, discardMutations, stageLocalPage,
     saveLocalPage, getLocalPage, listLocalPages, deleteLocalPage,
     putOperations, pendingOperations, acknowledge, saveDraft, getDrafts,
     clearProfile, clearActiveProfile, purgeResource, serviceWorkerReady });

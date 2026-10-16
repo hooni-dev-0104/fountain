@@ -1,6 +1,7 @@
 /* Bounded, resumable attachment transfers. IndexedDB stores metadata only, never file bytes or tokens. */
 (() => {
-  'use strict'; const CHUNK_SIZE=4*1024*1024,MAX_SIZE=5_000_000_000,SAMPLE_SIZE=64*1024; const DATABASE='fountain-upload-metadata-v1'; let database; const request=operation=>new Promise((resolve,reject)=> {
+  'use strict';
+  const SERVER_ORIGIN=globalThis.FountainTransport?.origin||location.origin; const CHUNK_SIZE=4*1024*1024,MAX_SIZE=5_000_000_000,SAMPLE_SIZE=64*1024; const DATABASE='fountain-upload-metadata-v1'; let database; const request=operation=>new Promise((resolve,reject)=> {
     operation.onsuccess=()=>resolve(operation.result); operation.onerror=()=>reject(operation.error);
   }); function open() {
     if(!database)database=new Promise((resolve,reject)=> {
@@ -29,10 +30,10 @@
     if(typeof value!=='string'||!value)throw new Error('로그인 정보를 확인하지 못했습니다.'); return encodeURIComponent(value);
   }
   function scopeIdentity(scope) {
-    return `${location.origin}|${identifier(scope.workspaceId)}|${identifier(scope.memberId)}|${identifier(scope.binding)}|${identifier(scope.pageId)}`;
+    return `${SERVER_ORIGIN}|${identifier(scope.workspaceId)}|${identifier(scope.memberId)}|${identifier(scope.binding)}|${identifier(scope.pageId)}`;
   }
   function profileIdentity(scope) {
-    return `${location.origin}|${identifier(scope.workspaceId)}|${identifier(scope.memberId)}|${identifier(scope.binding)}`;
+    return `${SERVER_ORIGIN}|${identifier(scope.workspaceId)}|${identifier(scope.memberId)}|${identifier(scope.binding)}`;
   }
   function abortError(message='전송을 일시 중지했습니다.') {
     return new DOMException(message,'AbortError');

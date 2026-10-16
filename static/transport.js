@@ -43,5 +43,5 @@
     localPath('/' + route, 'app');
     return root.location.origin + '/#' + route;
   }
-  root.FountainTransport = Object.freeze({ apiURL, request, events, xhr, publicURL: path => localPath(path, 'public'), appURL, downloadURL: apiURL });
+  root.FountainTransport = Object.freeze({ origin: root.location.origin, native: false, apiURL, request, events, xhr, publicURL: path => localPath(path, 'public'), appURL, downloadURL: apiURL });
 })(globalThis);

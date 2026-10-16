@@ -57,10 +57,10 @@ try {
       configurable: true,
       get: () => transport,
       set(value) {
-        transport = Object.freeze(Object.fromEntries(Object.entries(value).map(([name, method]) => [name, (...args) => {
+        transport = Object.freeze(Object.fromEntries(Object.entries(value).map(([name, method]) => [name, typeof method === 'function' ? (...args) => {
           window.__transportCalls.push({ name, path: args[0] });
           return method(...args);
-        }])));
+        } : method])));
       },
     });
   });

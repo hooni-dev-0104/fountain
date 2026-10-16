@@ -1,6 +1,7 @@
 /* Durable private drafts. Keys always include origin, workspace and signed-in actor. */
 (() => {
   'use strict';
+  const SERVER_ORIGIN=globalThis.FountainTransport?.origin||location.origin;
   const DATABASE = 'fountain-offline-v1';
   const STORES = ['profiles', 'meta', 'snapshots', 'operations', 'drafts', 'databaseSnapshots', 'mutations', 'localPages'];
   const LOCAL_TTL = 24 * 60 * 60 * 1000;
@@ -17,7 +18,7 @@
   function namespace(profile) {
     if (!profile || typeof profile !== 'object') throw new TypeError('Offline profile required');
     const binding = profile.session?.cache_binding || profile.cacheBinding;
-    return `${location.origin}|${identifier(profile.workspaceId, 'workspace')}|${identifier(profile.memberId, 'member')}|${identifier(binding, 'session binding')}`;
+    return `${SERVER_ORIGIN}|${identifier(profile.workspaceId, 'workspace')}|${identifier(profile.memberId, 'member')}|${identifier(binding, 'session binding')}`;
   }
   function key(profile, pageId) {
     return `${namespace(profile)}|${identifier(pageId, 'page')}`;
@@ -69,7 +70,7 @@
     const pointer = await request(tx.objectStore('meta').get('active'));
     if (!pointer) return null;
     const profile = await request(tx.objectStore('profiles').get(pointer.profileId));
-    return profile && profile.origin === location.origin && Number.isFinite(profile.validUntil)
+    return profile && profile.origin === SERVER_ORIGIN && Number.isFinite(profile.validUntil)
       && profile.validUntil > Date.now() ? profile : null;
   }
   function resourceType(profile, resourceKey) {
@@ -112,7 +113,7 @@
     const safeSession = Object.fromEntries(['enabled', 'required', 'authenticated', 'mode', 'identity', 'expires_at', 'workspace_id', 'cache_binding']
       .filter(field => Object.hasOwn(session, field)).map(field => [field, session[field]]));
     safeSession.member = safeMember;
-    const profile = { id, origin: location.origin, workspaceId: input.workspaceId, memberId: input.memberId,
+    const profile = { id, origin: SERVER_ORIGIN, workspaceId: input.workspaceId, memberId: input.memberId,
       cacheBinding: session.cache_binding,
       session: copy(safeSession), workspace: copy(input.workspace), validUntil, updatedAt: Date.now() };
     let changed = false;
@@ -639,7 +640,7 @@
     });
     if (id) announce(id);
   }
-  const serviceWorkerReady = globalThis.isSecureContext && 'serviceWorker' in navigator
+  const serviceWorkerReady = !globalThis.FountainTransport?.native && globalThis.isSecureContext && 'serviceWorker' in navigator
     ? navigator.serviceWorker.register('/sw.js', { scope: '/' }).then(() => navigator.serviceWorker.ready).catch(() => null)
     : Promise.resolve(null);
   globalThis.FountainOffline = Object.freeze({ available: !!globalThis.indexedDB,

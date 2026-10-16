@@ -137,7 +137,8 @@ class Store:
         return self.put("audit", {"action": action, "details": details, "user": user if user is not None else AUDIT_ACTOR.get()})
 
     def close(self):
-        self.db.close()
+        with self.lock:
+            self.db.close()
 
 
 BLOCK_TYPES = {"paragraph", "heading1", "heading2", "heading3", "bullet", "numbered", "todo",

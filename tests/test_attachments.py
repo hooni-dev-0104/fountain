@@ -65,6 +65,34 @@ class FileStorageTests(unittest.TestCase):
         self.assertEqual(error.exception.status, 409)
         self.assertLess(peak, 2 * 1024 * 1024)
 
+    def test_store_close_waits_for_active_blob_read(self):
+        upload = self.begin(5)
+        self.storage.append(upload['id'], 0, b'hello', 'local', self.access)
+        rowid = self.store.db.execute('SELECT rowid FROM attachment_chunks').fetchone()[0]
+        entered, release, closed = threading.Event(), threading.Event(), threading.Event()
+        failures = []
+        def read():
+            try:
+                with self.store.lock, self.store.db.blobopen('attachment_chunks', 'data', rowid, readonly=True) as blob:
+                    self.assertEqual(blob.read(1), b'h')
+                    entered.set()
+                    self.assertTrue(release.wait(3))
+                    self.assertEqual(blob.read(), b'ello')
+            except BaseException as error: failures.append(error)
+        reader = threading.Thread(target=read)
+        reader.start()
+        self.assertTrue(entered.wait(2))
+        closer = threading.Thread(target=lambda: (self.store.close(), closed.set()))
+        closer.start()
+        try:
+            self.assertFalse(closed.wait(0.05), 'Closing must not invalidate an active BLOB handle')
+        finally:
+            release.set()
+            reader.join(3)
+            closer.join(3)
+        self.assertEqual(failures, [])
+        self.assertTrue(closed.is_set())
+
     def test_empty_files_and_size_limits(self):
         upload = self.begin(0)
         metadata = self.storage.complete(upload["id"], "local", self.access)

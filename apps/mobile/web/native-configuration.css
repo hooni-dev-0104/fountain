@@ -2,6 +2,7 @@
 .native-configuration h1{color:#363632}
 .native-configuration>p{color:#64675e}
 .native-configuration label{color:#4f554a}
+#main>p.empty{color:#62665c;font-size:14px;line-height:1.8}
 /* Independent recovery panel also works before the application controller starts. */
 .native-recovery-entry{margin:0 24px 24px}
 .native-recovery-dialog{width:min(620px,calc(100% - 32px));max-height:calc(100dvh - 32px);padding:0;overflow:auto;overscroll-behavior:contain;border:1px solid #e2e4dc;border-radius:16px;background:#fff;color:#373630;box-shadow:0 24px 90px #1d30252b}

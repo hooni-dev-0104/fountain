@@ -1,6 +1,7 @@
 import {Wiki} from './wiki.ts';
 /** Synchronous advanced domain staging; external inference is a separate phase. */
 import {Inbox} from './inbox.ts';
+import {VerifiedPages} from './verified-pages.ts';
 import {Access,APIError,casefold,clone,get,has,is_object,put_key,truth} from './access.ts';
 import type {Entity} from './access.ts';
 import {Authorization} from './authorization.ts';
@@ -213,6 +214,7 @@ export function createAdvancedExtension(options:AdvancedOptions={}):DomainExtens
   // boundary that must be installed explicitly. A cookie login cannot replace it.
   if(r.path.startsWith('/scim/v2/'))return null;
   if(r.parts.length===4&&r.parts[0]==='api'&&r.parts[1]==='pages'&&['wiki','wiki-owner'].includes(r.parts[3]))return{status:200,payload:new Wiki(r.store,r.access).route(r.method,r.parts[2],r.parts[3],r.body,r.query)};
+  if(r.path==='/api/verified-pages'&&r.method==='GET')return{status:200,payload:new VerifiedPages(r.store,r.access,options.clock).get(r.query)};
   if(r.path==='/api/inbox'&&r.method==='GET')return{status:200,payload:new Inbox(r.store,r.access,options.clock).get(r.query)};
   if(r.parts.length===3&&r.parts[0]==='api'&&r.parts[1]==='inbox'&&r.method==='PATCH'){check(!r.query.toString(),'Invalid inbox query');return{status:200,payload:new Inbox(r.store,r.access,options.clock).patch(r.parts[2],r.body)};}
   const advanced=new Advanced(r.store,r.workspace,{...options,access:r.access,actor:r.access.member_id});

@@ -7,6 +7,8 @@ import {Workspace} from '../functions/_shared/core.ts';
 import {Authorization} from '../functions/_shared/authorization.ts';
 import {createDomain} from '../functions/_shared/domain.ts';
 import {Advanced,createAdvancedExtension} from '../functions/_shared/advanced.ts';
+import {projectPageHeader,PAGE_HEADER_META_KEY} from '../functions/_shared/page-headers.ts';
+import {projectVerificationIndex,VERIFICATION_INDEX_META_KEY} from '../functions/_shared/verification-index.ts';
 const stamp='2026-10-17T00:00:00.123000+00:00',now=Date.parse(stamp);
 class Store{
  sequence=0;records=new Map();metadata=new Map();context={memberId:'alice'};requestTime=stamp;
@@ -95,7 +97,7 @@ print(json.dumps(out));s.close()
  f.store.put('page',{...f.page,permissions:{default:'workspace',inherit:false,members:{},groups:{}},verification:{...f.page.verification,owners}});
  let snapshots=0,commits=0,revision=0;const auth={hash:'a'.repeat(64),userId:'11111111-1111-4111-8111-111111111111',authSessionId:'22222222-2222-4222-8222-222222222222',cacheBinding:'c'.repeat(32),expiresAt:now+60000,profile:{workspaceId:'inbox-fixture',member:f.store.get('member','alice'),authSessionActive:true}};
  const provider={async snapshot(request){snapshots++;const selected=request.selection,all=[...f.store.records].flatMap(([kind,rows])=>[...rows.values()].filter(data=>selected.kinds.includes(kind)||selected.ids[kind]?.includes(data.id)).map(data=>({kind,id:data.id,data,createdAt:data.created_at,updatedAt:data.updated_at}))),offset=request.cursor?.offset??0,size=selected.pageSize;
-  return{workspaceId:'inbox-fixture',memberId:'alice',principal:auth.profile.member,revision,accessRevision:0,entities:clone(all.slice(offset,offset+size)),meta:selected.metaKeys.map(key=>({key,present:f.store.metadata.has(key),value:f.store.meta(key)})),nextCursor:offset+size<all.length?{offset:offset+size}:null};},async commit(request){commits++;for(const change of request.changes){assert.equal(change.op,'put');f.store.put(change.kind,change.data);revision++;}return{revision}}};
+  return{workspaceId:'inbox-fixture',memberId:'alice',principal:auth.profile.member,revision,accessRevision:0,entities:clone(all.slice(offset,offset+size)),meta:selected.metaKeys.map(key=>key===PAGE_HEADER_META_KEY?{key,present:true,value:f.store.list('page').map(projectPageHeader)}:key===VERIFICATION_INDEX_META_KEY?{key,present:true,value:projectVerificationIndex(f.store.list('database'),f.store.list('row'))}:{key,present:f.store.metadata.has(key),value:f.store.meta(key)}),nextCursor:offset+size<all.length?{offset:offset+size}:null};},async commit(request){commits++;for(const change of request.changes){assert.equal(change.op,'put');f.store.put(change.kind,change.data);revision++;}return{revision}}};
  const domain=createDomain({provider,authorize:async()=>clone(auth),clock:()=>now,extensions:[createAdvancedExtension({clock:()=>now,cloud:true})]});
  const get=await domain(new Request('https://fixture.example/api/inbox'),'/api/inbox',auth),body=await get.json();assert.equal(get.status,200);assert.equal(body.total,1);assert(snapshots<30);assert.equal(revision,0,'GET never creates a receipt');const firstSnapshots=snapshots;snapshots=0;
  const patchPath='/api/inbox/'+body.items[0].id,patched=await domain(new Request('https://fixture.example'+patchPath,{method:'PATCH',body:JSON.stringify({read:true})}),patchPath,auth);assert.equal((await patched.json()).read,true);assert.equal(revision,1);assert(snapshots<30);

@@ -10,6 +10,8 @@ import re
 
 from .access import Access
 from .core import require
+from .database_verification import DatabaseVerification
+from .verification_index import inbox_store_reader
 
 
 def digest(value):
@@ -40,13 +42,15 @@ class Inbox:
 
     def candidates(self):
         if not self.access.active: return []
+        source = inbox_store_reader(self.store)
+        access = Access(source, self.access.principal)
         now = self.clock()
         receipts = {record['id']: record for record in self.store.list('inbox_receipt')}
         found = []
-        for page in self.store.list('page'):
+        for page in source.list('page'):
             if (not Access.verification_id(page.get('id')) or page.get('archived') or page.get('deleted') or page.get('deleted_at')
-                    or not self.access.can('page', page)): continue
-            value = self.access.project_verification(page)
+                    or not access.can('page', page)): continue
+            value = access.project_verification(page)
             if not value or self.access.member_id not in value['owners'] or value['expires_at'] is None: continue
             expiry = datetime.fromisoformat(value['expires_at']).astimezone(timezone.utc)
             if expiry > now: continue
@@ -59,6 +63,33 @@ class Inbox:
             item = {'id': identity, 'type': 'verification.expired', 'page_id': page['id'],
                     'title': page.get('title') if isinstance(page.get('title'), str) else '',
                     'icon': page.get('icon') if isinstance(page.get('icon'), str) else None,
+                    'verified_at': value['verified_at'], 'expires_at': value['expires_at'],
+                    'read': valid and receipt.get('read') is True, 'archived': valid and receipt.get('archived') is True}
+            found.append((expiry, item))
+        database_verification = DatabaseVerification(source, access)
+        for row in source.list('row'):
+            if (not Access.verification_id(row.get('id')) or row.get('archived') or row.get('deleted') or row.get('deleted_at')
+                    or not access.can('row', row)): continue
+            database = source.get('database', row.get('database_id'))
+            if (not database or database.get('archived') or database.get('deleted') or database.get('deleted_at')
+                    or not access.can('database', database)): continue
+            value = database_verification.public_verification(database, row)
+            if (access.member_id not in value['owners'] or value['verified_at'] is None or value['expires_at'] is None): continue
+            expiry = datetime.fromisoformat(value['expires_at']).astimezone(timezone.utc)
+            if expiry > now: continue
+            cycle = database_verification.event_cycle(database, row)
+            if (not isinstance(cycle, list) or len(cycle) != 2
+                    or any(type(number) is not int or not 0 <= number <= 9007199254740991 for number in cycle)): continue
+            identity = digest(['row', database['id'], row['id'], value['verified_at'], value['expires_at'], cycle,
+                               database_verification.raw_owners(database, row)])
+            receipt = receipts.get(digest([access.member_id, identity]), {})
+            valid = receipt.get('member_id') == access.member_id and receipt.get('notification_id') == identity
+            title_property = next((prop['id'] for prop in database['properties'] if prop.get('type') == 'title'), None)
+            title = row.get('properties', {}).get(title_property, '')
+            item = {'id': identity, 'type': 'verification.expired', 'resource_type': 'row',
+                    'database_id': database['id'], 'row_id': row['id'],
+                    'title': title if isinstance(title, str) else '',
+                    'icon': database.get('icon') if isinstance(database.get('icon'), str) else None,
                     'verified_at': value['verified_at'], 'expires_at': value['expires_at'],
                     'read': valid and receipt.get('read') is True, 'archived': valid and receipt.get('archived') is True}
             found.append((expiry, item))

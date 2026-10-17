@@ -5,6 +5,8 @@ import type {Entity} from './access.ts';
 import type {CoreStore} from './core.ts';
 import {IncrementalSHA256} from './storage.ts';
 import {scheduleDatetime} from './scheduler.ts';
+import {DatabaseVerification} from './database-verification.ts';
+import {inboxStoreReader} from './verification-index.ts';
 
 const digest=(value:unknown):string=>{const hash=new IncrementalSHA256();hash.update(new TextEncoder().encode(JSON.stringify(value)));return hash.hex();};
 export function inboxQuery(query:URLSearchParams|Entity):{filter:string;limit:number;offset:number}{
@@ -22,16 +24,31 @@ export class Inbox{
   constructor(store:CoreStore,access:Access,clock:()=>number=Date.now){this.store=store;this.access=access;this.clock=clock;}
   candidates():Entity[]{
     if(!this.access.active)return[];
-    // Whole private kinds keep legal 1000-assignee pages within transaction rounds.
-    const pages=this.store.list('page');this.store.list('member');
+    const source=inboxStoreReader(this.store),access=new Access(source,this.access.principal);
+    // The private index omits unrelated page, database and row bodies.
+    const pages=source.list('page');this.store.list('member');
     const receipts=new Map(this.store.list('inbox_receipt').map(record=>[record.id,record])),now=BigInt(Math.floor(this.clock()))*1000n,found:Array<{expiry:bigint;item:Entity}>=[];
     for(const page of pages){
-      if(!Access.verification_id(page.id)||truth(get(page,'archived'))||truth(get(page,'deleted'))||truth(get(page,'deleted_at'))||!this.access.can('page',page))continue;
-      const value=this.access.project_verification(page);if(!value||!value.owners.includes(this.access.member_id)||value.expires_at===null)continue;
+      if(!Access.verification_id(page.id)||truth(get(page,'archived'))||truth(get(page,'deleted'))||truth(get(page,'deleted_at'))||!access.can('page',page))continue;
+      const value=access.project_verification(page);if(!value||!value.owners.includes(this.access.member_id)||value.expires_at===null)continue;
       const expiry=scheduleDatetime(value.expires_at,'expires_at');if(expiry>now)continue;
       const cycle=get(page.verification,'cycle_revision');if(cycle!==null&&(!Number.isSafeInteger(cycle)||cycle<0))continue;
       const id=digest([page.id,value.verified_at,value.expires_at,cycle,Access.verification_owners(page)]),receipt=receipts.get(digest([this.access.member_id,id])),valid=receipt?.member_id===this.access.member_id&&receipt?.notification_id===id;
       found.push({expiry,item:{id,type:'verification.expired',page_id:page.id,title:typeof page.title==='string'?page.title:'',icon:typeof page.icon==='string'?page.icon:null,verified_at:value.verified_at,expires_at:value.expires_at,read:!!valid&&receipt.read===true,archived:!!valid&&receipt.archived===true}});
+    }
+    const databaseVerification=new DatabaseVerification(source,access);
+    for(const row of source.list('row')){
+      if(!Access.verification_id(row.id)||['archived','deleted','deleted_at'].some(key=>truth(get(row,key)))||!access.can('row',row))continue;
+      const database=source.get('database',row.database_id);
+      if(!database||['archived','deleted','deleted_at'].some(key=>truth(get(database,key)))||!access.can('database',database))continue;
+      const value=databaseVerification.public_verification(database,row);
+      if(!value.owners.includes(access.member_id)||value.verified_at===null||value.expires_at===null)continue;
+      const expiry=scheduleDatetime(value.expires_at,'expires_at');if(expiry>now)continue;
+      const cycle=databaseVerification.event_cycle(database,row);
+      if(!Array.isArray(cycle)||cycle.length!==2||cycle.some(number=>!Number.isSafeInteger(number)||number<0))continue;
+      const id=digest(['row',database.id,row.id,value.verified_at,value.expires_at,cycle,databaseVerification.raw_owners(database,row)]),receipt=receipts.get(digest([access.member_id,id])),valid=receipt?.member_id===access.member_id&&receipt?.notification_id===id;
+      const titleProperty=database.properties.find((prop:Entity)=>prop.type==='title')?.id,title=get(row.properties,titleProperty,'');
+      found.push({expiry,item:{id,type:'verification.expired',resource_type:'row',database_id:database.id,row_id:row.id,title:typeof title==='string'?title:'',icon:typeof database.icon==='string'?database.icon:null,verified_at:value.verified_at,expires_at:value.expires_at,read:!!valid&&receipt.read===true,archived:!!valid&&receipt.archived===true}});
     }
     found.sort((a,b)=>a.expiry===b.expiry?(a.item.id<b.item.id?-1:a.item.id>b.item.id?1:0):a.expiry>b.expiry?-1:1);
     return found.map(entry=>entry.item);

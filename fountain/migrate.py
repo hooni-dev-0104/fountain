@@ -7,7 +7,6 @@ with create semantics. The operator must stop the old API before cutover.
 from __future__ import annotations
 
 from contextlib import closing
-from decimal import Decimal
 import hashlib
 import json
 from pathlib import Path
@@ -17,6 +16,7 @@ import uuid
 from .backup import (BackupError, CHUNK_SIZE, PROVENANCE_COLUMNS, _inspect, _strict_json,
                      _provenance_digest, _provenance_provisioned, _attachments)
 from .core import APIError
+from .canonical import canonical_source
 from .file_chunks import FileChunkStorage, ROOT_KEY
 from .postgres import PostgresStore
 from .retention_vault import VAULT_COLUMNS
@@ -35,26 +35,12 @@ def _require(condition, message):
 
 
 def _canonical_json(encoded):
-    """Compare JSONB numerics without rounding through Python binary floats."""
-    def invalid(_):
-        raise MigrationError("Source contains a nonfinite JSON number")
-    value = json.loads(encoded, parse_int=Decimal, parse_float=Decimal, parse_constant=invalid)
-    def encode(item):
-        if item is None: return "null"
-        if item is True: return "true"
-        if item is False: return "false"
-        if isinstance(item, Decimal):
-            if item.is_zero(): return "0"
-            sign, digits, exponent = item.as_tuple()
-            digits = list(digits)
-            while digits[-1] == 0:
-                digits.pop()
-                exponent += 1
-            return ("-" if sign else "") + "".join(map(str, digits)) + "e" + str(exponent)
-        if isinstance(item, str): return json.dumps(item, ensure_ascii=False)
-        if isinstance(item, list): return "[" + ",".join(encode(child) for child in item) + "]"
-        return "{" + ",".join(json.dumps(key, ensure_ascii=False) + ":" + encode(item[key]) for key in sorted(item)) + "}"
-    return encode(value).encode("utf-8")
+    try:
+        return canonical_source(encoded)
+    except ValueError as error:
+        if str(error) == "Source contains a nonfinite JSON number":
+            raise MigrationError(str(error)) from None
+        raise
 
 
 def _digest(rows):

@@ -7,6 +7,19 @@ import Security
 @testable import App
 
 #if DEBUG
+// A test-owned, empty document uses the captured application's data store and
+// exact local origin. It has no plugins, application scripts or network routes.
+private final class FountainQAIndexedDBScheme: NSObject, WKURLSchemeHandler {
+    func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
+        guard let url = urlSchemeTask.request.url, url.absoluteString == "capacitor://localhost/__fountain_qa_indexeddb__" else {
+            urlSchemeTask.didFailWithError(NSError(domain: "FountainQAIndexedDB", code: 1)); return
+        }
+        let bytes = Data("<!doctype html><meta charset=utf-8><title>Fountain QA IndexedDB</title><script>globalThis.__fountainQAIndexedDB=true</script>".utf8)
+        urlSchemeTask.didReceive(URLResponse(url: url, mimeType: "text/html", expectedContentLength: bytes.count, textEncodingName: "utf-8"))
+        urlSchemeTask.didReceive(bytes); urlSchemeTask.didFinish()
+    }
+    func webView(_ webView: WKWebView, stop urlSchemeTask: WKURLSchemeTask) {}
+}
 // No global URLProtocol registration, TLS exception, shared cookie storage or
 // renderer-accessible nonce. Only the opted-in native session installs this.
 private final class FountainCloudQAProtocol: URLProtocol, URLSessionDataDelegate, @unchecked Sendable {
@@ -14,8 +27,11 @@ private final class FountainCloudQAProtocol: URLProtocol, URLSessionDataDelegate
     private static var nonce: String?
     private static var intercepted = 0
     private static var credentialRequests = 0
+    private static var logoutRequests = 0
     private static var candidates = 0
     private static var fixedMatches = 0
+    private static var offline = false
+    private static var offlineFailures = 0
     private enum Delivery { case response(HTTPURLResponse), bytes(Data), finished, failed(Int) }
     private let state = NSRecursiveLock()
     private var clientThread: Thread?
@@ -30,10 +46,12 @@ private final class FountainCloudQAProtocol: URLProtocol, URLSessionDataDelegate
     private static let prefix = "/functions/v1/fountain-api"
     static func install(_ value: String?) {
         lock.lock(); defer { lock.unlock() }
-        nonce = value; intercepted = 0; credentialRequests = 0; candidates = 0; fixedMatches = 0
+        nonce = value; intercepted = 0; credentialRequests = 0; logoutRequests = 0; candidates = 0; fixedMatches = 0; offline = false; offlineFailures = 0
     }
+    static func setOffline(_ value: Bool) { lock.lock(); defer { lock.unlock() }; offline = value }
+    static func offlineCount() -> Int { lock.lock(); defer { lock.unlock() }; return offlineFailures }
     static func counts() -> (Int, Int) { lock.lock(); defer { lock.unlock() }; return (intercepted, credentialRequests) }
-    static func routingCounts() -> [String: Int] { lock.lock(); defer { lock.unlock() }; return ["protocolCandidates": candidates, "protocolFixedMatches": fixedMatches] }
+    static func routingCounts() -> [String: Int] { lock.lock(); defer { lock.unlock() }; return ["protocolCandidates": candidates, "protocolFixedMatches": fixedMatches, "actualSessionDELETE": logoutRequests] }
     override class func canInit(with request: URLRequest) -> Bool {
         guard let url = request.url else { return false }
         let matches = url.scheme == "https" && url.host == host && (url.port == nil || url.port == 443) && url.path.hasPrefix(prefix + "/")
@@ -43,7 +61,8 @@ private final class FountainCloudQAProtocol: URLProtocol, URLSessionDataDelegate
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         state.lock(); clientThread = Thread.current; state.unlock()
-        Self.lock.lock(); let nonce = Self.nonce; Self.lock.unlock()
+        Self.lock.lock(); let nonce = Self.nonce, offline = Self.offline; if offline { Self.offlineFailures += 1 }; Self.lock.unlock()
+        if offline { fail(); return }
         guard let nonce = nonce, let url = request.url, let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
               components.percentEncodedPath.hasPrefix(Self.prefix + "/"), url.user == nil, url.password == nil, url.fragment == nil,
               request.value(forHTTPHeaderField: "Origin") == nil, request.value(forHTTPHeaderField: "Authorization") == nil else { fail(); return }
@@ -64,6 +83,7 @@ private final class FountainCloudQAProtocol: URLProtocol, URLSessionDataDelegate
         forwarding = session; forwardingTask = session.dataTask(with: wire); let pending = forwardingTask; state.unlock()
         Self.lock.lock(); Self.intercepted += 1
         if path == "/api/session" && request.httpMethod == "POST" { Self.credentialRequests += 1 }
+        if path == "/api/session" && request.httpMethod == "DELETE" { Self.logoutRequests += 1 }
         Self.lock.unlock(); pending?.resume()
     }
     override func stopLoading() {
@@ -160,6 +180,17 @@ final class FountainNativeTests: XCTestCase {
             for value in [item.0, try json(item.1), profile] { sqlite3_bind_text(statement, parameter, value, -1, transient); parameter += 1 }
             let bytes = try encoded(payload); _ = bytes.withUnsafeBytes { sqlite3_bind_blob(statement, parameter, $0.baseAddress, Int32(bytes.count), transient) }
             XCTAssertEqual(sqlite3_step(statement), SQLITE_DONE); sqlite3_finalize(statement)
+            // Synthetic fixture history is explicitly native-qualified. Tests
+            // of real attribution exercise commitDelta separately; metadata in
+            // a renderer-provided profile never creates this private control.
+            let row = sqlite3_last_insert_rowid(db)
+            let proofKey = item.3 ? "archiveAuthority:" + String(row) : "recordAuthority:" + item.0 + "|" + (try json(item.1))
+            let proof: [String: Any] = ["actor": profile.components(separatedBy: "|").prefix(3).joined(separator: "|"), "profile": profile, "digest": FountainOutbox.hash(bytes), "trust": "confirmed"]
+            var attribution: OpaquePointer?
+            XCTAssertEqual(sqlite3_prepare_v2(db, "INSERT INTO control(id,value) VALUES(?,?)", -1, &attribution, nil), SQLITE_OK)
+            sqlite3_bind_text(attribution, 1, proofKey, -1, transient)
+            let metadata = try encoded(proof); _ = metadata.withUnsafeBytes { sqlite3_bind_blob(attribution, 2, $0.baseAddress, Int32(metadata.count), transient) }
+            XCTAssertEqual(sqlite3_step(attribution), SQLITE_DONE); sqlite3_finalize(attribution)
         }
         return file
     }
@@ -179,8 +210,9 @@ final class FountainNativeTests: XCTestCase {
     }
     private func handles(_ result: [String: Any]) -> [String] { (result["items"] as! [[String: Any]]).map { $0["handle"] as! String } }
 
-    private func sql(_ file: URL, _ statement: String, _ values: [String] = []) throws -> [[String]] {
-        var db: OpaquePointer?; XCTAssertEqual(sqlite3_open(file.path, &db), SQLITE_OK); defer { sqlite3_close_v2(db) }
+    private func sql(_ file: URL, _ statement: String, _ values: [String] = [], readOnly: Bool = false) throws -> [[String]] {
+        var db: OpaquePointer?; XCTAssertEqual(sqlite3_open_v2(file.path, &db, (readOnly ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE) | SQLITE_OPEN_FULLMUTEX, nil), SQLITE_OK); defer { sqlite3_close_v2(db) }
+        sqlite3_busy_timeout(db, 1000)
         var query: OpaquePointer?; XCTAssertEqual(sqlite3_prepare_v2(db, statement, -1, &query, nil), SQLITE_OK); defer { sqlite3_finalize(query) }
         for (index, value) in values.enumerated() { sqlite3_bind_text(query, Int32(index + 1), value, -1, transient) }
         var result: [[String]] = []
@@ -228,6 +260,77 @@ final class FountainNativeTests: XCTestCase {
         let rows = try sql(file, "SELECT CAST(value AS TEXT) FROM control WHERE id=?", ["proofs:" + profile])
         let ledger = try JSONSerialization.jsonObject(with: Data(XCTUnwrap(rows.first?.first).utf8)) as! [String: Any]
         return try XCTUnwrap(ledger["page:welcome"] as? [String: Any])
+    }
+    func testSameCookieNativeRoleChangeFencesActualCacheAndPreservesInput() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Fountain-role-" + UUID().uuidString, isDirectory: true); cleanup.append(directory)
+        let origin = "https://role-" + UUID().uuidString.lowercased() + ".invalid", profile = origin + "|qa-workspace|qa-member|role-binding"
+        let store = try FountainOutbox(origin: origin, testingDirectory: directory); defer { store.close() }
+        let file = directory.appendingPathComponent(FountainOutbox.hash(Data(origin.utf8)) + ".sqlite")
+        var owner = session("qa-member", "role-binding"); var member = owner["member"] as! [String: Any]; member["role"] = "owner"; owner["member"] = member
+        try store.grant(owner, sessionRef: "private-role-cookie"); try store.ensureOwner("role-unit-owner", epoch: 1)
+        let page: [String: Any] = ["id": "private", "title": "Private canonical", "owner_id": "another-actor", "access_level": 4, "locked": false, "archived": false, "revision": 1]
+        let envelope: [String: Any] = ["workspace_id": "qa-workspace", "current_member_id": "qa-member", "session_binding": "role-binding", "access_revision": 4, "data_revision": 7]
+        var workspace = envelope; workspace["pages"] = [page]; workspace["databases"] = []
+        var snapshot = envelope; snapshot["page"] = page; snapshot["epoch"] = "private-epoch"; snapshot["seq"] = 0; snapshot["state"] = ["version": 1, "blocks": [String: Any](), "seen": [String: Any](), "max_clock": 0]; snapshot["blocks"] = []; snapshot["access_level"] = 4
+        try store.observeResource(path: "/api/workspace", method: "GET", status: 200, data: encoded(workspace), sessionRef: "private-role-cookie")
+        try store.observeResource(path: "/api/pages/private/collaboration", method: "GET", status: 200, data: encoded(snapshot), sessionRef: "private-role-cookie")
+        let opened = try store.open(), lease = opened["lease"] as! String, resource = profile + "|private"
+        let profileValue: [String: Any] = ["id": profile, "origin": origin, "workspaceId": "qa-workspace", "memberId": "qa-member", "cacheBinding": "role-binding", "session": owner, "workspace": workspace, "validUntil": opened["validUntil"]!, "updatedAt": 1]
+        let draft: [String: Any] = ["key": resource, "profileId": profile, "clientId": "role-draft", "draft": ["epoch": "private-epoch", "reason": "pending", "ops": [], "blocks": [["id": "new", "type": "paragraph", "text": "권한 변경 전 미전송 입력🙂"]]]]
+        let input: [String: Any] = ["version": 1, "origin": origin, "mode": "active", "changes": [
+            ["op": "put", "bucket": "profiles", "key": profile, "value": profileValue],
+            ["op": "put", "bucket": "meta", "key": "active", "value": ["id": "active", "profileId": profile]],
+            ["op": "put", "bucket": "snapshots", "key": resource, "value": ["key": resource, "profileId": profile, "snapshot": snapshot, "updatedAt": 1]],
+            ["op": "put", "bucket": "drafts", "key": [resource, "role-draft"], "value": draft]]]
+        let bytes = try encoded(input)
+        try store.stage(lease: lease, txID: "role-source", baseHead: opened["head"] as! Int, proofEpoch: opened["proofEpoch"] as! Int, part: 0, bytes: bytes)
+        _ = try store.commit(lease: lease, txID: "role-source", baseHead: opened["head"] as! Int, proofEpoch: opened["proofEpoch"] as! Int, digest: FountainOutbox.hash(bytes))
+        let ready = try store.open(); XCTAssertEqual(ready["resourceAccess"] as? String, "ready")
+        XCTAssertFalse((try store.read(lease: lease, head: ready["head"] as! Int, proofEpoch: ready["proofEpoch"] as! Int, cursor: nil, byteLimit: 1024)["fragments"] as! [Any]).isEmpty)
+        let retained = try retainedBytes(file), beforeExpiryOnly = try Data(contentsOf: file)
+        var extended = owner; extended["expires_at"] = ISO8601DateFormatter().string(from: Date().addingTimeInterval(7200))
+        try store.grant(extended, sessionRef: "private-role-cookie"); XCTAssertEqual(try Data(contentsOf: file), beforeExpiryOnly)
+        member["role"] = "member"; extended["member"] = member
+        try store.grant(extended, sessionRef: "private-role-cookie")
+        let fenced = try store.open(); XCTAssertEqual(fenced["identityState"] as? String, "verified"); XCTAssertEqual(fenced["resourceAccess"] as? String, "required")
+        XCTAssertEqual(fenced["head"] as? Int, ready["head"] as? Int); XCTAssertGreaterThan(fenced["proofEpoch"] as! Int, ready["proofEpoch"] as! Int)
+        XCTAssertEqual(try retainedBytes(file), retained)
+        XCTAssertNotEqual(fenced["lease"] as? String, lease)
+        XCTAssertThrowsError(try store.read(lease: lease, head: fenced["head"] as! Int, proofEpoch: fenced["proofEpoch"] as! Int, cursor: nil, byteLimit: 1024)) { XCTAssertEqual($0 as? FountainOutboxError, .stale) }
+        XCTAssertThrowsError(try store.read(lease: fenced["lease"] as! String, head: fenced["head"] as! Int, proofEpoch: fenced["proofEpoch"] as! Int, cursor: nil, byteLimit: 1024)) { XCTAssertEqual($0 as? FountainOutboxError, .access) }
+        workspace["pages"] = []; workspace["access_revision"] = 5; workspace["data_revision"] = 8
+        try store.observeResource(path: "/api/workspace", method: "GET", status: 200, data: encoded(workspace), sessionRef: "private-role-cookie")
+        try store.observeResource(path: "/api/pages/private/collaboration", method: "GET", status: 404, data: Data(), sessionRef: "private-role-cookie")
+        let recovered = try sql(file, "SELECT CAST(value AS TEXT) FROM recovery WHERE bucket='drafts' AND profile_id=?", [profile])
+        XCTAssertEqual(recovered.first?.first, try json(draft)); XCTAssertEqual(try sql(file, "SELECT count(*) FROM control WHERE id=?", ["suspended:" + profile])[0][0], "0")
+    }
+    func testFirstStaleStageRetainsPrivateAttemptForActiveAndQuarantineSettlement() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("Fountain-stage-race-" + UUID().uuidString, isDirectory: true); cleanup.append(directory)
+        let origin = "https://stage-race-" + UUID().uuidString.lowercased() + ".invalid", profile = origin + "|qa-workspace|qa-member|race-binding"
+        let store = try FountainOutbox(origin: origin, testingDirectory: directory); defer { store.close() }
+        let file = directory.appendingPathComponent(FountainOutbox.hash(Data(origin.utf8)) + ".sqlite")
+        try store.grant(session("qa-member", "race-binding"), sessionRef: "private-race-cookie"); try store.ensureOwner("race-owner", epoch: 1)
+        for mode in ["active", "quarantine"] {
+            let old = try store.open(), lease = old["lease"] as! String, head = old["head"] as! Int, proof = old["proofEpoch"] as! Int, id = "draft-" + mode
+            let put: [String: Any] = ["op": "put", "bucket": "drafts", "key": [profile + "|page", id], "value": ["profileId": profile, "key": profile + "|page", "clientId": id, "draft": ["reason": "pending", "blocks": [["id": "block", "type": "paragraph", "text": "첫 조각 경합 원본🙂"]]]]]
+            let retained = try encoded(["version": 1, "origin": origin, "mode": mode, "changes": [put]]), quarantine = try encoded(["version": 1, "origin": origin, "mode": "quarantine", "changes": [put]])
+            let bump = "bump-" + mode
+            try store.stage(lease: lease, txID: bump, baseHead: head, proofEpoch: proof, part: 0, bytes: quarantine)
+            _ = try store.commit(lease: lease, txID: bump, baseHead: head, proofEpoch: proof, digest: FountainOutbox.hash(quarantine))
+            let stale = "stale-first-" + mode
+            try store.stage(lease: lease, txID: stale, baseHead: head, proofEpoch: proof, part: 0, bytes: retained)
+            XCTAssertThrowsError(try store.commit(lease: lease, txID: stale, baseHead: head, proofEpoch: proof, digest: FountainOutbox.hash(retained))) { XCTAssertEqual($0 as? FountainOutboxError, .head) }
+            let settled = try store.reconcile(["generation": 1, "phase": "settle", "lease": lease, "journals": [["txId": stale, "digest": FountainOutbox.hash(retained), "baseHead": head, "proofEpoch": proof]]], admissionWatermark: 0, sessionRef: "private-race-cookie")
+            XCTAssertEqual((settled["settlements"] as! [[String: Any]])[0]["status"] as? String, "unaccepted")
+            XCTAssertThrowsError(try store.commit(lease: lease, txID: stale, baseHead: head, proofEpoch: proof, digest: FountainOutbox.hash(retained))) { XCTAssertEqual($0 as? FountainOutboxError, .conflict) }
+            XCTAssertEqual(try sql(file, "SELECT hex(data) FROM staging WHERE tx_id=?", [stale]).first?.first, retained.map { String(format: "%02X", $0) }.joined())
+            let fresh = try store.open(), tx = "fresh-" + mode
+            try store.stage(lease: lease, txID: tx, baseHead: fresh["head"] as! Int, proofEpoch: fresh["proofEpoch"] as! Int, part: 0, bytes: quarantine)
+            _ = try store.commit(lease: lease, txID: tx, baseHead: fresh["head"] as! Int, proofEpoch: fresh["proofEpoch"] as! Int, digest: FountainOutbox.hash(quarantine), quarantineOnly: true)
+            XCTAssertEqual(try sql(file, "SELECT CAST(value AS TEXT) FROM recovery WHERE tx_id=?", [tx]).first?.first, try json(put))
+            let accepted = try store.reconcile(["generation": 1, "phase": "settle", "lease": lease, "journals": [["txId": tx, "digest": FountainOutbox.hash(quarantine), "baseHead": fresh["head"]!, "proofEpoch": fresh["proofEpoch"]!]]], admissionWatermark: 0, sessionRef: "private-race-cookie")
+            XCTAssertEqual((accepted["settlements"] as! [[String: Any]])[0]["status"] as? String, "accepted")
+        }
     }
     func testOutboxOperationsPOSTAdvancesProofAndRejectsSequenceRegression() throws {
         let fixture = try operationObserverFixture(); defer { fixture.store.close() }
@@ -473,6 +576,9 @@ final class FountainNativeTests: XCTestCase {
     }
     @MainActor private func script(_ body: String, arguments: [String: Any] = [:]) async throws -> Any {
         let view = try await webView()
+        return try await script(view: view, body, arguments: arguments)
+    }
+    @MainActor private func script(view: WKWebView, _ body: String, arguments: [String: Any] = [:]) async throws -> Any {
         return try await withCheckedThrowingContinuation { continuation in view.callAsyncJavaScript(body, arguments: arguments, in: nil, in: .page) { continuation.resume(with: $0) } }
     }
     @MainActor func testActualBundledBridgeAndPrivateAssetGate() async throws {
@@ -557,6 +663,241 @@ final class FountainNativeTests: XCTestCase {
             try await Task.sleep(nanoseconds: 250_000_000)
         }
         throw NSError(domain: "FountainCloudQA", code: 4)
+    }
+    @MainActor private func detachCloudDataStore() throws -> WKWebsiteDataStore {
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene, let window = scene.windows.first,
+              let controller = window.rootViewController as? FountainBridgeViewController, let view = controller.webView,
+              view.url?.scheme == "capacitor", view.url?.host == "localhost", view.url?.port == nil else { throw NSError(domain: "FountainQAIndexedDB", code: 2) }
+        let store = view.configuration.websiteDataStore
+        controller.shutdownNative(); view.stopLoading(); view.removeFromSuperview()
+        window.rootViewController = UIViewController(); window.makeKeyAndVisible()
+        return store
+    }
+    @MainActor private func evictOwnedCloudIndexedDB(workspace: String, expected: String, evidence: inout [String: Any]) async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["FOUNTAIN_QA"] == "1", environment["FOUNTAIN_OUTBOX_QA"] == "1", (environment["SIMULATOR_DEVICE_NAME"] ?? "").hasPrefix("Fountain QA") else { throw NSError(domain: "FountainQAIndexedDB", code: 3) }
+        // WKWebView.url can already be the bundled navigation while its JS
+        // main frame is still about:blank. Wait for the actual owned document.
+        var original: [String: Any]?
+        for _ in 0..<100 {
+            if let value = try? await script("const source=new URL(location.href);if(source.protocol!=='capacitor:'||source.hostname!=='localhost'||source.port!==''||source.username!==''||source.password!==''||!document.querySelector('#app #main')||typeof globalThis.FountainNativeStorage?.close!=='function')return null;if(typeof closeDocument==='function')closeDocument();if(typeof closeMutations==='function')closeMutations();globalThis.FountainNativeStorage.close();return {origin:location.origin,adapterClosed:true};"), let value = value as? [String: Any] { original = value; break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        guard let original, let originalOrigin = original["origin"] as? String,
+              ["capacitor://localhost", "null"].contains(originalOrigin) else { throw NSError(domain: "FountainQAIndexedDB", code: 8) }
+        evidence["indexedDBAdapterClosed"] = original["adapterClosed"] as? Bool == true
+        let store = try detachCloudDataStore()
+        evidence["indexedDBActualStorePersistent"] = store.isPersistent
+        // WebKit's record API can omit custom-scheme IndexedDB. Record only
+        // bounded counts/allowlisted origin labels, and never remove broadly.
+        var listed: [WKWebsiteDataRecord]?
+        store.fetchDataRecords(ofTypes: [WKWebsiteDataTypeIndexedDBDatabases]) { listed = $0 }
+        for _ in 0..<40 { if listed != nil { break }; try await Task.sleep(nanoseconds: 50_000_000) }
+        evidence["indexedDBRecordAPIReturned"] = listed != nil
+        evidence["indexedDBRecordCount"] = min(listed?.count ?? 0, 100000)
+        evidence["indexedDBLocalRecordCount"] = min(listed?.filter { ["localhost", "capacitor://localhost"].contains($0.displayName) }.count ?? 0, 100000)
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene, let window = scene.windows.first else { throw NSError(domain: "FountainQAIndexedDB", code: 4) }
+        let configuration = WKWebViewConfiguration(); configuration.websiteDataStore = store
+        configuration.setURLSchemeHandler(FountainQAIndexedDBScheme(), forURLScheme: "capacitor")
+        let blank = WKWebView(frame: window.bounds, configuration: configuration), controller = UIViewController()
+        controller.view = blank; window.rootViewController = controller; window.makeKeyAndVisible()
+        defer { blank.stopLoading(); blank.removeFromSuperview(); window.rootViewController = UIViewController() }
+        blank.load(URLRequest(url: URL(string: "capacitor://localhost/__fountain_qa_indexeddb__")!))
+        var loaded = false
+        for _ in 0..<80 {
+            let ready = try? await script(view: blank, "return globalThis.__fountainQAIndexedDB===true&&location.protocol==='capacitor:'&&location.hostname==='localhost'&&location.port===''&&location.pathname==='/__fountain_qa_indexeddb__'&&location.origin===originalOrigin;", arguments: ["originalOrigin": originalOrigin])
+            if ready as? Bool == true { loaded = true; break }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        evidence["indexedDBBlankOriginVerified"] = loaded
+        guard loaded else { throw NSError(domain: "FountainQAIndexedDB", code: 5) }
+        // Native ownership has been synchronously revoked by detach; its old
+        // queued tasks cannot admit another write. Account for close effects
+        // before taking the exact source boundary around the two IDB deletes.
+        let before = try activeOutboxEvidence(workspace: workspace, page: "qa-native-shared", canonical: expected, pending: expected)
+        let sourceBefore = try activeOutboxSourceDigest()
+        evidence["beforeEviction"] = before; evidence["nativeSourceSHA256BeforeEviction"] = sourceBefore
+        let result = try await script(view: blank, """
+        if(location.protocol!=='capacitor:'||location.hostname!=='localhost'||location.port!==''||location.pathname!=='/__fountain_qa_indexeddb__'||location.origin!==originalOrigin||globalThis.__fountainQAIndexedDB!==true||typeof indexedDB.databases!=='function')throw new Error('QA_IDB_ORIGIN');
+        const owned=['fountain-offline-v1','fountain-upload-metadata-v1'];const before=await indexedDB.databases();
+        const present=owned.map(name=>before.some(item=>item.name===name));if(!present.every(Boolean))throw new Error('QA_IDB_EXPECTED_ABSENT');
+        let removed=0;for(let index=0;index<owned.length;index++){if(!present[index])continue;await new Promise((resolve,reject)=>{let settled=false;const finish=error=>{if(settled)return;settled=true;clearTimeout(timer);error?reject(new Error(error)):resolve();};const timer=setTimeout(()=>finish('QA_IDB_TIMEOUT'),8000);const request=indexedDB.deleteDatabase(owned[index]);request.onsuccess=()=>finish();request.onerror=()=>finish('QA_IDB_DELETE');request.onblocked=()=>finish('QA_IDB_BLOCKED');});removed++;}
+        const after=await indexedDB.databases();if(after.some(item=>owned.includes(item.name)))throw new Error('QA_IDB_REMAINS');
+        return {primaryPresent:present[0],uploadPresent:present[1],removed,ownedAbsent:true,otherDatabaseCount:Math.min(100000,before.filter(item=>!owned.includes(item.name)).length),otherDatabaseCountAfter:Math.min(100000,after.filter(item=>!owned.includes(item.name)).length)};
+        """, arguments: ["originalOrigin": originalOrigin])
+        guard let result = result as? [String: Any], result["primaryPresent"] as? Bool == true, result["uploadPresent"] as? Bool == true,
+              result["removed"] as? Int == 2, result["ownedAbsent"] as? Bool == true,
+              result["otherDatabaseCount"] as? Int == result["otherDatabaseCountAfter"] as? Int else { throw NSError(domain: "FountainQAIndexedDB", code: 6) }
+        evidence["indexedDBEviction"] = result
+        let after = try activeOutboxEvidence(workspace: workspace, page: "qa-native-shared", canonical: expected, pending: expected)
+        let sourceAfter = try activeOutboxSourceDigest()
+        evidence["afterEviction"] = after; evidence["nativeSourceSHA256AfterEviction"] = sourceAfter
+        guard sourceBefore == sourceAfter, before["head"] as? Int == after["head"] as? Int,
+              before["pendingOperations"] as? Int == after["pendingOperations"] as? Int,
+              before["pendingMatches"] as? Bool == after["pendingMatches"] as? Bool,
+              after["integrityOK"] as? Bool == true else { throw NSError(domain: "FountainQAIndexedDB", code: 7) }
+    }
+    private func activeOutboxSourceDigest() throws -> String {
+        let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+        let file = support.appendingPathComponent("FountainOutbox").appendingPathComponent(FountainOutbox.hash(Data("https://ehnovtfadpkwtubmwltl.supabase.co".utf8)) + ".sqlite")
+        // Use SQLite for every read, including exact BLOB bytes. A raw file
+        // descriptor close could interfere with another SQLite VFS connection.
+        let tables: [(String, String)] = [("control", "id,value"), ("records", "bucket,key,profile_id,resource_key,value"), ("recovery", "tx_id,position,bucket,key,profile_id,value"), ("staging", "tx_id,part,lease,base_head,data"), ("tx_receipts", "tx_id,digest,head"), ("tombstones", "scope,kind,profile_id")]
+        var source: [String: [[String]]] = [:]
+        for (table, columns) in tables {
+            let projection = columns.split(separator: ",").map { "quote(" + $0 + ")" }.joined(separator: ",")
+            source[table] = try sql(file, "SELECT rowid," + projection + " FROM " + table + " ORDER BY rowid", readOnly: true)
+        }
+        let bytes = try encoded(source)
+        guard bytes.count <= 128 * 1024 * 1024 else { throw NSError(domain: "FountainQAIndexedDB", code: 9) }
+        return FountainOutbox.hash(bytes)
+    }
+    private func activeOutboxEvidence(workspace: String, page: String, canonical: String, pending: String) throws -> [String: Any] {
+        let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+        let file = support.appendingPathComponent("FountainOutbox").appendingPathComponent(FountainOutbox.hash(Data("https://ehnovtfadpkwtubmwltl.supabase.co".utf8)) + ".sqlite")
+        guard FileManager.default.fileExists(atPath: file.path), let identityText = try sql(file, "SELECT CAST(value AS TEXT) FROM control WHERE id='identity'", readOnly: true).first?.first,
+              let identity = try JSONSerialization.jsonObject(with: Data(identityText.utf8)) as? [String: Any], let profile = identity["profileId"] as? String else { return ["actualSQLite": false] }
+        let parts = profile.components(separatedBy: "|")
+        guard parts.count == 4, parts[0] == "https://ehnovtfadpkwtubmwltl.supabase.co", parts[1].removingPercentEncoding == workspace else { return ["actualSQLite": true, "scopeMatches": false] }
+        let resource = profile + "|" + FountainOutbox.encodeURIComponent(page)
+        let snapshotRows = try sql(file, "SELECT CAST(value AS TEXT) FROM records WHERE bucket='snapshots' AND key=? AND profile_id=?", [try json(resource), profile], readOnly: true)
+        let snapshot = snapshotRows.first?.first.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }?["snapshot"] as? [String: Any]
+        let canonicalMatches = (snapshot?["blocks"] as? [[String: Any]] ?? []).contains { $0["text"] as? String == canonical }
+        var pendingMatches = false
+        let inputs = try sql(file, "SELECT bucket,CAST(value AS TEXT) FROM records WHERE profile_id=? AND resource_key=? AND bucket IN ('operations','drafts','mutations')", [profile, resource], readOnly: true)
+        for row in inputs {
+            guard let value = try JSONSerialization.jsonObject(with: Data(row[1].utf8)) as? [String: Any] else { throw FountainOutboxError.storage }
+            if (value["operation"] as? [String: Any])?["text"] as? String == pending { pendingMatches = true }
+            if let draft = value["draft"] as? [String: Any], (draft["blocks"] as? [[String: Any]] ?? []).contains(where: { $0["text"] as? String == pending }) { pendingMatches = true }
+        }
+        let head = Int(try sql(file, "SELECT CAST(value AS TEXT) FROM control WHERE id='head'", readOnly: true).first?.first ?? "-1") ?? -1
+        let receipts = Int(try sql(file, "SELECT count(*) FROM control WHERE substr(id,1,13)='receiptOwner:' AND CAST(value AS TEXT)=?", [try json(profile)], readOnly: true)[0][0]) ?? 0
+        return ["actualSQLite": true, "scopeMatches": true, "grantVerified": identity["state"] as? String == "verified", "head": head,
+                "canonicalMatches": canonicalMatches, "pendingMatches": pendingMatches, "pendingOperations": inputs.filter { $0[0] == "operations" }.count,
+                "deltaReceipts": receipts, "integrityOK": try sql(file, "PRAGMA integrity_check", readOnly: true).first?.first == "ok"]
+    }
+    @MainActor func testActualActiveCloudOutboxLifecyclePhase() async throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["FOUNTAIN_OUTBOX_QA"] == "1", "Opt-in DEBUG native outbox lifecycle phase required")
+        let manager = FileManager.default, documents = try manager.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let inputURL = documents.appendingPathComponent("fountain-cloud-outbox-input.json"), resultURL = documents.appendingPathComponent("fountain-cloud-outbox-result.json")
+        try XCTSkipUnless(manager.fileExists(atPath: inputURL.path), "Private outbox lifecycle input required")
+        let descriptor = Darwin.open(inputURL.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard descriptor >= 0 else { throw NSError(domain: "FountainOutboxQAInput", code: 1) }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true); defer { try? handle.close() }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG), info.st_mode & 0o777 == 0o600,
+              info.st_uid == getuid(), info.st_size > 0, info.st_size <= 16384, unlink(inputURL.path) == 0,
+              let bytes = try handle.read(upToCount: 16385), bytes.count == Int(info.st_size), let input = try JSONSerialization.jsonObject(with: bytes) as? [String: String],
+              Set(input.keys) == Set(["origin", "workspaceId", "email", "password", "nonce", "phase", "pageId", "expectedText", "editedText"]),
+              input["origin"] == "https://ehnovtfadpkwtubmwltl.supabase.co", let workspace = input["workspaceId"], workspace.range(of: "^fountain-qa-cloud-native-[a-f0-9]{16}$", options: .regularExpression) != nil,
+              let email = input["email"], email.hasSuffix(".invalid"), email.utf8.count <= 254, let password = input["password"], (10...1024).contains(password.utf8.count),
+              let nonce = input["nonce"], nonce.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil,
+              let phase = input["phase"], ["login-edit", "queue-offline", "restart-read", "evict-read", "logout"].contains(phase), input["pageId"] == "qa-native-shared",
+              let expected = input["expectedText"], let edited = input["editedText"], expected.utf8.count <= 4096, edited.utf8.count <= 4096 else { throw NSError(domain: "FountainOutboxQAInput", code: 2) }
+        let offlineBoot = ["restart-read", "evict-read"].contains(phase)
+        var evidence: [String: Any] = ["completed": false, "phase": phase, "processID": Int(ProcessInfo.processInfo.processIdentifier), "outboxEnabled": true,
+                                       "preinstallAllocated": FountainNative.qaLaunchNetworkEvidence()["allocated"] ?? -1]
+        var stage = "install"
+        FountainCloudQAProtocol.install(nonce); FountainCloudQAProtocol.setOffline(offlineBoot); try FountainNative.setQAProtocolClass(FountainCloudQAProtocol.self)
+        defer { let controller = (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.windows.first?.rootViewController as? FountainBridgeViewController; controller?.shutdownNative(); try? FountainNative.setQAProtocolClass(nil); FountainCloudQAProtocol.install(nil) }
+        do {
+            guard evidence["preinstallAllocated"] as? Int == 0 else { throw NSError(domain: "FountainOutboxQA", code: 10) }
+            if phase == "evict-read" {
+                stage = "indexeddb-eviction"
+                try await evictOwnedCloudIndexedDB(workspace: workspace, expected: expected, evidence: &evidence)
+            }
+            try freshCloudView(clearOrigin: phase == "login-edit")
+            if phase == "login-edit" {
+                stage = "configure"
+                try await waitCloud("return !!document.querySelector('#native-configuration-form input[name=origin]');")
+                _ = try await script("const f=document.querySelector('#native-configuration-form');f.elements.origin.value=origin;f.requestSubmit();return true;", arguments: ["origin": input["origin"]!])
+            }
+            stage = "authenticated-bootstrap"
+            for _ in 0..<180 {
+                if (try? await script("try{return state.loaded===true&&state.session?.authenticated===true&&FountainNativeStorage?.ready===true;}catch{return false;}")) as? Bool == true { break }
+                if phase == "login-edit" {
+                    _ = try? await script("""
+                    const submitted=globalThis.__fountainOutboxQAControls||(globalThis.__fountainOutboxQAControls=new WeakSet());const trace=globalThis.__fountainOutboxQATrace||(globalThis.__fountainOutboxQATrace={formSubmits:0,continueClicks:0,entryClicks:0,accountSwitchClicks:0});
+                    const dialog=document.querySelector('.native-recovery-dialog[open]');
+                    const f=dialog?dialog.querySelector('.native-recovery-login'):document.querySelector('#login-form');
+                    const switcher=dialog&&!f&&globalThis.FountainNativeStorage?.identityState==='blocked'&&dialog.getAttribute('aria-busy')!=='true'&&trace.accountSwitchClicks<2&&(!trace.lastAccountSwitch||Date.now()-trace.lastAccountSwitch>1000)&&[...dialog.querySelectorAll('button')].find(b=>b.textContent==='다른 계정으로 로그인'&&!b.disabled);if(switcher){trace.lastAccountSwitch=Date.now();trace.accountSwitchClicks++;switcher.click();return true;}
+                    if(f?.elements?.email&&!submitted.has(f)&&!f.querySelector('button[type=submit]')?.disabled){submitted.add(f);trace.formSubmits=Math.min(1000000,trace.formSubmits+1);f.elements.email.value=email;f.elements.password.value=password;f.requestSubmit();return true;}
+                    const resume=dialog&&[...dialog.querySelectorAll('button')].find(b=>['원본 보관하고 최신 상태로 계속','확인하고 계속'].includes(b.textContent)&&!b.disabled&&!submitted.has(b));
+                    if(resume){submitted.add(resume);trace.continueClicks=Math.min(1000000,trace.continueClicks+1);resume.click();return true;}
+                    const entry=!dialog&&document.querySelector('.native-recovery-entry');if(entry&&!submitted.has(entry)){submitted.add(entry);trace.entryClicks=Math.min(1000000,trace.entryClicks+1);entry.click();return true;}return false;
+                    """, arguments: ["email": email, "password": password])
+                }
+                try await Task.sleep(nanoseconds: 250_000_000)
+            }
+            try await waitCloud("return state.loaded===true&&state.session?.workspace_id===workspace&&FountainNativeStorage?.ready===true;", arguments: ["workspace": workspace], attempts: 12)
+            let privacy = try await script("const c=await Capacitor.registerPlugin('FountainNative').getConfiguration();return c.outboxEnabled===true&&document.cookie==='';") as? Bool
+            guard privacy == true else { throw NSError(domain: "FountainOutboxQA", code: 12) }
+            stage = "open-owned-page"
+            evidence["pageClickMatched"] = try await script("const b=document.querySelector('[data-action=page][data-id=qa-native-shared]');b?.click();return !!b;")
+            try await waitCloud("return state.page?.id==='qa-native-shared'&&[...document.querySelectorAll('.block-content')].some(e=>e.innerText===text);", arguments: ["text": expected])
+            let before = try activeOutboxEvidence(workspace: workspace, page: "qa-native-shared", canonical: expected, pending: expected)
+            evidence["before"] = before
+            if ["login-edit", "queue-offline"].contains(phase) {
+                if phase == "queue-offline" { FountainCloudQAProtocol.setOffline(true); _ = try await script("dispatchEvent(new Event('offline'));return true;") }
+                stage = "real-editor-input"
+                let changed = try await script("const e=[...document.querySelectorAll('.block-content')].find(e=>e.innerText===previous);if(!e||e.contentEditable!=='true')return false;e.focus();e.dispatchEvent(new InputEvent('beforeinput',{bubbles:true,inputType:'insertText',data:text}));e.textContent=text;e.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text}));return true;", arguments: ["previous": expected, "text": edited]) as? Bool
+                guard changed == true else { throw NSError(domain: "FountainOutboxQA", code: 13) }
+                stage = "native-commit"
+                var committed = false
+                for _ in 0..<180 {
+                    let state = try activeOutboxEvidence(workspace: workspace, page: "qa-native-shared", canonical: edited, pending: edited)
+                    let changedHead = (state["head"] as? Int ?? -1) > (before["head"] as? Int ?? Int.max)
+                    if changedHead && (phase == "queue-offline" ? state["pendingMatches"] as? Bool == true && (state["pendingOperations"] as? Int ?? 0) > 0 : state["canonicalMatches"] as? Bool == true && state["pendingOperations"] as? Int == 0) { evidence["after"] = state; committed = true; break }
+                    try await Task.sleep(nanoseconds: 250_000_000)
+                }
+                guard committed else { throw NSError(domain: "FountainOutboxQA", code: 14) }
+            } else if offlineBoot {
+                guard before["pendingMatches"] as? Bool == true, (before["pendingOperations"] as? Int ?? 0) > 0, before["integrityOK"] as? Bool == true,
+                      FountainCloudQAProtocol.counts().0 == 0, FountainCloudQAProtocol.offlineCount() > 0 else { throw NSError(domain: "FountainOutboxQA", code: 15) }
+                evidence["restoredPendingWithoutHTTPS"] = true
+            } else if phase == "logout" {
+                stage = "flush-pending"
+                _ = try await script("dispatchEvent(new Event('online'));state.channel?.sync?.();return true;")
+                var flushed = false
+                for _ in 0..<180 { let state = try activeOutboxEvidence(workspace: workspace, page: "qa-native-shared", canonical: expected, pending: expected); if state["canonicalMatches"] as? Bool == true && state["pendingOperations"] as? Int == 0 { evidence["after"] = state; flushed = true; break }; try await Task.sleep(nanoseconds: 250_000_000) }
+                guard flushed else { throw NSError(domain: "FountainOutboxQA", code: 16) }
+                stage = "explicit-logout"
+                _ = try await script("""
+                if(!globalThis.__fountainLogoutQA){const trace=globalThis.__fountainLogoutQA={clicks:0,calls:0,accepted:0,completed:0,inFlight:false,errorCode:null,errorName:null,frames:[]};const original=doAction;doAction=async function(...args){if(args[0]?.dataset?.action!=='logout')return original.apply(this,args);trace.calls++;trace.pausedAtCall=!!state.nativeOutboxPause;trace.resumingAtCall=!!state.nativeOutboxResuming;if(!state.nativeOutboxPause)trace.accepted++;trace.inFlight=true;try{return await original.apply(this,args);}catch(error){const allowed=['OUTBOX_STALE','OUTBOX_ACCESS_REQUIRED','OUTBOX_RECOVERY_REQUIRED','OUTBOX_STORAGE','OUTBOX_CANCELLED','OUTBOX_INVALID_OPEN','OUTBOX_SCOPE_CHANGED','OUTBOX_IDENTITY','OUTBOX_PAUSE','OUTBOX_CLOSED','OUTBOX_NOT_READY','OUTBOX_IDENTITY_REQUIRED','OUTBOX_UNAVAILABLE','NATIVE_OUTBOX_STALE','NATIVE_OUTBOX_HEAD','NATIVE_OUTBOX_CONFLICT','NATIVE_OUTBOX_INVALID','NATIVE_OUTBOX_LIMIT','NATIVE_OUTBOX_BLOCKED','NATIVE_STORAGE','STALE_REQUEST'];trace.errorCode=allowed.includes(error?.code)?error.code:'OTHER';trace.errorName=['Error','TypeError','AbortError','SecurityError','InvalidStateError','TransactionInactiveError','UnknownError'].includes(error?.name)?error.name:'OTHER';trace.frames=['opened','recover','releasePause','readCurrent','clearActiveProfile','getProfile','doAction','coordinated','scopeCheck'].filter(name=>String(error?.stack||'').includes(name));throw error;}finally{trace.inFlight=false;trace.completed++;}};}return true;
+                """)
+                try await waitCloud("""
+                const trace=globalThis.__fountainLogoutQA;if(trace.accepted>0)return true;if(state.nativeOutboxPause||state.nativeOutboxResuming||state.nativeRecoveryPreparing||state.nativeRecoveryPaused||!state.loaded||!FountainNativeStorage.ready){trace.readyAt=0;return false;}if(!trace.readyAt){trace.readyAt=Date.now();return false;}if(Date.now()-trace.readyAt<250)return false;const usable=button=>button&&!button.disabled&&!button.closest('[inert]')&&button.getClientRects().length>0;const logout=document.querySelector('[data-action=logout]');if(usable(logout)&&trace.clicks<3&&(!trace.lastClick||Date.now()-trace.lastClick>1000)){trace.clicks++;trace.lastClick=Date.now();logout.click();return trace.accepted>0;}const security=document.querySelector('[data-action=settings-tab][data-tab=security]');if(usable(security))security.click();else if(!document.querySelector('[data-action=logout]')){const settings=document.querySelector('[data-action=settings]');if(usable(settings))settings.click();}return false;
+                """)
+                try await waitCloud("if(!document.querySelector('#login-form'))return false;const r=await FountainTransport.request('/api/session');return r.status===200&&(await r.json()).authenticated===false&&document.cookie==='';")
+                guard (FountainCloudQAProtocol.routingCounts()["actualSessionDELETE"] ?? 0) > 0 else { throw NSError(domain: "FountainOutboxQA", code: 17) }
+                evidence["logoutAction"] = try await script("const t=globalThis.__fountainLogoutQA;return t?{clicks:t.clicks,calls:t.calls,accepted:t.accepted,completed:t.completed,inFlight:t.inFlight,errorCode:t.errorCode,errorName:t.errorName,frames:t.frames,pausedAtCall:t.pausedAtCall,resumingAtCall:t.resumingAtCall}:null;")
+                evidence["logoutVerified"] = true
+            }
+            evidence["completed"] = true
+        } catch {
+            evidence["failedStageSHA256"] = FountainOutbox.hash(Data(stage.utf8))
+            evidence["failureCode"] = (error as? FountainOutboxError)?.code ?? "QA_STAGE_FAILED"
+            let harnessError = error as NSError
+            if ["FountainQAIndexedDB", "FountainOutboxQA", "FountainCloudQA"].contains(harnessError.domain) { evidence["harnessFailureDomain"] = harnessError.domain; evidence["harnessFailureCode"] = harnessError.code }
+            if phase == "logout" { evidence["logoutAction"] = try? await script("const t=globalThis.__fountainLogoutQA;return t?{clicks:t.clicks,calls:t.calls,accepted:t.accepted,completed:t.completed,inFlight:t.inFlight,errorCode:t.errorCode,errorName:t.errorName,frames:t.frames,pausedAtCall:t.pausedAtCall,resumingAtCall:t.resumingAtCall,currentlyPaused:!!state.nativeOutboxPause,currentlyResuming:!!state.nativeOutboxResuming,settingsPresent:!!document.querySelector('[data-action=settings]'),logoutPresent:!!document.querySelector('[data-action=logout]')}:null;") }
+            evidence["expectedTextSHA256"] = FountainOutbox.hash(Data(expected.utf8))
+            evidence["nativeShape"] = try? activeOutboxEvidence(workspace: workspace, page: "qa-native-shared", canonical: expected, pending: expected)
+            evidence["pageUI"] = try? await script("""
+            const owned=typeof state!=='undefined'&&state.page?.id==='qa-native-shared';const all=[...document.querySelectorAll('.block-content')];const hash=async text=>{if(!globalThis.crypto?.subtle)return null;return [...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(text)))].map(v=>v.toString(16).padStart(2,'0')).join('');};return {selectedPagePresent:typeof state!=='undefined'&&!!state.page,selectedOwnedPage:owned,routeContainsOwnedPage:location.hash.includes('qa-native-shared'),blockCount:all.length,expectedDOMText:all.some(e=>e.innerText===expected),expectedStateText:owned&&(state.page.blocks||[]).some(b=>b.text===expected),stateBlockCount:owned&&Array.isArray(state.page.blocks)?state.page.blocks.length:0,innerTextSHA256:owned?await Promise.all(all.slice(0,8).map(e=>hash(e.innerText.slice(0,4096)))):[],textContentSHA256:owned?await Promise.all(all.slice(0,8).map(e=>hash((e.textContent||'').slice(0,4096)))):[],storageReady:globalThis.FountainNativeStorage?.ready===true};
+            """, arguments: ["expected": expected])
+            evidence["publicUI"] = try? await script("""
+            const d=document.querySelector('.native-recovery-dialog[open]');return {loaded:typeof state!=='undefined'&&state.loaded===true,authenticated:typeof state!=='undefined'&&state.session?.authenticated===true,storageReady:globalThis.FountainNativeStorage?.ready===true,recoveryOpen:!!d,loginVisible:!!(d?.querySelector('.native-recovery-login')||document.querySelector('#login-form')),continueVisible:!!d&&[...d.querySelectorAll('button')].some(b=>b.textContent==='원본 보관하고 최신 상태로 계속'),confirmationVisible:!!d&&[...d.querySelectorAll('button')].some(b=>b.textContent==='확인하고 계속'),busy:d?.getAttribute('aria-busy')==='true',qaActions:globalThis.__fountainOutboxQATrace||{formSubmits:0,continueClicks:0,entryClicks:0}};
+            """)
+            // Retain cookie, native source, staging and pending input for Root's
+            // next isolated phase; a test failure never silently logs it out.
+            XCTFail("Active native outbox lifecycle phase failed; inspect private boolean evidence")
+        }
+        evidence["qaActions"] = try? await script("return globalThis.__fountainOutboxQATrace||{formSubmits:0,continueClicks:0,entryClicks:0};")
+        evidence["interceptedHTTPS"] = FountainCloudQAProtocol.counts().0; evidence["offlineFailures"] = FountainCloudQAProtocol.offlineCount()
+        for (key, value) in FountainCloudQAProtocol.routingCounts() { evidence[key] = value }
+        evidence["textSHA256"] = FountainOutbox.hash(Data(edited.utf8)); evidence["launchNetwork"] = FountainNative.qaLaunchNetworkEvidence()
+        try JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys]).write(to: resultURL, options: [.atomic, .completeFileProtection])
+        try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: resultURL.path)
     }
     @MainActor func testActualCloudBundledUILoginEditReloadAndLogout() async throws {
         let manager = FileManager.default, documents = try manager.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)

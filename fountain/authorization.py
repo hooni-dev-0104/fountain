@@ -119,6 +119,10 @@ class Authorization:
         require(a.active, 'Authentication required', 401)
         parts = path.strip('/').split('/')
         writing = method in {'POST', 'PATCH', 'PUT', 'DELETE'}
+        if (len(parts)==4 and parts[:2]==['api','pages'] and (parts[3] in {'wiki','wiki-owner'}
+                or parts[3]=='verify' and method in {'POST','DELETE'})):
+            from .wiki import page_header_reader
+            self.store=page_header_reader(self.store);a.store=self.store
         if path.startswith('/scim/v2/'):
             a.require_admin(owner_only=True)
             if len(parts) == 4 and parts[2] == 'Users' and writing:
@@ -172,7 +176,6 @@ class Authorization:
             return
         if len(parts) == 4 and parts[:2] == ['api', 'pages'] and parts[3] in {'wiki','wiki-owner'}:
             from .wiki import ancestry
-            self.store.list('page')  # Validate private ancestry before ACL traversal.
             require(ancestry(self.store, self.owned('page', parts[2]))[0], 'Wiki page not found', 404)
             a.require_resource('page', parts[2], 1)
             return  # Wiki validates exact method/fields and current ownership.

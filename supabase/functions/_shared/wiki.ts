@@ -1,8 +1,9 @@
 /** Wiki membership and knowledge ownership are private domain state, never ACL grants. */
 import {Access,casefold,get,has,is_object,require,truth} from './access.ts';
-import type {Entity} from './access.ts';
+import type {Entity,StoreReader} from './access.ts';
 import type {CoreStore} from './core.ts';
 import {compareText} from './crdt.ts';
+import {pageHeaderReader} from './page-headers.ts';
 const PROTECTED=new Set(['is_wiki','wiki_owner','knowledge_owner','wiki_page']);
 export function protectFields(body:Entity):void{require(!Object.keys(body).some(key=>PROTECTED.has(key)),'Use the wiki endpoint');}
 const active=(page:Entity|null):page is Entity=>!!page&&!['archived','deleted','deleted_at'].some(key=>truth(get(page,key)));
@@ -18,21 +19,26 @@ export function ancestry(store:CoreStore,page:Entity):{valid:boolean;root:Entity
  return{valid:true,root:null};
 }
 export function stampCreated(store:CoreStore,page:Entity,actor:string):void{
- // Owned parents can pass ACL without loading ancestors. Batch this private
- // lookup so depth does not consume the cloud transaction selection budget.
- if(get(page,'parent_id')!==null)store.list('page');
- if(ancestry(store,page).root){require(Access.verification_id(actor),'Wiki creator is unavailable',409);store.put('wiki_page',{id:page.id,page_id:page.id,owner_id:actor});}
+ // Public/sync/import creation fixes immutable ACL ownership to the creator;
+ // the existing ownerId fallback needs no extra record, ancestry or body reads.
+ require(Access.verification_id(actor),'Wiki creator is unavailable',409);
+ if(page.owner_id===actor)return;
+ // Trusted internal calls may assign a different ACL owner. Keep their actual
+ // creator privately, dormant until current ancestry enters a wiki.
+ store.list('wiki_page'); // Allocated page IDs may change on a snapshot replay.
+ store.put('wiki_page',{id:page.id,page_id:page.id,owner_id:actor});
 }
 export function guardMove(page:Entity,parent:unknown):void{require(!(page.is_wiki===true&&parent!==null),'Wiki roots must remain standalone',409);}
 const integer=(value:unknown):boolean=>Number.isSafeInteger(value)&&Number(value)>=0;
 const scalar=(value:unknown,fallback:any=null):any=>typeof value==='string'?value:fallback;
 export class Wiki{
- store:CoreStore;access:Access;constructor(store:CoreStore,access:Access){this.store=store;this.access=access;}
- batch():void{this.store.list('page');this.store.list('member');this.store.list('wiki_page');}
+ store:CoreStore;headers:StoreReader;access:Access;constructor(store:CoreStore,access:Access){this.store=store;this.headers=pageHeaderReader(access.store);this.access=access;this.access.store=this.headers;}
+ batch():void{this.store.list('member');this.store.list('wiki_page');}
  page(id:string,level=1):Entity{const page=this.access.require_resource('page',id,level);require(active(page),'Wiki page not found',404);return page;}
+ writablePage(id:string,level:number):Entity{this.page(id,level);const page=this.store.get('page',id);require(active(page),'Wiki page not found',404);return page;}
  ownerId(page:Entity):string|null{const record=this.store.get('wiki_page',page.id),id=record===null?get(page,'owner_id'):record.page_id===page.id?get(record,'owner_id'):null;return this.access.verification_member(id,page,false)?id:null;}
  publicMember(id:unknown,page:Entity):Entity|null{if(!this.access.verification_member(id,page))return null;return{id,name:scalar(this.store.get('member',id)!.name,'')};}
- current(page:Entity):Entity|null{const value=ancestry(this.store,page);require(value.valid,'Wiki page not found',404);return value.root;}
+ current(page:Entity):Entity|null{const value=ancestry(this.headers,page);require(value.valid,'Wiki page not found',404);return value.root;}
  revision(page:Entity,body:Entity):number{require(integer(body.revision),'A page revision is required');const revision=get(page,'revision',0);require(integer(revision)&&revision<Number.MAX_SAFE_INTEGER&&body.revision===revision,'Page changed. Reload before saving.',409);require(!truth(get(page,'locked')),'Page is locked',423);return revision;}
  ownerView(id:string):Entity{
   this.batch();const page=this.page(id),root=this.current(page),editable=this.access.can('page',page,3);
@@ -42,17 +48,17 @@ export class Wiki{
  }
  changeOwner(id:string,body:Entity):Entity{
   require(is_object(body)&&Object.keys(body).length===2&&has(body,'owner_id')&&has(body,'revision')&&Access.verification_id(body.owner_id),'Invalid wiki owner fields');
-  this.batch();const page=this.page(id,3);require(this.current(page)!==null,'Wiki page not found',404);const revision=this.revision(page,body);require(this.access.verification_member(body.owner_id,page),'Wiki owner not found',404);
+  this.batch();const page=this.writablePage(id,3);require(this.current(page)!==null,'Wiki page not found',404);const revision=this.revision(page,body);require(this.access.verification_member(body.owner_id,page),'Wiki owner not found',404);
   const valid=this.access.project_verification(page);if(valid&&valid.verified_at!==null)page.verification={...page.verification,owners:[body.owner_id],owner:body.owner_id};
   page.revision=revision+1;this.store.put('page',page);this.store.put('wiki_page',{id,page_id:id,owner_id:body.owner_id});this.store.audit('wiki.owner.updated',{page_id:id});return this.ownerView(id);
  }
  convert(method:string,id:string,body:Entity):Entity{
-  require(is_object(body)&&Object.keys(body).length===1&&has(body,'revision'),'Invalid wiki fields');this.batch();const page=this.page(id,4),revision=this.revision(page,body);
+  require(is_object(body)&&Object.keys(body).length===1&&has(body,'revision'),'Invalid wiki fields');this.batch();const page=this.writablePage(id,4),revision=this.revision(page,body);
   if(method==='POST'){
    require(get(page,'parent_id')===null,'Wiki roots must be standalone',409);require(page.is_wiki!==true,'Page is already a wiki',409);
-   for(const candidate of this.store.list('page')){
+   for(const candidate of this.headers.list('page')){
     if(candidate.is_wiki!==true||candidate.id===id)continue;const seen=new Set();let parent=get(candidate,'parent_id');
-    while(Access.verification_id(parent)&&!seen.has(parent)){require(parent!==id,'Nested wikis are not allowed',409);seen.add(parent);const ancestor=this.store.get('page',parent);if(!ancestor)break;parent=get(ancestor,'parent_id');}
+    while(Access.verification_id(parent)&&!seen.has(parent)){require(parent!==id,'Nested wikis are not allowed',409);seen.add(parent);const ancestor=this.headers.get('page',parent);if(!ancestor)break;parent=get(ancestor,'parent_id');}
    }page.is_wiki=true;page.parent_id=null;
   }else{require(page.is_wiki===true,'Wiki page not found',404);page.is_wiki=false;}
   page.revision=revision+1;this.store.put('page',page);this.store.audit('wiki.updated',{page_id:id});return{wiki:{id,title:scalar(page.title,''),revision:page.revision},is_wiki:page.is_wiki};
@@ -63,9 +69,9 @@ export class Wiki{
   for(const [key,value]of pairs){require(['view','q','limit','offset'].includes(key)&&!seen.has(key)&&typeof value==='string','Invalid wiki query');seen.add(key);values[key]=value;}
   require(['home','all','owned'].includes(values.view)&&Array.from(values.q).length<=200,'Invalid wiki query');for(const [key,low,high]of [['limit',1,100],['offset',0,1000000]] as const){require(/^(0|[1-9][0-9]{0,6})$/.test(values[key])&&Number(values[key])>=low&&Number(values[key])<=high,'Invalid wiki '+key);values[key]=Number(values[key]);}
   this.batch();const root=this.page(id);require(root.is_wiki===true&&get(root,'parent_id')===null,'Wiki page not found',404);const items:Entity[]=[];
-  for(const page of this.store.list('page')){
-   const current=ancestry(this.store,page);if(!current.valid||!current.root||current.root.id!==id||!this.access.can('page',page))continue;const owner=this.ownerId(page);if(values.view==='owned'&&owner!==this.access.member_id)continue;
-   const title=scalar(page.title,'');if(!casefold(title).includes(casefold(values.q)))continue;const parent=get(page,'parent_id'),parentPage=Access.verification_id(parent)?this.store.get('page',parent):null,editable=this.access.can('page',page,3);
+  for(const page of this.headers.list('page')){
+   const current=ancestry(this.headers,page);if(!current.valid||!current.root||current.root.id!==id||!this.access.can('page',page))continue;const owner=this.ownerId(page);if(values.view==='owned'&&owner!==this.access.member_id)continue;
+   const title=scalar(page.title,'');if(!casefold(title).includes(casefold(values.q)))continue;const parent=get(page,'parent_id'),parentPage=Access.verification_id(parent)?this.headers.get('page',parent):null,editable=this.access.can('page',page,3);
    items.push({id:page.id,title,icon:scalar(page.icon),parent_id:parentPage&&this.access.can('page',parentPage)?parent:null,owner:this.publicMember(owner,page),verification:has(page,'verification')?this.access.project_verification(page):null,created_at:scalar(page.created_at),updated_at:scalar(page.updated_at),revision:get(page,'revision',0),can_edit:editable,can_verify:editable&&owner===this.access.member_id});
   }
   items.sort((a,b)=>compareText(casefold(a.title),casefold(b.title))||compareText(a.id,b.id));const offset=values.offset,limit=values.limit;

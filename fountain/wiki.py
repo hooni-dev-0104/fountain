@@ -1,9 +1,38 @@
 """Wiki hierarchy and knowledge ownership; ownership never grants page access."""
+import copy
 import re
 from .access import Access
 from .core import require
 
 PROTECTED = {'is_wiki', 'wiki_owner', 'knowledge_owner', 'wiki_page'}
+PAGE_HEADER_FIELDS = ('id','title','icon','parent_id','teamspace_id','owner_id','permissions',
+    'archived','deleted','deleted_at','locked','revision','is_wiki','verification','created_at','updated_at')
+
+class PageHeaderReader:
+    """Request-local page metadata for ACL/ancestry; never a mutation target."""
+    def __init__(self,store):
+        self.store=store;self.revision=None;self.headers={}
+    def pages(self):
+        revision=self.store.meta('_entity_revision')
+        # SQLite total_changes remains monotonic across rollback. A revision
+        # alone can repeat on another branch; other backends read through.
+        generation=getattr(getattr(self.store,'db',None),'total_changes',None)
+        cacheable=type(revision) is int and type(generation) is int
+        marker=(revision,generation)
+        if not cacheable or marker!=self.revision:
+            self.headers={page['id']:{key:copy.deepcopy(page[key]) for key in PAGE_HEADER_FIELDS if key in page}
+                for page in self.store.list('page')}
+            self.revision=marker
+        return self.headers
+    def get(self,kind,identity):
+        if kind=='page':return copy.deepcopy(self.pages().get(identity)) if isinstance(identity,str) else None
+        return self.store.get(kind,identity)
+    def list(self,kind):
+        return copy.deepcopy(list(self.pages().values())) if kind=='page' else self.store.list(kind)
+    def meta(self,key,fallback=None):return self.store.meta(key,fallback)
+
+def page_header_reader(store):
+    return store if isinstance(store,PageHeaderReader) else PageHeaderReader(store)
 
 def protect_fields(body):
     require(not (set(body) & PROTECTED), 'Use the wiki endpoint')
@@ -26,13 +55,14 @@ def ancestry(store, page):
     return True,None
 
 def stamp_created(store,page,actor):
-    # A deep owned parent can pass ACL immediately. Load its private ancestry in
-    # one kind selection rather than spending a cloud retry per ancestor.
-    if page.get('parent_id') is not None: store.list('page')
-    _,root=ancestry(store,page)
-    if root is not None:
-        require(Access.verification_id(actor),'Wiki creator is unavailable',409)
-        store.put('wiki_page',{'id':page['id'],'page_id':page['id'],'owner_id':actor})
+    # Public/sync/import creation fixes ACL ownership to the actual creator;
+    # owner_id is immutable there, so owner_id's existing fallback suffices.
+    require(Access.verification_id(actor),'Wiki creator is unavailable',409)
+    if page.get('owner_id') == actor: return
+    # Preserve the creator only for trusted internal calls assigning another
+    # ACL owner. The private record stays dormant outside current wiki ancestry.
+    store.list('wiki_page')  # New page IDs may change when a cloud read replays.
+    store.put('wiki_page',{'id':page['id'],'page_id':page['id'],'owner_id':actor})
 
 def guard_move(page,parent):
     require(not (page.get('is_wiki') is True and parent is not None),'Wiki roots must remain standalone',409)
@@ -44,11 +74,18 @@ def title_of(page):
     return page.get('title') if isinstance(page.get('title'),str) else ''
 
 class Wiki:
-    def __init__(self,store,access): self.store,self.access=store,access
+    def __init__(self,store,access):
+        self.store,self.access=store,access
+        self.headers=page_header_reader(access.store);self.access.store=self.headers
     def batch(self):
-        self.store.list('page');self.store.list('member');self.store.list('wiki_page')
+        self.store.list('member');self.store.list('wiki_page')
     def page(self,identity,level=1):
         page=self.access.require_resource('page',identity,level)
+        require(active(page),'Wiki page not found',404)
+        return page
+    def writable_page(self,identity,level):
+        self.page(identity,level)
+        page=self.store.get('page',identity)
         require(active(page),'Wiki page not found',404)
         return page
     def owner_id(self,page):
@@ -60,7 +97,7 @@ class Wiki:
         member=self.store.get('member',identity)
         return {'id':identity,'name':member.get('name') if isinstance(member.get('name'),str) else ''}
     def current(self,page):
-        valid,root=ancestry(self.store,page);require(valid,'Wiki page not found',404)
+        valid,root=ancestry(self.headers,page);require(valid,'Wiki page not found',404)
         return root
     def revision(self,page,body):
         require(integer(body.get('revision')),'A page revision is required')
@@ -79,7 +116,7 @@ class Wiki:
                 'can_manage':editable,'can_verify':editable and owner==self.access.member_id}
     def change_owner(self,identity,body):
         require(isinstance(body,dict) and set(body)=={'owner_id','revision'} and Access.verification_id(body['owner_id']),'Invalid wiki owner fields')
-        self.batch();page=self.page(identity,3);require(self.current(page) is not None,'Wiki page not found',404);revision=self.revision(page,body)
+        self.batch();page=self.writable_page(identity,3);require(self.current(page) is not None,'Wiki page not found',404);revision=self.revision(page,body)
         require(self.access.verification_member(body['owner_id'],page),'Wiki owner not found',404)
         valid=self.access.project_verification(page)
         if valid and valid['verified_at'] is not None:
@@ -90,17 +127,17 @@ class Wiki:
         return self.owner_view(identity)
     def convert(self,method,identity,body):
         require(isinstance(body,dict) and set(body)=={'revision'},'Invalid wiki fields')
-        self.batch();page=self.page(identity,4);revision=self.revision(page,body)
+        self.batch();page=self.writable_page(identity,4);revision=self.revision(page,body)
         if method=='POST':
             require(page.get('parent_id') is None,'Wiki roots must be standalone',409)
             require(page.get('is_wiki') is not True,'Page is already a wiki',409)
             # Refuse malformed nested boundaries without changing any descendants.
-            for candidate in self.store.list('page'):
+            for candidate in self.headers.list('page'):
                 if candidate.get('is_wiki') is not True or candidate['id']==identity:continue
                 seen=set();parent=candidate.get('parent_id')
                 while Access.verification_id(parent) and parent not in seen:
                     require(parent!=identity,'Nested wikis are not allowed',409);seen.add(parent)
-                    ancestor=self.store.get('page',parent)
+                    ancestor=self.headers.get('page',parent)
                     if ancestor is None:break
                     parent=ancestor.get('parent_id')
             page['is_wiki']=True;page['parent_id']=None
@@ -118,14 +155,14 @@ class Wiki:
             require(bool(re.fullmatch(r'0|[1-9][0-9]{0,6}',values[key])) and low<=int(values[key])<=high,'Invalid wiki '+key);values[key]=int(values[key])
         self.batch();root=self.page(identity);require(root.get('is_wiki') is True and root.get('parent_id') is None,'Wiki page not found',404)
         items=[]
-        for page in self.store.list('page'):
-            valid,current=ancestry(self.store,page)
+        for page in self.headers.list('page'):
+            valid,current=ancestry(self.headers,page)
             if not valid or current is None or current['id']!=identity or not self.access.can('page',page):continue
             owner=self.owner_id(page)
             if values['view']=='owned' and owner!=self.access.member_id:continue
             title=title_of(page)
             if values['q'].casefold() not in title.casefold():continue
-            parent=page.get('parent_id');parent_page=self.store.get('page',parent) if Access.verification_id(parent) else None
+            parent=page.get('parent_id');parent_page=self.headers.get('page',parent) if Access.verification_id(parent) else None
             editable=self.access.can('page',page,3)
             items.append({'id':page['id'],'title':title,'icon':page.get('icon') if isinstance(page.get('icon'),str) else None,
                 'parent_id':parent if parent_page and self.access.can('page',parent_page) else None,'owner':self.public_member(owner,page),

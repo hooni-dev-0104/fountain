@@ -4,6 +4,7 @@
 import {Access, clone, dictionary, get, has, is_object, put_key, require, truth, valid_id} from './access.ts';
 import type {Entity, StoreReader} from './access.ts';
 import {ancestry} from './wiki.ts';
+import {pageHeaderReader} from './page-headers.ts';
 
 export class Authorization {
   access: Access;
@@ -102,6 +103,7 @@ export class Authorization {
     require(a.active, 'Authentication required', 401);
     const parts = path.replace(/^\/+|\/+$/g, '').split('/'), last = parts.at(-1);
     const writing = ['POST', 'PATCH', 'PUT', 'DELETE'].includes(method);
+    if(parts.length===4&&parts[0]==='api'&&parts[1]==='pages'&&(['wiki','wiki-owner'].includes(last!)||last==='verify'&&['POST','DELETE'].includes(method))){this.store=pageHeaderReader(this.store);a.store=this.store;}
     if (path.startsWith('/scim/v2/')) {
       a.require_admin(true);
       if (parts.length === 4 && parts[2] === 'Users' && writing) {
@@ -143,7 +145,7 @@ export class Authorization {
       if (has(body, 'permissions')) body.permissions = a.validate_permissions(body.permissions);
       return;
     }
-    if(parts.length===4&&parts[0]==='api'&&parts[1]==='pages'&&['wiki','wiki-owner'].includes(parts[3])){this.store.list('page');require(ancestry(this.store,this.owned('page',parts[2])).valid,'Wiki page not found',404);a.require_resource('page',parts[2],1);return;}
+    if(parts.length===4&&parts[0]==='api'&&parts[1]==='pages'&&['wiki','wiki-owner'].includes(parts[3])){require(ancestry(this.store,this.owned('page',parts[2])).valid,'Wiki page not found',404);a.require_resource('page',parts[2],1);return;}
     if (parts.length === 4 && parts[0] === 'api' && parts[1] === 'pages' && parts[3] === 'presence') {
       require(['GET', 'PUT', 'DELETE'].includes(method), 'Unsupported presence method', 405);
       a.require_resource('page', parts[2], 1);

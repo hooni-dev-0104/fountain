@@ -221,10 +221,11 @@ public class FountainNativePlugin extends Plugin {
         return result;
     }
 
-    private void retryRevocationAfterStorageFailure() {
-        // Storage faults never suppress the old-cookie DELETE attempt. This is
-        // independent of caller cancellation and cannot re-enable ordinary API I/O.
-        sessions.execute(() -> { try { revokePending(); } catch (Exception ignored) {} });
+    private void retryRevocationAfterStorageFailure() { retryRevocationAfterStorageFailure(null); }
+    private void retryRevocationAfterStorageFailure(NativeSessionBinding.Admission actualLoginRollback) {
+        // A fresh private POST response can bind its own failed-login cleanup;
+        // it cannot lower an older durable public context to a bodyless retry.
+        sessions.execute(() -> { try { revokePending(actualLoginRollback,false); } catch (Exception ignored) {} });
     }
 
     /** UI-thread frame/configuration check; MessageHandler authenticates main-frame origin. */
@@ -272,6 +273,7 @@ public class FountainNativePlugin extends Plugin {
                     call.reject("Invalid configuration or session is still active", "NATIVE_INPUT"); return;
                 }
                 try {
+                    vault.resealPublicContexts(origin==null?next:origin);
                     invalidateRecovery();
                     sessionBinding.clear(); publicWeb.clear();
                     if (outboxEnabled() && !recoveryMode && origin != null) durableOutbox().revoke();
@@ -439,10 +441,12 @@ public class FountainNativePlugin extends Plugin {
             NativePolicy.require(id != null && id.matches("[A-Za-z0-9_.:-]{1,160}") && !operations.containsKey(id));
             NativeSessionBinding.Admission publicLogout = null;
             if (session && method.equals("DELETE")) {
-                try { publicLogout = sessionBinding.admit(origin, activeCookie, body); }
+                try { publicLogout = sessionBinding.admit(origin, activeCookie, body); vault.preparePublicLogout(publicLogout); }
                 catch (NativeSessionBinding.Failure denied) { call.reject("Native session deletion was not admitted", denied.code); return; }
+                catch (Exception unavailable) { call.reject("Native logout context could not be stored", "SESSION_STORAGE_FAILED"); return; }
             }
             if (mutation) {
+                try{vault.resealPublicContexts(origin);}catch(Exception unavailable){call.reject("Native logout context could not be confirmed","SESSION_STORAGE_FAILED");return;}
                 String explicitNativeActor=null;
                 if(method.equals("DELETE")&&outboxEnabled()&&!recoveryMode)try{explicitNativeActor=durableOutbox().nativeActor(activeCookie!=null?activeCookie:revokeCookie);}catch(Exception unavailable){broken=true;}
                 invalidateRecovery();
@@ -471,14 +475,15 @@ public class FountainNativePlugin extends Plugin {
             catch (Exception invalid) { fail(operation, "Native request input was rejected", "NATIVE_INPUT"); return; }
             Runnable work = () -> {
                 try {
-                    if (session && !operation.logout) revokePending(); // Public logout must retain its original binding fence.
+                    if (session && !operation.logout) revokePending(null, method.equals("POST")); // Explicit login may leave a proven-empty negative context until actual success.
                     check(operation);
                     if (operation.logout) {
                         Response response = exchange(operation, admittedLogout.origin, path, "DELETE", headers, admittedLogout.body, admittedLogout.cookie, null);
                         synchronized (lock) {
                             check(operation);
                             NativeSessionBinding.finishPublicLogout(admittedLogout, origin, activeCookie, revokeCookie, revokeOrigin, response.status, () -> {
-                                persist(origin, generation, null, null, null); revokeCookie = null; revokeOrigin = null;
+                                vault.finishPublicContext(admittedLogout, () -> persist(origin, generation, null, null, null));
+                                revokeCookie = null; revokeOrigin = null;
                             });
                         }
                         deliverResponse(operation, response);
@@ -509,25 +514,57 @@ public class FountainNativePlugin extends Plugin {
     }
 
     /** Revocation is serialized and is never cancel(id)'s connection. */
-    private void revokePending() throws Exception {
-        String token, server;
-        long boundaryEpoch = NativeCookieBoundary.epoch();
-        synchronized (lock) { token = revokeCookie; server = revokeOrigin; }
-        if (token == null) return;
-        if (!NativeCookieBoundary.permits(boundaryEpoch)) throw new IOException();
-        HttpsURLConnection connection = open(server, "/api/session", "DELETE", new HashMap<>(), new byte[0], token, 45000, boundaryEpoch);
-        ScheduledFuture<?> timeout = deadlines.schedule(connection::disconnect, 45, TimeUnit.SECONDS);
+    private void revokePending() throws Exception { revokePending(null,false); }
+    private void revokePending(NativeSessionBinding.Admission actualLoginRollback,boolean explicitLogin) throws Exception { revokePending(actualLoginRollback,explicitLogin,0); }
+    private void revokePending(NativeSessionBinding.Admission actualLoginRollback,boolean explicitLogin,int depth) throws Exception {
+        if(depth>2)throw new IOException("Pending public context did not converge");
+        boolean completed=false;
+        String token, server;long boundaryEpoch = NativeCookieBoundary.epoch();
+        synchronized (lock) { token = revokeCookie; server = revokeOrigin == null ? origin : revokeOrigin; }
+        if (token == null && !vault.hasPublicContext(server)) return;
+        NativeSessionBinding.Admission bound;
         try {
+            bound=vault.publicRetry(server,token);
+            if(bound==null&&actualLoginRollback!=null&&Objects.equals(server,actualLoginRollback.origin)&&Objects.equals(token,actualLoginRollback.cookie)){
+                vault.hasMatchingPublicContext(actualLoginRollback);bound=actualLoginRollback;
+            }
+        }
+        catch(NativeSessionBinding.Failure unknown){
+            if(actualLoginRollback!=null&&Objects.equals(server,actualLoginRollback.origin)&&Objects.equals(token,actualLoginRollback.cookie)){
+                vault.hasMatchingPublicContext(actualLoginRollback); // Validate all applicable contexts even when this fresh-cookie entry was not stored.
+                bound=actualLoginRollback;
+            }else if(explicitLogin&&token==null&&vault.confirmedEmptyForLogin(server))return;
+            else throw unknown;
+        }
+        if(token==null&&bound==null)return;
+        if (!NativeCookieBoundary.permits(boundaryEpoch)) throw new IOException();
+        byte[] body=bound==null?new byte[0]:bound.body;Map<String,String> headers=new HashMap<>();if(bound!=null)headers.put("Content-Type","application/json");
+        HttpsURLConnection connection = open(server, "/api/session", "DELETE", headers, body, token, 45000, boundaryEpoch);
+        ScheduledFuture<?> timeout = deadlines.schedule(connection::disconnect, 45, TimeUnit.SECONDS);
+        final NativeSessionBinding.Admission selected=bound;
+        try {
+            if(body.length>0)try(OutputStream output=connection.getOutputStream()){output.write(body);}
+            if(!NativeCookieBoundary.permits(boundaryEpoch))throw new IOException();
             int status = connection.getResponseCode();
-            if (!NativeCookieBoundary.permits(boundaryEpoch) || !(status >= 200 && status < 300 || status == 401 || status == 403)) throw new IOException();
+            if (!NativeCookieBoundary.permits(boundaryEpoch) || !(status >= 200 && status < 300 || status == 401 || status == 403 || selected!=null&&status==409)) throw new IOException();
             synchronized (lock) {
-                if (Objects.equals(token, revokeCookie) && Objects.equals(server, revokeOrigin)
+                if (Objects.equals(token, revokeCookie) && Objects.equals(server,revokeOrigin==null?origin:revokeOrigin)
                     && !destroyed && NativeCookieBoundary.permits(ownerBoundaryEpoch)) {
-                    persist(origin, generation, activeCookie, null, null);
-                    revokeCookie = null; revokeOrigin = null;
+                    if(selected!=null){
+                        NativeSessionBinding.finishPublicLogout(selected,server,activeCookie,revokeCookie,token==null?null:server,status,()->{
+                            if(vault.hasMatchingPublicContext(selected))vault.finishPublicContext(selected,()->persist(origin,generation,activeCookie,null,null));
+                            else if(selected==actualLoginRollback)persist(origin,generation,activeCookie,null,null);
+                            else throw new NativeSessionBinding.Failure("NATIVE_SESSION_REQUIRED");
+                        });
+                    }else persist(origin, generation, activeCookie, null, null);
+                    revokeCookie = null; revokeOrigin = null;completed=true;
                 }
             }
         } finally { timeout.cancel(false); connection.disconnect(); }
+        // After the one surviving bearer, a known local no-cookie intent may
+        // still need its own bound ACK. Unknown residual contexts block GET;
+        // only explicit login with a proven empty record may continue.
+        if(completed&&vault.hasPublicContext(server))revokePending(null,explicitLogin,depth+1);
     }
 
     private HttpsURLConnection open(String server, String path, String method, Map<String, String> headers,
@@ -620,19 +657,29 @@ public class FountainNativePlugin extends Plugin {
             check(operation);
             if (login && response.status >= 200 && response.status < 300) {
                 NativePolicy.require(response.cookie != null && !response.cookie.isEmpty());
+                NativeSessionBinding.Admission actualRollback=null;
                 try {
-                    persist(origin, generation, response.cookie, revokeCookie, revokeOrigin);
+                    if(vault.hasPublicContext(origin)){
+                        NativePolicy.require(response.status==200);
+                        actualRollback=NativeSessionBinding.actualLoginCleanup(operation.origin,response.cookie,new JSONObject(OutboxPolicy.utf8(response.body)));
+                        vault.preparePublicLogout(actualRollback);
+                        final NativeSessionBinding.Admission confirmed=actualRollback;
+                        vault.confirmActualLogin(confirmed,()->persist(origin,generation,response.cookie,revokeCookie,revokeOrigin));
+                    }else persist(origin, generation, response.cookie, revokeCookie, revokeOrigin);
                     activeCookie = response.cookie;
                 } catch (Exception failure) {
+                    // Retirement failed after an active-cookie write may otherwise
+                    // look like a successful login after process restart.
+                    NativePolicy.SessionInvalidation rollbackFence=NativePolicy.fenceSession(origin,response.cookie,sessionStorage());
                     activeCookie = null; revokeCookie = response.cookie; revokeOrigin = origin;
                     broken = true; authGeneration++;
-                    boolean durable = failure instanceof NativePolicy.SessionStorageFailure
+                    boolean durable = rollbackFence.durable || failure instanceof NativePolicy.SessionStorageFailure
                         && ((NativePolicy.SessionStorageFailure) failure).durable;
                     fail(operation, durable ? "Secure session storage failed; local session remains invalidated"
                         : "Durable session invalidation failed; remote revocation is being attempted",
                         durable ? "SESSION_STORAGE_FAILED" : "DURABLE_INVALIDATION_FAILED");
                     cancelAll(null, "SESSION_STORAGE_FAILED");
-                    retryRevocationAfterStorageFailure();
+                    retryRevocationAfterStorageFailure(actualRollback);
                     throw new IOException();
                 }
             } else if (response.status == 401 && (outboxEnabled() || recoveryMode || sentCookie != null) && Objects.equals(sentCookie, activeCookie)) {

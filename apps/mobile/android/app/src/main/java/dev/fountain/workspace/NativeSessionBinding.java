@@ -18,6 +18,37 @@ final class NativeSessionBinding {
         final byte[] body;
         Admission(String origin, String cookie, byte[] body) { this.origin = origin; this.cookie = cookie; this.body = body.clone(); }
     }
+    static String cookieRef(String cookie) throws Exception { return OutboxPolicy.hash(cookie == null ? "\u0000fountain-local-no-cookie-v1" : cookie); }
+    static Admission actualLoginCleanup(String origin,String cookie,JSONObject actualSession)throws Exception{
+        NativeSessionBinding observed=new NativeSessionBinding();observed.observe(origin,cookie,origin,null,cookie,true,actualSession);
+        return observed.admit(origin,cookie,new JSONObject().put("cache_binding",opaque(actualSession.opt("cache_binding"))).toString().getBytes(StandardCharsets.UTF_8));
+    }
+    static final class PublicContext {
+        final String origin, cookieRefHash, expectedBinding;
+        PublicContext(String origin, String ref, String binding) { this.origin=origin;cookieRefHash=ref;expectedBinding=binding; }
+        String encoded() throws Exception {
+            String raw=new JSONObject().put("version",1).put("origin",origin).put("cookieRefHash",cookieRefHash).put("expectedBinding",expectedBinding).toString();
+            if(raw.getBytes(StandardCharsets.UTF_8).length>8192)throw new Failure("NATIVE_SESSION_REQUIRED");return raw;
+        }
+        Admission retry(String token) throws Exception {
+            if (!cookieRefHash.equals(cookieRef(token))) throw new Failure("NATIVE_SESSION_REQUIRED");
+            return new Admission(origin,token,new JSONObject().put("cache_binding",expectedBinding).toString().getBytes(StandardCharsets.UTF_8));
+        }
+        static PublicContext capture(Admission admission) throws Exception { return new PublicContext(NativePolicy.origin(admission.origin),cookieRef(admission.cookie),expectedBinding(admission.body)); }
+        static PublicContext parse(String origin,String raw) throws Exception {
+            if(raw==null||raw.getBytes(StandardCharsets.UTF_8).length>8192)throw new Failure("NATIVE_SESSION_REQUIRED");
+            try {
+                JSONObject value=new JSONObject(raw);
+                if(value.length()!=4||!Integer.valueOf(1).equals(value.opt("version"))||!origin.equals(NativePolicy.origin(value.getString("origin")))
+                    ||!(value.opt("cookieRefHash") instanceof String)||!value.getString("cookieRefHash").matches("[a-f0-9]{64}"))throw new Failure("NATIVE_SESSION_REQUIRED");
+                PublicContext parsed=new PublicContext(origin,value.getString("cookieRefHash"),opaque(value.opt("expectedBinding")));
+                // Native metadata has one canonical encoding: aliases, duplicate keys,
+                // comments and permissive platform-JSON spellings are never accepted.
+                if(!parsed.encoded().equals(raw))throw new Failure("NATIVE_SESSION_REQUIRED");
+                return parsed;
+            } catch(org.json.JSONException|IllegalArgumentException|Failure invalid){throw new Failure("NATIVE_SESSION_REQUIRED");}
+        }
+    }
     private String origin, cookie, binding;
     void observe(String currentOrigin, String currentCookie, String requestOrigin, String sentCookie, String returnedCookie, boolean login, JSONObject actualSession) {
         clear();

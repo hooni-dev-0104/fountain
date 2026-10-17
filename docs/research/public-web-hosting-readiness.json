@@ -1,7 +1,7 @@
 {
   "checkedAt": "2026-10-17T08:06:06.377393+00:00",
   "state": "prepared; fee information pending, not deployed",
-  "sourceCommit": "51c56cc513e9fd7656104c49a802b55ae8fa57a0",
+  "sourceCommit": "790db74d14636787a4cfdc0298514749c9334cd9",
   "target": {
     "teamId": "team_ZtzXXpuCkVLHkJ4c7RUR2FZr",
     "teamSlug": "hoonis-projects-1ccfd37e",
@@ -20,7 +20,7 @@
     "planVerified": false,
     "existingFountainProjects": 0,
     "newDependencies": false,
-    "sourceHEAD": "51c56cc513e9fd7656104c49a802b55ae8fa57a0",
+    "sourceHEAD": "790db74d14636787a4cfdc0298514749c9334cd9",
     "files": [
       {
         "path": "api/public-relay.mjs",
@@ -29,8 +29,8 @@
       },
       {
         "path": "app.js",
-        "bytes": 365671,
-        "sha256": "da0aa3b05cd653fdf7ea94bdadf037d8f380723bdf86ab6afbe541b32d795bf4"
+        "bytes": 388170,
+        "sha256": "073947bef25db3bca52fae743f073d058ac44871495a5ad1fe4cd35b9bcd52d7"
       },
       {
         "path": "backup.js",
@@ -74,13 +74,13 @@
       },
       {
         "path": "style.css",
-        "bytes": 71094,
-        "sha256": "f528289aa74c49de050a4f3eef0669378f6e00f0617a9eb76dd00ebe85bc9c98"
+        "bytes": 73301,
+        "sha256": "d9200cf0ff822f698097082ceefaf53cbe6346615bc2476902b7dd8eaffe3b79"
       },
       {
         "path": "sw.js",
-        "bytes": 11894,
-        "sha256": "ccd5aaef017b606969c7c08f16926cb82d1da9120941975b95368d675418f223"
+        "bytes": 11891,
+        "sha256": "b89e69e0401388f47bef22a29e5b84fab07d6903a0e51ee2c11f0f61e932d745"
       },
       {
         "path": "transport.js",
@@ -105,7 +105,8 @@
     ],
     "supportsCancellation": true,
     "deploymentCreated": false,
-    "publicHostname": null
+    "publicHostname": null,
+    "refreshedAt": "2026-10-17T08:43:43.767250+00:00"
   },
   "validation": {
     "webHostTests": 10,
@@ -118,12 +119,12 @@
     "actualVercelRouterValidated": false
   },
   "runtime": {
-    "SupabaseMain": 20,
-    "migrations": 28,
+    "SupabaseMain": 21,
+    "migrations": 29,
     "worker": 4,
     "maintenance": 4,
-    "verifierRetired": 80,
-    "backendRedeployed": false,
+    "verifierRetired": 83,
+    "backendRedeployed": true,
     "originalPreviewChanged": false
   },
   "primarySources": [
@@ -140,5 +141,31 @@
     "Complete actual owner/family onboarding and five-platform whole journey"
   ],
   "goal": "active; fee information blocks only external hosting step",
-  "pushed": false
+  "pushed": false,
+  "artifactRefreshedAt": "2026-10-17T08:43:43.767250+00:00",
+  "billingEvidenceRefreshed": false,
+  "preparedFiles": {
+    "preparedOnly": true,
+    "teamId": "team_ZtzXXpuCkVLHkJ4c7RUR2FZr",
+    "teamSlug": "hoonis-projects-1ccfd37e",
+    "files": 16,
+    "rawBytes": 786801,
+    "encodedFileBytes": 1050052,
+    "sha256": "a0c518ef924c717d30d56bebd9af641d2c1c658da3fb4aec7bf7fbe8b62040e4",
+    "knownPrivateValuesScanned": 10,
+    "privateMatches": 0,
+    "billingPlanKnown": false,
+    "existingProject": false,
+    "CLIInstalled": false,
+    "newDependencies": false,
+    "requiredNextEvidence": [
+      "User current Hobby/free confirmation or billing UI login",
+      "Exact assigned project ID and canonical hostname",
+      "Actual Vercel rewrite/cookie/Origin/SSE/Range checks",
+      "Exact Supabase webOrigins/publicWebOrigin configuration preserving original scope"
+    ],
+    "sourceHEAD": "790db74d14636787a4cfdc0298514749c9334cd9",
+    "artifactRefreshedAt": "2026-10-17T08:43:43.767250+00:00"
+  },
+  "backendUpdateScope": "Only admin-role release after isolatedQA; no Vercel project/deployment or webOrigins change"
 }

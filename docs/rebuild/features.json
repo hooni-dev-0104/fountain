@@ -422,16 +422,22 @@
     "name": "검증 만료 알림함·기기 간 읽음/보관",
     "priority": "P1",
     "weight": 3,
-    "status": "specified",
+    "status": "implemented",
     "original_evidence": [
       "evidence/original-boundaries.md"
     ],
     "acceptance": [
       "검증 담당자의 현재 권한에 따른 알림과 수신자별 상태를 실제 API·두 클라이언트로 검증한다"
     ],
-    "verification": [],
+    "verification": [
+      {
+        "command": "Python70 + Node45/52 parity + actual SQLite/Chrome + isolated Supabase12 + main15 six boundaries",
+        "passed": true,
+        "evidence": "evidence/inbox-implementation.md"
+      }
+    ],
     "limitations": [
-      "구현·실제 연결·원본 비교 증거가 아직 전체 요구를 충족하지 않는다."
+      "현재 만료 알림과 개인 읽음·보관 검증. 전체 원본 알림 전달·역사적 사건·모든 플랫폼 실계정 여정은 아직 미검증이며 별도 미완료 항목으로 유지한다."
     ]
   },
   {

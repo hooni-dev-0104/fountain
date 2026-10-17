@@ -4,9 +4,11 @@
 
 ## 현재 범위와 완료 기준
 
-2026-10-17 확인 시점의 Supabase 프로젝트는 `ehnovtfadpkwtubmwltl`이다. `fountain-api` version 14에 문서·DB·통합 검색·공동 편집·동기화·첨부·presence/SSE·AI·계정·백업·연동 권한 관리·SCIM bearer handler가 연결됐다. 서비스 객체는 actor를 공유하지 않고 사람의 요청은 각 쿠키, SCIM은 별도 위임 토큰으로 인증한다. 운영 원본은 entities 153개·meta 6개, 실사용 Auth 사용자·identity mapping은 0개다. `fountain-files`는 비공개 bucket이며 QA 정리 후 객체는 0개다. `/health`의 `ready:false`는 전체 전환이 아직 끝나지 않았다는 뜻이다. API 13에서는 배포 설정의 `setupEnabled`만 켰으며 39개 배포 파일을 다시 대조했다. 원본 `local` 소유자용 연결은 해시만 저장한 유효기간 있는 일회용 코드와 사용자의 명시적 앱 입력이 필요하다. 계정 생성·소유자 연결을 자동 수행하지 않았다. [연결 준비 검증](research/owner-onboarding-preparation.json).
+2026-10-17 확인 시점의 Supabase 프로젝트는 `ehnovtfadpkwtubmwltl`이다. `fountain-api` version 15에 문서·DB·통합 검색·공동 편집·동기화·첨부·presence/SSE·AI·계정·백업·연동 권한 관리·SCIM bearer handler가 연결됐다. 서비스 객체는 actor를 공유하지 않고 사람의 요청은 각 쿠키, SCIM은 별도 위임 토큰으로 인증한다. 운영 원본은 entities 153개·meta 6개, 실사용 Auth 사용자·identity mapping은 0개다. `fountain-files`는 비공개 bucket이며 QA 정리 후 객체는 0개다. `/health`의 `ready:false`는 전체 전환이 아직 끝나지 않았다는 뜻이다. API 13에서는 배포 설정의 `setupEnabled`만 켰으며 39개 배포 파일을 다시 대조했다. 원본 `local` 소유자용 연결은 해시만 저장한 유효기간 있는 일회용 코드와 사용자의 명시적 앱 입력이 필요하다. 계정 생성·소유자 연결을 자동 수행하지 않았다. [연결 준비 검증](research/owner-onboarding-preparation.json).
 
 API 14에서는 페이지 검증의 복수 담당자·활성/열람 자격·만료값·문서 revision 검사를 맞췄다. 격리된 실제 Supabase 계정 2개와 별도의 멤버 기록으로 담당자 1,000명 처리, 권한·비공개 응답·충돌·원본 보존을 확인하고 검증 자료를 정리했다. 새 권한이나 DB 스키마를 추가하지 않았다. [페이지 검증 안내](PAGE_VERIFICATION.md) · [실행 증거](research/page-verification-evidence.json).
+
+API 15에서는 현재 검증 만료를 담당자별 알림함에 표시하고 읽음·보관을 계정별로 저장한다. 실제 Supabase 계정 2개·세션 3개로 수신자 격리·기기 간 상태·만료·재검증·접근 철회를 확인했다. 배포 40개 파일을 소스와 대조했고 격리 QA 데이터와 계정을 정리했다. 배경 전달·이메일/푸시는 아직 연결되지 않았다. [알림함 안내](INBOX.md) · [실행 증거](research/inbox-evidence.json).
 
 Auth/Vault·Store부터 계정 생성·관리·백업·분할 백업·연동 권한 관리·예약 실행·SCIM·파일 물리 정리·기존 inline 첨부 읽기까지 migration 26개를 적용했다. 적용된 SQL은 `supabase/migrations`의 실제 버전 파일로만 보관하고 중복 초안은 제거했다. 공개 RPC는 service_role 전용이며, private 테이블은 강제 RLS와 직접 접근 거절을 유지한다. 익명·일반 로그인 역할의 실행 권한 거절, 연결되지 않은 세션의 백업/정리 거절 등 실제 PostgreSQL 검사 10개가 통과했다. 이 구조는 서버의 신뢰된 권한 검사이며 최종 사용자별 RLS를 사용한다는 뜻이 아니다.
 

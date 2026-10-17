@@ -1,0 +1,249 @@
+{
+  "date": "2026-10-17",
+  "scope": "현재 검증 만료의 개인 알림함·계정별 읽음/보관; 전체 Notion 알림 전달 동등성은 미완료",
+  "originalEvidence": {
+    "officialHelp": [
+      "https://www.notion.com/help/wikis-and-verified-pages",
+      "https://www.notion.com/help/updates-and-notifications"
+    ],
+    "existingREA": [
+      "docs/research/notion-rea.md",
+      "docs/research/notion-desktop.md"
+    ],
+    "privateServerRecovered": false
+  },
+  "sourceHashes": {
+    "fountain/inbox.py": "cc9e758bed76f8bd6cfef5ebde9f6a6904ecc2a4cdecf6cb80d443d34721c20c",
+    "fountain/advanced.py": "433a9416a7ac2e8edf25857af9918242c33b48a5fac42a98ab5755adcc5f5664",
+    "fountain/authorization.py": "db589b8359895fcac8aa48e1e5357867bbafa8fdc3d5597d1b7826e845ec8d6c",
+    "fountain/server.py": "d13c6950ff5e74aa07b0e5742ac8a5ac7c493aa6a5013d25652e63a8d764473b",
+    "supabase/functions/_shared/inbox.ts": "6152ce68625b1a0f4b64bc5e7dce66b75ae52732454ee5abbfe84ab9444f5163",
+    "supabase/functions/_shared/advanced.ts": "45c2c60ddbc427bfb65fb920942e2c1ed148febe67bd40ad93c04c8abef38bf3",
+    "supabase/functions/_shared/authorization.ts": "7357217ae360d01039392ffef35e5523b252246d01912f1a1141a4a1531a71cd",
+    "static/app.js": "fba77f8feb87787b2ab5a04534ce20e1885593b430134686b25edce1bad28ce3",
+    "static/style.css": "6b0f0db326df3e9ccb7104c18b97d8dcbeb624d1f60a493d8f0a538e5560a933",
+    "tests/test_inbox.py": "73e032e7af9af81aaf75d210fb3ee298750f804a5d57e7032e7b9a2e1a722620",
+    "supabase/tests/inbox.mjs": "999096288993170756db875e71a9c7a5651f2a742e51ae93a7b641a3d5b30b27",
+    "tests/browser-inbox.mjs": "afb89f4f2ee9b89afe1290d7db5071aa85edda07103517dce1b204b9cb33e9a6"
+  },
+  "sourceCommits": [
+    "ea40c1e",
+    "ec7954b",
+    "915d5eb",
+    "2b8dc1e",
+    "72923af",
+    "585a40f"
+  ],
+  "verification": {
+    "python": {
+      "command": ".data/supabase-venv/bin/python -m unittest tests.test_inbox tests.test_page_verification tests.test_permissions_http tests.test_read_authorization tests.test_advanced tests.test_access -q",
+      "tests": 70,
+      "passed": true,
+      "log": ".data/inbox-qa/python-root-final.log"
+    },
+    "typescriptRuntime": {
+      "command": "FOUNTAIN_PYTHON=.data/supabase-venv/bin/python node supabase/tests/inbox.mjs",
+      "productionChecks": 45,
+      "pythonSQLiteParityResults": 52,
+      "passed": true,
+      "actualCloudIO": false,
+      "cloudStoreModel": {
+        "assignees": 1000,
+        "defaultTransactionLimitsUnchanged": true,
+        "getSnapshotCalls": 14,
+        "patchSnapshotCalls": 14,
+        "getDomainChanges": 0,
+        "patchChanges": "one recipient-owned inbox_receipt"
+      },
+      "log": ".data/inbox-qa/node-root-final.log"
+    },
+    "browser": {
+      "command": "node tests/browser-inbox.mjs",
+      "passed": true,
+      "realSQLiteHTTPChrome": true,
+      "realRowsForPagination": 57,
+      "sameAccountDifferentBrowsers": true,
+      "faultInjection": "500/503, held real HTTP responses, native pause/auth lifecycle JS models; these are not SDK evidence",
+      "fixedRegressions": [
+        "Application first GET settings write RED→GREEN",
+        "profile-cleared login retains private titles RED→GREEN",
+        "native pause held GET/PATCH stuck loading/busy RED→GREEN"
+      ],
+      "log": ".data/inbox-qa/browser-root-final.log"
+    },
+    "independentReview": {
+      "result": "SOURCE APPROVE; no remaining scoped P1/P2",
+      "actualSupabaseOrSDKClaim": false
+    },
+    "visual": {
+      "score": 94,
+      "threshold": 90,
+      "passed": true,
+      "reference": "existing Fountain sharing modal; no Notion pixel parity claim",
+      "evidence": ".data/inbox-qa/visual/verdict-final.json"
+    },
+    "desktopUnit": {
+      "tests": 50,
+      "passed": true
+    },
+    "webUnit": {
+      "tests": 10,
+      "passed": true
+    },
+    "mobileTransport": {
+      "passed": true,
+      "scope": "Chrome mock native bridge plus actual disposable HTTP; not new SDK authenticated inbox"
+    }
+  },
+  "cloud": {
+    "mainVersion": 15,
+    "mainSHA": "50586d13ac4693b51f15ef19ce2e7be8310b03226341dff4334ce594cf8ab05e",
+    "mainFiles": 40,
+    "exactSourceReadback": true,
+    "qaVersion": 62,
+    "qaSHA": "41c18a661543876bc8866578e423739207157aa15f83d483cc055c5d44ae1488",
+    "qaFiles": 39,
+    "cleanup": {
+      "total_qa_rows_remaining": 0,
+      "storage_objects": 0,
+      "cron_jobs": 0
+    },
+    "authCleanup": {
+      "owned_auth_users": 0,
+      "owned_auth_sessions": 0
+    },
+    "retired": {
+      "id": "fd579a35-54fa-4ad2-a0bd-f877e08201d3",
+      "slug": "fountain-verify",
+      "name": "fountain-verify",
+      "status": "ACTIVE",
+      "version": 64,
+      "created_at": 1792145257003,
+      "updated_at": 1792211985092,
+      "verify_jwt": false,
+      "import_map": false,
+      "entrypoint_path": "file:///tmp/user_fn_ehnovtfadpkwtubmwltl_fd579a35-54fa-4ad2-a0bd-f877e08201d3_64/source/index.ts",
+      "ezbr_sha256": "2751841f2d53327e30beaedaed88fca983c493428a67367115fe4409a2475cb3"
+    },
+    "actualProof": {
+      "actualSupabaseHTTP": true,
+      "actualAuth": true,
+      "actualPostgres": true,
+      "checks": [
+        "anonymous_inbox_denied",
+        "actual_two_auth_accounts_three_distinct_sessions",
+        "actual_1000_assignee_page_and_valid_expiry_only_no_owner_recipient_bypass",
+        "read_receipt_cross_session_persistence_recipient_isolation_no_page_write",
+        "archive_unarchive_unread_shared_only_with_same_account",
+        "actual_strict_query_body_and_unknown_event_denials",
+        "content_change_keeps_cycle_and_current_title",
+        "real_server_time_expiry_reverification_new_unread_cycle_stale_event_404",
+        "guest_self_recipient_receipt_does_not_change_owner_state",
+        "actual_acl_revocation_removes_title_and_rejects_receipt_update",
+        "verification_removal_retires_current_reminder",
+        "all_real_sessions_logged_out"
+      ],
+      "passed": true
+    },
+    "seedEntities": 1023,
+    "workspaceMembers": 1005,
+    "bulkVerificationAssignees": 1000,
+    "actualAuthAccounts": 2,
+    "actualSessions": 3,
+    "sourceNamespace": "fresh sealed disposable workspace; no original identity fabrication",
+    "originalSixBusinessAndSessionFingerprints": "unchanged before and after main15 deployment/QAcleanup",
+    "mainBoundaries": {
+      "passed": true,
+      "cases": 6,
+      "healthReady": false
+    },
+    "newMigrations": 0,
+    "liveFamilyOwnerConnected": false,
+    "publicWebHostConnected": false,
+    "testHarnessCorrections": [
+      "Prototype query is blocked upstream with403 HTML, not domain400 JSON; final driver records outer-boundary denial without relaxing app guards.",
+      "Malformed setup nonce gets400; main six-boundary final probe uses a valid-shaped wrong nonce and confirms403."
+    ],
+    "retirementProof": ".data/inbox-qa/retirement-proof.json"
+  },
+  "builds": {
+    "desktop": {
+      "publicFiles": 14,
+      "macPackagedActualChecks": 14,
+      "anonymousSupabaseRounds": 2,
+      "windowsExecution": false
+    },
+    "web": {
+      "buildCommand": "node apps/web/build.mjs",
+      "allowlistedFiles": 16,
+      "hostDeployment": false
+    },
+    "mobile": {
+      "wwwAssets": 19,
+      "copyIOSAndroid": true,
+      "androidOfflineGradleAndLint": true,
+      "apkSignatureVerified": true,
+      "iosReleaseBuildAndLocalSignatureVerified": true,
+      "iosSimulatorInstallAndLaunch": true,
+      "iosSimulatorLaunchPID": 20760,
+      "iosObservedState": "anonymous login entry gate, no credentials entered",
+      "androidNewRuntimeLaunch": false
+    },
+    "archives": [
+      {
+        "name": "Fountain-Android-debug.apk",
+        "bytes": 4601403,
+        "sha256": "e512e6f8e74331fa994f1d63677481dca3186650ff2d456b23a7963cd2622e1b",
+        "zipCRC": true,
+        "currentUIAssets": 2
+      },
+      {
+        "name": "Fountain-Windows-x64.zip",
+        "bytes": 158647458,
+        "sha256": "515591d88efb20b10cce065e05192818f143fb410bcddb513fca690b9c5769a6",
+        "zipCRC": true,
+        "currentUIAssets": 2
+      },
+      {
+        "name": "Fountain-iOS-Simulator-Release.zip",
+        "bytes": 3125726,
+        "sha256": "94c576e08b7a1bd72bdf182aa6d763cc67445dcf5b87b930592e20a5a1262a9a",
+        "zipCRC": true,
+        "currentUIAssets": 2
+      },
+      {
+        "name": "Fountain-macOS-arm64.zip",
+        "bytes": 127610390,
+        "sha256": "c0aad508956aa144c20258222ad83c1aa3651561e192e0f6119382f8ae57a60f",
+        "zipCRC": true,
+        "currentUIAssets": 2
+      }
+    ],
+    "knownPrivateValuesScanned": 7,
+    "privateMatches": 0,
+    "androidDEX": {
+      "count": 6,
+      "unchangedFromPriorVerifiedCore": true
+    }
+  },
+  "limitations": [
+    "No historical expiry event queue, closed-app background collection, email or OS push delivery.",
+    "No comments/mentions/invites/other Notion inbox types.",
+    "Wiki/database verification and verified-page management incomplete.",
+    "No authenticated inbox journey on native SDK or Windows OS; browser and real Supabase proof are separate.",
+    "No physical mobile devices, public signing/notarization/app stores.",
+    "TypeScript static typecheck not run; no compiler installed without pending dependency approval.",
+    "Original owner/family signup, free web host and full backend cutover remain incomplete."
+  ],
+  "security": {
+    "privateHistory": {
+      "blobsChecked": 1168,
+      "privateValuesChecked": 7,
+      "currentPrivateMatches": 0
+    },
+    "syntheticSecretCandidates": 22,
+    "candidateHashesUnchanged": true,
+    "noPush": true
+  },
+  "goalComplete": false
+}

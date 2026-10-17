@@ -29,6 +29,7 @@ private final class FountainCloudQAProtocol: URLProtocol, URLSessionDataDelegate
     private static var credentialRequests = 0
     private static var logoutRequests = 0
     private static var bodyfulLogoutRequests = 0
+    private static var ownedPageReads = 0
     private static var candidates = 0
     private static var fixedMatches = 0
     private static var offline = false
@@ -47,12 +48,12 @@ private final class FountainCloudQAProtocol: URLProtocol, URLSessionDataDelegate
     private static let prefix = "/functions/v1/fountain-api"
     static func install(_ value: String?) {
         lock.lock(); defer { lock.unlock() }
-        nonce = value; intercepted = 0; credentialRequests = 0; logoutRequests = 0; bodyfulLogoutRequests = 0; candidates = 0; fixedMatches = 0; offline = false; offlineFailures = 0
+        nonce = value; intercepted = 0; credentialRequests = 0; logoutRequests = 0; bodyfulLogoutRequests = 0; ownedPageReads = 0; candidates = 0; fixedMatches = 0; offline = false; offlineFailures = 0
     }
     static func setOffline(_ value: Bool) { lock.lock(); defer { lock.unlock() }; offline = value }
     static func offlineCount() -> Int { lock.lock(); defer { lock.unlock() }; return offlineFailures }
     static func counts() -> (Int, Int) { lock.lock(); defer { lock.unlock() }; return (intercepted, credentialRequests) }
-    static func routingCounts() -> [String: Int] { lock.lock(); defer { lock.unlock() }; return ["protocolCandidates": candidates, "protocolFixedMatches": fixedMatches, "actualSessionDELETE": logoutRequests, "actualSessionDELETEWithBody": bodyfulLogoutRequests] }
+    static func routingCounts() -> [String: Int] { lock.lock(); defer { lock.unlock() }; return ["protocolCandidates": candidates, "protocolFixedMatches": fixedMatches, "actualSessionDELETE": logoutRequests, "actualSessionDELETEWithBody": bodyfulLogoutRequests, "actualOwnedPageGET": ownedPageReads] }
     override class func canInit(with request: URLRequest) -> Bool {
         guard let url = request.url else { return false }
         let matches = url.scheme == "https" && url.host == host && (url.port == nil || url.port == 443) && url.path.hasPrefix(prefix + "/")
@@ -85,6 +86,7 @@ private final class FountainCloudQAProtocol: URLProtocol, URLSessionDataDelegate
         Self.lock.lock(); Self.intercepted += 1
         if path == "/api/session" && request.httpMethod == "POST" { Self.credentialRequests += 1 }
         if path == "/api/session" && request.httpMethod == "DELETE" { Self.logoutRequests += 1; if request.httpBody?.isEmpty == false || request.httpBodyStream != nil { Self.bodyfulLogoutRequests += 1 } }
+        if path == "/api/pages/qa-native-shared" && request.httpMethod == "GET" { Self.ownedPageReads += 1 }
         Self.lock.unlock(); pending?.resume()
     }
     override func stopLoading() {
@@ -852,6 +854,28 @@ final class FountainNativeTests: XCTestCase {
                     try await Task.sleep(nanoseconds: 250_000_000)
                 }
                 guard committed else { throw NSError(domain: "FountainOutboxQA", code: 14) }
+                if phase == "login-edit" {
+                    stage = "saved-badge"
+                    try await waitCloud("return document.querySelector('#save-status')?.textContent==='모든 변경 사항 저장됨';", attempts: 120)
+                    evidence["savedBadgeVerified"] = true
+                    stage = "independent-backend-get"
+                    let wireBefore = FountainCloudQAProtocol.routingCounts()["actualOwnedPageGET"] ?? 0
+                    let actual = try await script("""
+                    const bridge=Capacitor.registerPlugin('FountainNative'),configuration=await bridge.getConfiguration();if(configuration.origin!==origin)throw new Error('QA_BACKEND_ORIGIN');
+                    const response=await bridge.request({id:requestId,generation:configuration.generation,path:'/api/pages/qa-native-shared',method:'GET',headers:{accept:'application/json'},bodyBase64:'',timeoutMs:45000});
+                    const headers=Object.keys(response.headers||{}).map(key=>key.toLowerCase()),safe=!headers.includes('set-cookie')&&!headers.includes('cookie');
+                    if(response.status!==200)return {status:response.status,pageMatches:false,editedTextMatches:false,responseHeadersSafe:safe};
+                    const value=JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(response.bodyBase64),character=>character.charCodeAt(0))));
+                    return {status:response.status,pageMatches:value.page?.id==='qa-native-shared',editedTextMatches:Array.isArray(value.blocks)&&value.blocks.some(block=>block.text===edited),responseHeadersSafe:safe};
+                    """, arguments: ["origin": input["origin"]!, "edited": edited, "requestId": "lifecycle-backend-" + UUID().uuidString]) as? [String: Any]
+                    let wireDelta = (FountainCloudQAProtocol.routingCounts()["actualOwnedPageGET"] ?? 0) - wireBefore
+                    evidence["actualBackendRead"] = actual ?? [:]
+                    evidence["actualBackendGETWireDelta"] = wireDelta
+                    guard actual?["status"] as? Int == 200, actual?["pageMatches"] as? Bool == true,
+                          actual?["editedTextMatches"] as? Bool == true, actual?["responseHeadersSafe"] as? Bool == true,
+                          wireDelta > 0 else { throw NSError(domain: "FountainOutboxQA", code: 18) }
+                    evidence["actualBackendReadMatched"] = true
+                }
             } else if offlineBoot {
                 guard before["pendingMatches"] as? Bool == true, (before["pendingOperations"] as? Int ?? 0) > 0, before["integrityOK"] as? Bool == true,
                       FountainCloudQAProtocol.counts().0 == 0, FountainCloudQAProtocol.offlineCount() > 0 else { throw NSError(domain: "FountainOutboxQA", code: 15) }
@@ -870,6 +894,10 @@ final class FountainNativeTests: XCTestCase {
                 const trace=globalThis.__fountainLogoutQA;if(trace.accepted>0)return true;if(state.nativeOutboxPause||state.nativeOutboxResuming||state.nativeRecoveryPreparing||state.nativeRecoveryPaused||!state.loaded||!FountainNativeStorage.ready){trace.readyAt=0;return false;}if(!trace.readyAt){trace.readyAt=Date.now();return false;}if(Date.now()-trace.readyAt<250)return false;const usable=button=>button&&!button.disabled&&!button.closest('[inert]')&&button.getClientRects().length>0;const logout=document.querySelector('[data-action=logout]');if(usable(logout)&&trace.clicks<3&&(!trace.lastClick||Date.now()-trace.lastClick>1000)){trace.clicks++;trace.lastClick=Date.now();logout.click();return trace.accepted>0;}const security=document.querySelector('[data-action=settings-tab][data-tab=security]');if(usable(security))security.click();else if(!document.querySelector('[data-action=logout]')){const settings=document.querySelector('[data-action=settings]');if(usable(settings))settings.click();}return false;
                 """)
                 try await waitCloud("if(!document.querySelector('#login-form'))return false;const r=await FountainTransport.request('/api/session');return r.status===200&&(await r.json()).authenticated===false&&document.cookie==='';")
+                stage = "logout-flow-completion"
+                try await waitCloud("const trace=globalThis.__fountainLogoutQA;return trace?.accepted===1&&trace.completed===1&&trace.inFlight===false&&trace.errorCode===null&&trace.errorName===null&&typeof logoutPendingKey==='function'&&localStorage.getItem(logoutPendingKey())===null;", attempts: 120)
+                evidence["logoutFlowCompleted"] = true
+                evidence["pendingLogoutMarkerCleared"] = true
                 guard (FountainCloudQAProtocol.routingCounts()["actualSessionDELETE"] ?? 0) > 0 else { throw NSError(domain: "FountainOutboxQA", code: 17) }
                 evidence["logoutAction"] = try await script("const t=globalThis.__fountainLogoutQA;return t?{clicks:t.clicks,calls:t.calls,accepted:t.accepted,completed:t.completed,inFlight:t.inFlight,errorCode:t.errorCode,errorName:t.errorName,frames:t.frames,pausedAtCall:t.pausedAtCall,resumingAtCall:t.resumingAtCall}:null;")
                 evidence["logoutVerified"] = true

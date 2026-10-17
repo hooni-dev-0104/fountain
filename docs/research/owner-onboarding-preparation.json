@@ -1,0 +1,112 @@
+{
+  "verifiedAt": "2026-10-17",
+  "scope": "Preparation only; actual owner signup and workspace link require private human input",
+  "mainAPI": {
+    "version": 13,
+    "sha256": "386df6378b219fef10ed352dbeee6f85dad027e8b2afdcc7ac08d205b0290ca5",
+    "retrievedFilesMatched": 39,
+    "onlyChangedModule": "fountain-api/deployment.ts",
+    "setupEnabled": true,
+    "webOrigins": [],
+    "publicWebOrigin": null,
+    "ready": false
+  },
+  "ownerClaim": {
+    "fixedExistingMember": "local",
+    "purpose": "bootstrap",
+    "serverStoresPlaintextNonce": false,
+    "ttlSeconds": 3600,
+    "unusedClaimsProvisioned": 1,
+    "liveDuplicateClaimRejected": true,
+    "onboardingNotPerformedByAgent": true,
+    "emailOrSignupOrderUsedAsAuthority": false,
+    "requiresActualAuthSessionAndExplicitNonce": true
+  },
+  "originalDataBeforeHumanSignup": {
+    "entities": 153,
+    "remoteMeta": 6,
+    "identityMappings": 0,
+    "authUsers": 0,
+    "portableBackup": {
+      "bytes": 131072,
+      "integrity": "ok",
+      "entities": 153,
+      "meta": 4,
+      "attachmentChunks": 0,
+      "inlineAttachmentBytes": 80,
+      "hashVerified": true,
+      "runtimeAndSessionMetaIntentionallyExcluded": true
+    },
+    "sixBusinessSessionFingerprintsUnchanged": true,
+    "originalSQLiteAnd8787Preserved": true
+  },
+  "actualHTTPBoundaries": [
+    {
+      "method": "GET",
+      "path": "/health",
+      "status": 200,
+      "badOrigin": false,
+      "code": null,
+      "ready": false,
+      "setupSupported": null,
+      "authenticated": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/session",
+      "status": 200,
+      "badOrigin": false,
+      "code": null,
+      "ready": null,
+      "setupSupported": true,
+      "authenticated": false
+    },
+    {
+      "method": "GET",
+      "path": "/api/workspace",
+      "status": 401,
+      "badOrigin": false,
+      "code": "AUTH_REQUIRED",
+      "ready": null,
+      "setupSupported": null,
+      "authenticated": null
+    },
+    {
+      "method": "POST",
+      "path": "/api/session",
+      "status": 403,
+      "badOrigin": false,
+      "code": "SETUP_REJECTED",
+      "ready": null,
+      "setupSupported": null,
+      "authenticated": null
+    },
+    {
+      "method": "GET",
+      "path": "/api/session",
+      "status": 403,
+      "badOrigin": true,
+      "code": "ORIGIN_DENIED",
+      "ready": null,
+      "setupSupported": null,
+      "authenticated": null
+    }
+  ],
+  "verification": {
+    "desktopUnitTests": 50,
+    "desktopSkipped": 0,
+    "webHostBuildFiles": 16,
+    "webHostTests": 10,
+    "webHostSkipped": 0,
+    "onboardingChecks": 129,
+    "onboardingScope": "Loopback HTTP/Auth/claim model and migration source; not real account proof",
+    "independentPreparationReview": "APPROVE"
+  },
+  "notCompleted": [
+    "Actual original-owner signup and mapping",
+    "Actual owner/family login and shared-data verification",
+    "Public HTTPS host, web-origin registration and operating cutover",
+    "Original scheduler and maintenance registration after task review",
+    "Five-platform runtime verification and actual AI provider"
+  ]
+}

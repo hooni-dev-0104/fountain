@@ -5,6 +5,6 @@ export const deployment=Object.freeze({
   webOrigins:[] as string[],
   // Optional verified sharing origin; must also occur in webOrigins.
   publicWebOrigin:null as string|null,
-  // Enable only after the private bootstrap RPC and actual setup flow are verified.
-  setupEnabled:false,
+  // Setup still requires an explicit private, expiring claim for the existing member.
+  setupEnabled:true,
 });

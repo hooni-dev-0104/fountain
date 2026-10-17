@@ -121,6 +121,13 @@
       if(operation.kind==='page.create'){result.body.title??='제목 없음';result.body.icon??='📄';result.body.cover??='';result.body.parent_id??=null;}
     }else{
       result.database_id=identity(operation.database_id);
+      check(!['verification','_owner_generations','owner_generations','verification_cycle','_verification_generation'].some(key=>own(body,key)),'검증 기록과 담당자 증거는 복구 파일로 지정할 수 없습니다.');
+      const ownerSchema=Object.create(null);
+      for(const [id,property]of Object.entries(operation.base?.schema||{}))if(property?.type==='owner'){
+        identity(id);check(object(property)&&Number.isSafeInteger(property.generation)&&property.generation>0&&['one','unlimited'].includes(property.limit)&&['created_by','none'].includes(property.default)&&['created_by','none'].includes(property.initial_default),'복구할 담당자 속성의 설정이 올바르지 않습니다.');
+        ownerSchema[id]={type:'owner',generation:property.generation,limit:property.limit,default:property.default,initial_default:property.initial_default};
+      }
+      if(Object.keys(ownerSchema).length)result.base={schema:ownerSchema};
       if(operation.kind!=='row.delete'){
         check(body.properties===undefined||object(body.properties));result.body.properties=copy(body.properties||{});
         if(own(body,'parent_row_id'))result.body.parent_row_id=body.parent_row_id===null?null:identity(body.parent_row_id);

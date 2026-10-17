@@ -5,6 +5,9 @@
   const PAUSED = new Set(['conflict', 'denied', 'invalid', 'paused']);
   const PAGE_FIELDS = ['title', 'icon', 'cover', 'favorite'];
   const ROW_FIELDS = ['parent_row_id', 'depends_on'];
+  const COMPUTED = new Set(['formula', 'rollup', 'verification']);
+  const OWNER_SCHEMA = ['type', 'generation', 'limit', 'default', 'initial_default'];
+  const ROW_PRIVATE = ['verification', '_owner_generations', 'owner_generations', 'verification_cycle', '_verification_generation'];
   const ARCHIVE_TARGETS=Symbol('archive targets');
   const preparedImports = new WeakMap();
   const copy = value => structuredClone(value);
@@ -134,7 +137,11 @@
       for (const record of records) {
         const operation = record.operation; if (!ACTIVE.has(record.status) || operation.database_id !== id) continue;
         if (record.status === 'applied' && this.proof(snapshot, record)) continue;
-        pending = true; const body = operation.body || {}, row = rows.get(operation.target_id);
+        pending = true; const body = copy(operation.body || {}), row = rows.get(operation.target_id);
+        if (operation.kind !== 'row.delete') {
+          try { const values = this.rowBody(body); this.schema(snapshot.database, values); this.ownerSchema(snapshot.database, values, operation.base?.schema); body.properties = values; }
+          catch { continue; /* Keep stale or malformed evidence in recovery without projecting it as current data. */ }
+        }
         if (operation.kind === 'row.create') {
           if (!row) rows.set(operation.target_id, { id: operation.target_id, database_id: id, owner_id: this.profile.memberId, properties: copy(body.properties || {}), parent_row_id: body.parent_row_id || null,
             depends_on: copy(body.depends_on || []), access_level: 3, created_at: new Date(record.createdAt).toISOString(), updated_at: record.result?.updated_at || new Date(record.createdAt).toISOString(), offline_pending: true });
@@ -143,7 +150,7 @@
           row.offline_pending = true; if (record.result?.updated_at) row.updated_at = record.result.updated_at;
         } else if (operation.kind === 'row.delete') for (const target of Object.keys(operation.base_rows || { [operation.target_id]: {} })) rows.delete(target);
       }
-      const computed = snapshot.database.properties.some(property => ['formula', 'rollup'].includes(property.type));
+      const computed = snapshot.database.properties.some(property => COMPUTED.has(property.type));
       snapshot.rows = [...rows.values()].map(row => pending && computed ? { ...row, computed_pending: true } : row);
       snapshot.offline_pending = pending; snapshot.computed_pending = pending && computed; return snapshot;
     }
@@ -165,8 +172,13 @@
     schema(database, values) {
       const result = Object.create(null), properties = new Map(database.properties.map(property => [property.id, property]));
       for (const [id, value] of Object.entries(values)) {
-        const property = properties.get(id); require(property && !['formula', 'rollup'].includes(property.type), '계산 속성이나 삭제된 속성은 변경할 수 없습니다.');
-        if (value !== null) {
+        const property = properties.get(id); require(property && !COMPUTED.has(property.type), '계산 속성이나 삭제된 속성은 변경할 수 없습니다.');
+        if (property.type === 'owner') {
+          require(Number.isSafeInteger(property.generation) && property.generation > 0 && ['one', 'unlimited'].includes(property.limit) && ['created_by', 'none'].includes(property.default) && ['created_by', 'none'].includes(property.initial_default), '담당자 속성의 현재 설정을 확인해 주세요.', 409, 'OWNER_SCHEMA_CHANGED');
+          require(Array.isArray(value) && value.length <= 1000, '담당자는 식별자 목록으로 지정해 주세요.');
+          const ids = [...new Set(value.map(identity))]; require(property.limit !== 'one' || ids.length <= 1, '담당자는 한 명만 지정할 수 있습니다.'); values[id] = ids;
+        }
+        else if (value !== null) {
           if (property.type === 'number') require(typeof value === 'number' && Number.isFinite(value) && Math.abs(value) < 1e15, '숫자 속성을 확인해 주세요.');
           else if (property.type === 'checkbox') require(typeof value === 'boolean', '체크박스 값을 확인해 주세요.');
           else if (['multi_select', 'relation', 'files'].includes(property.type)) require(Array.isArray(value) && value.length <= 1000, '목록 속성을 확인해 주세요.');
@@ -176,6 +188,20 @@
         result[id] = copy(property);
       }
       return result;
+    }
+    rowBody(body) {
+      require(body && typeof body === 'object' && !Array.isArray(body), '항목 변경 내용을 확인해 주세요.');
+      require(!ROW_PRIVATE.some(key => own(body, key)), '검증 기록과 담당자 증거는 직접 변경할 수 없습니다.');
+      require(!(own(body, 'properties') && own(body, 'values')), '속성 값은 한 가지 형식으로 지정해 주세요.');
+      const values = body.properties ?? body.values ?? {};
+      require(values && typeof values === 'object' && !Array.isArray(values), '속성 값을 확인해 주세요.'); return copy(values);
+    }
+    ownerSchema(database, values, captured) {
+      const current = new Map(database.properties.map(property => [property.id, property]));
+      for (const id of Object.keys(values)) {
+        const before = captured?.[id], after = current.get(id);
+        if (before?.type === 'owner' || after?.type === 'owner') require(before?.type === 'owner' && after?.type === 'owner' && OWNER_SCHEMA.every(key => same(before[key], after[key])), '담당자 속성이 변경되었습니다. 현재 설정을 확인해 다시 편집해 주세요.', 409, 'OWNER_SCHEMA_CHANGED');
+      }
     }
     latest(records, target, databaseId) { return records.filter(record => ACTIVE.has(record.status) && record.operation.target_id === target && (databaseId === undefined || record.operation.database_id === databaseId)).at(-1); }
     rowDependencies(records, database, body, target) {
@@ -187,6 +213,7 @@
       require(ids.size <= 50, '먼저 연결된 변경을 동기화한 뒤 다시 시도해 주세요.'); return [...ids];
     }
     async enqueue(resourceKey, operation) {
+      if (operation.kind.startsWith('row.')) this.rowBody(operation.body || {});
       await this.write(() => this.offline.putMutation(this.profile, resourceKey, operation));
       await this.changed({ reason: 'queued', databaseIds: operation.database_id ? [operation.database_id] : [], pageIds: operation.kind.startsWith('page.') ? [operation.target_id] : [] }); this.schedule(); return operation;
     }
@@ -194,10 +221,11 @@
       await this.guard(); const snapshot = await this.editDatabase(databaseId);
       require(snapshot.database.can_create_row ?? snapshot.database.access_level >= 3, '새 항목을 만들 권한이 없습니다.', 403);
       const target = identity(body.id || uuid()); require(!snapshot.rows.some(row => row.id === target), '이미 사용 중인 항목 식별자입니다.', 409);
-      const values = copy(body.properties || body.values || {}), payload = { id: target, properties: values };
+      const values = this.rowBody(body), captured = this.schema({ ...snapshot.database, properties: schema || snapshot.database.properties }, values);
+      this.ownerSchema(snapshot.database, values, captured); const payload = { id: target, properties: values };
       for (const field of ROW_FIELDS) if (own(body, field)) payload[field] = copy(body[field]);
       const records = await this.records(), operation = { id: uuid(), kind: 'row.create', target_id: target, database_id: databaseId, body: payload,
-        base: { schema: this.schema({ ...snapshot.database, properties: schema || snapshot.database.properties }, values) }, depends_on: this.rowDependencies(records, snapshot.database, payload, target) };
+        base: { schema: captured }, depends_on: this.rowDependencies(records, snapshot.database, payload, target) };
       await this.enqueue(this.offline.databaseKey(this.profile, databaseId), operation);
       return (await this.loadDatabase(databaseId, { remote: false })).rows.find(row => row.id === target);
     }
@@ -205,13 +233,15 @@
       identity(rowId); const snapshot = await this.editDatabase(databaseId), current = snapshot.rows.find(value => value.id === rowId);
       require(current, '항목을 찾을 수 없습니다.', 404); require((current.access_level ?? snapshot.database.access_level) >= 3, '이 항목을 편집할 권한이 없습니다.', 403);
       const row = baseline ? copy(baseline) : current; require(row.id === rowId, '폼의 원래 항목이 일치하지 않습니다.');
+      const supplied = this.rowBody(body), captured = this.schema({ ...snapshot.database, properties: schema || snapshot.database.properties }, supplied);
       const values = Object.create(null), baseValues = Object.create(null), fields = Object.create(null), payload = {};
-      for (const [id, value] of Object.entries(body.properties || body.values || {})) if (!same(value, row.properties?.[id])) { values[id] = copy(value); baseValues[id] = copy(row.properties?.[id] ?? null); }
+      for (const [id, value] of Object.entries(supplied)) if (!same(value, row.properties?.[id])) { values[id] = copy(value); baseValues[id] = copy(row.properties?.[id] ?? null); }
+      this.ownerSchema(snapshot.database, values, captured);
       if (Object.keys(values).length) payload.properties = values;
       for (const field of ROW_FIELDS) if (own(body, field) && !same(body[field], row[field] ?? (field === 'depends_on' ? [] : null))) { payload[field] = copy(body[field]); fields[field] = copy(row[field] ?? (field === 'depends_on' ? [] : null)); }
       if (!Object.keys(payload).length) return row;
       const records = await this.records(), operation = { id: uuid(), kind: 'row.patch', target_id: rowId, database_id: databaseId, body: payload,
-        base: { schema: this.schema({ ...snapshot.database, properties: schema || snapshot.database.properties }, values), properties: baseValues, fields }, depends_on: this.rowDependencies(records, snapshot.database, payload, rowId) };
+        base: { schema: Object.fromEntries(Object.keys(values).map(id => [id, captured[id]])), properties: baseValues, fields }, depends_on: this.rowDependencies(records, snapshot.database, payload, rowId) };
       await this.enqueue(this.offline.databaseKey(this.profile, databaseId), operation);
       return (await this.loadDatabase(databaseId, { remote: false })).rows.find(value => value.id === rowId);
     }
@@ -456,6 +486,10 @@
     }
     planRowOperation(original, snapshot, virtual) {
       const operation = copy(original), row = snapshot.rows.find(value => value.id === operation.target_id);
+      const values = this.rowBody(operation.body || {});
+      this.ownerSchema(snapshot.database, values, operation.base?.schema);
+      this.schema(snapshot.database, values);
+      if (operation.kind !== 'row.delete') operation.body.properties = values;
       if (operation.kind === 'row.create') {
         require(snapshot.database.can_create_row ?? snapshot.database.access_level >= 3, '새 항목을 만들 권한이 없습니다.', 403);
         require(!row, '같은 ID의 항목이 이미 있습니다.', 409, 'UNSUPPORTED_RECOVERY');
@@ -519,9 +553,9 @@
             if (operation.kind!=='row.create') await requireRow(operation.database_id,operation.target_id,record);
             if (body.parent_row_id) await requireRow(operation.database_id,body.parent_row_id,record);
             for (const id of body.depends_on||[]) await requireRow(operation.database_id,id,record);
-            this.schema(db.database,body.properties||{});
+            this.rowBody(body); this.ownerSchema(db.database,body.properties||{},operation.base?.schema); this.schema(db.database,body.properties||{});
             for (const [id,value] of Object.entries(body.properties||{})) {
-              const property=db.database.properties.find(property=>property.id===id); require(property&&!['formula','rollup'].includes(property.type),'삭제되었거나 계산된 속성은 가져올 수 없습니다.');
+              const property=db.database.properties.find(property=>property.id===id); require(property&&!COMPUTED.has(property.type),'삭제되었거나 계산된 속성은 가져올 수 없습니다.');
               if (property.type==='relation'&&value!==null) for (const target of value) await requireRow(property.database_id||operation.database_id,target,record);
               if (property.type==='files'&&value!==null) for (const attachment of value) await read('metadata',identity(attachment));
             }
@@ -541,7 +575,7 @@
         for (const record of ordered) {
           const original=record.operation,body=mappedBody(original),target=original.kind.startsWith('page.')?(pages.get(original.target_id)||original.target_id):(rows.get(rowKey(original.database_id,original.target_id))||original.target_id);
           let bodyDeferred=false,preservedBlocks=0,preservedCodePoints=0;
-          let operation={id:opIds.get(original.id),kind:original.kind,target_id:target,body,depends_on:[...new Set([...(original.depends_on||[]),...(extraEdges.get(original.id)||[])].filter(id=>opIds.has(id)).map(id=>opIds.get(id)))]},before=null,after=null,deleteRows;
+          let operation={id:opIds.get(original.id),kind:original.kind,target_id:target,body,...(original.base?.schema?{base:{schema:copy(original.base.schema)}}:{}),depends_on:[...new Set([...(original.depends_on||[]),...(extraEdges.get(original.id)||[])].filter(id=>opIds.has(id)).map(id=>opIds.get(id)))]},before=null,after=null,deleteRows;
           if (original.kind==='page.create') {
             require(!workspace.pages.some(page=>page.id===target),'새 문서 식별자가 이미 사용 중입니다.',409);
             let parent=body.parent_id&&(pageValues.get(body.parent_id)||(await read('page',body.parent_id)).page);

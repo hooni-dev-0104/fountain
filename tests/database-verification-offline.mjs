@@ -1,0 +1,80 @@
+/** Public Owner descriptors survive durable queue/recovery; private verification never becomes a mutation. */
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {webcrypto} from 'node:crypto';
+const require=createRequire(import.meta.url);
+Object.defineProperty(globalThis,'crypto',{value:webcrypto,configurable:true});
+Object.defineProperty(globalThis,'navigator',{value:{onLine:false},configurable:true});
+const events=new Map();globalThis.addEventListener=(type,listener)=>{if(!events.has(type))events.set(type,new Set());events.get(type).add(listener);};globalThis.removeEventListener=(type,listener)=>events.get(type)?.delete(listener);
+const copy=structuredClone, origin='http://offline.invalid',binding='bound',profile={id:'p',origin,workspaceId:'w',memberId:'alice',cacheBinding:binding,session:{authenticated:true,workspace_id:'w',cache_binding:binding,member:{id:'alice',role:'owner'}}};
+let active=profile,records=[],staged=null,serial=0;
+const owner={id:'owner',name:'담당자',type:'owner',limit:'one',default:'created_by',initial_default:'created_by',generation:1};
+const properties=[{id:'title',name:'이름',type:'title'},owner,{id:'verified',name:'검증',type:'verification',owner_property_id:'owner',generation:2},{id:'person',name:'기존 사람',type:'person'}];
+let canonical={workspace_id:'w',current_member_id:'alice',session_binding:binding,database:{id:'db',properties:copy(properties),access_level:4,can_create_row:true},rows:[{id:'row',database_id:'db',owner_id:'alice',access_level:4,updated_at:'2026-01-01T00:00:00Z',properties:{title:'원본',owner:['alice'],verified:null,person:'기존 텍스트'}}]};
+const caches=new Map([['db:db',copy(canonical)]]),requests=[];
+globalThis.FountainOffline={getProfile:async()=>active,databaseKey:(_p,id)=>'db:'+id,getDatabase:async key=>copy(caches.get(key)),saveDatabase:async(key,data)=>caches.set(key,copy(data)),listMutations:async()=>copy(records),putMutation:async(_p,resourceKey,operation)=>{records.push({id:operation.id,resourceKey,operation:copy(operation),status:'pending',createdAt:++serial});},replaceMutations:async(_p,replacements)=>{for(const replacement of replacements){const i=records.findIndex(record=>record.id===replacement.previousId);records[i]={...records[i],id:replacement.operation.id,operation:copy(replacement.operation),status:'pending'};}},stageRecoveryImport:async(_p,bundle)=>{staged=copy(bundle);return {imported:true};},suspendProfile:async()=>{}};
+globalThis.FountainTransport={origin,request:async path=>{requests.push(path);const value=path==='/api/session'?profile.session:path==='/api/workspace'?{workspace_id:'w',current_member_id:'alice',session_binding:binding,pages:[]}:canonical;return {ok:true,json:async()=>copy(value)};}};
+globalThis.FountainCollaboration=require('../static/collaboration.js');globalThis.FountainRecovery=require('../static/recovery-import.js');require('../static/mutations.js');
+let controller=new FountainMutations.Controller({profile});
+const fresh=()=>{records=[];canonical.database.properties=copy(properties);caches.set('db:db',copy(canonical));};
+let checks=0;const check=(name,fn)=>{fn();checks++;console.log('PASS '+name);};
+try{
+  await controller.patchRow('db','row',{properties:{title:'수정',owner:['alice'],person:'기존 텍스트'}});
+  check('ordinary edit captures changed fields only, preserving person text and untouched Owner',()=>{assert.deepEqual(records[0].operation.body.properties,{title:'수정'});assert.deepEqual(Object.keys(records[0].operation.base.schema),['title']);});
+  fresh();await controller.patchRow('db','row',{properties:{owner:['bob','bob']}});
+  check('Owner IDs deduplicate and capture readonly current schema',()=>{assert.deepEqual(records[0].operation.body.properties.owner,['bob']);assert.equal(records[0].operation.base.schema.owner.generation,1);assert.equal(records[0].operation.base.schema.owner.initial_default,'created_by');assert.deepEqual(records[0].operation.base.properties.owner,['alice']);assert.ok(!JSON.stringify(records).includes('_owner_generations'));});
+  controller.close();controller=new FountainMutations.Controller({profile});
+  check('controller restart keeps typed optimistic Owner and verification pending',()=>{const projected=controller.projectDatabase(caches.get('db:db'),records);assert.deepEqual(projected.rows[0].properties.owner,['bob']);assert.equal(projected.rows[0].computed_pending,true);});
+  for(const value of [null,'alice',{},[null],['bad/id'],['\ud800'],['a','b'],Array(1001).fill('a')])await assert.rejects(controller.patchRow('db','row',{properties:{owner:value}}));
+  check('Owner rejects scalar/null/invalid IDs/limit/request overflow',()=>assert.equal(records.length,1));
+  fresh();const unbounded=canonical.database.properties.find(p=>p.id==='owner');unbounded.limit='unlimited';caches.set('db:db',copy(canonical));
+  await controller.patchRow('db','row',{properties:{owner:Array.from({length:1000},(_,i)=>'member-'+i)}});
+  check('unlimited Owner accepts exactly 1000 IDs without requiring a cached eligibility list',()=>assert.equal(records[0].operation.body.properties.owner.length,1000));
+  fresh();for(const method of ['patchRow','createRow'])for(const value of [null,{status:'verified'},'verified'])await assert.rejects(method==='patchRow'?controller[method]('db','row',{properties:{verified:value}}):controller[method]('db',{properties:{verified:value}}));
+  for(const field of ['verification','_owner_generations','owner_generations','verification_cycle','_verification_generation'])for(const method of ['patchRow','createRow'])await assert.rejects(method==='patchRow'?controller[method]('db','row',{[field]:null,properties:{title:'x'}}):controller[method]('db',{[field]:null}));
+  check('computed Verification even unchanged null and all private source keys cannot queue',()=>assert.equal(records.length,0));
+  await controller.patchRow('db','row',{properties:{person:'다른 기존 텍스트'}});await assert.rejects(controller.patchRow('db','row',{properties:{person:['alice']}}));
+  check('generic person remains text-valued',()=>assert.equal(records[0].operation.body.properties.person,'다른 기존 텍스트'));
+  fresh();await controller.patchRow('db','row',{properties:{owner:['bob']}});const queued=copy(records[0]);
+  canonical.database.properties.find(p=>p.id==='owner').generation=3;caches.set('db:db',copy(canonical));
+  check('same-ID replacement does not project dormant Owner edits',()=>assert.deepEqual(controller.projectDatabase(canonical,records).rows[0].properties.owner,['alice']));
+  records[0].status='conflict';await assert.rejects(controller.reapply(records[0].id),e=>e.code==='OWNER_SCHEMA_CHANGED');
+  check('reapply cannot refresh an Owner generation or discard original recovery data',()=>assert.equal(records[0].operation.base.schema.owner.generation,1));
+  await assert.rejects(controller.patchRow('db','row',{properties:{owner:['bob']}},{schema:properties}),e=>e.code==='OWNER_SCHEMA_CHANGED');
+  check('captured stale form schema cannot target a replacement Owner',()=>assert.equal(records.length,1));
+  for(const replacement of [{...owner,limit:'unlimited'},{...owner,default:'none'},{...owner,initial_default:'none'},{...owner,type:'person'},{...owner,type:'verification'}]){
+    canonical.database.properties=properties.map(property=>copy(property.id==='owner'?replacement:property));caches.set('db:db',copy(canonical));records=[{...copy(queued),status:'conflict'}];
+    await assert.rejects(controller.reapply(queued.id),e=>e.code==='OWNER_SCHEMA_CHANGED');
+  }
+  check('Owner config changes and promotion to another type require a fresh explicit edit',()=>assert.equal(records[0].operation.base.schema.owner.type,'owner'));
+  canonical.database.properties=copy(properties);caches.set('db:db',copy(canonical));records=[{...queued,status:'conflict'}];await controller.reapply(queued.id);
+  check('same-generation explicit reapply refreshes touched-value basis and remains typed',()=>{assert.notEqual(records[0].id,queued.id);assert.deepEqual(records[0].operation.base.properties.owner,['alice']);assert.deepEqual(records[0].operation.body.properties.owner,['bob']);});
+  const envelope=(record=queued)=>({format:'fountain-recovery-v2',origin,workspace_id:'w',member_id:'alice',source_binding:binding,records:[{...record,resourceKey:undefined}],localPages:[],drafts:[]});
+  const parsed=FountainRecovery.parse(JSON.stringify(envelope()),{origin,workspaceId:'w',memberId:'alice'});
+  check('recovery parser retains only public Owner schema CAS fields',()=>{assert.deepEqual(Object.keys(parsed.records[0].operation.base.schema.owner).sort(),['default','generation','initial_default','limit','type']);assert.equal(parsed.records[0].operation.base.schema.owner.generation,1);});
+  records=[];const prepared=await controller.prepareImport(JSON.stringify(envelope()));await controller.importPrepared(prepared);
+  check('recovery preview/import creates a fresh typed operation without private proof',()=>{assert.ok(staged);const operation=staged.mutations[0].operation;assert.notEqual(operation.id,queued.id);assert.equal(operation.base.schema.owner.generation,1);assert.deepEqual(operation.body.properties.owner,['bob']);assert.ok(!JSON.stringify(staged).includes('_owner_generations'));});
+  canonical.database.properties.find(p=>p.id==='owner').generation=3;
+  await assert.rejects(controller.prepareImport(JSON.stringify(envelope())),e=>e.code==='OWNER_SCHEMA_CHANGED');
+  const missing=copy(queued);delete missing.operation.base;
+  await assert.rejects(controller.prepareImport(JSON.stringify(envelope(missing))),e=>e.code==='OWNER_SCHEMA_CHANGED');
+  check('replacement or missing Owner generation cannot be silently imported',()=>assert.equal(records.length,0));
+  canonical.database.properties=copy(properties);
+  const forged=copy(queued);forged.operation.body.properties={verified:null};
+  await assert.rejects(controller.prepareImport(JSON.stringify(envelope(forged))));
+  for(const key of ['verification','_owner_generations','owner_generations','verification_cycle','_verification_generation']){const value=copy(queued);value.operation.body[key]=null;assert.throws(()=>FountainRecovery.parse(JSON.stringify(envelope(value)),{origin,workspaceId:'w',memberId:'alice'}));}
+  for(const changed of [{generation:0},{generation:1.5},{limit:'fake'},{default:'fake'},{initial_default:'fake'}]){const value=copy(queued);Object.assign(value.operation.base.schema.owner,changed);assert.throws(()=>FountainRecovery.parse(JSON.stringify(envelope(value)),{origin,workspaceId:'w',memberId:'alice'}));}
+  check('forged computed values/private raw fields and malformed schema proof fail recovery',()=>assert.equal(records.length,0));
+  const textOnly=copy(queued);textOnly.operation.body.properties={person:'호환'};delete textOnly.operation.base;
+  const legacyPrepared=await controller.prepareImport(JSON.stringify(envelope(textOnly)));await controller.importPrepared(legacyPrepared);
+  check('legacy non-Owner recovery remains compatible without captured schema',()=>assert.equal(staged.mutations[0].operation.body.properties.person,'호환'));
+  fresh();await controller.createRow('db',{id:'created',properties:{title:'새 행',owner:['bob','bob']}});
+  check('explicit Owner create queues normalized public IDs and captured generation',()=>{assert.deepEqual(records[0].operation.body.properties.owner,['bob']);assert.equal(records[0].operation.base.schema.owner.generation,1);});
+  const canonicalBefore=copy(canonical),forgedQueue=copy(records[0]);forgedQueue.operation.body.verification={verified_by:'alice'};
+  check('a forged recovered raw stamp is never projected and cannot alter canonical cache',()=>{assert.ok(!controller.projectDatabase(canonical,[forgedQueue]).rows.some(row=>row.id==='created'));assert.deepEqual(canonical,canonicalBefore);});
+  const forgedOperation=copy(forgedQueue.operation);await assert.rejects(controller.enqueue('db:db',forgedOperation));
+  check('direct enqueue rejects private evidence before a durable write',()=>assert.equal(records.length,1));
+  fresh();active={...profile,id:'other'};await assert.rejects(controller.patchRow('db','row',{properties:{owner:['bob']}}),e=>e.code==='STALE_CONTROLLER');
+  check('account switch fences writes and closes previous queue controller',()=>{assert.equal(controller.closed,true);assert.equal(records.length,0);});
+  console.log(`PASS: ${checks} database verification offline/recovery scenarios`);
+}finally{controller.close();}

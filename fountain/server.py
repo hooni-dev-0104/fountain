@@ -47,6 +47,7 @@ class CSVDownload:
     iterator: object
     session_binding: str | None = None
     content_revision: int | None = None
+    framed: bool = False
 
 
 @dataclass
@@ -255,7 +256,11 @@ class Application:
                 if path.endswith('/permissions'): return 200, service.permissions(query)
                 if path.endswith('/options'): return 200, service.options(query)
                 if path.endswith('/export'):
-                    return 200, CSVDownload('fountain-admin-content.csv', service.csv(query), access.principal.get('_content_session_binding'), service.state['revision'])
+                    require(isinstance(query,dict), 'Invalid content export query')
+                    formats = query.get('format',['raw'])
+                    require(isinstance(formats,list) and len(formats)==1 and formats[0] in ('raw','frames'), 'Invalid content export format')
+                    search_query = {key:value for key,value in query.items() if key!='format'}
+                    return 200, CSVDownload('fountain-admin-content.csv', service.csv(search_query), access.principal.get('_content_session_binding'), service.state['revision'], formats[0]=='frames')
                 return 200, service.search(query)
             require(method == 'POST', 'Unsupported content method', 405)
             require(not query, 'Content mutations do not accept query parameters')
@@ -563,27 +568,61 @@ def handler_for(application):
             authorize()
             self.protocol_version = 'HTTP/1.1'
             self.send_response(200)
-            self.send_header('Content-Type','text/csv; charset=utf-8')
-            self.send_header('Content-Disposition', "attachment; filename=fountain-admin-content.csv")
+            self.send_header('Content-Type','application/x-ndjson; charset=utf-8' if download.framed else 'text/csv; charset=utf-8')
+            if download.framed:
+                self.send_header('X-Fountain-CSV-Protocol','1')
+            else:
+                self.send_header('Content-Disposition', "attachment; filename=fountain-admin-content.csv")
             self.send_header('Cache-Control','no-store')
             self.send_header('X-Content-Type-Options','nosniff')
             self.send_header('Connection','close')
             self.send_header('Transfer-Encoding','chunked')
             self.close_connection = True
             self.end_headers()
+            def write_chunk(piece):
+                self.wfile.write(f'{len(piece):x}\r\n'.encode('ascii') + piece + b'\r\n')
+            def frame(value):
+                write_chunk(json.dumps(value,separators=(',',':'),ensure_ascii=True).encode('ascii')+b'\n')
+            def error_frame(status):
+                if download.framed:
+                    try:
+                        frame({'type':'error','status':status if type(status) is int and status in (400,401,403,409,413,503) else 503})
+                        self.wfile.write(b'0\r\n\r\n')
+                    except OSError:
+                        pass
             try:
                 if self.command != 'HEAD':
+                    total = 0
                     for piece in download.iterator:
-                        authorize()
-                        self.wfile.write(f'{len(piece):x}\r\n'.encode('ascii') + piece + b'\r\n')
+                        if download.framed:
+                            require(isinstance(piece,(bytes,bytearray)), 'Invalid export bytes', 503)
+                            for offset in range(0,len(piece),65536):
+                                authorize()
+                                data=piece[offset:offset+65536]
+                                total+=len(data)
+                                require(total<=9007199254740991, 'Export size limit exceeded', 413)
+                                frame({'type':'data','data':base64.b64encode(data).decode('ascii')})
+                        else:
+                            authorize()
+                            write_chunk(piece)
                     with application.store.transaction():
                         authorize()
+                        if download.framed:frame({'type':'complete','bytes':total})
                         self.wfile.write(b'0\r\n\r\n')
-            except Exception:
-                # Closing a stream after a failed recheck never appends JSON.
+            except APIError as error:
+                # A terminal error record reaches gateways as a normal close;
+                # the consumer must still refuse to commit the partial CSV.
+                error_frame(error.status)
+            except OSError:
+                # A failed/cancelled transport cannot reliably carry a terminal.
                 self.close_connection = True
+            except Exception:
+                error_frame(503)
             finally:
-                download.iterator.close()
+                try:
+                    download.iterator.close()
+                except Exception:
+                    self.close_connection = True
 
         def send_download(self, download):
             try:

@@ -17,6 +17,7 @@ from .backup import (BackupError, CHUNK_SIZE, PROVENANCE_COLUMNS, _inspect, _str
                      _provenance_digest, _provenance_provisioned, _attachments)
 from .core import APIError
 from .canonical import canonical_source
+from .activity import ACTIVITY_COLUMNS
 from .file_chunks import FileChunkStorage, ROOT_KEY
 from .postgres import PostgresStore
 from .retention_vault import VAULT_COLUMNS
@@ -210,6 +211,66 @@ def _restore_vault(source, target):
     return counts
 
 
+def _activity_rows(source, table):
+    columns = ','.join(ACTIVITY_COLUMNS[table])
+    order = 'ledger_id,sequence' if table == 'activity_events' else 'id'
+    return source.execute('SELECT '+columns+' FROM '+table+' ORDER BY '+order)
+
+
+def _has_activity(source):
+    tables = {row[0] for row in source.execute("SELECT name FROM sqlite_schema WHERE type='table'")}
+    return bool(tables & set(ACTIVITY_COLUMNS)) and any(
+        source.execute('SELECT 1 FROM '+table+' LIMIT 1').fetchone() is not None
+        for table in ACTIVITY_COLUMNS)
+
+
+def _activity_target_empty(target, *, required):
+    tables = (*ACTIVITY_COLUMNS, 'activity_runtime', 'activity_current_members', 'activity_current_accounts')
+    provisioned = [target._execute('SELECT to_regclass(%s) IS NOT NULL',
+                                  ('fountain_private.'+table,), fetch='one')[0] for table in tables]
+    if not any(provisioned):
+        _require(not required, 'Target activity ledger schema is not provisioned')
+        return
+    _require(all(provisioned), 'Target activity ledger schema is incomplete')
+    if required:
+        available = target._execute(
+            "SELECT to_regprocedure('fountain_private.activity_import_row(text,text,jsonb)') IS NOT NULL "
+            "AND to_regprocedure('fountain_private.activity_import_finish(text)') IS NOT NULL", fetch='one')[0]
+        _require(available, 'Target activity ledger import is not provisioned')
+    for table in tables:
+        _require(target._execute('SELECT 1 FROM fountain_private.'+table+' WHERE workspace_id=%s LIMIT 1',
+                                (target.workspace_id,), fetch='one') is None,
+                 'Target activity ledger must be empty')
+
+
+def _restore_activity(source, target):
+    """Compare historical rows before the explicit new-server restore transition.
+
+    Imported history never becomes current account authority. The private finish
+    operation opens a new capture epoch and closes old open episodes; committed
+    history is never removed to make an import fit.
+    """
+    if not _has_activity(source):
+        return {}
+    counts = {}
+    for table, names in ACTIVITY_COLUMNS.items():
+        for row in _activity_rows(source, table):
+            encoded = json.dumps(dict(zip(names, row)), ensure_ascii=False, allow_nan=False, separators=(',', ':'))
+            target._execute('SELECT fountain_private.activity_import_row(%s,%s,%s::jsonb)',
+                            (target.workspace_id, table, encoded))
+        order = 'ledger_id COLLATE "C",sequence' if table == 'activity_events' else 'id COLLATE "C"'
+        actual = _provenance_digest(_target_rows(target, 'SELECT '+','.join(names)+' FROM fountain_private.'+table+
+                                               ' WHERE workspace_id=%s ORDER BY '+order))
+        expected = _provenance_digest(_activity_rows(source, table))
+        _require(actual == expected, 'Target activity history checksum verification failed')
+        counts[table] = {'rows': expected[0], 'sha256': expected[1]}
+    epoch = target._execute('SELECT fountain_private.activity_import_finish(%s)',
+                            (target.workspace_id,), fetch='one')[0]
+    _require(isinstance(epoch, str) and len(epoch) == 32 and all(c in '0123456789abcdef' for c in epoch),
+             'Target activity restore epoch is invalid')
+    return {'tables': counts, 'restore_ledger_id': epoch}
+
+
 def migrate_sqlite(source_path, targetStore):
     """Move one namespace into an empty file-backed PostgresStore atomically.
 
@@ -229,11 +290,14 @@ def migrate_sqlite(source_path, targetStore):
                          "Migration requires a PostgreSQL target with filesystem attachment storage")
                 _require(targetStore.workspace_id == namespace, "Source and target workspace namespaces do not match")
                 has_vault = source.execute("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='retention_records'").fetchone() is not None and source.execute('SELECT 1 FROM retention_records LIMIT 1').fetchone() is not None
-                _require(not has_vault or targetStore.transaction_depth == 0, 'Private retention migration requires its own top-level PostgreSQL transaction')
+                has_activity = _has_activity(source)
+                _require(not (has_vault or has_activity) or targetStore.transaction_depth == 0,
+                         'Private history migration requires its own top-level PostgreSQL transaction')
                 expected_entities = _digest(source.execute("SELECT kind,id,created_at,updated_at,data FROM entities ORDER BY kind,id"))
                 expected_metadata = _digest(source.execute("SELECT key,data FROM meta ORDER BY key"))
                 with targetStore.transaction():
                     file_metadata = _empty_target(targetStore)
+                    _activity_target_empty(targetStore, required=has_activity)
                     history_provisioned = _provenance_provisioned(targetStore)
                     if history_provisioned:
                         for table in ('content_search_documents', 'content_provenance'):
@@ -249,6 +313,7 @@ def migrate_sqlite(source_path, targetStore):
                     _require(chunks == expected_chunks, "Target attachment count verification failed")
                     history = _restore_provenance(source, targetStore, history_provisioned)
                     vault = _restore_vault(source, targetStore)
+                    activity = _restore_activity(source, targetStore)
                     # Reset the transport counter after all internal manifest writes;
                     # no later operation in this transaction modifies persisted data.
                     if "_entity_revision" in metadata:
@@ -273,6 +338,7 @@ def migrate_sqlite(source_path, targetStore):
                         "retention_vault": vault,
                         "content_provenance_count": history[0] if history is not None else 0,
                         "content_provenance_sha256": history[1] if history is not None else None,
+                        "activity_history": activity,
                         "entity_revision": _strict_json(metadata["_entity_revision"]) if "_entity_revision" in metadata else None}
             finally:
                 source.rollback()

@@ -15,6 +15,7 @@ from uuid import uuid4
 
 from .core import APIError, AUDIT_ACTOR, CURRENT_ACCESS
 from .access import Access
+from .inbox import Inbox
 
 
 class AdvancedError(APIError):
@@ -117,7 +118,7 @@ class Advanced:
                       if access.verification_member(owner, page, visible=False) and not access.verification_member(owner, page)]
             owners = list(dict.fromkeys([*owners, *hidden]))
             require(len(owners) <= 1000, '페이지 검증 상태를 다시 확인해주세요', 409)
-            page['verification'] = {'owners': owners, 'owner': owners[0], 'verified_by': AUDIT_ACTOR.get(), 'verified_at': now(), 'expires_at': expiry}
+            page['verification'] = {'owners': owners, 'owner': owners[0], 'verified_by': AUDIT_ACTOR.get(), 'verified_at': now(), 'expires_at': expiry, 'cycle_revision': int(revision) + 1}
         else: page.pop('verification', None)
         page['revision'] = int(revision) + 1
         self.store.put('page', page)
@@ -501,6 +502,11 @@ class Advanced:
         return render_public(self, path)
 
     def dispatch(self, method, path, body, query):
+        if path == '/api/inbox' and method == 'GET':
+            return 200, Inbox(self.store, CURRENT_ACCESS.get() or Access(self.store, self.store.get('member', AUDIT_ACTOR.get()))).get(query)
+        if len(path.strip('/').split('/')) == 3 and path.startswith('/api/inbox/') and method == 'PATCH':
+            require(not query, 'Invalid inbox query')
+            return 200, Inbox(self.store, CURRENT_ACCESS.get() or Access(self.store, self.store.get('member', AUDIT_ACTOR.get()))).patch(path.removeprefix('/api/inbox/'), body)
         if method == 'GET' and path.startswith(('/sites/', '/forms/')):
             return self.public_view(path)
         if path.startswith('/scim/v2/'):

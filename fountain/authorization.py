@@ -132,6 +132,8 @@ class Authorization:
             return
         if path in {'/api/health', '/api/workspace', '/api/search', '/api/search/advanced', '/api/capabilities', '/api/advanced'} and method == 'GET':
             return
+        if (path == '/api/inbox' and method == 'GET') or (len(parts) == 3 and parts[:2] == ['api', 'inbox'] and method == 'PATCH'):
+            return  # Inbox checks exact current recipient and resource access itself.
         if path.startswith('/api/accounts'):
             a.require_admin(owner_only=True)
             return

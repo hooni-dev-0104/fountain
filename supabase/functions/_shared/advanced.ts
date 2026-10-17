@@ -1,4 +1,5 @@
 /** Synchronous advanced domain staging; external inference is a separate phase. */
+import {Inbox} from './inbox.ts';
 import {Access,APIError,casefold,clone,get,has,is_object,put_key,truth} from './access.ts';
 import type {Entity} from './access.ts';
 import {Authorization} from './authorization.ts';
@@ -74,7 +75,7 @@ export class Advanced {
       check(owners.every(owner=>access.verification_member(owner,page)),'검증 담당자가 없습니다',404);
       const hidden=Access.verification_owners(page).filter(owner=>access.verification_member(owner,page,false)&&!access.verification_member(owner,page));
       owners=[...new Set([...owners,...hidden])];check(owners.length<=1000,'페이지 검증 상태를 다시 확인해주세요',409);
-      page.verification={owners,owner:owners[0],verified_by:this.actor,verified_at:this.now(),expires_at:expiry};
+      page.verification={owners,owner:owners[0],verified_by:this.actor,verified_at:this.now(),expires_at:expiry,cycle_revision:revision+1};
     }else delete page.verification;
     page.revision=revision+1;this.store.put('page',page);this.audit('page.verification.updated',{page_id:page.id});return page;
   }
@@ -176,6 +177,8 @@ export class Advanced {
   scim(method:string,path:string,body:Entity,query:URLSearchParams|Entity):DomainResult{return scim_resource(this,method,path,body,query);}
   public_view(path:string):DomainResult|null{return render_public(this,path);}
   dispatch(method:string,path:string,body:Entity,query:URLSearchParams|Entity):DomainResult|null{
+    if(path==='/api/inbox'&&method==='GET')return{status:200,payload:new Inbox(this.store,this.access??new Access(this.store,this.store.get('member',this.actor)),this.options.clock).get(query)};
+    if(path.split('/').length===4&&path.startsWith('/api/inbox/')&&method==='PATCH'){check(query instanceof URLSearchParams?!query.toString():!Object.keys(query).length,'Invalid inbox query');return{status:200,payload:new Inbox(this.store,this.access??new Access(this.store,this.store.get('member',this.actor)),this.options.clock).patch(path.slice('/api/inbox/'.length),body)};}
     const result=(payload:any,status=200)=>({status,payload});
     if(method==='GET'&&(path.startsWith('/sites/')||path.startsWith('/forms/')))return this.public_view(path);
     if(path.startsWith('/scim/v2/'))return this.scim(method,path,body,query);
@@ -204,6 +207,8 @@ export function createAdvancedExtension(options:AdvancedOptions={}):DomainExtens
   // Pure SCIM helpers exist, but the cloud bearer/service authority is a distinct
   // boundary that must be installed explicitly. A cookie login cannot replace it.
   if(r.path.startsWith('/scim/v2/'))return null;
+  if(r.path==='/api/inbox'&&r.method==='GET')return{status:200,payload:new Inbox(r.store,r.access,options.clock).get(r.query)};
+  if(r.parts.length===3&&r.parts[0]==='api'&&r.parts[1]==='inbox'&&r.method==='PATCH'){check(!r.query.toString(),'Invalid inbox query');return{status:200,payload:new Inbox(r.store,r.access,options.clock).patch(r.parts[2],r.body)};}
   const advanced=new Advanced(r.store,r.workspace,{...options,access:r.access,actor:r.access.member_id});
   const rowRoute=r.parts[0]==='api'&&r.parts[1]==='databases'&&r.parts[3]==='rows';
   const event=r.method==='POST'&&(r.parts.length===4||r.parts.length===6&&r.parts[5]==='duplicate')?'row.created':r.method==='PATCH'&&r.parts.length===5?'row.updated':null;

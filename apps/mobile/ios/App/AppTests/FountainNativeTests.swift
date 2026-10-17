@@ -28,6 +28,7 @@ private final class FountainCloudQAProtocol: URLProtocol, URLSessionDataDelegate
     private static var intercepted = 0
     private static var credentialRequests = 0
     private static var logoutRequests = 0
+    private static var bodyfulLogoutRequests = 0
     private static var candidates = 0
     private static var fixedMatches = 0
     private static var offline = false
@@ -46,12 +47,12 @@ private final class FountainCloudQAProtocol: URLProtocol, URLSessionDataDelegate
     private static let prefix = "/functions/v1/fountain-api"
     static func install(_ value: String?) {
         lock.lock(); defer { lock.unlock() }
-        nonce = value; intercepted = 0; credentialRequests = 0; logoutRequests = 0; candidates = 0; fixedMatches = 0; offline = false; offlineFailures = 0
+        nonce = value; intercepted = 0; credentialRequests = 0; logoutRequests = 0; bodyfulLogoutRequests = 0; candidates = 0; fixedMatches = 0; offline = false; offlineFailures = 0
     }
     static func setOffline(_ value: Bool) { lock.lock(); defer { lock.unlock() }; offline = value }
     static func offlineCount() -> Int { lock.lock(); defer { lock.unlock() }; return offlineFailures }
     static func counts() -> (Int, Int) { lock.lock(); defer { lock.unlock() }; return (intercepted, credentialRequests) }
-    static func routingCounts() -> [String: Int] { lock.lock(); defer { lock.unlock() }; return ["protocolCandidates": candidates, "protocolFixedMatches": fixedMatches, "actualSessionDELETE": logoutRequests] }
+    static func routingCounts() -> [String: Int] { lock.lock(); defer { lock.unlock() }; return ["protocolCandidates": candidates, "protocolFixedMatches": fixedMatches, "actualSessionDELETE": logoutRequests, "actualSessionDELETEWithBody": bodyfulLogoutRequests] }
     override class func canInit(with request: URLRequest) -> Bool {
         guard let url = request.url else { return false }
         let matches = url.scheme == "https" && url.host == host && (url.port == nil || url.port == 443) && url.path.hasPrefix(prefix + "/")
@@ -83,7 +84,7 @@ private final class FountainCloudQAProtocol: URLProtocol, URLSessionDataDelegate
         forwarding = session; forwardingTask = session.dataTask(with: wire); let pending = forwardingTask; state.unlock()
         Self.lock.lock(); Self.intercepted += 1
         if path == "/api/session" && request.httpMethod == "POST" { Self.credentialRequests += 1 }
-        if path == "/api/session" && request.httpMethod == "DELETE" { Self.logoutRequests += 1 }
+        if path == "/api/session" && request.httpMethod == "DELETE" { Self.logoutRequests += 1; if request.httpBody?.isEmpty == false || request.httpBodyStream != nil { Self.bodyfulLogoutRequests += 1 } }
         Self.lock.unlock(); pending?.resume()
     }
     override func stopLoading() {
@@ -898,6 +899,87 @@ final class FountainNativeTests: XCTestCase {
         evidence["textSHA256"] = FountainOutbox.hash(Data(edited.utf8)); evidence["launchNetwork"] = FountainNative.qaLaunchNetworkEvidence()
         try JSONSerialization.data(withJSONObject: evidence, options: [.sortedKeys]).write(to: resultURL, options: [.atomic, .completeFileProtection])
         try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: resultURL.path)
+    }
+    private func logoutProbeSourceDigest() throws -> String {
+        let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+        let file = support.appendingPathComponent("FountainOutbox").appendingPathComponent(FountainOutbox.hash(Data("https://ehnovtfadpkwtubmwltl.supabase.co".utf8)) + ".sqlite")
+        return FileManager.default.fileExists(atPath: file.path) ? try activeOutboxSourceDigest() : "absent"
+    }
+    @MainActor func testActualPublicLogoutBindingAdmissionPreservesCurrentSession() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        try XCTSkipUnless(environment["FOUNTAIN_QA"] == "1" && (environment["SIMULATOR_DEVICE_NAME"] ?? "").hasPrefix("Fountain QA"), "Dedicated native QA Simulator required")
+        let manager = FileManager.default, documents = try manager.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+        let inputURL = documents.appendingPathComponent("fountain-native-logout-input.json"), output = documents.appendingPathComponent("fountain-native-logout-result.json")
+        try XCTSkipUnless(manager.fileExists(atPath: inputURL.path), "Private real-HTTPS logout QA input required")
+        let descriptor = Darwin.open(inputURL.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK)
+        guard descriptor >= 0 else { throw NSError(domain: "FountainLogoutInput", code: 1) }
+        let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true); defer { try? handle.close() }
+        var info = stat()
+        guard fstat(descriptor, &info) == 0, info.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG), info.st_mode & 0o777 == 0o600, info.st_uid == getuid(),
+              info.st_size > 0, info.st_size <= 16384, unlink(inputURL.path) == 0,
+              let bytes = try handle.read(upToCount: 16385), bytes.count == Int(info.st_size), let input = try JSONSerialization.jsonObject(with: bytes) as? [String: String],
+              Set(input.keys) == Set(["origin", "workspaceId", "email", "password", "nonce"]),
+              input["origin"] == "https://ehnovtfadpkwtubmwltl.supabase.co", let workspace = input["workspaceId"], workspace.range(of: "^fountain-qa-cloud-native-[a-f0-9]{16}$", options: .regularExpression) != nil,
+              let email = input["email"], email.hasSuffix(".invalid"), email.utf8.count <= 254,
+              let password = input["password"], (10...1024).contains(password.utf8.count),
+              let nonce = input["nonce"], nonce.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else { throw NSError(domain: "FountainLogoutInput", code: 2) }
+        var evidence: [String: Any] = ["completed": false, "actualNativeBoundary": true, "processID": Int(ProcessInfo.processInfo.processIdentifier)]
+        var stage = "install"
+        FountainCloudQAProtocol.install(nonce); FountainCloudQAProtocol.setOffline(true); try FountainNative.setQAProtocolClass(FountainCloudQAProtocol.self)
+        defer { let controller = (UIApplication.shared.connectedScenes.first as? UIWindowScene)?.windows.first?.rootViewController as? FountainBridgeViewController; controller?.shutdownNative(); try? FountainNative.setQAProtocolClass(nil); FountainCloudQAProtocol.install(nil) }
+        do {
+            // Preserve the existing native configuration and all persisted
+            // data. Pause only this test WebView's already-existing business
+            // controller; raw Capacitor still crosses the real native gate.
+            try freshCloudView(clearOrigin: false)
+            try await waitCloud("return !!globalThis.Capacitor?.isPluginAvailable('FountainNative');")
+            _ = try await script("if(typeof state!=='undefined'){state.bootGeneration=(state.bootGeneration||0)+1;state.nativeRecoveryPaused=true;state.nativeOutboxPause=true;}if(typeof closeDocument==='function')closeDocument();if(typeof closeMutations==='function')closeMutations();globalThis.FountainNativeStorage?.close();return true;")
+            FountainCloudQAProtocol.setOffline(false)
+            stage = "two-real-sessions"
+            let setup = try await script("""
+            const bridge=Capacitor.registerPlugin('FountainNative');const configuration=await bridge.getConfiguration();if(configuration.origin!==origin)throw new Error('QA_EXISTING_CONFIGURATION');
+            const pause=()=>{if(typeof state!=='undefined'){state.bootGeneration=(state.bootGeneration||0)+1;state.nativeRecoveryPaused=true;state.nativeOutboxPause=true;}if(typeof closeDocument==='function')closeDocument();if(typeof closeMutations==='function')closeMutations();globalThis.FountainNativeStorage?.close();};pause();
+            const probe=globalThis.__fountainLogoutAdmission={bridge,generation:configuration.generation,sequence:0};
+            probe.exchange=async(method,body)=>{const raw=body===undefined?'':typeof body==='string'?body:JSON.stringify(body);const bytes=new TextEncoder().encode(raw);let binary='';for(let i=0;i<bytes.length;i++)binary+=String.fromCharCode(bytes[i]);return bridge.request({id:'logout-admission-'+(++probe.sequence),generation:probe.generation,path:'/api/session',method,headers:{'content-type':'application/json'},bodyBase64:btoa(binary),timeoutMs:45000});};
+            probe.session=async()=>{const response=await probe.exchange('GET');if(response.status!==200)throw new Error('QA_SESSION_STATUS');return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(response.bodyBase64),c=>c.charCodeAt(0))));};
+            if((await probe.exchange('POST',{email,password})).status!==200)throw new Error('QA_LOGIN_A');pause();const a=await probe.session();
+            if((await probe.exchange('POST',{email,password})).status!==200)throw new Error('QA_LOGIN_B');pause();const b=await probe.session();
+            if(a.authenticated!==true||b.authenticated!==true||a.workspace_id!==workspace||b.workspace_id!==workspace||typeof a.cache_binding!=='string'||typeof b.cache_binding!=='string'||a.cache_binding===b.cache_binding)throw new Error('QA_SESSION_SCOPE');
+            probe.bindingA=a.cache_binding;probe.bindingB=b.cache_binding;return {twoRealSessions:true,distinctBindings:true,outboxEnabled:configuration.outboxEnabled===true};
+            """, arguments: ["origin": input["origin"]!, "email": email, "password": password, "workspace": workspace]) as! [String: Any]
+            evidence.merge(setup, uniquingKeysWith: { _, value in value })
+            let sourceBefore = try logoutProbeSourceDigest(), deleteBefore = FountainCloudQAProtocol.routingCounts()["actualSessionDELETE"] ?? 0
+            stage = "stale-a-current-b"
+            let stale = try await script("""
+            const p=globalThis.__fountainLogoutAdmission;try{const response=await p.exchange('DELETE',{cache_binding:p.bindingA});return {rejected:false,status:response.status};}catch(error){return {rejected:error?.code==='NATIVE_SESSION_CONFLICT',code:['NATIVE_SESSION_CONFLICT','NATIVE_SESSION_REQUIRED','NATIVE_SESSION_INVALID'].includes(error?.code)?error.code:'OTHER'};}
+            """) as! [String: Any]
+            evidence["staleAdmission"] = stale
+            let sourceAfter = try logoutProbeSourceDigest(), deleteAfter = FountainCloudQAProtocol.routingCounts()["actualSessionDELETE"] ?? 0
+            let after = try await script("const p=globalThis.__fountainLogoutAdmission,s=await p.session();return {authenticatedB:s.authenticated===true&&s.cache_binding===p.bindingB};") as! [String: Any]
+            evidence["privateSourceUnchanged"] = sourceBefore == sourceAfter; evidence["sourceSHA256Before"] = sourceBefore; evidence["sourceSHA256After"] = sourceAfter
+            evidence["unexpectedDELETEDelta"] = deleteAfter - deleteBefore; evidence["actualGETStillAuthenticatedB"] = after["authenticatedB"] as? Bool == true
+            XCTAssertEqual(stale["rejected"] as? Bool, true); XCTAssertEqual(deleteAfter, deleteBefore); XCTAssertEqual(sourceAfter, sourceBefore); XCTAssertEqual(after["authenticatedB"] as? Bool, true)
+            guard stale["rejected"] as? Bool == true, sourceBefore == sourceAfter, deleteAfter == deleteBefore, after["authenticatedB"] as? Bool == true else { throw NSError(domain: "FountainLogoutQA", code: 3) }
+            stage = "malformed-no-effects"
+            let invalid = try await script("""
+            const p=globalThis.__fountainLogoutAdmission;const cases=['','{}','[]','{"cache_binding":null}','{"cache_binding":"a","cache_binding":"b"}','{"cache_binding":"a","extra":true}',JSON.stringify({cache_binding:'a'.repeat(1001)}),JSON.stringify({cache_binding:p.bindingB})+' '.repeat(8193)];let rejected=0;for(const body of cases){try{await p.exchange('DELETE',body);}catch(error){if(error?.code==='NATIVE_SESSION_INVALID')rejected++;}}return {cases:cases.length,rejected};
+            """) as! [String: Any]
+            evidence["malformed"] = invalid
+            XCTAssertEqual(invalid["rejected"] as? Int, 8); XCTAssertEqual(FountainCloudQAProtocol.routingCounts()["actualSessionDELETE"], deleteBefore); XCTAssertEqual(try logoutProbeSourceDigest(), sourceBefore)
+            stage = "matching-b-actual-bound-delete"
+            let matchingBefore = FountainCloudQAProtocol.routingCounts()
+            let matching = try await script("const p=globalThis.__fountainLogoutAdmission;const r=await p.exchange('DELETE',{cache_binding:p.bindingB});const s=await p.session();return {status:r.status,anonymous:s.authenticated===false};") as! [String: Any]
+            let matchingAfter = FountainCloudQAProtocol.routingCounts()
+            evidence["matching"] = matching; evidence["matchingActualDELETEDelta"] = (matchingAfter["actualSessionDELETE"] ?? 0) - (matchingBefore["actualSessionDELETE"] ?? 0)
+            evidence["matchingBodyfulDELETEDelta"] = (matchingAfter["actualSessionDELETEWithBody"] ?? 0) - (matchingBefore["actualSessionDELETEWithBody"] ?? 0)
+            XCTAssertEqual(matching["status"] as? Int, 200); XCTAssertEqual(matching["anonymous"] as? Bool, true); XCTAssertEqual(evidence["matchingActualDELETEDelta"] as? Int, 1); XCTAssertEqual(evidence["matchingBodyfulDELETEDelta"] as? Int, 1)
+            evidence["completed"] = true
+        } catch {
+            evidence["failedStageSHA256"] = FountainOutbox.hash(Data(stage.utf8)); evidence["failed"] = true
+            XCTFail("Native logout admission failed; inspect private boolean/hash evidence")
+        }
+        for (key, value) in FountainCloudQAProtocol.routingCounts() { evidence[key] = value }
+        try encoded(evidence).write(to: output, options: [.atomic, .completeFileProtection]); try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: output.path)
     }
     @MainActor func testActualCloudBundledUILoginEditReloadAndLogout() async throws {
         let manager = FileManager.default, documents = try manager.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)

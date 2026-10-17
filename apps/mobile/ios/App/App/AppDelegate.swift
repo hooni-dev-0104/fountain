@@ -175,9 +175,12 @@ final class FountainBridgeViewController: CAPBridgeViewController {
 }
 
 private enum FountainFailure: Error {
-    case invalid, stale, cancelled, network, timeout, storage, durableInvalidation, redirect, tooLarge, incomplete, busy, revoke, unavailable
+    case invalid, stale, cancelled, network, timeout, storage, durableInvalidation, redirect, tooLarge, incomplete, busy, revoke, unavailable, sessionInvalid, sessionRequired, sessionConflict
     var code: String {
         switch self {
+        case .sessionInvalid: return "NATIVE_SESSION_INVALID"
+        case .sessionRequired: return "NATIVE_SESSION_REQUIRED"
+        case .sessionConflict: return "NATIVE_SESSION_CONFLICT"
         case .invalid: return "NATIVE_INVALID"
         case .stale: return "NATIVE_STALE"
         case .cancelled: return "NATIVE_CANCELLED"
@@ -193,8 +196,14 @@ private enum FountainFailure: Error {
         case .unavailable: return "NATIVE_UNAVAILABLE"
         }
     }
+    static func session(_ error: FountainSessionLogoutError) -> FountainFailure {
+        switch error { case .invalid: return .sessionInvalid; case .required: return .sessionRequired; case .conflict: return .sessionConflict }
+    }
     var message: String {
         switch self {
+        case .sessionInvalid: return "A valid logout binding is required"
+        case .sessionRequired: return "Verify the current native session before logout"
+        case .sessionConflict: return "The logout binding does not match the current native session"
         case .invalid: return "Invalid native request"
         case .stale: return "Native session or server configuration changed"
         case .cancelled: return "Native request cancelled"
@@ -261,6 +270,10 @@ private final class FountainJob {
     var backupHash = SHA256()
     var sentCookie: String?
     var logoutActor: FountainOutbox.LogoutActor?
+    var logoutIntent: FountainSessionLogout.Intent?
+    var logoutCookie: String?
+    var logoutOrigin: String?
+    var requestOrigin: String?
     var reconcileAdmission: FountainOutbox.ReconcileAdmission?
     var syncAdmission: FountainOutbox.SyncAdmission?
     var httpAdmission: FountainOutbox.HTTPAdmission?
@@ -346,6 +359,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     private var authQueue: [FountainJob] = []
     private var authJob: FountainJob?
     private var authDrainSuspended = 0
+    private let sessionLogout = FountainSessionLogout()
     private var exportID: String?
     private weak var picker: UIDocumentPickerViewController?
     // Main-thread only; a dismissed old picker cannot complete a newer export.
@@ -444,7 +458,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         queue.async {
             Self.ownership.lock(); defer { Self.ownership.unlock() }
             guard !self.terminated else { return }
-            self.terminated = true; self.auth += 1; self.authDrainSuspended += 1
+            self.terminated = true; self.sessionLogout.clear(); self.auth += 1; self.authDrainSuspended += 1
             for job in Array(self.jobs.values) { self.end(job, failure: .stale) }
             self.authQueue.removeAll()
             self.session?.invalidateAndCancel()
@@ -651,6 +665,23 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         }
     }
 
+    private func observePrivateSession(_ job: FountainJob, response: HTTPURLResponse, data: Data, method: String) throws {
+        guard response.statusCode == 200, current(job), let backend = origin, let requestedOrigin = job.requestOrigin else { return }
+        let value = try cookies()
+        guard value.revoke == nil, let responseURL = response.url else { sessionLogout.clear(); return }
+        let fields = response.allHeaderFields.reduce(into: [String: String]()) { result, entry in
+            if let key = entry.key as? String { result[key] = String(describing: entry.value) }
+        }
+        let returned = HTTPCookie.cookies(withResponseHeaderFields: fields, for: responseURL).filter { $0.name == "fountain_session" }
+        guard returned.count <= 1 else { sessionLogout.clear(); return }
+        let header: FountainSessionLogout.HeaderCookie
+        if let cookie = returned.first {
+            header = .value(outboxReference(cookie.value.isEmpty ? nil : "fountain_session=" + cookie.value))
+        } else { header = .absent }
+        sessionLogout.observeActualSession(origin: backend, requestOrigin: requestedOrigin,
+            requestCookieReference: outboxReference(job.sentCookie), currentCookieReference: outboxReference(value.active),
+            responseCookie: header, method: method, status: response.statusCode, data: data)
+    }
     private func observeOutboxSession(_ job: FountainJob, response: HTTPURLResponse, data: Data) throws {
         guard ACTIVE_OUTBOX_ENABLED else { return }
         let store = try outboxStore()
@@ -763,46 +794,53 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         return SHA256.hash(data: Data(backend.utf8)).map { String(format: "%02x", $0) }.joined() + ".invalid"
     }
 
-    private func hasInvalidation(_ backend: String) throws -> Bool {
+    private func invalidationState(_ backend: String) throws -> FountainSessionInvalidation.State? {
         let directory = try journalDirectory()
         defer { Darwin.close(directory) }
-        var info = stat()
-        if fstatat(directory, markerName(backend), &info, AT_SYMLINK_NOFOLLOW) != 0 {
-            if errno == ENOENT { return false }
-            throw FountainFailure.storage
-        }
-        guard (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG), info.st_uid == getuid(),
-              (info.st_mode & mode_t(0o777)) == mode_t(0o600) else { throw FountainFailure.storage }
-        return true
+        return try FountainSessionInvalidation(directory: directory, name: markerName(backend)).state()
+    }
+
+    private func hasInvalidation(_ backend: String) throws -> Bool {
+        try invalidationState(backend) != nil
     }
 
     private func writeInvalidation(_ backend: String) throws {
         let directory = try journalDirectory()
         defer { Darwin.close(directory) }
-        let name = markerName(backend)
-        var descriptor = openat(directory, name, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_NONBLOCK, mode_t(0o600))
-        if descriptor < 0 && errno == EEXIST { descriptor = openat(directory, name, O_WRONLY | O_NOFOLLOW | O_NONBLOCK) }
-        guard descriptor >= 0 else { throw FountainFailure.storage }
-        defer { Darwin.close(descriptor) }
-        var info = stat()
-        guard fstat(descriptor, &info) == 0, (info.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
-              info.st_uid == getuid(), (info.st_mode & mode_t(0o777)) == mode_t(0o600) else { throw FountainFailure.storage }
-        var marker: UInt8 = 1
-        guard Darwin.write(descriptor, &marker, 1) == 1, fsync(descriptor) == 0, fsync(directory) == 0 else { throw FountainFailure.storage }
+        try FountainSessionInvalidation(directory: directory, name: markerName(backend)).writeLegacy()
+    }
+
+    private func preparePublicInvalidation(_ intent: FountainSessionLogout.Intent, backend: String) throws {
+        let directory = try journalDirectory()
+        defer { Darwin.close(directory) }
+        try FountainSessionInvalidation(directory: directory, name: markerName(backend)).preparePublic(intent)
+    }
+
+    private func pendingRevokeBody(_ cookie: String?) throws -> Data {
+        guard let backend = origin else { throw FountainFailure.stale }
+        let directory = try journalDirectory()
+        defer { Darwin.close(directory) }
+        return try FountainSessionInvalidation(directory: directory, name: markerName(backend)).pendingBody(cookieRefHash: outboxReference(cookie))
+    }
+
+    private func invalidationTransition(_ job: FountainJob, cookies: FountainCookies) throws -> FountainSessionInvalidation.Transition {
+        guard let backend = origin else { throw FountainFailure.stale }
+        let directory = try journalDirectory()
+        defer { Darwin.close(directory) }
+        return try FountainSessionInvalidation(directory: directory, name: markerName(backend)).transition(mode: job.mode, active: cookies.active, revoke: cookies.revoke, cookieReference: outboxReference)
     }
 
     private func clearInvalidation(_ backend: String) throws {
         let directory = try journalDirectory()
         defer { Darwin.close(directory) }
-        guard unlinkat(directory, markerName(backend), 0) == 0 || errno == ENOENT else { throw FountainFailure.storage }
-        guard fsync(directory) == 0 else { throw FountainFailure.storage }
+        try FountainSessionInvalidation(directory: directory, name: markerName(backend)).clear()
     }
 
     private func cookies() throws -> FountainCookies {
         Self.ownership.lock(); defer { Self.ownership.unlock() }
         guard Self.currentOwner === self else { throw FountainFailure.stale }
         guard !storageFailed, let backend = origin else { throw FountainFailure.storage }
-        let invalidated = try hasInvalidation(backend)
+        let invalidated = try invalidationState(backend)
         var query = cookieQuery(backend)
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -816,16 +854,20 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                   cookie.hasPrefix("fountain_session=") && cookie.utf8.count > 17 && cookie.utf8.count <= 4113
                       && !cookie.unicodeScalars.contains(where: { $0.value <= 32 || $0.value >= 127 || $0.value == 59 })
               }) else { throw FountainFailure.storage }
-        if invalidated {
-            return FountainCookies(active: nil, revoke: value.revoke ?? value.active)
+        if invalidated != nil {
+            let directory = try journalDirectory()
+            defer { Darwin.close(directory) }
+            let masked = try FountainSessionInvalidation(directory: directory, name: markerName(backend)).restore(active: value.active, revoke: value.revoke, cookieReference: outboxReference)
+            return FountainCookies(active: masked.active, revoke: masked.revoke)
         }
         return value
     }
 
-    private func saveCookies(_ value: FountainCookies) throws {
+    private func saveCookies(_ value: FountainCookies, allowBestEffortRevoke: Bool = true, actualRollbackBody: Data? = nil) throws {
         Self.ownership.lock(); defer { Self.ownership.unlock() }
         guard Self.currentOwner === self else { throw FountainFailure.stale }
         guard !storageFailed, let backend = origin else { throw FountainFailure.storage }
+        sessionLogout.clear()
         var journalReady = false
         if value.active == nil {
             do { try writeInvalidation(backend); journalReady = true }
@@ -866,14 +908,17 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
             nextAuth()
             // Never send a revoke-only cookie through an ordinary API request.
             // A vault failure must not prevent best-effort DELETE using RAM.
-            bestEffortRevoke(value.revoke ?? value.active)
+            if allowBestEffortRevoke { bestEffortRevoke(value.revoke ?? value.active, actualBody: actualRollbackBody) }
             throw failure
         }
     }
 
-    private func bestEffortRevoke(_ cookie: String?) {
-        guard ownsBridge(), !terminated,
-              let task = try? network(path: "/api/session", method: "DELETE", headers: [:], body: Data(),
+    private func bestEffortRevoke(_ cookie: String?, actualBody: Data? = nil) {
+        // actualBody is supplied only for a current private POST200 response
+        // whose newly returned cookie failed durable adoption. Old context
+        // cannot authorize a bodyless rollback of that different cookie.
+        guard ownsBridge(), !terminated, let body = actualBody ?? (try? pendingRevokeBody(cookie)),
+              let task = try? network(path: "/api/session", method: "DELETE", headers: [:], body: body,
                                       cookie: cookie, timeout: 45, file: nil, done: { _, _, _ in }) else { return }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + .seconds(45))
@@ -932,7 +977,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
             if ACTIVE_OUTBOX_ENABLED, !self.recoveryMode { try self.outbox?.suspend() }
             self.recovery?.close(); self.recovery = nil
             self.outbox?.close(); self.outbox = nil
-            self.generation += 1; self.auth += 1
+            self.sessionLogout.clear(); self.generation += 1; self.auth += 1
             for job in Array(self.jobs.values) { self.end(job, failure: .stale) }
             self.origin = updated
             self.defaults.set(updated, forKey: "FountainNative.origin")
@@ -960,9 +1005,10 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
             }
         }
         let encoded = call.getString("bodyBase64") ?? ""
-        let limit = mode == "saveData" ? 8 * 1024 * 1024 : 10_000_000
+        let publicLogout = mode == "request" && decoded == "/api/session" && method == "DELETE"
+        let limit = publicLogout ? 8192 : mode == "saveData" ? 8 * 1024 * 1024 : 10_000_000
         guard encoded.utf8.count <= ((limit + 2) / 3) * 4,
-              let body = Data(base64Encoded: encoded), body.count <= limit else { throw FountainFailure.tooLarge }
+              let body = Data(base64Encoded: encoded), body.count <= limit else { throw publicLogout ? FountainFailure.sessionInvalid : FountainFailure.tooLarge }
         guard mode != "download" || body.isEmpty else { throw FountainFailure.invalid }
         let timeout: Int
         if call.options["timeoutMs"] == nil { timeout = 45_000 }
@@ -971,6 +1017,16 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         let kind = mode == "request" && decoded == "/api/session" ? (method == "POST" ? "login" : method == "DELETE" ? "logout" : method == "GET" ? "check" : mode) : mode
         let job = FountainJob(id: id, call: call, generation: generation, auth: auth, path: path,
                               method: method, headers: headers, body: body, timeout: Double(timeout) / 1000, mode: kind)
+        job.requestOrigin = origin
+        if publicLogout {
+            do {
+                job.logoutIntent = try sessionLogout.admit(body: body, origin: origin!, generation: generation, auth: auth) {
+                    let value = try self.cookies()
+                    guard value.revoke == nil else { throw FountainSessionLogoutError.required }
+                    return self.outboxReference(value.active)
+                }
+            } catch let error as FountainSessionLogoutError { throw FountainFailure.session(error) }
+        }
         jobs[id] = job
         if mode == "request" || mode.hasPrefix("recovery") {
             let timer = DispatchSource.makeTimerSource(queue: queue)
@@ -988,11 +1044,6 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     @objc func request(_ call: CAPPluginCall) {
         fromMainFrame(call) {
             let job = try self.newJob(call, mode: "request")
-            if job.mode == "logout", ACTIVE_OUTBOX_ENABLED, !self.recoveryMode {
-                let value = try self.cookies()
-                let reference = self.outboxReference(value.active ?? value.revoke) ?? "local-no-cookie"
-                job.logoutActor = try self.outboxStore().actorForLogout(reference: reference)
-            }
             if self.recoveryMode, job.method != "GET", !["login", "logout"].contains(job.mode) {
                 self.failRecovery(job, FountainRecoveryError.access); return
             }
@@ -1024,15 +1075,50 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         return ownsBridge() && !terminated && jobs[job.id] === job && job.generation == generation && job.auth == auth
     }
 
+    private func qualifyPublicLogout(_ job: FountainJob) throws {
+        guard let backend = origin, let intent = job.logoutIntent else { throw FountainFailure.sessionRequired }
+        var selected: FountainCookies?
+        try sessionLogout.recheck(intent, origin: backend, generation: generation, auth: auth) {
+            let value = try self.cookies()
+            guard value.revoke == nil else { throw FountainSessionLogoutError.conflict }
+            selected = value
+            return self.outboxReference(value.active)
+        }
+        guard let selected else { throw FountainFailure.sessionRequired }
+        // The durable negative context must exist before auth/cancellation,
+        // Vault, Recovery or Outbox effects. Failure leaves them untouched.
+        try preparePublicInvalidation(intent, backend: backend)
+        job.logoutCookie = selected.active; job.logoutOrigin = backend; job.logoutActor = nil
+        if ACTIVE_OUTBOX_ENABLED, !recoveryMode {
+            job.logoutActor = try outboxStore().actorForLogout(reference: outboxReference(selected.active) ?? "local-no-cookie")
+        }
+    }
+    private func clearPublicLogoutPending(_ job: FountainJob, rejected: Bool) throws {
+        guard current(job), origin == job.logoutOrigin else { throw FountainFailure.stale }
+        let value = try cookies()
+        guard let intent = job.logoutIntent, sessionLogout.ownsPending(intent, origin: origin!, activeCookieReference: outboxReference(value.active), pendingCookieReference: outboxReference(value.revoke)) else { throw FountainFailure.stale }
+        // A server409 disqualifies this explicit binding. It must never become
+        // an unconditional later bodyless retry, including storage-error paths.
+        try saveCookies(FountainCookies(), allowBestEffortRevoke: !rejected)
+    }
     private func nextAuth() {
         Self.ownership.lock(); defer { Self.ownership.unlock() }
         guard authJob == nil, authDrainSuspended == 0 else { return }
         while !authQueue.isEmpty {
             let job = authQueue.removeFirst()
             guard jobs[job.id] === job else { continue }
+            if job.mode == "logout" {
+                do { try qualifyPublicLogout(job) }
+                catch {
+                    let failure = (error as? FountainSessionLogoutError).map(FountainFailure.session) ?? (error as? FountainFailure) ?? .storage
+                    authDrainSuspended += 1; end(job, failure: failure); authDrainSuspended -= 1
+                    continue
+                }
+            }
             authJob = job
             do {
                 if job.mode != "check" {
+                    sessionLogout.clear()
                     recovery?.close(); recovery = nil
                     auth += 1
                     for other in Array(jobs.values) where other !== job && !authQueue.contains(where: { $0 === other }) {
@@ -1043,21 +1129,33 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                 var value: FountainCookies
                 if job.mode == "check" { value = try cookies() }
                 else { value = try authCookies(logoutActor: job.mode == "logout" ? job.logoutActor : nil) }
+                if job.mode != "check", let active = value.active { value.active = nil; value.revoke = active }
+                let transition = try invalidationTransition(job, cookies: value)
+                if transition.blockCheck { throw FountainFailure.revoke }
                 if job.mode != "check" {
-                    if let active = value.active { value.active = nil; value.revoke = active }
-                    try saveCookies(value)
+                    // An explicitly submitted login may use confirmed empty
+                    // credentials, retaining context until its actual POST200
+                    // cookie is durable. Unknown GET never consumes context.
+                    if !transition.preserveEmptyContext { try saveCookies(value) }
                 }
-                if let old = value.revoke {
+                if job.mode == "logout" || transition.pending != nil {
+                    let old = job.mode == "logout" ? job.logoutCookie : transition.pending?.cookie
+                    let revokeBody = job.mode == "logout" ? job.body : transition.pending!.body
                     job.revoking = true
-                    job.task = try network(path: "/api/session", method: "DELETE", headers: [:], body: Data(), cookie: old,
+                    job.task = try network(path: job.mode == "logout" ? job.path : "/api/session", method: "DELETE", headers: job.mode == "logout" ? job.headers : [:], body: revokeBody, cookie: old,
                                            timeout: job.timeout, file: nil) { response, data, error in
                         job.revoking = false
                         guard self.current(job) else { return }
-                        guard error == nil, let response = response, (200..<300).contains(response.statusCode) || response.statusCode == 401 else {
-                            self.end(job, failure: .revoke); return
+                        guard error == nil, let response = response else { self.end(job, failure: .revoke); return }
+                        if job.mode == "logout", response.statusCode == 409 {
+                            do { try self.clearPublicLogoutPending(job, rejected: true); self.resolve(job, response: response, data: data) }
+                            catch { self.end(job, failure: error as? FountainFailure ?? .storage) }
+                            return
                         }
+                        guard (200..<300).contains(response.statusCode) || response.statusCode == 401 else { self.end(job, failure: .revoke); return }
                         do {
-                            try self.saveCookies(FountainCookies())
+                            if job.mode == "logout" { try self.clearPublicLogoutPending(job, rejected: false) }
+                            else { try self.saveCookies(FountainCookies()) }
                             if job.cancelAfterRevoke { self.end(job, failure: .cancelled) }
                             else if job.mode == "logout" { self.resolve(job, response: response, data: data) }
                             else { self.send(job) }
@@ -1094,7 +1192,8 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                         guard found.count == 1, found[0].path == "/", !found[0].value.isEmpty,
                               found[0].value.utf8.count <= 4096,
                               !found[0].value.unicodeScalars.contains(where: { $0.value <= 32 || $0.value >= 127 || $0.value == 59 }) else { throw FountainFailure.invalid }
-                        try self.saveCookies(FountainCookies(active: "fountain_session=" + found[0].value, revoke: nil))
+                        let rollbackBody = try FountainSessionLogout.actualResponseBody(data)
+                        try self.saveCookies(FountainCookies(active: "fountain_session=" + found[0].value, revoke: nil), actualRollbackBody: rollbackBody)
                     } else if response.statusCode == 401, let sent = job.sentCookie {
                         let value = try self.cookies()
                         if value.active == sent {
@@ -1116,6 +1215,9 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                     }
                     if self.recoveryMode, job.method == "GET", self.recovery?.observes(job.path) == true {
                         self.recovery?.noteCanonical(path: job.path, status: response.statusCode, data: data)
+                    }
+                    if ["check", "login"].contains(job.mode) {
+                        try self.observePrivateSession(job, response: response, data: data, method: job.method)
                     }
                     try self.observeOutboxSession(job, response: response, data: data)
                     if ACTIVE_OUTBOX_ENABLED, job.path == "/api/session", response.statusCode == 200 {
@@ -1492,6 +1594,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                     if response?.statusCode == 401 { try self.recoveryUnauthorized(job) }
                     guard error == nil, let response = response, response.statusCode == 200 else { throw FountainRecoveryError.auth }
                     guard try self.cookies().active == job.sentCookie else { throw FountainRecoveryError.stale }
+                    try self.observePrivateSession(job, response: response, data: data, method: "GET")
                     let authority = try FountainRecovery.Authority.session(data, origin: backend, reference: self.outboxReference(job.sentCookie) ?? "local-no-cookie")
                     // This explicit Recovery session remains authoritative even
                     // when a permanently suspended Outbox grant cannot mutate.

@@ -65,7 +65,7 @@ window.addEventListener('fountain-native-outbox-pause',event=>{
   const paused={...detail,navigation,channel:state.channel,loaded:state.loaded,profile:state.offlineProfile,saveScheduled:!!state.saveTimer,titleScheduled:!!state.titleTimer,route:state.route,id:navigation?.id||(state.route==='page'?state.page?.id:state.database?.id),dom:[],input:null,forms:unsubmittedNativeForms(),resourceKind:navigation?.route==='database'?'database':state.route==='page'?'page':state.database?.id?'database':null,focus:document.activeElement,selection:state.route==='page'?selectedTextPosition():null};
   try{if(state.loaded)paused.input=authenticationInput(state.offlineProfile);}catch{ /* Keep the live DOM when it cannot yet be represented as a bounded draft. */ }
   if(previous?.channel)previous.channel.resumeNetwork?.(previous.owner+':'+previous.token);
-  state.nativeOutboxPause=paused;clearDatabaseVerification();clearDatabasePropertyView();clearInbox();clearWikiMutation();clearWikiPage();clearTimeout(state.saveTimer);clearTimeout(state.titleTimer);
+  state.nativeOutboxPause=paused;if(state.verifiedPages)closeModal();clearVerifiedPages();clearDatabaseVerification();clearDatabasePropertyView();clearInbox();clearWikiMutation();clearWikiPage();clearTimeout(state.saveTimer);clearTimeout(state.titleTimer);
   state.channel?.pauseNetwork?.(detail.owner+':'+detail.token);
   state.presenceManager?.pause({leave:false});
   for(const node of [$('#main'),$('#sidebar'),$('#topbar'),$('#overlay-root')].filter(Boolean)){paused.dom.push({node,inert:previous?.dom.find(item=>item.node===node)?.inert??node.inert});node.inert=true;}
@@ -251,7 +251,7 @@ function pruneAdministrativeControls() {
   });
 }
 // Durable entity edits share the current login binding with document drafts.
-const serverOnlyActions=new Set(['new-database','teamspace','history','share','db-share','lock-page','delete-page','verify-page','move-page','duplicate-page','copy-blocks','new-property','task-settings','duplicate-row','restore-version','restore-page','trash','settings','ai','new-teamspace','wiki-toggle','confirm-wiki-toggle','wiki-owner','row-verification','owner-settings']);
+const serverOnlyActions=new Set(['new-database','teamspace','history','share','db-share','lock-page','delete-page','verify-page','move-page','duplicate-page','copy-blocks','new-property','task-settings','duplicate-row','restore-version','restore-page','trash','settings','ai','new-teamspace','wiki-toggle','confirm-wiki-toggle','wiki-owner','row-verification','owner-settings','verified-pages']);
 const activeMutationStatuses=new Set(['pending','deferred','applied']);
 function closeMutations() {
   if(state.recoveryImport)closeModal();
@@ -722,6 +722,7 @@ function renderTopbar(title='홈',emoji='') {
 async function navigate(route,id) {
   if(state.nativeOutboxPause)return;
   if(state.nativeRecoveryPaused)return;
+  settingsOpenSequence++;if(!state.verifiedPages?.opening)clearVerifiedPages();
   state.uploadTargetPageId=route==='page'?id:null;state.uploadManager?.pauseAll('다른 문서를 여는 동안 파일 전송을 일시 중지했습니다.');
   const binding=state.session?.cache_binding,generation=state.bootGeneration;
   const navigation={route,id,binding,generation,opening:false};state.nativeNavigation=navigation;
@@ -1432,7 +1433,7 @@ async function reloadDatabase() {
   applyDatabaseControls();
 }
 function openModal(title,content,cls='') {
-  clearSearch();searchNavigation++;
+  settingsOpenSequence++;clearVerifiedPages();clearSearch();searchNavigation++;
   clearDatabaseVerification();clearDatabasePropertyView();clearWikiMutation();clearInbox();clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;state.verificationView=null;closeSlash();
   $('#overlay-root').innerHTML=`<div class="modal-backdrop"><section class="modal ${cls}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="modal-head"><h2>${esc(title)}</h2><button class="modal-close" data-action="close-modal" aria-label="닫기">×</button></header><div class="modal-body">${content}</div></section></div>`;
   if(state.route==='page'&&resourceLevel(state.page)<4)$$('[data-action="delete-page"],[data-action="move-page"]',$('.modal')).forEach(el=>el.remove());
@@ -1442,7 +1443,7 @@ function openModal(title,content,cls='') {
   requestAnimationFrame(()=>{if(body?.isConnected)$('input:not([type=checkbox]),textarea,select,button',body)?.focus();});
 }
 function closeModal() {
-  clearSearch();searchNavigation++;
+  settingsOpenSequence++;clearVerifiedPages();clearSearch();searchNavigation++;
   clearDatabaseVerification();clearDatabasePropertyView();clearWikiMutation();clearInbox();clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;state.verificationView=null;$('#overlay-root').innerHTML='';
   closeSlash();
 }
@@ -1824,33 +1825,101 @@ async function openPermissions(kind,id) {
   openModal(kind==='pages'?'페이지 공유 및 권한':'데이터베이스 공유 및 권한',`<p>링크를 전달해도 아래에서 허용한 사람만 열 수 있습니다. 워크스페이스 소유자는 모든 문서에 접근할 수 있습니다. 그 외 멤버의 명시적 차단은 그룹과 상위 페이지의 허용보다 우선합니다.</p><div style="display:flex;gap:8px;margin-bottom:20px"><input id="share-url" style="flex:1;min-width:0" readonly value="${esc(shareURL||'')}" placeholder="${shareURL?'':'공유 웹 주소를 연결해 주세요.'}"><button class="outline-btn" data-action="copy-link" ${shareURL?'':'disabled'}>${icon('link')}링크 복사</button></div>${!manage?'<div class="info-box">현재 공유 설정을 볼 수 있습니다. 소유자 또는 전체 권한을 가진 사람만 변경할 수 있습니다.</div>':''}<form id="permissions-form" data-kind="${kind}" data-id="${esc(id)}" class="form-grid" style="margin-top:18px"><label>기본 공유 범위<select name="default" ${!manage?'disabled':''}><option value="private" ${acl.default==='private'?'selected':''}>지정·상속된 사람만 · 비공개</option><option value="workspace" ${acl.default==='workspace'?'selected':''}>워크스페이스 멤버 · 편집 (게스트 제외)</option></select></label><label style="display:flex;align-items:center"><input name="inherit" type="checkbox" style="width:auto" ${acl.inherit!==false?'checked':''} ${!manage?'disabled':''}>${kind==='pages'?'상위 페이지와 팀스페이스 권한 상속':'팀스페이스 권한 상속'}</label><div><strong class="small">가족 멤버</strong><div class="settings-list">${rows(result.members||[],'members')}</div></div>${result.groups?.length?`<div><strong class="small">그룹</strong><div class="settings-list">${rows(result.groups,'groups')}</div></div>`:''}${database?`<div style="border-top:1px solid var(--line);padding-top:15px"><strong class="small">항목별 접근</strong><label style="margin-top:12px">보여줄 항목<select name="row_mode" ${!manage?'disabled':''}><option value="all" ${policy.mode!=='assigned'?'selected':''}>접근 가능한 모든 항목</option><option value="assigned" ${policy.mode==='assigned'?'selected':''}>내가 담당자인 항목만</option></select></label><label style="margin-top:12px">담당자 속성<select name="property_id" ${!manage?'disabled':''}><option value="">선택하세요</option>${(database.properties||[]).filter(p=>p.type==='person').map(p=>`<option value="${esc(p.id)}" ${policy.property_id===p.id?'selected':''}>${esc(p.name)}</option>`).join('')}</select></label><label style="display:flex;align-items:center;margin-top:12px"><input type="checkbox" name="edit_assigned" style="width:auto" ${policy.edit_assigned!==false?'checked':''} ${!manage?'disabled':''}>담당 항목 편집 허용</label><label style="display:flex;align-items:center;margin-top:12px"><input type="checkbox" name="allow_create" style="width:auto" ${policy.allow_create!==false?'checked':''} ${!manage?'disabled':''}>새 항목 생성 허용</label></div>`:''}${manage?'<div class="form-actions"><button class="solid-btn">공유 설정 저장</button></div>':''}</form>`);
 }
 
+let settingsOpenSequence=0;
+function verifiedPagesIdentity(){return {binding:state.session?.cache_binding,member:state.session?.member?.id,role:state.session?.member?.role,profile:state.offlineProfile?.id,workspace:state.workspace?.workspace_id,boot:state.bootGeneration,epoch:FountainTransport.scopeEpoch,origin:FountainTransport.origin};}
+function verifiedPagesIdentityCurrent(scope){return !!scope&&state.loaded&&state.session?.member?.active!==false&&!state.offline&&!state.authSuspending&&!state.nativeOutboxPause&&!state.nativeRecoveryPaused&&Object.entries(scope).every(([key,value])=>verifiedPagesIdentity()[key]===value);}
+function clearVerifiedPages(){const view=state.verifiedPages;state.verifiedPages=null;if(!view)return;view.closed=true;view.sequence++;clearTimeout(view.timer);view.request?.abort();view.items=[];view.filters={owners:[],teamspaces:[]};if(view.content?.isConnected)view.content.replaceChildren();}
+function verifiedPagesCurrent(view){return !!view&&!view.closed&&state.verifiedPages===view&&verifiedPagesIdentityCurrent(view.scope)&&state.settingsTab==='verified'&&view.modal?.isConnected&&$('.settings-modal')===view.modal&&$('#settings-content')===view.content&&view.content.isConnected&&view.form.isConnected&&$('#verified-pages-filters',view.content)===view.form&&state.nativeNavigation===view.navigation;}
+function verifiedPagesId(value){return typeof value==='string'&&value.length>0&&Array.from(value).length<=200&&!/[\u0000-\u001f\u007f\uD800-\uDFFF]/u.test(value);}
+function verifiedPagesPerson(value){return !!value&&verifiedPagesId(value.id)&&typeof value.name==='string';}
+function validVerifiedPagesItem(item){return !!item&&verifiedPagesId(item.id)&&['page','row'].includes(item.resource_type)&&typeof item.title==='string'&&(item.icon==null||typeof item.icon==='string')&&Array.isArray(item.owners)&&item.owners.every(verifiedPagesPerson)&&(item.teamspace===null||verifiedPagesPerson(item.teamspace))&&item.verification&&['verified','expired'].includes(item.verification.status)&&verificationTimestamp(item.verification.verified_at)&&(item.verification.expires_at===null||verificationTimestamp(item.verification.expires_at))&&(item.resource_type==='page'?item.page_id===item.id:verifiedPagesId(item.database_id)&&item.row_id===item.id);}
+function verifiedPagesOptions(select,options,label){const value=select.value;select.innerHTML=`<option value="">${label}</option>${value&&!options.some(option=>option.id===value)?`<option value="${esc(value)}">선택한 필터 · 정보 비공개</option>`:''}${options.map(option=>`<option value="${esc(option.id)}">${esc(option.name||'이름 없음')}</option>`).join('')}`;select.value=value;}
+function renderVerifiedPages(view){
+  if(!verifiedPagesCurrent(view))return;const disabled=view.loading||view.opening;
+  const status=$('#verified-pages-status',view.content),error=$('#verified-pages-error',view.content),results=$('#verified-pages-results',view.content),footer=$('#verified-pages-count',view.content);
+  status.textContent=view.opening?'최신 문서와 접근 권한을 확인하고 있습니다…':view.loading?'검증 문서를 불러오고 있습니다…':view.error?'목록을 불러오지 못했습니다.':`${view.total??0}개의 검증 문서와 항목`;
+  error.textContent=view.error||'';results.innerHTML=view.loading?'<div class="empty" role="status">목록을 확인하고 있습니다…</div>':view.items.length?`<div class="verified-pages-scroll"><table class="verified-pages-table"><thead><tr><th>문서</th><th>담당자</th><th>팀스페이스</th><th>검증 상태</th><th>만료</th><th>열기</th></tr></thead><tbody>${view.items.map((item,index)=>`<tr><td data-label="문서"><strong>${esc(item.icon|| (item.resource_type==='row'?'▤':'📄'))} ${esc(item.title||'제목 없음')}</strong><small>${item.resource_type==='row'?'데이터베이스 항목':'페이지'}</small></td><td data-label="담당자">${item.owners.length?item.owners.map(owner=>esc(owner.name||'이름 없는 담당자')).join(', '):'담당자 정보 비공개'}</td><td data-label="팀스페이스">${esc(item.teamspace?.name||'위치 정보 비공개')}</td><td data-label="검증 상태"><span class="verification-badge ${item.verification.status==='verified'?'verified':''}">${item.verification.status==='verified'?'✓ 검증됨':'검증 만료'}</span><small>확인 ${esc(verificationDate(item.verification.verified_at))}</small></td><td data-label="만료">${item.verification.expires_at?esc(verificationDate(item.verification.expires_at)):'만료 없음'}</td><td data-label="열기"><div class="verified-pages-actions"><button type="button" class="outline-btn" data-action="verified-open" data-index="${index}" ${disabled?'disabled':''}>열기</button><button type="button" class="outline-btn" data-action="verified-edit" data-index="${index}" ${disabled?'disabled':''}>검증 보기</button></div></td></tr>`).join('')}</tbody></table></div>`:view.error?'':'<div class="empty">현재 조건에 맞는 검증 문서가 없습니다.</div>';
+  footer.textContent=view.total===null?'':view.items.length?`${view.offset+1}–${view.offset+view.items.length} / ${view.total}개`:`0 / ${view.total}개`;
+  $('[data-action="verified-previous"]',view.content).disabled=disabled||view.offset===0;$('[data-action="verified-next"]',view.content).disabled=disabled||!view.hasMore;
+  $('[data-action="verified-retry"]',view.content).hidden=!view.error;$('[data-action="verified-refresh"]',view.content).disabled=!!view.opening;
+  for(const control of view.form.elements)control.disabled=!!view.opening;
+}
+function verifiedPagesParameters(view){const fields=new FormData(view.form),q=String(fields.get('q')||'');if(Array.from(q).length>200||/[\u0000\uD800-\uDFFF]/u.test(q))throw Error('검색어는 올바른 문자로 200자 이내로 입력해 주세요.');const params=new URLSearchParams({q,status:fields.get('status')||'all',kind:fields.get('kind')||'all',limit:'50',offset:String(view.offset)});for(const key of ['owner','teamspace']){const value=fields.get(key);if(value)params.set(key,value);}return params;}
+async function loadVerifiedPages(view){
+  if(!verifiedPagesCurrent(view)||view.opening)return;const sequence=++view.sequence;view.request?.abort();clearTimeout(view.timer);view.request=new AbortController();view.loading=true;view.error=null;view.items=[];view.total=null;view.hasMore=false;renderVerifiedPages(view);
+  const current=()=>verifiedPagesCurrent(view)&&view.sequence===sequence;
+  try{
+    const parameters=verifiedPagesParameters(view),offset=view.offset;
+    if(!current())return;const result=await api('/verified-pages?'+parameters,undefined,'GET',{signal:view.request.signal,current});if(!current())return;
+    if(!Array.isArray(result.items)||result.items.length>50||!result.items.every(validVerifiedPagesItem)||!Number.isSafeInteger(result.total)||result.total<0||typeof result.has_more!=='boolean'||result.limit!==50||result.offset!==offset||!Array.isArray(result.filters?.owners)||!result.filters.owners.every(verifiedPagesPerson)||!Array.isArray(result.filters?.teamspaces)||!result.filters.teamspaces.every(verifiedPagesPerson)||new Set(result.items.map(item=>item.resource_type+':'+item.id)).size!==result.items.length)throw Error('검증 목록 응답을 확인하지 못했습니다. 다시 시도해 주세요.');
+    view.items=result.items.map(item=>({id:item.id,resource_type:item.resource_type,title:item.title,icon:item.icon,owners:item.owners.map(owner=>({id:owner.id,name:owner.name})),teamspace:item.teamspace?{id:item.teamspace.id,name:item.teamspace.name}:null,verification:{status:item.verification.status,verified_at:item.verification.verified_at,expires_at:item.verification.expires_at},...(item.resource_type==='page'?{page_id:item.page_id}:{database_id:item.database_id,row_id:item.row_id})}));
+    view.total=result.total;view.hasMore=result.has_more;view.filters=result.filters;
+    verifiedPagesOptions(view.form.elements.owner,result.filters.owners,'모든 담당자');verifiedPagesOptions(view.form.elements.teamspace,result.filters.teamspaces,'모든 팀스페이스');
+  }catch(error){if(!current()||error.name==='AbortError'||error.code==='STALE_REQUEST')return;view.items=[];view.total=null;view.hasMore=false;view.filters={owners:[],teamspaces:[]};verifiedPagesOptions(view.form.elements.owner,[],'모든 담당자');verifiedPagesOptions(view.form.elements.teamspace,[],'모든 팀스페이스');view.error=[403,404].includes(error.status)?'현재 목록에 접근할 수 없습니다. 권한을 확인한 뒤 다시 열어 주세요.':error.status===409?'목록이 변경되었습니다. 새로고침해 주세요.':error.message;}
+  finally{if(current()){view.loading=false;view.request=null;renderVerifiedPages(view);}}
+}
+function changeVerifiedPages(view,debounce=false){
+  if(!verifiedPagesCurrent(view)||view.opening)return;view.sequence++;view.request?.abort();clearTimeout(view.timer);view.offset=0;view.items=[];view.total=null;view.hasMore=false;view.error=null;view.loading=true;renderVerifiedPages(view);
+  if(debounce)view.timer=setTimeout(()=>{if(verifiedPagesCurrent(view))void loadVerifiedPages(view);},150);else void loadVerifiedPages(view);
+}
+async function mountVerifiedPages(content){
+  if(!content||state.offline||!state.loaded||!state.session?.member||state.session.member.active===false)throw Error('현재 계정으로 서버에 연결한 뒤 검증 문서를 확인해 주세요.');
+  content.innerHTML='<section class="verified-pages-directory"><h3>검증된 페이지</h3><p>현재 접근할 수 있는 검증 문서와 데이터베이스 항목입니다. 검증 변경은 문서를 연 뒤 현재 권한으로 진행합니다.</p><form id="verified-pages-filters" class="verified-pages-filters"><label class="verified-pages-query">문서 제목 검색<input name="q" maxlength="400" placeholder="검증 문서의 제목 검색"></label><label>담당자<select name="owner"><option value="">모든 담당자</option></select></label><label>팀스페이스<select name="teamspace"><option value="">모든 팀스페이스</option></select></label><label>검증 상태<select name="status"><option value="all">전체 검증 상태</option><option value="verified">검증됨</option><option value="expired">검증 만료</option></select></label><label>문서 종류<select name="kind"><option value="all">페이지와 항목</option><option value="page">페이지</option><option value="row">데이터베이스 항목</option></select></label><div class="verified-pages-filter-actions"><button class="solid-btn" type="submit">검색</button><button class="outline-btn" type="button" data-action="verified-clear">초기화</button><button class="outline-btn" type="button" data-action="verified-refresh">새로고침</button></div></form><div id="verified-pages-status" role="status" aria-live="polite"></div><div id="verified-pages-error" role="alert"></div><div id="verified-pages-results"></div><div class="verified-pages-footer"><span id="verified-pages-count"></span><div><button type="button" class="outline-btn" data-action="verified-previous">이전</button><button type="button" class="outline-btn" data-action="verified-next">다음</button><button type="button" class="outline-btn" data-action="verified-retry" hidden>다시 시도</button></div></div></section>';
+  const view={scope:verifiedPagesIdentity(),navigation:state.nativeNavigation,modal:content.closest('.modal'),content,form:$('#verified-pages-filters',content),sequence:0,offset:0,items:[],filters:{owners:[],teamspaces:[]},total:null,hasMore:false,loading:false,opening:false,closed:false};state.verifiedPages=view;
+  view.form.onsubmit=event=>{event.preventDefault();changeVerifiedPages(view);};view.form.onchange=event=>{if(event.target!==view.form.elements.q)changeVerifiedPages(view);};view.form.elements.q.oninput=()=>changeVerifiedPages(view,true);
+  await loadVerifiedPages(view);
+}
+async function openVerifiedPages(){
+  if(!state.loaded||state.offline||state.nativeOutboxPause||state.nativeRecoveryPaused||state.authSuspending||!state.session?.member||state.session.member.active===false)throw Error('현재 계정으로 서버에 연결한 뒤 확인해 주세요.');
+  state.settingsTab='verified';openModal('워크스페이스 설정','<div class="settings-layout"><nav class="settings-tabs" id="settings-tabs"></nav><div class="settings-content" id="settings-content"></div></div>','settings-modal verified-settings-modal');$('.modal-body').style.padding='0';await renderSettings();
+}
+async function openVerifiedPagesItem(index,edit=false){
+  const view=state.verifiedPages,item=view?.items[index];if(!verifiedPagesCurrent(view)||view.loading||view.opening||!item)return;
+  const scope={...view.scope},ticket=searchNavigation;view.opening=true;view.request?.abort();renderVerifiedPages(view);
+  const navigationPromise=navigate(item.resource_type==='page'?'page':'database',item.resource_type==='page'?item.page_id:item.database_id),navigation=state.nativeNavigation;view.navigation=navigation;
+  const opened=await navigationPromise;
+  if(opened!==true){if(state.verifiedPages===view&&verifiedPagesIdentityCurrent(scope)&&view.modal.isConnected&&searchNavigation===ticket&&state.nativeNavigation===null){view.navigation=null;}if(verifiedPagesCurrent(view)){view.opening=false;view.error='문서를 열지 못했습니다. 작성 중인 입력과 현재 화면을 확인해 주세요.';renderVerifiedPages(view);}return;}
+  const current=()=>verifiedPagesIdentityCurrent(scope)&&state.nativeNavigation===null&&searchNavigation===ticket+1&&!$('.modal');if(!current())return;
+  if(item.resource_type==='row'){
+    if(state.route!=='database'||state.database?.id!==item.database_id)return;if(!state.rows.some(row=>row.id===item.row_id&&resourceLevel(row)>=1)){toast('항목이 삭제되었거나 더 이상 접근할 수 없습니다.');return;}openRow(item.row_id);if(edit)await openDatabaseVerification();return;
+  }
+  if(state.route!=='page'||state.page?.id!==item.page_id||!edit)return;await syncWikiPage();if(!current()||state.page?.id!==item.page_id)return;
+  if(pageEditable()&&wikiVerificationAllowed())await verificationModal();else toast('현재 권한으로 문서의 검증 상태를 확인할 수 있습니다.');
+}
+
 async function openSettings(tab='members') {
+  if(tab==='verified'){await openVerifiedPages();return;}
   clearScimPanel();
-  if(!isAdmin()){openModal('내 계정',`<p><strong>${esc(state.session?.member?.name||'가족')}</strong><br>${esc(state.session?.member?.email||'')}<br>${esc(state.session?.member?.role||'')}</p><button class="outline-btn" data-action="logout">로그아웃</button>`);return;}
+  if(!isAdmin()){openModal('내 계정',`<p><strong>${esc(state.session?.member?.name||'가족')}</strong><br>${esc(state.session?.member?.email||'')}<br>${esc(state.session?.member?.role||'')}</p><button class="outline-btn" data-action="verified-pages">검증된 페이지</button><button class="outline-btn" data-action="logout">로그아웃</button>`);return;}
+  const identity=verifiedPagesIdentity(),ticket=++settingsOpenSequence,navigation=state.nativeNavigation,overlay=$('#overlay-root').firstChild;const current=()=>verifiedPagesIdentityCurrent(identity)&&isAdmin()&&settingsOpenSequence===ticket&&state.nativeNavigation===navigation&&$('#overlay-root').firstChild===overlay;
   state.settingsTab=tab;
   try {
-    state.advanced=await api('/advanced');
+    const advanced=await api('/advanced',undefined,'GET',{current});if(!current())return;state.advanced=advanced;
   }
   catch(e) {
-    toast(e.message);
+    if(!current())return;toast(e.message);
     state.advanced= {
     };
   }
   openModal('워크스페이스 설정','<div class="settings-layout"><nav class="settings-tabs" id="settings-tabs"></nav><div class="settings-content" id="settings-content"></div></div>','settings-modal');
-  $('.modal-body').style.padding='0';
-  await renderSettings();
+  $('.modal-body').style.padding='0';const modal=$('.settings-modal');
+  await renderSettings();return modal.isConnected&&$('.settings-modal')===modal&&verifiedPagesIdentityCurrent(identity)&&state.settingsTab===tab&&state.nativeNavigation===navigation;
 }
-const settingsTabs=[['accounts','가족 계정'],['members','멤버 및 그룹'],['security','보안 및 권한'],['scim','SCIM 계정 연동'],['automations','자동화'],['forms','폼'],['sites','사이트'],['AI','AI 및 연결'],['analytics','워크스페이스 분석'],['features','기능 제공 현황'],['export','가져오기 / 내보내기']];
+const settingsTabs=[['verified','검증된 페이지'],['accounts','가족 계정'],['members','멤버 및 그룹'],['security','보안 및 권한'],['scim','SCIM 계정 연동'],['automations','자동화'],['forms','폼'],['sites','사이트'],['AI','AI 및 연결'],['analytics','워크스페이스 분석'],['features','기능 제공 현황'],['export','가져오기 / 내보내기']];
 async function renderSettings() {
-  clearScimPanel();
-  const tab=state.settingsTab;
-  $('#settings-tabs').innerHTML=settingsTabs.filter(([key])=>!['accounts','security','scim','analytics','export','AI'].includes(key)||isOwner()).map(([key,name])=>`<button data-action="settings-tab" data-tab="${key}" class="${tab===key?'active':''}">${name}</button>`).join('');
-  const content=$('#settings-content'),a=state.advanced|| {
+  clearVerifiedPages();clearScimPanel();
+  if(!$('#settings-tabs')||!$('#settings-content'))return;
+  if(!isAdmin()&&state.settingsTab!=='verified'){$('#settings-content').textContent='관리자 권한이 필요합니다.';return;}
+  const tab=state.settingsTab;$('.settings-modal')?.classList.toggle('verified-settings-modal',tab==='verified');
+  $('#settings-tabs').innerHTML=settingsTabs.filter(([key])=>(isAdmin()||key==='verified')&&(!['accounts','security','scim','analytics','export','AI'].includes(key)||isOwner())).map(([key,name])=>`<button data-action="settings-tab" data-tab="${key}" class="${tab===key?'active':''}">${name}</button>`).join('');
+  let content=$('#settings-content');if(tab==='verified'){const fresh=content.cloneNode(false);content.replaceWith(fresh);content=fresh;}
+  const a=state.advanced|| {
   };
   const header=(title,desc,button='')=>`<div class="section-heading"><h3>${title}</h3>${button}</div><p>${desc}</p>`;
   const add=(kind,label)=>`<button class="outline-btn" data-action="add-advanced" data-kind="${kind}">+ ${label}</button>`;
   const items=(kind,detail)=>`<div class="settings-list">${normalizeList(a[kind]).map(item=>`<div class="settings-item"><div><strong>${esc(item.name||item.title||item.email||item.id)}</strong><small>${esc(detail(item))}</small></div><div>${kind==='automations'?`<button data-action="toggle-automation" data-id="${esc(item.id)}">${item.enabled===false?'사용':'일시 중지'}</button><button data-action="automation-runs" data-id="${esc(item.id)}">기록</button><button data-action="run-automation" data-id="${esc(item.id)}" ${item.enabled===false?'disabled title="직접 실행하려면 먼저 자동화를 사용 상태로 바꾸세요"':''}>한 번 실행</button>`:''}${kind==='forms'?`<button data-action="fill-form" data-id="${esc(item.id)}">응답</button>`:''}${kind==='sites'?`<button data-action="site-link" data-id="${esc(item.id)}">링크</button>`:''}<button data-action="edit-advanced" data-kind="${kind}" data-id="${esc(item.id)}">관리</button></div></div>`).join('')||'<div class="empty">아직 항목이 없어요. 첫 번째 항목을 만들어 보세요.</div>'}</div>`;
-  if(tab==='scim'){await renderScimSettings(content);}
+  if(tab==='verified'){await mountVerifiedPages(content);}
+  else if(tab==='scim'){await renderScimSettings(content);}
   else if(tab==='accounts'){await renderAccounts(content);}
   else if(tab==='members') {
     content.innerHTML=header('함께 만드는 워크스페이스','팀원을 초대하고, 역할과 그룹을 관리하세요.',add('members','멤버 초대'))+items('members',m=>`${m.email||''} · ${m.role||'member'}`)+`<div class="section-heading" style="margin-top:28px"><h3>그룹</h3>${add('groups','그룹 추가')}</div>`+items('groups',g=>`${(g.members||[]).length}명의 멤버`);
@@ -2237,6 +2306,11 @@ async function doAction(target,grouped=false) {
   if(edits.includes(a)&&resourceLevel(state.page)<3)throw new Error('페이지 편집 권한이 없습니다.');
   if(['add-row','new-property'].includes(a)&&!(a==='add-row'?canCreateRow():resourceLevel(state.database)>=4))throw new Error('데이터베이스 편집 권한이 없습니다.');
   switch(a) {
+    case'verified-pages':await openVerifiedPages();break;
+    case'verified-clear':{const view=state.verifiedPages;if(verifiedPagesCurrent(view)&&!view.opening){view.form.reset();changeVerifiedPages(view);}break;}
+    case'verified-refresh':case'verified-retry':await loadVerifiedPages(state.verifiedPages);break;
+    case'verified-previous':case'verified-next':{const view=state.verifiedPages;if(verifiedPagesCurrent(view)&&!view.loading&&!view.opening){view.offset=Math.max(0,view.offset+(a==='verified-next'?50:-50));await loadVerifiedPages(view);}break;}
+    case'verified-open':case'verified-edit':await openVerifiedPagesItem(Number(target.dataset.index),a==='verified-edit');break;
     case'inbox':await openInbox();break;
     case'inbox-filter':{const view=state.inboxView,filter=target.dataset.filter;if(inboxScopeCurrent(view)&&!view.busy&&!view.loading&&['all','unread','archived'].includes(filter)){view.filter=filter;view.items=[];view.hasMore=false;await loadInbox(view);}break;}
     case'inbox-refresh':await loadInbox(state.inboxView);break;
@@ -2268,7 +2342,7 @@ async function doAction(target,grouped=false) {
     }
     case'accounts':await openSettings('accounts');break;
     case'account-password':openAccountPassword(id);break;
-    case'account-add-member':await openSettings('members');advancedForm('members');break;
+    case'account-add-member':if(await openSettings('members')===true)advancedForm('members');break;
     case'account-remove':{
       if(!isOwner())throw new Error('소유자 권한이 필요합니다.');
       const account=state.accounts.find(account=>account.id===id);
@@ -2502,14 +2576,12 @@ async function doAction(target,grouped=false) {
     case'settings-tab':state.settingsTab=target.dataset.tab;
     await renderSettings();
     break;
-    case'invite':await openSettings('members');
-    advancedForm('members');
+    case'invite':if(await openSettings('members')===true)advancedForm('members');
     break;
-    case'new-teamspace':await openSettings('members');
-    advancedForm('teamspaces');
+    case'new-teamspace':if(await openSettings('members')===true)advancedForm('teamspaces');
     break;
     case'teamspace': {
-      await openSettings('members');
+      if(await openSettings('members')!==true)break;
       const t=state.advanced.teamspaces?.find(t=>t.id===id);
       if(t)advancedForm('teamspaces',id);
       break;
@@ -2608,7 +2680,8 @@ async function doAction(target,grouped=false) {
     }
   }
 }
-window.addEventListener('pagehide',clearScimPanel);
+window.addEventListener('pagehide',()=>{clearVerifiedPages();clearScimPanel();});
+window.addEventListener('offline',()=>{if(state.verifiedPages)closeModal();});
 document.addEventListener('click',event=> {
   if(state.nativeOutboxPause&&!event.target.closest?.('.native-recovery-dialog'))return;
   if(event.target.closest?.('.block-content a.rich-link')&&pageEditable()&&!event.metaKey&&!event.ctrlKey){event.preventDefault();return;}
@@ -2892,7 +2965,7 @@ window.addEventListener('beforeunload',event=> {
   }
 });
 function renderLogin(preserve=true) {
-  clearWikiMutation();clearWikiPage();clearInbox();clearScimPanel();stopBackup();
+  if(state.verifiedPages)closeModal();clearVerifiedPages();clearWikiMutation();clearWikiPage();clearInbox();clearScimPanel();stopBackup();
   if(state.nativeRecoveryPaused)return;
   if(preserve)return suspendLoginInput().then(current=>{if(current)renderLogin(false);});
   closeDocument();closeMutations();state.offlineProfile=null;state.offline=false;
@@ -2911,7 +2984,7 @@ function renderLogin(preserve=true) {
   if(state.authRetentionError&&$('#login-error'))$('#login-error').textContent=state.authRetentionError;
 }
 async function boot() {
-  clearWikiMutation();clearWikiPage();clearInbox();clearScimPanel();clearSearch();
+  if(state.verifiedPages)closeModal();clearVerifiedPages();clearWikiMutation();clearWikiPage();clearInbox();clearScimPanel();clearSearch();
   if(state.nativeRecoveryPaused)return;
   const generation=(state.bootGeneration||0)+1;state.bootGeneration=generation;
   const cachedIdentity=await window.FountainOffline?.getProfile().catch(()=>null);

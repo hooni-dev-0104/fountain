@@ -26,7 +26,7 @@ let checks=0;
 function denied(status,action,store){const before=store?clone([store.records,store.metadata]):null;assert.throws(action,error=>error instanceof APIError&&error.status===status);if(store)assert.deepEqual([store.records,store.metadata],before);checks++;}
 {
  const s=new Store(),a=authority(s),before=clone([s.records,s.metadata]);assert.deepEqual(a.actions(),['audit.read','analytics.read']);assert.equal(a.access.owner,false);assert.equal(a.access.can('page',s.get('page','private')),false);assert.deepEqual(new Set(authority(s,'local').actions()),ACTIONS);assert.deepEqual(authority(s,'admin').actions(),['members.read','members.manage','groups.read','groups.membership.manage']);for(const id of ['guest','inactive','bob'])assert.deepEqual(authority(s,id).actions(),[]);assert.equal(a.allows('__proto__'),false);assert.equal(a.allows({}),false);checks++;
- const value=overview(s);assert.deepEqual(value.assignments,[{member_id:'alice',role_ids:['analytics','audit']}]);for(const key of ['generation','nonce','permissions'])assert(!JSON.stringify(value).includes(key));assert.deepEqual([s.records,s.metadata],before);checks++;
+ const value=overview(s);assert.deepEqual(value.assignments,[{member_id:'alice',role_ids:['analytics','audit']}]);const publicKeys=[];const walk=item=>{if(Array.isArray(item))item.forEach(walk);else if(item&&typeof item==='object')for(const [key,child]of Object.entries(item)){publicKeys.push(key);walk(child);}};walk(value);for(const key of ['generation','nonce','permissions'])assert(!publicKeys.includes(key));assert.deepEqual([s.records,s.metadata],before);checks++;
  for(const principal of [{id:'bob',role:'owner'},{id:'missing',role:'owner'},{id:'guest',role:'member'}])assert.deepEqual(authority(s,'alice',principal).actions(),[]);checks++;
  const alice=s.get('member','alice');s.put('member',{...alice,admin_actions:['members.manage'],capabilities:{'members.manage':true}});assert.equal(a.allows('members.manage'),false);for(const change of [{active:false},{role:'guest'},{role:'admin'},{role:'unknown'}]){s.put('member',{...alice,...change});assert.deepEqual(a.actions(),[]);}checks++;
 }
@@ -50,6 +50,17 @@ function denied(status,action,store){const before=store?clone([store.records,sto
  for(const query of [new URLSearchParams('q=x'),{q:['x']},null,[]])denied(400,()=>authority(s,'local').route('GET','/api/admin/roles',{},query),s);
  denied(409,()=>mutate(s,'PATCH','/api/admin/roles/audit',{name:'stale',revision:'0'.repeat(64)}),s);
  for(const id of ['local','guest','inactive','absent'])denied(400,()=>mutate(s,'PUT','/api/admin/assignments/'+id,{role_ids:['audit']}),s);
+}
+{
+ const s=new Store(),added=['content.search.read','content.search.export','content.permissions.manage','content.publish.manage'];
+ for(const actor of ['alice','admin','bob','guest'])assert(!authority(s,actor).actions().some(action=>added.includes(action)));
+ assert(added.every(action=>authority(s,'local').allows(action)));
+ for(const action of added.slice(1))denied(400,()=>mutate(s,'POST','/api/admin/roles',{name:'Invalid grant',actions:[action]}),s);
+ const created=mutate(s,'POST','/api/admin/roles',{name:'Explicit content export',actions:['content.search.read','content.search.export']});
+ mutate(s,'PUT','/api/admin/assignments/alice',{role_ids:[created.created_role_id,'audit']});
+ assert.deepEqual(authority(s).actions(),['audit.read','content.search.read','content.search.export']);
+ assert.equal(authority(s).access.can('page',s.get('page','private')),false);
+ denied(400,()=>mutate(s,'PATCH','/api/admin/roles/'+created.created_role_id,{actions:['content.search.export']}),s);checks++;
 }
 // Match full DTOs, opaque canonical revisions and errors against real SQLite.
 {

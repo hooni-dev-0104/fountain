@@ -7,6 +7,8 @@ export const CATALOG = [
  ['audit.read','감사 로그 조회'],['analytics.read','워크스페이스 분석 조회'],
  ['members.read','멤버 조회'],['members.manage','멤버 관리'],
  ['groups.read','그룹 조회'],['groups.membership.manage','기존 그룹 멤버 관리'],
+ ['content.search.read','관리자 콘텐츠 검색'],['content.search.export','관리자 검색 CSV 내보내기'],
+ ['content.permissions.manage','콘텐츠 공유 권한 관리'],['content.publish.manage','콘텐츠 게시 해제'],
 ] as const;
 export const ACTIONS = new Set<string>(CATALOG.map(([action])=>action));
 const MEMBERSHIP_ACTIONS=new Set(['members.read','members.manage','groups.read','groups.membership.manage']);
@@ -20,7 +22,7 @@ function nonce(store:AdminStore,kind:string):string{return store.allocate_id?sto
 export function invalidateMember(store:AdminStore,memberId:unknown):boolean{const key=generationKey(memberId);if(store.meta(key)===null)return false;store.set_meta(key,nonce(store,'admin_generation'));return true;}
 export {generationKey as generation_key,invalidateMember as invalidate_member};
 const plain=(value:unknown,limit:number,empty=true):value is string=>typeof value==='string'&&Array.from(value).length<=limit&&(empty||/[^ \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/u.test(value))&&!/[\u0000-\u001f\u007f\ud800-\udfff]/u.test(value);
-function actionsValid(value:unknown):value is string[]{return Array.isArray(value)&&value.length>=1&&value.length<=ACTIONS.size&&value.every(action=>typeof action==='string'&&ACTIONS.has(action))&&new Set(value).size===value.length&&(!value.includes('members.manage')||value.includes('members.read'))&&(!value.includes('groups.membership.manage')||value.includes('groups.read'));}
+function actionsValid(value:unknown):value is string[]{return Array.isArray(value)&&value.length>=1&&value.length<=ACTIONS.size&&value.every(action=>typeof action==='string'&&ACTIONS.has(action))&&new Set(value).size===value.length&&(!value.includes('members.manage')||value.includes('members.read'))&&(!value.includes('groups.membership.manage')||value.includes('groups.read'))&&(!['content.search.export','content.permissions.manage','content.publish.manage'].some(action=>value.includes(action))||value.includes('content.search.read'));}
 const eligible=(member:unknown):member is Entity=>is_object(member)&&Access.verification_id(get(member,'id'))&&get(member,'active',true)===true&&['member','admin'].includes(get(member,'role'));
 function validRole(role:unknown):role is Entity{return is_object(role)&&Access.verification_id(get(role,'id'))&&get(role,'version')===1&&plain(get(role,'name'),100,false)&&plain(get(role,'description'),1000)&&actionsValid(get(role,'actions'))&&typeof get(role,'nonce')==='string'&&UUID.test(role.nonce)&&Object.keys(role).every(key=>['id','version','name','description','actions','nonce','created_at','updated_at'].includes(key));}
 

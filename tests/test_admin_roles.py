@@ -66,6 +66,21 @@ class AdminRolesTests(unittest.TestCase):
         self.assertFalse(self.authority().allows('future.read'))
         self.error(403, lambda: self.authority().require_action('members.manage'))
 
+    def test_content_actions_require_explicit_grants_and_the_read_dependency(self):
+        added = {'content.search.read', 'content.search.export', 'content.permissions.manage', 'content.publish.manage'}
+        for actor in ['alice', 'admin', 'bob', 'guest']:
+            self.assertFalse(added.intersection(self.authority(actor).actions()))
+        self.assertTrue(added <= set(self.owner.actions()))
+        for action in added - {'content.search.read'}:
+            self.error(400, lambda action=action: self.mutate('POST', '/api/admin/roles', {'name': 'Invalid grant', 'actions': [action]}))
+        created = self.mutate('POST', '/api/admin/roles', {
+            'name': 'Content export only', 'actions': ['content.search.read', 'content.search.export']})
+        role = created['created_role_id']
+        self.mutate('PUT', '/api/admin/assignments/alice', {'role_ids': [role, 'audit']})
+        self.assertEqual(set(self.authority().actions()), {'audit.read', 'content.search.read', 'content.search.export'})
+        self.assertFalse(self.authority().access.can('page', self.store.get('page', 'private')))
+        self.error(400, lambda: self.mutate('PATCH', '/api/admin/roles/' + role, {'actions': ['content.search.export']}))
+
     def test_current_member_revalidation_and_no_synthetic_grants(self):
         authority = self.authority()
         alice = self.store.get('member', 'alice')

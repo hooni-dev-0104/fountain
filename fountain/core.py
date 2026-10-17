@@ -47,6 +47,20 @@ def text(value, name, limit=10000, empty=True):
     return value
 
 
+def _admin_membership_changed(previous, current):
+    """An admin grant cannot survive a different member/account incarnation."""
+    def email(member):
+        value = member.get("email")
+        # Domain writes already normalize email. Internal identity changes are
+        # deliberately conservative, including case/whitespace-only changes.
+        return value if isinstance(value, str) else None
+
+    return previous is not None and (current is None
+        or current.get("active", True) is not True
+        or current.get("role") not in ("member", "admin")
+        or email(previous) != email(current))
+
+
 class Store:
     """Thread-safe JSON entity persistence; identifiers are namespaced by kind."""
     def __init__(self, db_path):
@@ -113,18 +127,24 @@ class Store:
         data = copy.deepcopy(data)
         entity_id = data.get("id") or uid()
         text(entity_id, "id", 160, False)
-        with self.lock:
+        with self.transaction() if kind == "member" else self.lock:
             previous = self.get(kind, entity_id)
             data.update(id=entity_id, created_at=(previous or {}).get("created_at", now()), updated_at=now())
             self.db.execute("INSERT OR REPLACE INTO entities VALUES (?,?,?,?,?)", (
                 kind, entity_id, json.dumps(data, ensure_ascii=False), data["created_at"], data["updated_at"]))
+            if kind == "member" and _admin_membership_changed(previous, data):
+                from .admin_roles import invalidate_member
+                invalidate_member(self, entity_id)
             self._advance_revision()
             self.commit()
         return data
 
     def delete(self, kind, entity_id):
-        with self.lock:
+        with self.transaction() if kind == "member" else self.lock:
             cursor = self.db.execute("DELETE FROM entities WHERE kind=? AND id=?", (kind, entity_id))
+            if kind == "member" and cursor.rowcount:
+                from .admin_roles import invalidate_member
+                invalidate_member(self, entity_id)
             if cursor.rowcount: self._advance_revision()
             self.commit()
 

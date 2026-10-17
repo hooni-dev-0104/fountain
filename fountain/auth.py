@@ -78,6 +78,9 @@ class Auth:
                             and self.store.get("credential", other["id"]) for other in self.store.list("member")),
                     "Another active account uses this email", 409)
             salt = secrets.token_bytes(32)
+            if self.store.get("credential", member_id) is None:
+                from .admin_roles import invalidate_member
+                invalidate_member(self.store, member_id)
             self.store.put("credential", {"id": member_id, "salt": salt.hex(),
                 "password_hash": self._password_hash(password, salt), "algorithm": "scrypt"})
             self._revoke(member_id)
@@ -93,6 +96,8 @@ class Auth:
             owners = self._owners()
             require(not self.accounts_required or any(member["id"] != member_id for member in owners),
                     "Cannot remove the last active owner account", 409)
+            from .admin_roles import invalidate_member
+            invalidate_member(self.store, member_id)
             self.store.delete("credential", member_id)
             self._revoke(member_id)
             member = self.store.get("member", member_id)

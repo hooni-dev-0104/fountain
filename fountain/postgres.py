@@ -11,7 +11,7 @@ import json
 import threading
 from contextlib import contextmanager
 
-from .core import APIError, AUDIT_ACTOR, now, require, text, uid
+from .core import APIError, AUDIT_ACTOR, _admin_membership_changed, now, require, text, uid
 
 
 class PostgresStore:
@@ -169,6 +169,9 @@ class PostgresStore:
                 "INSERT INTO fountain_private.entities(workspace_id,kind,id,data,created_at,updated_at) VALUES (%s,%s,%s,%s,%s,%s) "
                 "ON CONFLICT(workspace_id,kind,id) DO UPDATE SET data=EXCLUDED.data,updated_at=EXCLUDED.updated_at",
                 (self.workspace_id, kind, entity_id, self._json(value), value["created_at"], value["updated_at"]))
+            if kind == "member" and _admin_membership_changed(previous, value):
+                from .admin_roles import invalidate_member
+                invalidate_member(self, entity_id)
             self._advance_revision()
         return value
 
@@ -176,6 +179,9 @@ class PostgresStore:
         with self.transaction():
             removed = self._execute("DELETE FROM fountain_private.entities WHERE workspace_id=%s AND kind=%s AND id=%s",
                                     (self.workspace_id, kind, entity_id))
+            if kind == "member" and removed:
+                from .admin_roles import invalidate_member
+                invalidate_member(self, entity_id)
             if removed: self._advance_revision()
 
     def meta(self, key, default=None):

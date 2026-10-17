@@ -1,3 +1,4 @@
+import {protectFields,stampCreated,guardMove} from './wiki.ts';
 /** Synchronous domain staging port of fountain/core.py. Authorization wraps this
 * primitive; only CloudStore.commit may perform the eventual external write. */
 import {
@@ -189,6 +190,7 @@ export class WorkspaceCore {
     };
   }
   create_page(body: Entity): Entity {
+    protectFields(body);
     const title=text(get(body,'title','제목 없음'),'title',500);
     if(truth(get(body,'id')))require(this.store.get('page',body.id)===null,'Page id already exists',409);
     const parent=get(body,'parent_id');
@@ -196,14 +198,17 @@ export class WorkspaceCore {
     const page=this.store.put('page',{
       id:truth(get(body,'id'))?body.id:this.id('page'),title,icon:text(get(body,'icon','📄'),'icon',80),cover:text(get(body,'cover',''),'cover',4000),parent_id:parent,teamspace_id:get(body,'teamspace_id','general'),favorite:false,owner_id:get(body,'owner_id',this.actor),permissions:has(body,'permissions')?clone(body.permissions):null,archived:false,locked:false,revision:0,blocks:this.validate_blocks(get(body,'blocks',[]))
     });
+    stampCreated(this.store,page,this.actor);
     this.store.audit('page.created',{
       page_id:page.id
     });
     return page;
   }
   update_page(id: string, body: Entity): Entity {
+    protectFields(body);
     const page=this.page(id);
     this.check_revision(page,get(body,'revision'));
+    if(has(body,'parent_id'))guardMove(page,body.parent_id);
     for(const field of ['title','icon','cover'])if(has(body,field))page[field]=text(body[field],field,field==='title'?500:4000);
     for(const field of ['favorite','archived','locked'])if(has(body,field)){
       require(typeof body[field]==='boolean',field+' must be boolean');

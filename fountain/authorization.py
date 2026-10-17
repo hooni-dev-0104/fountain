@@ -170,6 +170,12 @@ class Authorization:
             if 'permissions' in body:
                 body['permissions'] = a.validate_permissions(body['permissions'])
             return
+        if len(parts) == 4 and parts[:2] == ['api', 'pages'] and parts[3] in {'wiki','wiki-owner'}:
+            from .wiki import ancestry
+            self.store.list('page')  # Validate private ancestry before ACL traversal.
+            require(ancestry(self.store, self.owned('page', parts[2]))[0], 'Wiki page not found', 404)
+            a.require_resource('page', parts[2], 1)
+            return  # Wiki validates exact method/fields and current ownership.
         if len(parts) == 4 and parts[:2] == ['api', 'pages'] and parts[3] == 'presence':
             require(method in {'GET', 'PUT', 'DELETE'}, 'Unsupported presence method', 405)
             a.require_resource('page', parts[2], 1)
@@ -363,16 +369,20 @@ class Authorization:
                     continue  # Imports return new database IDs rather than entity records.
                 item['access_level'] = a.level(kind, item)
                 item.setdefault('owner_id', 'local')
+                if kind == 'page': item['is_wiki'] = item.get('is_wiki') is True
         if 'page' in result and isinstance(result['page'], dict):
             result['page']['access_level'] = a.level('page', result['page'])
             result['page'].setdefault('owner_id', 'local')
+            result['page']['is_wiki'] = result['page'].get('is_wiki') is True
             if 'versions' in result and not a.can('page', result['page'], 3):
                 result['versions'] = []
         if path.startswith('/api/pages/') and 'id' in result and 'title' in result:
             result['access_level'] = a.level('page', result)
             result.setdefault('owner_id', 'local')
+            result['is_wiki'] = result.get('is_wiki') is True
         if path == '/api/pages' and 'id' in result:
             result['access_level'] = a.level('page', result)
+            result['is_wiki'] = result.get('is_wiki') is True
         pages = [] if path == '/api/workspace' else [*result.get('pages', []), *result.get('results', []), result.get('page')]
         if path.startswith('/api/pages') and 'id' in result and 'title' in result: pages.append(result)
         for page in pages:

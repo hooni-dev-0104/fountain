@@ -338,6 +338,8 @@ class Workspace:
                 "comments": [c for c in self.store.list("comment") if c["page_id"] == page_id]}
 
     def create_page(self, body):
+        from .wiki import protect_fields, stamp_created
+        protect_fields(body)
         title = text(body.get("title", "제목 없음"), "title", 500)
         if body.get("id"):
             require(self.store.get("page", body["id"]) is None, "Page id already exists", 409)
@@ -349,13 +351,17 @@ class Workspace:
             "parent_id": parent, "teamspace_id": body.get("teamspace_id", "general"), "favorite": False,
             "owner_id": body.get("owner_id", AUDIT_ACTOR.get()), "permissions": copy.deepcopy(body.get("permissions")) if "permissions" in body else None,
             "archived": False, "locked": False, "revision": 0, "blocks": self.validate_blocks(body.get("blocks", []))})
+        stamp_created(self.store, page, AUDIT_ACTOR.get())
         self.store.audit("page.created", {"page_id": page["id"]})
         return page
 
     def update_page(self, page_id, body):
+        from .wiki import protect_fields, guard_move
+        protect_fields(body)
         with self.lock:
             page = self.page(page_id)
             self.check_revision(page, body.get("revision"))
+            if "parent_id" in body: guard_move(page, body["parent_id"])
             for field in ["title", "icon", "cover"]:
                 if field in body:
                     page[field] = text(body[field], field, 500 if field == "title" else 4000)

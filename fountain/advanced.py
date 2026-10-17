@@ -112,9 +112,11 @@ class Advanced:
         revision = page.get('revision', 0)
         require(safe_integer(revision) and revision < 9007199254740991, '페이지 검증 상태를 다시 확인해주세요', 409)
         if 'revision' in body: require(body['revision'] == revision, '페이지 검증 상태를 다시 확인해주세요', 409)
+        from .wiki import Wiki
+        wiki_child = Wiki(self.store, access).guard_verify(page, owners if method == 'POST' else None)
         if method == 'POST':
             require(all(access.verification_member(owner, page) for owner in owners), '검증 담당자가 없습니다', 404)
-            hidden = [owner for owner in Access.verification_owners(page)
+            hidden = [] if wiki_child else [owner for owner in Access.verification_owners(page)
                       if access.verification_member(owner, page, visible=False) and not access.verification_member(owner, page)]
             owners = list(dict.fromkeys([*owners, *hidden]))
             require(len(owners) <= 1000, '페이지 검증 상태를 다시 확인해주세요', 409)

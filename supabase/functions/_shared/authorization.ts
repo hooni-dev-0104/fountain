@@ -3,6 +3,7 @@
  */
 import {Access, clone, dictionary, get, has, is_object, put_key, require, truth, valid_id} from './access.ts';
 import type {Entity, StoreReader} from './access.ts';
+import {ancestry} from './wiki.ts';
 
 export class Authorization {
   access: Access;
@@ -142,6 +143,7 @@ export class Authorization {
       if (has(body, 'permissions')) body.permissions = a.validate_permissions(body.permissions);
       return;
     }
+    if(parts.length===4&&parts[0]==='api'&&parts[1]==='pages'&&['wiki','wiki-owner'].includes(parts[3])){this.store.list('page');require(ancestry(this.store,this.owned('page',parts[2])).valid,'Wiki page not found',404);a.require_resource('page',parts[2],1);return;}
     if (parts.length === 4 && parts[0] === 'api' && parts[1] === 'pages' && parts[3] === 'presence') {
       require(['GET', 'PUT', 'DELETE'].includes(method), 'Unsupported presence method', 405);
       a.require_resource('page', parts[2], 1);
@@ -323,17 +325,20 @@ export class Authorization {
       if (!is_object(item)) continue; // Import responses contain IDs, not records.
       item.access_level = a.level(kind, item);
       if (!has(item, 'owner_id')) item.owner_id = 'local';
+      if(kind==='page')item.is_wiki=item.is_wiki===true;
     }
     if (has(result, 'page') && is_object(result.page)) {
       result.page.access_level = a.level('page', result.page);
       if (!has(result.page, 'owner_id')) result.page.owner_id = 'local';
+      result.page.is_wiki=result.page.is_wiki===true;
       if (has(result, 'versions') && !a.can('page', result.page, 3)) result.versions = [];
     }
     if (path.startsWith('/api/pages/') && has(result, 'id') && has(result, 'title')) {
       result.access_level = a.level('page', result);
       if (!has(result, 'owner_id')) result.owner_id = 'local';
+      result.is_wiki=result.is_wiki===true;
     }
-    if (path === '/api/pages' && has(result, 'id')) result.access_level = a.level('page', result);
+    if (path === '/api/pages' && has(result, 'id')) {result.access_level = a.level('page', result);result.is_wiki=result.is_wiki===true;}
     const pages=path==='/api/workspace'?[]:[...get(result,'pages',[]),...get(result,'results',[]),get(result,'page')];
     if(path.startsWith('/api/pages')&&has(result,'id')&&has(result,'title'))pages.push(result);
     for(const page of pages)if(is_object(page)&&has(page,'verification'))page.verification=a.project_verification(page);

@@ -149,7 +149,8 @@ class Application:
                 authority = Authorization(access)
                 inbox_route = (path == '/api/inbox' and method == 'GET'
                     or len(parts) == 3 and parts[:2] == ['api', 'inbox'] and method == 'PATCH')
-                if self.advanced is None and not inbox_route:
+                wiki_route = len(parts) == 4 and parts[:2] == ['api','pages'] and parts[3] in {'wiki','wiki-owner'}
+                if self.advanced is None and not (inbox_route or wiki_route):
                     from .advanced import Advanced
                     self.advanced = Advanced(self.store, self.workspace)
                 authority.prepare(method, path, body)
@@ -161,7 +162,7 @@ class Application:
                         require(not self.auth.accounts_required or self.auth._owners(), 'Cannot remove the last active owner account', 409)
                     if method in {'POST', 'PATCH', 'PUT', 'DELETE'} and (
                             path.endswith('/permissions') or path.startswith(('/api/members', '/api/groups', '/api/teamspaces', '/api/accounts', '/scim/v2/'))
-                            or method == 'PATCH' and path.startswith('/api/pages/')):
+                            or method == 'PATCH' and path.startswith('/api/pages/') and not path.endswith('/wiki-owner')):
                         self.store.set_meta('access_revision', self.store.meta('access_revision', 0) + 1)
                     payload = authority.project(path, payload)
                     if isinstance(payload, dict) and (canonical_snapshot or path.endswith(('/collaboration', '/operations'))):
@@ -234,6 +235,9 @@ class Application:
     def _dispatch(self, method, path, body, query, access):
         w, s = self.workspace, self.store
         parts = path.strip("/").split("/")
+        if len(parts) == 4 and parts[:2] == ['api','pages'] and parts[3] in {'wiki','wiki-owner'}:
+            from .wiki import Wiki
+            return 200, Wiki(s, access).route(method, parts[2], parts[3], body, query)
         if path == '/api/inbox' and method == 'GET':
             from .inbox import Inbox
             return 200, Inbox(s, access).get(query)

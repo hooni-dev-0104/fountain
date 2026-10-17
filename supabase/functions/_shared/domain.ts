@@ -112,7 +112,7 @@ export function dispatchStaged(s:CloudStore,method:string,path:string,input:Enti
   routed??=coreRoute(r);
   if(!routed)throw new APIError(404,'Route not found');
   const writing=['POST','PATCH','PUT','DELETE'].includes(method);
-  if(writing&&(path.endsWith('/permissions')||path.startsWith('/api/members')||path.startsWith('/api/groups')||path.startsWith('/api/teamspaces')||path.startsWith('/api/accounts')||path.startsWith('/scim/v2/')||method==='PATCH'&&path.startsWith('/api/pages/')))s.set_meta('access_revision',s.meta('access_revision',0)+1);
+  if(writing&&(path.endsWith('/permissions')||path.startsWith('/api/members')||path.startsWith('/api/groups')||path.startsWith('/api/teamspaces')||path.startsWith('/api/accounts')||path.startsWith('/scim/v2/')||method==='PATCH'&&path.startsWith('/api/pages/')&&!path.endsWith('/wiki-owner')))s.set_meta('access_revision',s.meta('access_revision',0)+1);
   const payload=authority.project(path,routed.payload),canonical=method==='GET'&&(path==='/api/workspace'||/^\/api\/databases\/[^/]+$/.test(path));
   if(is_object(payload)&&(canonical||path.endsWith('/collaboration')||path.endsWith('/operations')))Object.assign(payload,{workspace_id:s.context.workspaceId,current_member_id:access.member_id,session_binding:s.context.cacheBinding,access_revision:s.meta('access_revision',0),data_revision:s.meta('_entity_revision',0)});
   return {status:routed.status,payload};

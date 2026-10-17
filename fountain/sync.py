@@ -116,8 +116,10 @@ class SyncService:
         current = {prop["id"]: prop for prop in database.get("properties", [])}
         for key in properties:
             require(key in schema and isinstance(schema[key], dict), "Missing touched property schema")
-            require(key in current and current[key] == schema[key], "Property schema changed while offline", 409)
-            require(current[key].get("type") not in {"formula", "rollup"}, "Computed properties cannot be assigned")
+            fields=("type","generation","limit","default","initial_default")
+            equal=key in current and (all(current[key].get(field)==schema[key].get(field) for field in fields) if current[key].get("type")=="owner" else current[key]==schema[key])
+            require(equal, "Property schema changed while offline", 409)
+            require(current[key].get("type") not in {"formula", "rollup", "verification"}, "Computed properties cannot be assigned")
 
     def _execute(self, operation, context, dispatch):
         kind, target = operation["kind"], operation["target_id"]

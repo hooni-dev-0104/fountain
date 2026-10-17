@@ -344,12 +344,16 @@ class Application:
                 return 200, w.database_detail(database_id, parse_option("filters"), parse_option("sorts"), lambda row: access.can("row", row))
             if len(parts) == 3 and method == "PATCH":
                 database = w.database(database_id)
+                from .database_verification import check_schema_revision
+                check_schema_revision(database,body)
                 if "name" in body:
                     from .core import text
                     database["name"] = text(body["name"], "name", 500, False)
                 if "properties" in body:
+                    from .database_verification import prepare_schema
                     properties = w.validate_properties(body["properties"])
                     Authorization(access).schema_references(database, properties)
+                    prepare_schema(s,database,properties,copy.deepcopy(database))
                     database["properties"] = properties
                 if "task_settings" in body or "properties" in body:
                     from .tasks import validate_settings
@@ -358,6 +362,9 @@ class Application:
                     require(isinstance(body["views"], list) and len(body["views"]) <= 50, "Invalid views")
                     database["views"] = body["views"]
                 return 200, s.put("database", database)
+            if len(parts)==6 and parts[3]=="rows" and parts[5]=="verification":
+                from .database_verification import DatabaseVerification
+                return 200, DatabaseVerification(s,access).route(method,database_id,parts[4],body,query)
             if len(parts) == 4 and parts[3] == "rows" and method == "POST":
                 row = w.create_row(database_id, body)
                 if self.advanced:

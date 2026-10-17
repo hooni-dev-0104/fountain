@@ -150,6 +150,7 @@ class Access:
             return None
         if mode == "assigned" and (not isinstance(policy.get("property_id"), str) or not policy["property_id"]):
             return None
+        if mode=="assigned" and any(p.get("id")==policy["property_id"] and p.get("type") in {"owner","verification"} for p in database.get("properties",[])): return None
         return policy
 
     def can(self, kind, entity, needed=1):
@@ -248,6 +249,10 @@ class Access:
                              if self.regular or member.get("id") == self.member_id]
         if "groups" in result:
             result["groups"] = result["groups"] if self.regular else []
+        from .database_verification import schema_revision
+        for database in result.get("databases",[]):
+            database["schema_revision"]=schema_revision(database)
+            database.pop("_property_generation",None)
         return result
 
     def filter_database(self, detail):
@@ -255,6 +260,17 @@ class Access:
         database = result.get("database")
         require(self.can("database", database), "Resource not found", 404)
         result["rows"] = [row for row in result.get("rows", []) if self.can("row", row)]
+        from .database_verification import DatabaseVerification, PRIVATE_DB_FIELDS, PRIVATE_ROW_FIELDS, schema_revision
+        database["schema_revision"]=schema_revision(database)
+        resolver=DatabaseVerification(self.store,self)
+        for row in result["rows"] if any(p.get("type") in {"owner","verification"} for p in database.get("properties",[])) else []:
+            source=self.store.get("row",row["id"]) or row
+            projected=resolver.project(database,source)
+            for prop in database.get("properties",[]):
+                if prop.get("type") in {"owner","verification"}: row.setdefault("properties",{})[prop["id"]]=projected["properties"][prop["id"]]
+        for row in result["rows"]:
+            for key in PRIVATE_ROW_FIELDS: row.pop(key,None)
+        for key in PRIVATE_DB_FIELDS: database.pop(key,None)
         known = {prop["id"] for prop in database.get("properties", [])}
         for row in result["rows"]: row["properties"] = {key: value for key, value in row.get("properties", {}).items() if key in known}
         relations = {prop["id"] for prop in database.get("properties", []) if prop.get("type") == "relation"}

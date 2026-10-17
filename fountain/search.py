@@ -133,6 +133,8 @@ def _number(value):
 
 
 def _scalar(kind, value):
+    if kind == "owner" and isinstance(value,list): return " ".join(v for v in value if isinstance(v,str))
+    if kind == "verification" and isinstance(value,dict): return value.get("status","")
     if not isinstance(kind, str):
         return ""
     if kind in TEXT_PROPERTIES:
@@ -238,7 +240,9 @@ def advanced_search(store, access, query):
                 title = entity.get("name") if isinstance(entity.get("name"), str) else entity.get("title")
                 body = entity.get("description", "") if _text(entity.get("description", "")) else ""
             else:
-                props = entity.get("properties") if isinstance(entity.get("properties"), dict) else {}
+                from .database_verification import DatabaseVerification
+                projected=DatabaseVerification(store,access).project(database,entity)
+                props = projected.get("properties") if isinstance(projected.get("properties"), dict) else {}
                 schema = database.get("properties") if isinstance(database.get("properties"), list) else []
                 title = next((props.get(p.get("id")) for p in schema if isinstance(p, dict) and p.get("type") == "title"), "")
                 body = " ".join(_scalar(p.get("type"), props.get(p.get("id"))) for p in schema if isinstance(p, dict) and isinstance(p.get("id"), str))

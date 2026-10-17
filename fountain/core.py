@@ -212,7 +212,7 @@ BLOCK_TYPES = {"paragraph", "heading1", "heading2", "heading3", "bullet", "numbe
                "quote", "code", "callout", "divider", "toggle", "image", "bookmark", "file",
                "heading_1", "heading_2", "heading_3", "bulleted_list_item", "numbered_list_item", "to_do"}
 PROPERTY_TYPES = {"title", "text", "number", "select", "multi_select", "date", "checkbox", "person", "url", "email",
-                  "status", "relation", "rollup", "formula", "files", "created_time", "last_edited_time"}
+                  "status", "relation", "rollup", "formula", "files", "created_time", "last_edited_time", "owner", "verification"}
 
 
 ARITHMETIC = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
@@ -469,6 +469,9 @@ class Workspace:
             "icon": body.get("icon", "📊"), "properties": self.validate_properties(copy.deepcopy(body.get("properties", [{"id": "name", "name": "이름", "type": "title"}]))),
             "views": body.get("views", [{"id": "table", "name": "테이블", "type": "table"}])}
 
+        from .database_verification import prepare_schema
+        require('_property_generation' not in body and 'schema_revision' not in body, 'Property generations are server managed')
+        prepare_schema(self.store, database, database['properties'])
         from .tasks import validate_settings
         database['task_settings'] = validate_settings(body.get('task_settings', {}), database)
         return self.store.put('database', database)
@@ -479,7 +482,11 @@ class Workspace:
         for key, value in values.items():
             require(key in known, f"Unknown property: {key}")
             kind = known[key]["type"]
-            require(kind not in {"formula", "rollup"}, f"{key} is computed and cannot be assigned")
+            require(kind not in {"formula", "rollup", "verification"}, f"{key} is computed and cannot be assigned")
+            if kind == "owner":
+                from .access import Access
+                require(isinstance(value,list) and len(value)<=1000 and all(Access.verification_id(v) for v in value), "Owner must be a member ID list")
+                continue
             if value is None:
                 continue
             if kind == "number":
@@ -503,6 +510,8 @@ class Workspace:
 
     def create_row(self, database_id, body):
         from .tasks import TaskGraph
+        from .database_verification import protect_row, DatabaseVerification
+        protect_row(body)
         with self.store.transaction():
             database = self.database(database_id)
             identity = text(body.get('id') or uid(), 'row id', 160, False)
@@ -513,13 +522,16 @@ class Workspace:
             links = TaskGraph(self.store).prepare_row(database, identity, body) if has_links else {'parent_row_id': None, 'depends_on': []}
             if not has_links:
                 require(body.get('parent_row_id') is None and body.get('depends_on', []) == [], 'Enable task links before adding them')
-            row = self.store.put('row', {'id': identity, 'database_id': database_id,
-                'owner_id': body.get('owner_id', AUDIT_ACTOR.get()),
-                'properties': self.validate_values(database, values), **links})
+            row = {'id': identity, 'database_id': database_id, 'owner_id': AUDIT_ACTOR.get(),
+                'properties': self.validate_values(database, copy.deepcopy(values)), **links}
+            DatabaseVerification(self.store, CURRENT_ACCESS.get()).apply_values(database,row,row['properties'])
+            row = self.store.put('row', row)
             self.store.audit('row.created', {'database_id': database_id, 'row_id': row['id']})
             return row
 
     def update_row(self, database_id, row_id, body, can_edit=None):
+        from .database_verification import protect_row, DatabaseVerification
+        protect_row(body)
         from .tasks import TaskGraph
         with self.store.transaction():
             database = self.database(database_id)
@@ -529,7 +541,9 @@ class Workspace:
             if can_edit is None and access is not None: can_edit = lambda item: access.can('row', item, 3)
             require(can_edit is None or can_edit(row), 'Insufficient row edit permission', 403)
             previous = copy.deepcopy(row)
-            row['properties'].update(self.validate_values(database, body.get('properties', body.get('values', {}))))
+            values = self.validate_values(database, copy.deepcopy(body.get('properties', body.get('values', {}))))
+            row['properties'].update(values)
+            DatabaseVerification(self.store, access).apply_values(database,row,values,previous)
             graph = TaskGraph(self.store)
             settings = database.get('task_settings', {})
             has_links = bool(previous.get('parent_row_id') or previous.get('depends_on') or settings.get('subitems') or settings.get('dependencies') or body.get('parent_row_id') or body.get('depends_on'))
@@ -568,12 +582,19 @@ class Workspace:
         from .tasks import TaskGraph
         with self.store.transaction():
             planned = TaskGraph(self.store).duplicate_plan(database_id, row_id, AUDIT_ACTOR.get(), can_read)
-            rows = [self.store.put('row', item) for item in planned]
+            from .database_verification import DatabaseVerification
+            resolver = DatabaseVerification(self.store, CURRENT_ACCESS.get())
+            database = self.database(database_id)
+            rows = [self.store.put('row', resolver.apply_values(database,item,{},reset=True)) for item in planned]
             for row in rows:
                 self.store.audit('row.duplicated', {'database_id': database_id, 'row_id': row['id'], 'source_row_id': row_id})
             return {'root_id': rows[0]['id'], 'rows': rows}
 
     def computed_rows(self, database, rows, can_read_row=None):
+        from .database_verification import DatabaseVerification, pair
+        resolver = DatabaseVerification(self.store, CURRENT_ACCESS.get())
+        source_rows = {row["id"]:row for row in rows}
+        rows = [resolver.project(database,row) for row in rows] if pair(database)[0] else rows
         cache, databases = {}, {database["id"]: database}
         def resolve(row, key, trail=()):
             token = (row["id"], key)
@@ -604,6 +625,7 @@ class Workspace:
                               else min(values) if aggregation == "min" else max(values)) if values or aggregation == "sum" else None
             elif prop['type'] == 'relation' and can_read_row:
                 result = [identity for identity in row['properties'].get(key, []) if (target := self.store.get('row', identity)) and can_read_row(target)]
+            elif prop["type"] in {"owner", "verification"}: result = resolver.project(db,source_rows.get(row["id"],row))["properties"].get(key)
             else: result = row["properties"].get(key)
             cache[token] = result
             return result
@@ -679,7 +701,12 @@ class Workspace:
                 output.append("")
             return {"filename": "workspace.md", "content": "\n\n".join(output), "mime": "text/markdown"}
         require(format == "json", "Unsupported export format")
-        return {"filename": "workspace.json", "content": json.dumps({"format": "fountain-v1", **self.snapshot(), "rows": self.store.list("row")}, ensure_ascii=False, indent=2), "mime": "application/json"}
+        from .database_verification import DatabaseVerification
+        snapshot=self.snapshot()
+        for database in snapshot.get("databases",[]): database.pop("_property_generation",None)
+        resolver=DatabaseVerification(self.store,CURRENT_ACCESS.get())
+        rows=[resolver.project(self.database(row["database_id"]),row) for row in self.store.list("row")]
+        return {"filename": "workspace.json", "content": json.dumps({"format": "fountain-v1", **snapshot, "rows": rows}, ensure_ascii=False, indent=2), "mime": "application/json"}
 
     def import_data(self, body):
         with self.store.transaction():
@@ -745,6 +772,10 @@ class Workspace:
             require(database["id"] not in db_ids, "Duplicate imported database")
             text(database.get("name", ""), "name", 500, False)
             database["properties"] = self.validate_properties(copy.deepcopy(database.get("properties")))
+            for prop in database["properties"]:
+                for key in ("generation", "initial_default", "owner_property_id"): prop.pop(key,None)
+            database.pop("_property_generation",None)
+            database.pop("schema_revision",None)
             db_ids[database["id"]] = database
         imported_rows = {}
         for row in rows:
@@ -756,6 +787,9 @@ class Workspace:
             from .tasks import validate_settings
             database['task_settings'] = validate_settings(database.get('task_settings', {}), database)
         for row in rows:
+            require(isinstance(row.get("properties"),dict), "Invalid imported row properties")
+            for prop in db_ids[row["database_id"]]["properties"]:
+                if prop["type"] in {"owner","verification"}: row["properties"].pop(prop["id"],None)
             self.validate_values(db_ids[row["database_id"]], row.get("properties"), imported_rows)
             if row.get('parent_row_id') or row.get('depends_on'):
                 from .tasks import TaskGraph
@@ -785,7 +819,10 @@ class Workspace:
             for prop in db_ids[row["database_id"]]["properties"]:
                 if prop["type"] == "relation" and values.get(prop["id"]):
                     values[prop["id"]] = [row_map[identity] for identity in values[prop["id"]]]
-            self.store.put("row", {"id": row_map[row["id"]], "owner_id": AUDIT_ACTOR.get(), "database_id": database_map[row["database_id"]], "properties": values, "parent_row_id": row_map.get(row.get("parent_row_id")), "depends_on": [row_map[identity] for identity in row.get("depends_on", [])]})
+            imported_row = {"id": row_map[row["id"]], "owner_id": AUDIT_ACTOR.get(), "database_id": database_map[row["database_id"]], "properties": values, "parent_row_id": row_map.get(row.get("parent_row_id")), "depends_on": [row_map[identity] for identity in row.get("depends_on", [])]}
+            from .database_verification import DatabaseVerification
+            DatabaseVerification(self.store,CURRENT_ACCESS.get()).apply_values(self.database(imported_row["database_id"]),imported_row,values)
+            self.store.put("row", imported_row)
         return {"pages": pages, "databases": list(database_map.values()), "count": len(pages), "row_count": len(rows)}
 
     def attachment(self, body):

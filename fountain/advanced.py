@@ -1,6 +1,8 @@
 """Paid-plan workflow primitives; external services stay explicit boundaries."""
 from __future__ import annotations
 
+import copy
+
 import html
 import json
 import math
@@ -189,6 +191,9 @@ class Advanced:
                 condition = field.get('condition')
                 if condition:
                     require(isinstance(condition, dict) and condition.get('field') in seen - {field['id']}, '조건은 앞선 질문을 참조해야 합니다')
+        if kind == 'forms':
+            protected={p['id'] for p in self.store.get('database',data['database_id']).get('properties',[]) if p.get('type') in {'owner','verification'}}
+            require(all(field.get('property_id',field['id']) not in protected for field in data['fields']), 'Owner and Verification cannot be form answers')
         if kind == 'sites':
             require(not self.settings().get('disable_public_sharing') or not data.get('published'), '공개 공유가 비활성화되었습니다', 403)
             page = self.item('page', data.get('page_id', ''))
@@ -243,7 +248,12 @@ class Advanced:
         answers = body.get('answers', {})
         require(isinstance(answers, dict), '응답 객체가 필요합니다')
         values = {}
+        database=self.store.get('database',form['database_id'])
+        protected={p['id'] for p in database.get('properties',[]) if p.get('type') in {'owner','verification'}}
+        targets={field['id']:field.get('property_id',field['id']) for field in form['fields']}
+        require(not any(targets.get(key,key) in protected for key in answers), 'Owner and Verification cannot be form answers')
         for field in form['fields']:
+            require(field.get('property_id',field['id']) not in protected, 'Owner and Verification cannot be form answers')
             if not self.field_visible(field, answers):
                 continue
             value = answers.get(field['id'])
@@ -317,7 +327,11 @@ class Advanced:
             require(row.get('database_id') == automation['database_id'], '다른 데이터베이스의 행입니다')
         conditions = automation.get('conditions', {})
         require(isinstance(conditions, dict), '조건 객체가 필요합니다')
-        if conditions and (not row or any(row.get('properties', {}).get(k) != v for k, v in conditions.items())):
+        condition_row=row
+        if row:
+            access=CURRENT_ACCESS.get()
+            condition_row=self.workspace.computed_rows(self.store.get('database',row['database_id']),[copy.deepcopy(row)], (lambda candidate:access.can('row',candidate)) if access else None)[0]
+        if conditions and (not condition_row or any(condition_row.get('properties', {}).get(k) != v for k, v in conditions.items())):
             return {'skipped': True, 'reason': '조건 불일치'}
         require(row is not None or not any(a['type'] == 'set_property' for a in automation['actions']), '속성을 변경할 행을 지정해 주세요')
         results = []

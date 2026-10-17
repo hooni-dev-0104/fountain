@@ -230,6 +230,11 @@ class Authorization:
             if len(parts) >= 4 and parts[3] == 'permissions':
                 if writing: a.require_resource('database', parts[2], 4)
                 return
+            require('_property_generation' not in body, 'Property generations are server managed')
+            if len(parts)==6 and parts[3]=='rows' and parts[5]=='verification':
+                row=a.require_resource('row',parts[4],1 if method=='GET' else 3)
+                require(row.get('database_id')==database['id'],'Row not found',404)
+                return
             if len(parts) == 6 and parts[3] == 'rows' and parts[5] == 'duplicate' and method == 'POST':
                 require(a.can_create_row(database), 'Creating database rows is not allowed', 403)
                 row = a.require_resource('row', parts[4])
@@ -319,6 +324,10 @@ class Authorization:
         a = self.access
         if not isinstance(payload, dict): return payload
         result = copy.deepcopy(payload)
+        if isinstance(result.get('properties'),list) and 'id' in result:
+            from .database_verification import schema_revision
+            result['schema_revision']=schema_revision(result)
+        result.pop('_property_generation',None)
         def row_projection(row):
             database = self.store.get('database', row.get('database_id'))
             if not a.can('row', row):

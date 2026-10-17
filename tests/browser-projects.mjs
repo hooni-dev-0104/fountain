@@ -93,8 +93,10 @@ function localInput(instant,timezone) {
   const parts=Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
     timeZone:timezone,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'
   }).formatToParts(new Date(instant)).filter(part=>part.type!=='literal').map(part=>[part.type,part.value]));
-  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}`;
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}${parts.second==='00'?'':':'+parts.second}`;
 }
+assert.equal(localInput(Date.UTC(2026,0,2,3,4,0),'Asia/Seoul'),'2026-01-02T12:04','datetime-local uses its canonical minute form for zero seconds');
+assert.equal(localInput(Date.UTC(2026,0,2,3,4,5),'Asia/Seoul'),'2026-01-02T12:04:05','nonzero schedule seconds keep their exact precision');
 let databaseId;
 try {
   origin=await startServer();

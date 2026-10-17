@@ -95,8 +95,12 @@ os._exit(9)
             self.assertEqual(self.db.execute('SELECT count(*) FROM records').fetchone()[0], 1 if commit else 3)
         self.db.execute('BEGIN IMMEDIATE')
         self.db.execute(sql("INSERT OR IGNORE INTO tombstones(scope,kind,profile_id) SELECT profile_id,'profile',profile_id FROM records"), ('profile', 'profile'))
-        self.db.execute(sql('DELETE FROM records WHERE substr(profile_id,'), ('profile', 'profile'))
-        self.db.execute(sql('DELETE FROM recovery WHERE substr(profile_id,'), ('profile', 'profile'))
+        # These model rows are explicitly owned; production Swift separately
+        # proves private attribution before selecting any row for deletion.
+        for row in list(self.db.execute('SELECT rowid FROM records WHERE profile_id=?', ('profile',))):
+            self.db.execute(sql('DELETE FROM records WHERE rowid='), row)
+        for row in list(self.db.execute('SELECT rowid FROM recovery WHERE profile_id=?', ('profile',))):
+            self.db.execute(sql('DELETE FROM recovery WHERE rowid='), row)
         self.db.execute('COMMIT')
         self.assertEqual(self.db.execute('SELECT count(*) FROM records').fetchone()[0], 0)
         self.assertEqual(self.db.execute('SELECT count(*) FROM tombstones').fetchone()[0], 2)
@@ -137,11 +141,11 @@ os._exit(9)
     def test_source_disabled_gate_final_delivery_and_failclosed_contract(self):
         plugin = (APP / 'AppDelegate.swift').read_text()
         self.assertIn('private let OUTBOX_ENABLED = false', plugin)
-        self.assertIn('"outboxEnabled": OUTBOX_ENABLED', plugin)
-        self.assertIn('guard OUTBOX_ENABLED else { call.reject(', plugin)
-        self.assertIn('if OUTBOX_ENABLED, !recoveryMode, value.active == nil { try outboxStore().suspend() }', plugin)
+        self.assertIn('"outboxEnabled": ACTIVE_OUTBOX_ENABLED', plugin)
+        self.assertIn('guard ACTIVE_OUTBOX_ENABLED else { call.reject(', plugin)
+        self.assertIn('if ACTIVE_OUTBOX_ENABLED, !recoveryMode, value.active == nil { try outboxStore().suspend() }', plugin)
         observer = plugin.split('private func observeOutboxSession', 1)[1].split('private func validOrigin', 1)[0]
-        self.assertLess(observer.index('guard OUTBOX_ENABLED, !recoveryMode else'), observer.index('try outboxStore()'))
+        self.assertLess(observer.index('guard ACTIVE_OUTBOX_ENABLED else'), observer.index('try outboxStore()'))
         self.assertIn('self.auth == startingAuth', plugin)
         self.assertIn('self.outbox === store, store.boundary == boundary', plugin)
         self.assertIn('if error == .storage { self.poisonOutbox() }', plugin)
@@ -182,7 +186,8 @@ os._exit(9)
         self.assertNotEqual(found, json.dumps({**receipt, 'operationIds': ['forged']}).encode())
         self.assertEqual(self.db.execute(sql('SELECT rowid,bucket,key,length(value) FROM records'), ('other-profile', 0)).fetchall(), [])
         prefix = profile.rsplit('|', 1)[0] + '|'
-        self.db.execute(sql('DELETE FROM records WHERE substr(profile_id,'), (prefix, prefix))
+        for row in list(self.db.execute('SELECT rowid FROM records WHERE substr(profile_id,1,length(?))=?', (prefix, prefix))):
+            self.db.execute(sql('DELETE FROM records WHERE rowid='), row)
         self.assertEqual(self.db.execute('SELECT count(*) FROM records').fetchone()[0], 0)
         parser = SOURCE.split('private func importReceiptProfile(', 1)[1].split('private func purgeProfile(', 1)[0]
         self.assertIn('key.lastIndex(of: ":")', parser)
@@ -208,7 +213,7 @@ os._exit(9)
         self.assertIn('guard active == item.profile else', SOURCE)
         self.assertIn('guard active == profile else', SOURCE)
         request = plugin.split('@objc func request(', 1)[1].split('@objc func cancel(', 1)[0]
-        self.assertIn('job.mode == "logout", OUTBOX_ENABLED, !self.recoveryMode', request)
+        self.assertIn('job.mode == "logout", ACTIVE_OUTBOX_ENABLED, !self.recoveryMode', request)
         self.assertIn('actorForLogout(reference: reference)', request)
         self.assertNotIn('call.getString("profile', request)
         self.assertIn('job.mode == "logout" ? job.logoutActor : nil', plugin)
@@ -390,8 +395,9 @@ os._exit(9)
                                         ('profile', 0)).fetchone()[1], 'drafts')
         purge = SOURCE.split('private func purgeResource(', 1)[1].split('private func accessIssues(', 1)[0]
         self.assertIn("bucket IN ('mutations','operations','drafts')", purge)
-        self.assertIn('else { payload = bytes }', purge)
-        self.assertLess(purge.index('INSERT INTO recovery('), purge.index('DELETE FROM records WHERE resource_key='))
+        self.assertIn('archiveOriginal(original, bytes: bytes', purge)
+        self.assertNotIn('value["status"] =', purge)
+        self.assertLess(purge.index('archiveOriginal('), purge.index('DELETE FROM records WHERE resource_key='))
 
     def test_preflight_and_quarantine_stream_records_with_bounded_private_ledger(self):
         for index in range(40):
@@ -509,11 +515,12 @@ os._exit(9)
         self.assertLess(inventory.index('self.recoveryMode = true'), inventory.index('self.recoverySession(job)'))
         session = plugin.split('private func recoverySession(', 1)[1].split('private func recoveryResources(', 1)[0]
         self.assertIn('network(path: "/api/session", method: "GET"', session)
-        self.assertNotIn('outboxStore()', session)
-        self.assertNotIn('.grant(', session)
+        self.assertIn('if ACTIVE_OUTBOX_ENABLED {', session)
+        self.assertLess(session.index('cookies().active == job.sentCookie'), session.index('outboxStore().grant('))
+        self.assertIn('self.recoveryGrant = authority', session)
         self.assertNotIn('.revoke(', session)
         self.assertIn('job.method != "GET", !["login", "logout"].contains(job.mode)', plugin)
-        self.assertIn('guard OUTBOX_ENABLED, !recoveryMode else', plugin)
+        self.assertIn('guard ACTIVE_OUTBOX_ENABLED, !recoveryMode,', plugin)
         self.assertIn('reader.boundary == startingBoundary, reader.validMetadata(result["exportToken"] as? String, other: authority)', plugin)
         self.assertIn('self.recoveryFiles[job.id] ?? [file]', plugin)
         self.assertIn('"filesSaved": saved', plugin)

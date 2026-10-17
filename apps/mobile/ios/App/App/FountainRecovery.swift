@@ -20,7 +20,7 @@ enum FountainRecoveryError: Error {
 
 final class FountainRecovery {
     struct Authority {
-        let origin: String, workspace: String, member: String, binding: String, reference: String
+        let origin: String, workspace: String, member: String, binding: String, reference: String, role: String
         let deadline: Double
         private static func boolean(_ value: Any?) -> Bool? {
             guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else { return nil }
@@ -43,10 +43,10 @@ final class FountainRecovery {
                 deadline = min(date.timeIntervalSince1970 * 1000, now + 86_400_000)
             }
             guard deadline > now else { throw FountainRecoveryError.auth }
-            return Authority(origin: origin, workspace: workspace, member: actor, binding: binding, reference: reference, deadline: deadline)
+            return Authority(origin: origin, workspace: workspace, member: actor, binding: binding, reference: reference, role: member["role"] as! String, deadline: deadline)
         }
         func matches(_ other: Authority) -> Bool {
-            origin == other.origin && workspace == other.workspace && member == other.member && binding == other.binding && reference == other.reference
+            origin == other.origin && workspace == other.workspace && member == other.member && binding == other.binding && reference == other.reference && role == other.role
         }
         func envelope(_ body: [String: Any]) -> Bool {
             body["workspace_id"] as? String == workspace && body["current_member_id"] as? String == member && body["session_binding"] as? String == binding
@@ -74,25 +74,48 @@ final class FountainRecovery {
     private var entries: [String: Entry] = [:], cursors: [String: (Int, Int64)] = [:]
     private var inventoryBytes = 0
     private var prepared: Prepared?
+    private var workspaceExportAllowed = false
+    private var localVersionChecks: [String: Bool] = [:]
+    private var localLineages: [String: LocalLineage] = [:]
+    private var localAuxiliaryBytes = 0
     private var closed = false
     private(set) var boundary = UUID().uuidString
     let token = UUID().uuidString
 
-    init(authority: Authority) throws {
+    convenience init(authority: Authority) throws { try self.init(authority: authority, isolatedDirectory: nil) }
+    #if DEBUG
+    // Read-only native QA fixtures may inspect only their private temp database;
+    // no renderer method, URL input, or release-build path override exists.
+    convenience init(authority: Authority, testingDirectory: URL) throws {
+        let temporary = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().standardizedFileURL.path + "/"
+        guard testingDirectory.resolvingSymlinksInPath().standardizedFileURL.path.hasPrefix(temporary) else { throw FountainRecoveryError.storage }
+        try self.init(authority: authority, isolatedDirectory: testingDirectory)
+    }
+    #endif
+    private init(authority: Authority, isolatedDirectory: URL?) throws {
         self.authority = authority
         sessionDeadline = authority.deadline
         let manager = FileManager.default
-        let support = try manager.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
-        let directory = support.appendingPathComponent("FountainOutbox", isDirectory: true)
+        let directory: URL
+        if let isolatedDirectory { directory = isolatedDirectory }
+        else {
+            let support = try manager.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+            directory = support.appendingPathComponent("FountainOutbox", isDirectory: true)
+        }
         if !manager.fileExists(atPath: directory.path) { path = nil; fingerprint = "absent"; return }
         try Self.privateItem(directory, directory: true)
-        let candidate = directory.appendingPathComponent(FountainOutbox.hash(Data(authority.origin.utf8)) + ".sqlite")
+        // Canonicalize the already validated directory (e.g. macOS /var) only;
+        // leave the database basename unresolved for SQLite's NOFOLLOW check.
+        guard let resolvedDirectory = realpath(directory.path, nil) else { throw FountainRecoveryError.storage }
+        let canonicalDirectory = URL(fileURLWithPath: String(cString: resolvedDirectory), isDirectory: true)
+        free(resolvedDirectory)
+        let candidate = canonicalDirectory.appendingPathComponent(FountainOutbox.hash(Data(authority.origin.utf8)) + ".sqlite")
         if !manager.fileExists(atPath: candidate.path) { path = nil; fingerprint = "absent"; return }
         try Self.privateItem(candidate, directory: false)
-        let descriptor = Darwin.open(candidate.path, O_RDONLY | O_NOFOLLOW)
-        guard descriptor >= 0 else { throw FountainRecoveryError.storage }; Darwin.close(descriptor)
         path = candidate; fingerprint = try Self.fingerprint(candidate)
-        guard sqlite3_open_v2(candidate.path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK else { close(); throw FountainRecoveryError.storage }
+        // SQLite must own every database descriptor so its VFS can preserve other
+        // live connections' locks. NOFOLLOW supplies the symlink guard at open.
+        guard sqlite3_open_v2(candidate.path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_NOFOLLOW, nil) == SQLITE_OK else { close(); throw FountainRecoveryError.storage }
         do {
             guard sqlite3_exec(db, "PRAGMA query_only=ON", nil, nil, nil) == SQLITE_OK,
                   sqlite3_exec(db, "BEGIN", nil, nil, nil) == SQLITE_OK,
@@ -112,6 +135,7 @@ final class FountainRecovery {
     func cancelPrepared() {
         for url in prepared?.urls ?? [] { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
         prepared = nil
+        workspaceExportAllowed = false
         boundary = UUID().uuidString
     }
     @discardableResult func cancelToken(_ token: String) -> Bool { if prepared?.token == token { cancelPrepared(); return true }; return false }
@@ -122,7 +146,7 @@ final class FountainRecovery {
     func validMetadata(_ exportToken: String?, other: Authority) -> Bool {
         guard validContext(other) else { return false }
         guard let token = exportToken else { return true }
-        return prepared?.token == token && (prepared?.deadline ?? 0) > Date().timeIntervalSince1970 * 1000
+        return workspaceExportAllowed && prepared?.token == token && (prepared?.deadline ?? 0) > Date().timeIntervalSince1970 * 1000
     }
     func checkSource(_ other: Authority) throws { try current(other) }
     func sameSession(_ data: Data, origin: String, reference: String) -> Bool {
@@ -168,7 +192,7 @@ final class FountainRecovery {
             try Self.privateItem(path, directory: false)
             guard try Self.fingerprint(path) == fingerprint else { throw FountainRecoveryError.stale }
             var fresh: OpaquePointer?; defer { if let fresh = fresh { sqlite3_close_v2(fresh) } }
-            guard sqlite3_open_v2(path.path, &fresh, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK,
+            guard sqlite3_open_v2(path.path, &fresh, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX | SQLITE_OPEN_NOFOLLOW, nil) == SQLITE_OK,
                   try headDigest(fresh) == sourceHead, try Self.fingerprint(path) == fingerprint else { throw FountainRecoveryError.stale }
         }
     }
@@ -181,6 +205,127 @@ final class FountainRecovery {
         let size = Int(sqlite3_column_bytes(statement, 3))
         guard size > 0, size <= limit, let bytes = sqlite3_column_blob(statement, 3) else { throw FountainRecoveryError.access }
         return (String(cString: bucket), String(cString: key), String(cString: profile), Data(bytes: bytes, count: size))
+    }
+    private func attributed(_ row: Int64, recovery: Bool, profile: String, bucket: String, encoded: String, digest: String) throws -> Bool {
+        let key = recovery ? "archiveAuthority:" + String(row) : "recordAuthority:" + bucket + "|" + encoded
+        var statement: OpaquePointer?; defer { sqlite3_finalize(statement) }
+        guard sqlite3_prepare_v2(db, "SELECT value FROM control WHERE id=?", -1, &statement, nil) == SQLITE_OK,
+              sqlite3_bind_text(statement, 1, key, -1, transient) == SQLITE_OK else { throw FountainRecoveryError.storage }
+        let status = sqlite3_step(statement)
+        if status == SQLITE_DONE { return false }
+        guard status == SQLITE_ROW else { throw FountainRecoveryError.storage }
+        let size = Int(sqlite3_column_bytes(statement, 0))
+        guard size > 0, size <= 16384, let bytes = sqlite3_column_blob(statement, 0),
+              let proof = try JSONSerialization.jsonObject(with: Data(bytes: bytes, count: size)) as? [String: Any] else { throw FountainRecoveryError.storage }
+        let actor = authority.origin + "|" + [authority.workspace, authority.member].map(FountainOutbox.encodeURIComponent).joined(separator: "|")
+        return proof["actor"] as? String == actor && proof["profile"] as? String == profile && proof["digest"] as? String == digest && (recovery ? ["confirmed", "upgrade"].contains(proof["trust"] as? String ?? "") : proof["trust"] as? String == "confirmed")
+    }
+    private func privateControl(_ key: String) throws -> Any? {
+        var statement: OpaquePointer?; defer { sqlite3_finalize(statement) }
+        guard sqlite3_prepare_v2(db, "SELECT value FROM control WHERE id=?", -1, &statement, nil) == SQLITE_OK,
+              sqlite3_bind_text(statement, 1, key, -1, transient) == SQLITE_OK else { throw FountainRecoveryError.storage }
+        let status = sqlite3_step(statement); if status == SQLITE_DONE { return nil }
+        guard status == SQLITE_ROW, let bytes = sqlite3_column_blob(statement, 0) else { throw FountainRecoveryError.storage }
+        let size = Int(sqlite3_column_bytes(statement, 0)); guard size > 0, size <= 16384 else { throw FountainRecoveryError.storage }
+        return try JSONSerialization.jsonObject(with: Data(bytes: bytes, count: size), options: [.fragmentsAllowed])
+    }
+    private func targetPage(_ entry: Entry, _ value: [String: Any]) -> String? {
+        if entry.bucket == "mutations", let operation = value["operation"] as? [String: Any], (operation["kind"] as? String)?.hasPrefix("page.") == true { return operation["target_id"] as? String }
+        return pageID(entry, value)
+    }
+    private struct LocalLineage { let target: String, externalParent: String?, teamspace: String? }
+    private func nativeCreationVersion(_ context: [String: Any], bucket: String) throws -> Bool {
+        guard let profile = context["profile"] as? String, let page = context["page"] as? String, let creation = context["creation"] as? String else { throw FountainRecoveryError.access }
+        let rawKey: Any = bucket == "mutations" ? [profile, creation] : profile + "|" + FountainOutbox.encodeURIComponent(page)
+        let encoded = String(data: try JSONSerialization.data(withJSONObject: rawKey, options: [.sortedKeys, .withoutEscapingSlashes, .fragmentsAllowed]), encoding: .utf8)!, cacheKey = bucket + "|" + encoded + "|" + FountainOutbox.hash(try json(context))
+        if let known = localVersionChecks[cacheKey] { return known }
+        for recovery in [false, true] {
+            var statement: OpaquePointer?; defer { sqlite3_finalize(statement) }
+            let table = recovery ? "recovery" : "records"
+            guard sqlite3_prepare_v2(db, "SELECT rowid,value FROM " + table + " WHERE profile_id=? AND bucket=? AND key=? ORDER BY rowid DESC LIMIT 100001", -1, &statement, nil) == SQLITE_OK,
+                  sqlite3_bind_text(statement, 1, profile, -1, transient) == SQLITE_OK, sqlite3_bind_text(statement, 2, bucket, -1, transient) == SQLITE_OK,
+                  sqlite3_bind_text(statement, 3, encoded, -1, transient) == SQLITE_OK else { throw FountainRecoveryError.storage }
+            var rows = 0
+            while true {
+                let status = sqlite3_step(statement); if status == SQLITE_DONE { break }
+                guard status == SQLITE_ROW else { throw FountainRecoveryError.storage }
+                rows += 1; guard rows <= 100000 else { throw FountainRecoveryError.access }
+                let row = sqlite3_column_int64(statement, 0), size = Int(sqlite3_column_bytes(statement, 1))
+                guard size > 0, size <= limit, size <= 64 * 1024 * 1024 - localAuxiliaryBytes, let raw = sqlite3_column_blob(statement, 1) else { throw FountainRecoveryError.access }
+                localAuxiliaryBytes += size
+                let digest = FountainOutbox.hash(Data(bytes: raw, count: size)), key = recovery ? "archiveAuthority:" + String(row) : "recordAuthority:" + bucket + "|" + encoded
+                guard let attribution = try privateControl(key) as? [String: Any], attribution["trust"] as? String == "confirmed", attribution["digest"] as? String == digest,
+                      let stamped = attribution["nativeLocal"] as? [String: Any], try json(stamped) == json(context) else { continue }
+                let entry = Entry(handle: "", row: row, recovery: recovery, profile: profile, bucket: bucket, encoded: encoded, category: "local_page", bytes: size, digest: digest)
+                guard let record = try checkedValue(entry) else { continue }
+                if bucket == "mutations" {
+                    guard let operation = record["operation"] as? [String: Any], operation["kind"] as? String == "page.create", operation["id"] as? String == creation,
+                          operation["target_id"] as? String == page, operation["document_epoch"] as? String == context["epoch"] as? String,
+                          context["operationDigest"] as? String == FountainOutbox.hash(try json(operation)) else { continue }
+                } else {
+                    guard let metadata = record["metadata"] as? [String: Any], metadata["create_operation_id"] as? String == creation,
+                          metadata["initial_epoch"] as? String == context["epoch"] as? String, (metadata["page"] as? [String: Any])?["id"] as? String == page else { continue }
+                }
+                localVersionChecks[cacheKey] = true; return true
+            }
+        }
+        localVersionChecks[cacheKey] = false; return false
+    }
+    private func localLineage(_ entry: Entry, value: [String: Any]) throws -> LocalLineage? {
+        guard let target = targetPage(entry, value), identifier(target) else { return nil }
+        let key = entry.recovery ? "archiveAuthority:" + String(entry.row) : "recordAuthority:" + entry.bucket + "|" + entry.encoded
+        guard let attribution = try privateControl(key) as? [String: Any], attribution["trust"] as? String == "confirmed",
+              let original = attribution["nativeLocal"] as? [String: Any] else { return nil }
+        let actor = authority.origin + "|" + [authority.workspace, authority.member].map(FountainOutbox.encodeURIComponent).joined(separator: "|")
+        let observedPrefix = "serverObserved:" + FountainOutbox.encodeURIComponent(authority.workspace) + "|"
+        if try privateControl(observedPrefix + FountainOutbox.encodeURIComponent(target)) != nil { return nil }
+        guard original["profile"] as? String == entry.profile, original["actor"] as? String == actor, original["page"] as? String == target,
+              let epoch = original["epoch"] as? String, let creation = original["creation"] as? String else { throw FountainRecoveryError.access }
+        if entry.bucket == "localPages" { guard let metadata = value["metadata"] as? [String: Any], metadata["initial_epoch"] as? String == epoch, metadata["create_operation_id"] as? String == creation, (metadata["page"] as? [String: Any])?["id"] as? String == target else { throw FountainRecoveryError.access } }
+        if entry.bucket == "snapshots", (value["snapshot"] as? [String: Any])?["epoch"] as? String != epoch { throw FountainRecoveryError.access }
+        if entry.bucket == "drafts", (value["draft"] as? [String: Any])?["epoch"] as? String != epoch { throw FountainRecoveryError.access }
+        if entry.bucket == "operations", (value["operation"] as? [String: Any])?["_epoch"] as? String != epoch { throw FountainRecoveryError.access }
+        if entry.bucket == "mutations", let operation = value["operation"] as? [String: Any], operation["kind"] as? String == "page.create" {
+            guard operation["id"] as? String == creation, operation["document_epoch"] as? String == epoch,
+                  original["operationDigest"] as? String == FountainOutbox.hash(try json(operation)) else { throw FountainRecoveryError.access }
+        }
+        var context = original, visited = Set<String>()
+        func result(parent: String?, teamspace: String?) -> LocalLineage {
+            for page in visited { localLineages[entry.profile + "|" + FountainOutbox.encodeURIComponent(page)] = LocalLineage(target: page, externalParent: parent, teamspace: teamspace) }
+            return LocalLineage(target: target, externalParent: parent, teamspace: teamspace)
+        }
+        for _ in 0..<100000 {
+            guard context["version"] as? Int == 1, context["profile"] as? String == entry.profile, context["actor"] as? String == actor,
+                  let page = context["page"] as? String, identifier(page), visited.insert(page).inserted,
+                  let epoch = context["epoch"] as? String, !epoch.isEmpty, epoch.utf8.count <= 1000,
+                  let creation = context["creation"] as? String, identifier(creation) else { throw FountainRecoveryError.access }
+            if let known = localLineages[entry.profile + "|" + FountainOutbox.encodeURIComponent(page)] { return result(parent: known.externalParent, teamspace: known.teamspace) }
+            guard try nativeCreationVersion(context, bucket: "mutations"), try nativeCreationVersion(context, bucket: "localPages") else { throw FountainRecoveryError.access }
+            if let parent = context["parent"] as? String {
+                guard identifier(parent), !visited.contains(parent) else { throw FountainRecoveryError.access }
+                if try privateControl(observedPrefix + FountainOutbox.encodeURIComponent(parent)) == nil,
+                   let ancestor = try privateControl("nativeLocal:" + entry.profile + "|" + FountainOutbox.encodeURIComponent(parent)) as? [String: Any] { context = ancestor; continue }
+                return result(parent: parent, teamspace: nil)
+            }
+            guard context["parent"] is NSNull, context["teamspace"] is String || context["teamspace"] is NSNull else { throw FountainRecoveryError.access }
+            return result(parent: nil, teamspace: context["teamspace"] as? String)
+        }
+        throw FountainRecoveryError.access
+    }
+    private func readablePage(_ entry: Entry, value: [String: Any], responses: Responses, other: Authority) throws -> Bool {
+        guard let target = targetPage(entry, value) else { throw FountainRecoveryError.access }
+        let local: LocalLineage?
+        do { local = try localLineage(entry, value: value) } catch FountainRecoveryError.access { local = nil }
+        guard let local else { try page(target, responses: responses, other: other); return false }
+        if let parent = local.externalParent { try page(parent, responses: responses, other: other) }
+        else {
+            guard ["owner", "admin", "member"].contains(other.role) else { throw FountainRecoveryError.access }
+            let workspace = try authorized("/api/workspace", responses: responses, other: other)
+            if let teamspace = local.teamspace, !teamspace.isEmpty {
+                guard let spaces = workspace["teamspaces"] as? [[String: Any]], let space = spaces.first(where: { $0["id"] as? String == teamspace }), (safeInteger(space["access_level"]) ?? 0) >= 3 else { throw FountainRecoveryError.access }
+            }
+        }
+        return true
     }
     func inventory(_ other: Authority, cursor: String?, count: Int) throws -> [String: Any] {
         try current(other)
@@ -207,19 +352,22 @@ final class FountainRecovery {
                     let profile = String(cString: profileRaw); if !scoped(profile) { continue }
                     guard entries.count < 10000 else { throw FountainRecoveryError.access }
                     let bucket = String(cString: bucketRaw), bytes = Int(sqlite3_column_int64(statement, 4))
+                    guard bytes > 0, bytes <= limit else { continue }
+                    let actualDigest = FountainOutbox.hash(try read(position.1, recovery: position.0 == 1).3)
+                    guard try attributed(position.1, recovery: position.0 == 1, profile: profile, bucket: bucket, encoded: String(cString: encodedRaw), digest: actualDigest) else { continue }
                     var category = bucket == "mutations" ? "typed" : bucket == "localPages" ? "local_page" : "body"
                     let handle = UUID().uuidString, recovery = position.0 == 1
                     let metadataBytes = profile.utf8.count + String(cString: encodedRaw).utf8.count + 512
                     guard inventoryBytes <= limit - metadataBytes else { throw FountainRecoveryError.access }
                     inventoryBytes += metadataBytes
-                    var blocked = category == "local_page" || bytes <= 0 || bytes > limit
-                    let digest = blocked ? "" : FountainOutbox.hash(try read(position.1, recovery: recovery).3)
+                    var blocked = bytes <= 0 || bytes > limit
+                    let digest = actualDigest
                     let candidate = Entry(handle: handle, row: position.1, recovery: recovery, profile: profile, bucket: bucket, encoded: String(cString: encodedRaw), category: category, bytes: bytes, digest: digest)
                     if !blocked {
                         if let value = try checkedValue(candidate) {
                             if bucket == "mutations" {
                                 let kind = (value["operation"] as? [String: Any])?["kind"] as? String ?? ""
-                                if kind == "page.create" { category = "local_page"; blocked = true }
+                                if kind == "page.create" { category = "local_page" }
                                 else if !["page.patch", "row.create", "row.patch", "row.delete"].contains(kind) { category = "unsupported"; blocked = true }
                             }
                         } else { category = "unsupported"; blocked = true }
@@ -246,6 +394,7 @@ final class FountainRecovery {
     private func sourceData(_ entry: Entry) throws -> Data {
         let source = try read(entry.row, recovery: entry.recovery)
         guard source.0 == entry.bucket, source.1 == entry.encoded, source.2 == entry.profile, FountainOutbox.hash(source.3) == entry.digest else { throw FountainRecoveryError.stale }
+        guard try attributed(entry.row, recovery: entry.recovery, profile: entry.profile, bucket: entry.bucket, encoded: entry.encoded, digest: entry.digest) else { throw FountainRecoveryError.access }
         return source.3
     }
     private func value(_ entry: Entry) throws -> [String: Any] {
@@ -274,7 +423,7 @@ final class FountainRecovery {
                 guard record["key"] as? String == keys[0], record[entry.bucket == "drafts" ? "clientId" : "id"] as? String == keys[1] else { throw FountainRecoveryError.access }
                 if entry.bucket == "operations", (record["operation"] as? [String: Any])?["id"] as? String != keys[1] { throw FountainRecoveryError.access }
             }
-        } else if entry.bucket == "snapshots" { guard record["key"] as? String == storedKey as? String else { throw FountainRecoveryError.access } }
+        } else if ["snapshots", "localPages"].contains(entry.bucket) { guard record["key"] as? String == storedKey as? String else { throw FountainRecoveryError.access } }
         return record
     }
     private func checkedValue(_ entry: Entry) throws -> [String: Any]? {
@@ -290,19 +439,24 @@ final class FountainRecovery {
     func authorityPaths(_ handles: [String], _ other: Authority) throws -> [String] {
         var paths = Set(["/api/workspace"])
         for entry in try selected(handles, other) {
-            if entry.digest.isEmpty || entry.category == "local_page" { continue }
+            if entry.digest.isEmpty { continue }
             guard let value = try checkedValue(entry) else { continue }
+            if let local = try? localLineage(entry, value: value) {
+                if let parent = local.externalParent { paths.insert("/api/pages/" + FountainOutbox.encodeURIComponent(parent) + "/collaboration") }
+                continue
+            }
             if entry.bucket == "mutations", let operation = value["operation"] as? [String: Any], let kind = operation["kind"] as? String {
-                if kind == "page.patch", let id = operation["target_id"] as? String { paths.insert("/api/pages/" + FountainOutbox.encodeURIComponent(id) + "/collaboration") }
+                if ["page.patch", "page.create"].contains(kind), let id = operation["target_id"] as? String { paths.insert("/api/pages/" + FountainOutbox.encodeURIComponent(id) + "/collaboration") }
                 else if ["row.create", "row.patch", "row.delete"].contains(kind), let id = operation["database_id"] as? String { paths.insert("/api/databases/" + FountainOutbox.encodeURIComponent(id)) }
             } else if let id = pageID(entry, value) { paths.insert("/api/pages/" + FountainOutbox.encodeURIComponent(id) + "/collaboration") }
         }
-        return paths.sorted()
+        return ["/api/workspace"] + paths.filter { $0 != "/api/workspace" }.sorted()
     }
     typealias Responses = [String: (Int, Data)]
     func additionalPaths(_ handles: [String], _ other: Authority, responses: Responses) throws -> [String] {
         var paths = Set<String>()
         let workspace = try authorized("/api/workspace", responses: responses, other: other)
+        try exportPolicy(workspace)
         for entry in try selected(handles, other) {
             if entry.digest.isEmpty { continue }
             guard let value = try checkedValue(entry) else { continue }
@@ -345,8 +499,27 @@ final class FountainRecovery {
         guard let response = responses[path], response.0 == 200, response.1.count <= limit,
               let body = try JSONSerialization.jsonObject(with: response.1) as? [String: Any] else { throw FountainRecoveryError.access }
         if path.hasSuffix("/metadata") { return body }
-        guard other.envelope(body), safeInteger(body["access_revision"]) != nil, safeInteger(body["data_revision"]) != nil else { throw FountainRecoveryError.access }
+        guard other.envelope(body), let access = safeInteger(body["access_revision"]), let data = safeInteger(body["data_revision"]) else { throw FountainRecoveryError.access }
+        if path != "/api/workspace" {
+            let workspace = try authorized("/api/workspace", responses: responses, other: other)
+            guard let workspaceAccess = safeInteger(workspace["access_revision"]), let workspaceData = safeInteger(workspace["data_revision"]),
+                  access == workspaceAccess, data >= workspaceData else { throw FountainRecoveryError.stale }
+        }
         return body
+    }
+    private func permissionFloors(_ responses: Responses, other: Authority) throws {
+        _ = try authorized("/api/workspace", responses: responses, other: other)
+        // Validate the complete permission cut before any intermediate/export
+        // file exists; a later mismatching entry must not produce partial files.
+        for (path, response) in responses where response.0 == 200 {
+            if let kind = FountainOutbox.canonicalResource(path: path, method: "GET")?.0, ["page", "database"].contains(kind) { _ = try authorized(path, responses: responses, other: other) }
+        }
+    }
+    private func exportPolicy(_ workspace: [String: Any]) throws {
+        guard let supplied = workspace["settings"] else { return }
+        guard let settings = supplied as? [String: Any] else { throw FountainRecoveryError.access }
+        guard let value = settings["disable_export"] else { return }
+        guard boolean(value) == false else { throw FountainRecoveryError.access }
     }
     private func currentDenied(_ kind: String, id: String, other: Authority) throws -> Bool {
         guard db != nil else { return false }
@@ -580,10 +753,26 @@ final class FountainRecovery {
         return true
     }
     private func projection(_ entry: Entry, value: [String: Any], responses: Responses, other: Authority, selectedIDs: Set<String>) throws -> (String, [String: Any], Int) {
-        if entry.bucket == "localPages" { throw FountainRecoveryError.access }
+        if entry.bucket == "localPages" {
+            _ = try readablePage(entry, value: value, responses: responses, other: other)
+            guard let metadata = value["metadata"] as? [String: Any], let page = metadata["page"] as? [String: Any], page["id"] as? String == targetPage(entry, value),
+                  let epoch = metadata["initial_epoch"] as? String, !epoch.isEmpty, epoch.utf8.count <= 1000,
+                  let creation = metadata["create_operation_id"] as? String, identifier(creation) else { throw FountainRecoveryError.access }
+            return ("readable", ["page": try readablePageFields(page), "initial_epoch": epoch, "create_operation_id": creation], 0)
+        }
         if entry.bucket == "mutations" {
             guard let operation = value["operation"] as? [String: Any] else { throw FountainRecoveryError.access }
             let dependencies = try operationDependencies(operation)
+            if let kind = operation["kind"] as? String, ["page.create", "page.patch"].contains(kind) {
+                let local = try readablePage(entry, value: value, responses: responses, other: other)
+                if kind == "page.create" || local {
+                    guard let id = operation["id"] as? String, identifier(id), let target = operation["target_id"] as? String, identifier(target),
+                          let body = operation["body"] as? [String: Any], dependencies.allSatisfy(identifier) else { throw FountainRecoveryError.access }
+                    var output: [String: Any] = ["id": id, "kind": kind, "target_id": target, "depends_on": dependencies, "body": try readablePageFields(body)]
+                    if kind == "page.create" { guard body["id"] as? String == target, let epoch = operation["document_epoch"] as? String, !epoch.isEmpty, epoch.utf8.count <= 1000 else { throw FountainRecoveryError.access }; output["document_epoch"] = epoch }
+                    return ("readable", ["operation": output], 0)
+                }
+            }
             guard let kind = operation["kind"] as? String,
                   let id = operation["id"] as? String, identifier(id), let target = operation["target_id"] as? String, identifier(target),
                   let body = operation["body"] as? [String: Any],
@@ -615,7 +804,7 @@ final class FountainRecovery {
             return ("records", ["id": id, "operation": output], 0)
         }
         guard let pageID = pageID(entry, value) else { throw FountainRecoveryError.access }
-        try page(pageID, responses: responses, other: other)
+        let nativeLocal = try readablePage(entry, value: value, responses: responses, other: other)
         var draft: [String: Any]
         if entry.bucket == "drafts", let source = value["draft"] as? [String: Any] {
             draft = source.filter { ["epoch", "seq", "blocks", "ops", "reason", "createdAt", "history_pending"].contains($0.key) }
@@ -646,12 +835,27 @@ final class FountainRecovery {
                     guard metadata["id"] as? String == id, metadata["status"] as? String == "complete" else { throw FountainRecoveryError.access }
                 }
             }
+            if nativeLocal { return ("readable", ["page_id": pageID, "draft": draft], blocks.count) }
             if !importable(blocks) || (draft["ops"] as? [Any])?.isEmpty == false { return ("readable", draft, blocks.count) }
             return ("drafts", ["page_id": pageID, "draft": draft], blocks.count)
         }
+        if nativeLocal, let blocks = draft["blocks"] as? [[String: Any]], blocks.isEmpty { return ("readable", ["page_id": pageID, "draft": draft], 0) }
         guard let ops = draft["ops"] as? [[String: Any]], !ops.isEmpty else { throw FountainRecoveryError.access }
+        if nativeLocal { return ("readable", ["page_id": pageID, "draft": draft], 0) }
         if ops.count > 1000 { return ("readable", ["ops": ops], 0) }
         return ("drafts", ["page_id": pageID, "draft": ["ops": ops, "reason": "native_unresolved_operations"]], 0)
+    }
+    private func readablePageFields(_ body: [String: Any]) throws -> [String: Any] {
+        var output: [String: Any] = [:]
+        for (field, limit) in [("id", 160), ("title", 500), ("icon", 10000), ("cover", 10000), ("parent_id", 160), ("teamspace_id", 1000)] {
+            guard let value = body[field] else { continue }
+            if value is NSNull, ["parent_id", "teamspace_id", "cover"].contains(field) { output[field] = NSNull(); continue }
+            guard let text = value as? String, text.unicodeScalars.count <= limit, !text.unicodeScalars.contains(where: { $0.value < 32 || $0.value == 127 }),
+                  !["id", "parent_id"].contains(field) || identifier(text) else { throw FountainRecoveryError.access }
+            output[field] = text
+        }
+        if let value = body["favorite"] { guard boolean(value) != nil else { throw FountainRecoveryError.access }; output["favorite"] = value }
+        return output
     }
     private func operationDependencies(_ operation: [String: Any]) throws -> [String] {
         if let supplied = operation["depends_on"], !(supplied is [String]) { throw FountainRecoveryError.access }
@@ -692,7 +896,8 @@ final class FountainRecovery {
     func prepare(_ handles: [String], other: Authority, responses: Responses, observedAt: Double, makeFile: (String) throws -> URL) throws -> [String: Any] {
         try current(other); cancelPrepared()
         guard responses.values.reduce(0, { $0 + $1.1.count }) <= 64 * 1024 * 1024 else { throw FountainRecoveryError.access }
-        _ = try authorized("/api/workspace", responses: responses, other: other)
+        try permissionFloors(responses, other: other)
+        try exportPolicy(authorized("/api/workspace", responses: responses, other: other))
         let chosen = try selected(handles, other)
         var ids = Set<String>()
         for entry in chosen where entry.category == "typed" && !entry.digest.isEmpty {
@@ -705,7 +910,7 @@ final class FountainRecovery {
             if !keep { for url in outputs { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) } }
         }
         for entry in chosen {
-            if entry.digest.isEmpty || entry.category == "local_page" { blocked += 1; continue }
+            if entry.digest.isEmpty { blocked += 1; continue }
             guard let value = try checkedValue(entry) else { blocked += 1; continue }
             do {
                 let (section, output, blocks) = try projection(entry, value: value, responses: responses, other: other, selectedIDs: ids)
@@ -716,7 +921,7 @@ final class FountainRecovery {
                 intermediateBytes += data.count
                 let file = try makeFile("recovery-part.json")
                 temporary.append(file); try write(data, to: file)
-                let operation = output["operation"] as? [String: Any]
+                let operation = section == "records" ? output["operation"] as? [String: Any] : nil
                 pieces.append(Piece(entry: entry, section: section, url: file, bytes: data.count, blocks: blocks, nodes: nodes, operationID: operation?["id"] as? String, dependencies: operation?["depends_on"] as? [String] ?? []))
             } catch FountainRecoveryError.access { blocked += 1 }
         }
@@ -804,13 +1009,13 @@ final class FountainRecovery {
         var outputDigests: [String: String] = [:]
         for file in outputs { outputDigests[file.path] = try fileDigest(file) }
         let result = Prepared(token: exportToken, handles: handles.sorted(), digests: Dictionary(uniqueKeysWithValues: chosen.map { ($0.handle, $0.digest) }), authority: other,
-            urls: outputs, paths: responses.keys.sorted(), authorityDigests: try authorityDigests(responses), deadline: deadline,
+            urls: outputs, paths: ["/api/workspace"] + responses.keys.filter { $0 != "/api/workspace" }.sorted(), authorityDigests: try authorityDigests(responses), deadline: deadline,
             floorAccess: floorAccess, floorData: floorData, outputDigests: outputDigests)
         let files: [[String: Any]] = try outputs.map { url in
             let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
             return ["name": url.lastPathComponent, "byteLength": (attributes[.size] as? NSNumber)?.intValue ?? 0, "format": formats[url.path] ?? "readable-body"]
         }
-        prepared = result; keep = true
+        prepared = result; workspaceExportAllowed = true; keep = true
         return ["exportToken": exportToken, "readyCount": pieces.count, "blockedCount": blocked,
             "files": files,
             "warnings": ["원본은 기기에 그대로 남습니다. 새 파일은 가져오기 미리보기에서 다시 확인해야 합니다."] + (readable ? ["큰 자료는 순서가 표시된 원문 JSON 조각으로 보관합니다. 직접 내용을 확인하고 나누어 복구하세요."] : []) + (blocked > 0 ? ["확인되지 않은 항목은 파일에 포함하지 않았습니다. 권한을 확인하거나 자료를 나누어 선택해 주세요."] : [])]
@@ -828,17 +1033,22 @@ final class FountainRecovery {
     }
     func saveFiles(_ exportToken: String, handles: [String], other: Authority, responses: Responses) throws -> [URL] {
         _ = try preparedPaths(exportToken, handles: handles, other: other)
+        do { try permissionFloors(responses, other: other); try exportPolicy(authorized("/api/workspace", responses: responses, other: other)) }
+        catch { cancelPrepared(); throw error }
         guard let prepared = prepared, try authorityDigests(responses) == prepared.authorityDigests else { cancelPrepared(); throw FountainRecoveryError.stale }
         for file in prepared.urls { guard try fileDigest(file) == prepared.outputDigests[file.path] else { cancelPrepared(); throw FountainRecoveryError.storage } }
         try current(other)
         return prepared.urls
     }
     func validSave(_ exportToken: String, other: Authority) -> Bool {
-        guard let prepared = prepared, prepared.token == exportToken, prepared.authority.matches(other), prepared.deadline > Date().timeIntervalSince1970 * 1000 else { return false }
+        guard workspaceExportAllowed, let prepared = prepared, prepared.token == exportToken, prepared.authority.matches(other), prepared.deadline > Date().timeIntervalSince1970 * 1000 else { return false }
         return validContext(other)
     }
     func noteCanonical(path: String, status: Int, data: Data) {
         guard let prepared = prepared else { return }
+        if path == "/api/workspace", status == 200 {
+            guard let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], authority.envelope(body), (try? exportPolicy(body)) != nil else { cancelPrepared(); return }
+        }
         if status == 403 || status == 404 { cancelPrepared(); return }
         if let old = prepared.authorityDigests[path], (try? authorityDigest(path, status: status, data: data)) != old { cancelPrepared(); return }
         if status == 200, let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any], authority.envelope(body),

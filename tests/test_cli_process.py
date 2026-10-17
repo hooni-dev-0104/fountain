@@ -1,4 +1,5 @@
 import os
+import signal
 from pathlib import Path
 import subprocess
 import sys
@@ -71,21 +72,73 @@ class CLIProcessTests(unittest.TestCase):
             self.run_fixture("print('x')", max_stdout=0)
         self.assertEqual(caught.exception.kind, "stdout_limit")
 
-    def test_deadline_kills_leader_and_child_and_reaps_leader(self):
+    def assert_ready_group_deadline_cleanup(self, bootstrap_delay=0):
         source = ("import os,subprocess,sys,time\n"
+                  f"time.sleep({bootstrap_delay!r})\n"
                   "child=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'])\n"
-                  "open('pids','w').write(str(os.getpid())+' '+str(child.pid))\n"
+                  "with open('pids.tmp','w') as output:\n"
+                  " output.write(str(os.getpid())+' '+str(child.pid)+'\\n')\n"
+                  "os.replace('pids.tmp','pids')\n"
                   "time.sleep(60)\n")
+        # Process creation is a test fixture prerequisite, not a promise that a
+        # cold interpreter can bootstrap within the product's 300 ms deadline.
+        real_popen = subprocess.Popen
+        ready = {}
+        def after_fixture_ready(*args, **kwargs):
+            self.assertIs(kwargs.get('start_new_session'), True)
+            process = real_popen(*args, **kwargs)
+            deadline = time.monotonic() + 5
+            try:
+                while time.monotonic() < deadline:
+                    try:
+                        fields = (self.cwd / 'pids').read_text().split()
+                    except FileNotFoundError:
+                        self.assertIsNone(process.poll(), 'Fixture exited before publishing readiness')
+                        time.sleep(0.01)
+                        continue
+                    self.assertEqual(len(fields), 2, 'Invalid fixture PID record')
+                    self.assertTrue(all(value.isascii() and value.isdecimal() and str(int(value)) == value and int(value) > 0
+                                        for value in fields), 'Invalid fixture PID record')
+                    leader, child = map(int, fields)
+                    self.assertEqual(leader, process.pid)
+                    self.assertNotEqual(child, leader)
+                    self.assertEqual(os.getpgid(leader), process.pid)
+                    self.assertEqual(os.getpgid(child), process.pid)
+                    ready.update(at=time.monotonic(), leader=leader, child=child, process=process)
+                    return process
+                self.fail('Fixture readiness deadline exceeded')
+            except BaseException:
+                # run_cli has not received this Popen yet, so this wrapper owns
+                # cleanup if fixture startup or readiness validation fails.
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                finally:
+                    for stream in (process.stdin, process.stdout, process.stderr):
+                        if stream is not None: stream.close()
+                    process.wait(timeout=5)
+                raise
         started = time.monotonic()
-        with self.assertRaises(CLIProcessError) as caught:
-            self.run_fixture(source, timeout=0.3)
-        self.assertEqual(caught.exception.kind, "timeout")
-        self.assertLess(time.monotonic() - started, 3)
-        leader, child = map(int, (self.cwd / "pids").read_text().split())
-        self.assert_terminated(leader)
-        self.assert_terminated(child)
+        with patch('fountain.cli_process.subprocess.Popen', side_effect=after_fixture_ready):
+            with self.assertRaises(CLIProcessError) as caught:
+                self.run_fixture(source, timeout=0.3)
+        self.assertEqual(caught.exception.kind, 'timeout')
+        self.assertLess(time.monotonic() - ready['at'], 3)
+        if bootstrap_delay:
+            self.assertGreater(ready['at'] - started, 0.3, 'Delayed fixture must exceed the original cold-start assumption')
+        self.assert_terminated(ready['leader'])
+        self.assert_terminated(ready['child'])
         with self.assertRaises(ChildProcessError):
-            os.waitpid(leader, os.WNOHANG)
+            os.waitpid(ready['leader'], os.WNOHANG)
+        self.assertTrue(all(stream.closed for stream in
+                            (ready['process'].stdin, ready['process'].stdout, ready['process'].stderr)))
+
+    def test_deadline_kills_leader_and_child_and_reaps_leader(self):
+        self.assert_ready_group_deadline_cleanup()
+
+    def test_deadline_reaps_ready_group_after_slow_fixture_bootstrap(self):
+        self.assert_ready_group_deadline_cleanup(bootstrap_delay=0.5)
 
     def test_normal_exit_also_kills_remaining_group_descendant(self):
         source = ("import subprocess,sys\n"

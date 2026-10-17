@@ -1,0 +1,12 @@
+{
+  "date": "2026-10-17",
+  "scope": "Verified pages directory implemented and scoped verified, not original whole-product parity",
+  "details": "../../research/verified-pages-evidence.json",
+  "actualCloudGroups": {
+    "basic": 5,
+    "large": 3,
+    "browser": 5,
+    "mainBoundaries": 14
+  },
+  "limitationsPreserved": true
+}

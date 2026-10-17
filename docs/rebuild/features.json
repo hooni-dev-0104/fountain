@@ -28,7 +28,7 @@
       "evidence/original-boundaries.md"
     ],
     "acceptance": [
-      "Complete and verify: Supabase Auth·Edge·Postgres·비공개 Storage·Realtime, 서비스 권한·예약 Cron·SCIM·파일/백업 정리의 구현과 격리된 실제 QA; API 19의 초기 소유자 연결·기본 위키·DB 검증 경로",
+      "Complete and verify: Supabase Auth·Edge·Postgres·비공개 Storage·Realtime, 서비스 권한·예약 Cron·SCIM·파일/백업 정리의 구현과 격리된 실제 QA; API 20의 초기 소유자 연결·기본 위키·DB 검증·검증 목록 경로",
       "Resolve: 실제 소유자 연결·공개 웹 호스트·원본 예약/정리 등록·전체 운영 전환; [전환 범위](supabase-backend.md). Python 호환 경로의 5GB 검증은 클라우드 5GB 전송 증거가 아님"
     ],
     "verification": [],
@@ -508,16 +508,22 @@
     "name": "검증 페이지 관리·필터",
     "priority": "P1",
     "weight": 3,
-    "status": "discovered",
+    "status": "implemented",
     "original_evidence": [
       "evidence/original-boundaries.md"
     ],
     "acceptance": [
       "설정에서 검증 페이지를 소유자·팀스페이스와 검색으로 관리한다"
     ],
-    "verification": [],
+    "verification": [
+      {
+        "command": "Python588actualPG + Node63/1651Access + ChromeSQLite/realSupabaseQA78 + main20 exact46files",
+        "passed": true,
+        "evidence": "evidence/verified-pages-increment.json"
+      }
+    ],
     "limitations": [
-      "구현·실제 연결·원본 비교 증거가 아직 전체 요구를 충족하지 않는다."
+      "설정의 통합 조회·검색·공개 담당자/팀스페이스 필터를 구현·검사했으나 원본 추가 관리 옵션·전체 유료 비교와 실계정 다섯 플랫폼 여정은 남아 있다."
     ]
   },
   {

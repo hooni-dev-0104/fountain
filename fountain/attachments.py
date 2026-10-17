@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
+import sqlite3
 from datetime import datetime, timedelta, timezone
 
 from .core import APIError, require, text, uid
@@ -16,6 +18,94 @@ UPLOAD_TTL_SECONDS = 24 * 60 * 60
 class FileStorage:
     def __init__(self, store):
         self.store = store
+
+    @staticmethod
+    def _document_references(value, kind):
+        """Validate only typed read slots; leave the applied vault format intact."""
+        from .retention_vault import RetentionVault
+        require(isinstance(value, dict), "Attachment reference source is invalid", 503)
+        def object_field(parent, key):
+            if parent is None or key not in parent: return None
+            child = parent[key]
+            require(isinstance(child, dict), "Attachment reference source is invalid", 503)
+            return child
+        def registers(document):
+            blocks = object_field(document, 'blocks')
+            for block in (blocks or {}).values():
+                require(isinstance(block, dict), "Attachment reference source is invalid", 503)
+                fields = object_field(block, 'fields')
+                register = object_field(fields, 'attachment_id')
+                if register is not None:
+                    require('value' in register, "Attachment reference source is invalid", 503)
+        if kind in ('page', 'version'):
+            blocks = value.get('blocks', [])
+            require(isinstance(blocks, list) and all(isinstance(block, dict) for block in blocks),
+                    "Attachment reference source is invalid", 503)
+        else:
+            state = object_field(value, 'state')
+            registers(state)
+            history = object_field(state, 'history')
+            registers(object_field(history, 'baseline'))
+            operations = object_field(history, 'ops')
+            for operation in (operations or {}).values():
+                require(isinstance(operation, dict), "Attachment reference source is invalid", 503)
+                if operation.get('type') == 'block.set' and operation.get('field') == 'attachment_id':
+                    require('value' in operation, "Attachment reference source is invalid", 503)
+        references = RetentionVault._attachment_ids(value, kind)
+        require(all(identity.strip() for identity in references), "Attachment reference source is invalid", 503)
+        return references
+
+    def referenced(self, identity):
+        """Read current typed references under the workspace writer, after ACLs.
+
+        PostgreSQL returns one boolean; document and CRDT bodies stay in SQL.
+        This is a live-reference predicate, separate from private retention pins.
+        """
+        from .search import _id
+        require(_id(identity) and bool(identity.strip()), "Invalid attachment id")
+        with self.store.transaction():
+            if getattr(self.store, 'backend', None) == 'postgres':
+                row = self.store._execute(
+                    'SELECT fountain_private.attachment_referenced(%s,%s)',
+                    (self.store.workspace_id, identity), fetch='one')
+                require(row is not None and len(row) == 1 and type(row[0]) is bool,
+                        "Attachment reference lookup is unavailable", 503)
+                return row[0]
+            try:
+                for kind, raw in self.store.db.execute(
+                        "SELECT kind,data FROM entities WHERE kind IN ('page','version','collaboration')"):
+                    value = json.loads(raw)
+                    if identity in self._document_references(value, kind): return True
+                # Only the current schema's files slots denote row attachments.
+                # Project these slots rather than fetching unrelated DB bodies.
+                for database_id, database_type, encoded_values, values_type, encoded_schema in self.store.db.execute(
+                        "SELECT json_extract(r.data,'$.database_id'),json_type(r.data,'$.database_id'),"
+                        "json_extract(r.data,'$.properties'),json_type(r.data,'$.properties'),json_extract(d.data,'$.properties') "
+                        "FROM entities r LEFT JOIN entities d ON d.kind='database' "
+                        "AND d.id=json_extract(r.data,'$.database_id') WHERE r.kind='row'"):
+                    require(database_type == 'text' and _id(database_id) and bool(database_id.strip()),
+                            "Attachment reference schema is invalid", 503)
+                    schema = json.loads(encoded_schema)
+                    require(isinstance(schema, list), "Attachment reference schema is invalid", 503)
+                    values = json.loads(encoded_values) if values_type is not None else {}
+                    require(isinstance(values, dict), "Attachment reference values are invalid", 503)
+                    found = False
+                    for prop in schema:
+                        require(isinstance(prop, dict) and _id(prop.get('id')) and bool(prop['id'].strip()) and isinstance(prop.get('type'), str),
+                                "Attachment reference schema is invalid", 503)
+                        if prop.get('type') != 'files': continue
+                        files = values.get(prop.get('id'))
+                        if files is None or files == '': continue
+                        require(isinstance(files, (str, list)), "Attachment reference values are invalid", 503)
+                        files = [files] if isinstance(files, str) else files
+                        for item in files:
+                            candidate = item.get('id') if isinstance(item, dict) else item
+                            require(_id(candidate) and bool(candidate.strip()), "Attachment reference values are invalid", 503)
+                            found = found or identity == candidate
+                    if found: return True
+            except (APIError, ValueError, TypeError, sqlite3.Error):
+                raise APIError(503, "Attachment reference source is invalid") from None
+            return False
 
     def _public(self, upload):
         result = {key: upload.get(key) for key in ("id", "owner_id", "page_id", "name", "size", "offset", "chunk_size", "expires_at", "completed")}

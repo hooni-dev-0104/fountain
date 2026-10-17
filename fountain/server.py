@@ -501,11 +501,7 @@ class Application:
             return 200, Download(attachment['name'], base64.b64decode(attachment['data']), attachment_id=attachment['id'])
         if len(parts) == 3 and parts[:2] == ['api', 'attachments'] and method == 'DELETE':
             require(s.get('attachment', parts[2]), 'Attachment not found', 404)
-            require(not any(block.get('attachment_id') == parts[2] for page in s.list('page') + s.list('version') for block in page.get('blocks', [])), 'Attachment is still referenced by a document', 409)
-            for row in s.list('row'):
-                database = s.get('database', row.get('database_id')) or {}
-                file_fields = [prop['id'] for prop in database.get('properties', []) if prop.get('type') == 'files']
-                require(not any(parts[2] in (row.get('properties', {}).get(key) or []) for key in file_fields), 'Attachment is still referenced by a database row', 409)
+            require(not self.files.referenced(parts[2]), 'Attachment is still referenced', 409)
             s.chunk_delete(parts[2])
             s.delete('attachment', parts[2])
             return 200, {'deleted': True}

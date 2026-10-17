@@ -2264,3 +2264,43 @@ svg {
   .inbox-item{padding:12px}
   .inbox-item-actions{gap:12px}
 }
+
+.wiki-panel:empty,.wiki-owner-status:empty{display:none}
+.wiki-panel{margin:18px 0 22px;min-width:0}
+.wiki-heading{font-size:12px;font-weight:600;color:#596b48;letter-spacing:.04em;margin-bottom:12px}
+.wiki-tabs{display:flex;gap:8px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding-bottom:10px}
+.wiki-tabs button{padding:8px 12px;border-radius:5px;color:#696b60}
+.wiki-tabs .selected{background:#eef4e6;color:#405c37;font-weight:600}
+.wiki-search{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;margin:20px 0 12px}
+.wiki-search label{display:grid;gap:7px;font-size:12px;flex:1;min-width:160px;color:#696b60}
+.wiki-search input{width:100%;min-width:0;border:1px solid var(--line);border-radius:5px;padding:10px 12px;background:var(--paper);color:inherit}
+.wiki-status{font-size:12px;color:#696b60;margin-bottom:10px}
+.wiki-error:not(:empty){color:#87402f;background:#fcf1e8;border:1px solid #e5c9b9;border-radius:5px;padding:10px;font-size:12px;line-height:1.7;margin-bottom:12px}
+.wiki-table{border:1px solid var(--line);border-radius:7px;overflow:hidden;min-width:0}
+.wiki-table-head,.wiki-table-row{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr) minmax(0,1fr);align-items:center;gap:14px;padding:12px 14px;font-size:12px}
+.wiki-table-head{background:#f5f5ef;color:#696b60;font-weight:600}
+.wiki-table-row{border-top:1px solid var(--line)}
+.wiki-table-row>span{overflow-wrap:anywhere;min-width:0;color:#696b60;line-height:1.7}
+.wiki-page-link{text-align:left;overflow-wrap:anywhere;min-width:0;font-weight:500;line-height:1.7;padding:4px 0}
+.wiki-page-link:hover{color:#405c37;text-decoration:underline}
+.wiki-more{margin-top:14px}
+.wiki-empty{padding:30px 12px;text-align:center;color:#696b60;font-size:13px}
+.wiki-owner-status{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:16px 0;font-size:12px;color:#696b60}
+.wiki-owner-status>span,.wiki-owner-status>button{overflow-wrap:anywhere;min-width:0}
+.wiki-owner-note{flex-basis:100%;font-size:12px}
+.wiki-mutation-modal{max-width:560px}
+.wiki-mutation-modal p{color:#696b60;line-height:1.8;overflow-wrap:anywhere}
+#wiki-home-content[hidden]{display:none}
+@media(max-width:600px){
+ .wiki-panel{margin:16px 0;max-width:100%}
+ .wiki-tabs{gap:4px}.wiki-tabs button{padding:8px;min-height:44px;font-size:14px;flex:1;white-space:nowrap}
+ .wiki-heading,.wiki-search label,.wiki-status,.wiki-error:not(:empty),.wiki-empty,.wiki-owner-status,.wiki-owner-note{font-size:14px}
+ .wiki-search{gap:8px}.wiki-search label{flex-basis:100%}.wiki-search input,.wiki-search button,.wiki-more,.wiki-owner-status button{min-height:44px;font-size:14px}
+ .wiki-table-head,.wiki-table-row{grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) minmax(0,.8fr);padding:10px 8px;gap:8px;font-size:14px}
+ .wiki-page-link{min-height:44px;font-size:14px}
+ .wiki-mutation-modal{display:flex;flex-direction:column;overflow:hidden;max-height:calc(100dvh - 20px)}
+ .wiki-mutation-modal .modal-head{flex-shrink:0}.wiki-mutation-modal .modal-body{min-height:0;overflow:auto;font-size:14px}
+ .wiki-mutation-modal p,.wiki-mutation-modal label,.wiki-mutation-modal .wiki-error{font-size:14px}
+ .wiki-mutation-modal select,.wiki-mutation-modal button{min-height:44px;font-size:14px;min-width:0}.wiki-mutation-modal .modal-close{min-width:44px}
+ .wiki-mutation-modal .form-actions{flex-wrap:wrap}.wiki-mutation-modal .form-actions button{flex:1}
+}

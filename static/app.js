@@ -65,7 +65,7 @@ window.addEventListener('fountain-native-outbox-pause',event=>{
   const paused={...detail,navigation,channel:state.channel,loaded:state.loaded,profile:state.offlineProfile,saveScheduled:!!state.saveTimer,titleScheduled:!!state.titleTimer,route:state.route,id:navigation?.id||(state.route==='page'?state.page?.id:state.database?.id),dom:[],input:null,forms:unsubmittedNativeForms(),resourceKind:navigation?.route==='database'?'database':state.route==='page'?'page':state.database?.id?'database':null,focus:document.activeElement,selection:state.route==='page'?selectedTextPosition():null};
   try{if(state.loaded)paused.input=authenticationInput(state.offlineProfile);}catch{ /* Keep the live DOM when it cannot yet be represented as a bounded draft. */ }
   if(previous?.channel)previous.channel.resumeNetwork?.(previous.owner+':'+previous.token);
-  state.nativeOutboxPause=paused;clearInbox();clearTimeout(state.saveTimer);clearTimeout(state.titleTimer);
+  state.nativeOutboxPause=paused;clearInbox();clearWikiMutation();clearWikiPage();clearTimeout(state.saveTimer);clearTimeout(state.titleTimer);
   state.channel?.pauseNetwork?.(detail.owner+':'+detail.token);
   state.presenceManager?.pause({leave:false});
   for(const node of [$('#main'),$('#sidebar'),$('#topbar'),$('#overlay-root')].filter(Boolean)){paused.dom.push({node,inert:previous?.dom.find(item=>item.node===node)?.inert??node.inert});node.inert=true;}
@@ -251,7 +251,7 @@ function pruneAdministrativeControls() {
   });
 }
 // Durable entity edits share the current login binding with document drafts.
-const serverOnlyActions=new Set(['new-database','teamspace','history','share','db-share','lock-page','delete-page','verify-page','move-page','duplicate-page','copy-blocks','new-property','task-settings','duplicate-row','restore-version','restore-page','trash','settings','ai','new-teamspace']);
+const serverOnlyActions=new Set(['new-database','teamspace','history','share','db-share','lock-page','delete-page','verify-page','move-page','duplicate-page','copy-blocks','new-property','task-settings','duplicate-row','restore-version','restore-page','trash','settings','ai','new-teamspace','wiki-toggle','confirm-wiki-toggle','wiki-owner']);
 const activeMutationStatuses=new Set(['pending','deferred','applied']);
 function closeMutations() {
   if(state.recoveryImport)closeModal();
@@ -709,7 +709,7 @@ function renderSidebar() {
   const pages=w.pages.filter(p=>!p.deleted&&!p.deleted_at&&!p.archived&&(!state.offline||state.cachedPages?.has(p.id)));
   const favorite=pages.filter(p=>p.favorite);
   const roots=pages.filter(p=>!p.parent_id);
-  const pageItem=(p,depth=0)=>`<div class="nav-item page-nav ${state.page?.id===p.id&&state.route==='page'?'active':''}" style="padding-left:${10+depth*13}px"><button data-action="page" data-id="${esc(p.id)}" class="nav-item" style="padding:0;min-height:23px"><span class="page-icon">${esc(p.icon||'📄')}</span><span class="label">${esc(p.title||'제목 없음')}</span></button><button class="page-menu" aria-label="하위 페이지 추가" data-action="add-page" data-parent="${esc(p.id)}">+</button></div>${pages.filter(q=>q.parent_id===p.id).map(q=>pageItem(q,Math.min(depth+1,4))).join('')}`;
+  const pageItem=(p,depth=0)=>`<div class="nav-item page-nav ${state.page?.id===p.id&&state.route==='page'?'active':''}" style="padding-left:${10+depth*13}px"><button data-action="page" data-id="${esc(p.id)}" class="nav-item" style="padding:0;min-height:23px"><span class="page-icon">${esc(p.is_wiki===true?'📚':p.icon||'📄')}</span><span class="label">${esc(p.title||'제목 없음')}</span></button><button class="page-menu" aria-label="하위 페이지 추가" data-action="add-page" data-parent="${esc(p.id)}">+</button></div>${pages.filter(q=>q.parent_id===p.id).map(q=>pageItem(q,Math.min(depth+1,4))).join('')}`;
   $('#sidebar').innerHTML=`<div class="brand"><span class="brand-mark">f</span>fountain<span style="font-family:sans-serif;font-size:9px;letter-spacing:1px;color:#a5a497;margin-left:2px;font-weight:400">WORKSPACE</span></div><button class="workspace-switch" data-action="settings"><span class="workspace-avatar">F</span><span class="workspace-name">${esc(w.settings?.name||'Fountain 스튜디오')}<small>함께 만드는 작은 가능성</small></span>${icon('down')}</button><nav><button class="nav-item" data-action="search">${icon('search')}<span class="label">검색</span><span class="shortcut">⌘ K</span></button><button class="nav-item ${state.route==='home'?'active':''}" data-action="home">${icon('home')}<span class="label">홈</span></button><button class="nav-item" data-action="inbox">${icon('inbox')}<span class="label">알림함</span></button><button class="nav-item" data-action="activity">${icon('clock')}<span class="label">업데이트</span></button><button class="nav-item" data-action="ai">${icon('spark')}<span class="label">Fountain AI</span><span class="badge">AI</span></button></nav><div class="sidebar-pages"><div class="section-label">즐겨찾기<span>${icon('star')}</span></div>${favorite.length?favorite.map(p=>pageItem(p)).join(''):'<div class="small muted" style="padding:5px 12px;font-size:10px">자주 찾는 페이지를 모아보세요</div>'}<div class="section-label">팀스페이스<button data-action="new-teamspace" aria-label="팀스페이스 추가">+</button></div>${(w.teamspaces||[{id:'general',name:'Fountain 팀'}]).map(t=>`<button class="nav-item" data-action="teamspace" data-id="${esc(t.id)}"><span class="team-icon">${esc((t.name||'팀')[0])}</span><span class="label">${esc(t.name||'Fountain 팀')}</span>${icon('down')}</button>`).join('')}${(w.databases||[]).filter(d=>!state.offline||state.cachedDatabases?.has(d.id)).map(d=>`<button class="nav-item ${state.route==='database'&&state.database?.id===d.id?'active':''}" data-action="database" data-id="${esc(d.id)}" style="padding-left:20px"><span class="page-icon">${esc(d.icon||'▤')}</span><span class="label">${esc(d.name||d.title||'프로젝트')}</span></button>`).join('')}<div class="section-label">페이지<button data-action="add-page" aria-label="새 페이지">+</button></div>${roots.map(p=>pageItem(p)).join('')}<button class="nav-item muted" data-action="add-page">${icon('plus')}<span class="label">새 페이지</span></button><button class="nav-item muted" data-action="new-database">${icon('table')}<span class="label">새 데이터베이스</span></button></div><div class="sidebar-bottom">${state.offline?'<button class="nav-item" data-action="logout">로그아웃</button>':''}<button class="nav-item sync-status-button" data-action="sync-queue"><span aria-hidden="true">↻</span><span class="label" data-sync-label>기기 저장과 동기화</span></button><button class="nav-item" data-action="settings">${icon('settings')}<span class="label">설정 및 멤버</span></button><button class="nav-item" data-action="trash">${icon('trash')}<span class="label">휴지통</span></button><div class="invite-card"><strong>좋은 생각은, 함께 자라니까요.</strong>팀원을 초대하고 한곳에서 시작하세요.<br><button data-action="invite">멤버 초대하기 ↗</button></div></div>`;
   pruneAdministrativeControls();renderSyncIndicators();
 }
@@ -929,6 +929,7 @@ async function cacheProfile(workspaceId=state.workspace?.workspace_id||state.ses
   state.offlineProfile=profile;return profile;
 }
 function closeDocument() {
+  clearWikiMutation();clearWikiPage();
   if(state.versionView||state.verificationView)closeModal();clearTimeout(state.verificationTimer);state.verificationTimer=null;state.versions=[];
   state.presenceManager?.close();state.presenceManager=null;state.presenceChannel=null;
   state.uploadManager?.dispose();state.uploadManager=null;state.uploadReselectId=null;
@@ -1091,20 +1092,20 @@ function renderPage() {
   if(state.nativeRecoveryPaused)return;
   const p=state.page;state.pageViewBasis=structuredClone(p);
   renderTopbar(p.title,p.icon);
-  $('#main').innerHTML=`${p.cover?'<div class="page-cover"></div>':''}<article class="editor-wrap ${p.cover?'has-cover':''}"><button class="page-emoji" data-action="change-icon" aria-label="페이지 아이콘 변경">${esc(p.icon||'📄')}</button><h1 class="page-title" id="page-title" contenteditable="${pageEditable()}" role="textbox" aria-label="페이지 제목">${esc(p.title)}</h1><div id="page-verification-status" class="page-verification-status" role="status" aria-live="polite"></div><div class="page-tools" style="flex-wrap:wrap"><span>${icon('clock')}</span><span>${date(p.updated_at)} 수정</span><button data-action="favorite" class="${p.favorite?'favorite-on':''}">${p.favorite?'★ 즐겨찾기':'☆ 즐겨찾기'}</button><button data-action="toggle-cover">${p.cover?'커버 제거':'커버 추가'}</button>${!pageEditable()?'<span>🔒 읽기 전용</span>':'<button data-action="add-file" title="파일당 최대 5 GB">📎 파일 추가</button><input id="attachment-input" type="file" aria-label="첨부할 파일 (최대 5 GB)" hidden>'}<button data-action="ai" style="margin-left:auto">✦ AI 도우미</button></div>${pageEditable()?`<div class="rich-toolbar" aria-label="본문 편집"><button data-action="undo" aria-label="실행 취소" title="실행 취소 (⌘/Ctrl Z)">↶</button><button data-action="redo" aria-label="다시 실행" title="다시 실행 (⌘/Ctrl Shift Z)">↷</button><span class="history-divider" aria-hidden="true"></span><button data-action="rich-mark" data-mark="bold" aria-label="굵게"><b>B</b></button><button data-action="rich-mark" data-mark="italic" aria-label="기울임"><i>I</i></button><button data-action="rich-mark" data-mark="underline" aria-label="밑줄"><u>U</u></button><button data-action="rich-mark" data-mark="strike" aria-label="취소선"><s>S</s></button><button data-action="rich-mark" data-mark="code" aria-label="인라인 코드">&lt;/&gt;</button><button data-action="rich-link">${icon('link')}링크</button><label>글자색<select id="rich-color" aria-label="글자색"><option value="default">기본</option>${FountainCollaboration.PALETTE.filter(color=>color!=='default').map(color=>`<option value="${color}">${esc(({gray:'회색',brown:'갈색',orange:'주황',yellow:'노랑',green:'초록',blue:'파랑',purple:'보라',pink:'분홍',red:'빨강'})[color])}</option>`).join('')}</select></label><label>배경<select id="rich-background" aria-label="글자 배경"><option value="default">없음</option>${FountainCollaboration.PALETTE.filter(color=>color!=='default').map(color=>`<option value="${color}">${esc(({gray:'회색',brown:'갈색',orange:'주황',yellow:'노랑',green:'초록',blue:'파랑',purple:'보라',pink:'분홍',red:'빨강'})[color])}</option>`).join('')}</select></label></div>`:''}<div id="blocks" aria-label="페이지 블록">${state.blocks.map(blockHTML).join('')}</div>${pageEditable()?'<button class="editor-end" data-action="add-block"><span>+</span> 글을 쓰거나 ‘/’로 블록을 추가하세요</button>':''}<section class="comment-section"><h3>댓글 <span class="muted">${state.comments.filter(c=>!c.resolved).length}</span></h3><div id="comments">${commentsHTML()}</div><form class="comment-form" id="comment-form"><input name="text" aria-label="댓글 내용" placeholder="생각을 나눠보세요…" required maxlength="10000"><button class="outline-btn">보내기 ${icon('arrow')}</button></form></section></article>`;
+  $('#main').innerHTML=`${p.cover?'<div class="page-cover"></div>':''}<article class="editor-wrap ${p.cover?'has-cover':''}"><button class="page-emoji" data-action="change-icon" aria-label="페이지 아이콘 변경">${esc(p.icon||'📄')}</button><h1 class="page-title" id="page-title" contenteditable="${pageEditable()}" role="textbox" aria-label="페이지 제목">${esc(p.title)}</h1><div id="wiki-owner-status" class="wiki-owner-status"></div><section id="wiki-panel" class="wiki-panel"></section><div id="page-verification-status" class="page-verification-status" role="status" aria-live="polite"></div><div class="page-tools" style="flex-wrap:wrap"><span>${icon('clock')}</span><span>${date(p.updated_at)} 수정</span><button data-action="favorite" class="${p.favorite?'favorite-on':''}">${p.favorite?'★ 즐겨찾기':'☆ 즐겨찾기'}</button><button data-action="toggle-cover">${p.cover?'커버 제거':'커버 추가'}</button>${!pageEditable()?'<span>🔒 읽기 전용</span>':'<button data-action="add-file" title="파일당 최대 5 GB">📎 파일 추가</button><input id="attachment-input" type="file" aria-label="첨부할 파일 (최대 5 GB)" hidden>'}<button data-action="ai" style="margin-left:auto">✦ AI 도우미</button></div><div id="wiki-home-content">${pageEditable()?`<div class="rich-toolbar" aria-label="본문 편집"><button data-action="undo" aria-label="실행 취소" title="실행 취소 (⌘/Ctrl Z)">↶</button><button data-action="redo" aria-label="다시 실행" title="다시 실행 (⌘/Ctrl Shift Z)">↷</button><span class="history-divider" aria-hidden="true"></span><button data-action="rich-mark" data-mark="bold" aria-label="굵게"><b>B</b></button><button data-action="rich-mark" data-mark="italic" aria-label="기울임"><i>I</i></button><button data-action="rich-mark" data-mark="underline" aria-label="밑줄"><u>U</u></button><button data-action="rich-mark" data-mark="strike" aria-label="취소선"><s>S</s></button><button data-action="rich-mark" data-mark="code" aria-label="인라인 코드">&lt;/&gt;</button><button data-action="rich-link">${icon('link')}링크</button><label>글자색<select id="rich-color" aria-label="글자색"><option value="default">기본</option>${FountainCollaboration.PALETTE.filter(color=>color!=='default').map(color=>`<option value="${color}">${esc(({gray:'회색',brown:'갈색',orange:'주황',yellow:'노랑',green:'초록',blue:'파랑',purple:'보라',pink:'분홍',red:'빨강'})[color])}</option>`).join('')}</select></label><label>배경<select id="rich-background" aria-label="글자 배경"><option value="default">없음</option>${FountainCollaboration.PALETTE.filter(color=>color!=='default').map(color=>`<option value="${color}">${esc(({gray:'회색',brown:'갈색',orange:'주황',yellow:'노랑',green:'초록',blue:'파랑',purple:'보라',pink:'분홍',red:'빨강'})[color])}</option>`).join('')}</select></label></div>`:''}<div id="blocks" aria-label="페이지 블록">${state.blocks.map(blockHTML).join('')}</div>${pageEditable()?'<button class="editor-end" data-action="add-block"><span>+</span> 글을 쓰거나 ‘/’로 블록을 추가하세요</button>':''}<section class="comment-section"><h3>댓글 <span class="muted">${state.comments.filter(c=>!c.resolved).length}</span></h3><div id="comments">${commentsHTML()}</div><form class="comment-form" id="comment-form"><input name="text" aria-label="댓글 내용" placeholder="생각을 나눠보세요…" required maxlength="10000"><button class="outline-btn">보내기 ${icon('arrow')}</button></form></section></div></article>`;
   if(!pageEditable()) {
     for(const action of ['change-icon','favorite','toggle-cover'])$$(`[data-action="${action}"]`).forEach(el=>el.disabled=true);
   }
   if(resourceLevel(p)<2)$('#comment-form')?.remove();
   state.renderedChars=new Map(state.blocks.map(block=>[block.id,state.channel?.chars(block.id)||[]]));
   documentStatus({status:state.channel?.status||'synced',pending:state.channel?.pending.size||0,durable:state.channel?.durable!==false});renderRecoveryDrafts();ensureUploads();
-  pruneAdministrativeControls();renderVerificationStatus();
+  pruneAdministrativeControls();renderVerificationStatus();void syncWikiPage();
 
 }
 function patchPageMetadataUI() {
   if(state.nativeOutboxPause)return;
   if(!state.page||state.route!=='page')return;
-  renderVerificationStatus();
+  void syncWikiPage();renderVerificationStatus();
   state.pageViewBasis||=structuredClone(state.page);
   const title=$('#page-title');
   if(title&&document.activeElement!==title&&!state.titlePending&&!state.titleSaving){title.textContent=state.page.title;state.pageViewBasis.title=state.page.title;}
@@ -1398,7 +1399,7 @@ async function reloadDatabase() {
 }
 function openModal(title,content,cls='') {
   clearSearch();searchNavigation++;
-  clearInbox();clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;state.verificationView=null;closeSlash();
+  clearWikiMutation();clearInbox();clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;state.verificationView=null;closeSlash();
   $('#overlay-root').innerHTML=`<div class="modal-backdrop"><section class="modal ${cls}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="modal-head"><h2>${esc(title)}</h2><button class="modal-close" data-action="close-modal" aria-label="닫기">×</button></header><div class="modal-body">${content}</div></section></div>`;
   if(state.route==='page'&&resourceLevel(state.page)<4)$$('[data-action="delete-page"],[data-action="move-page"]',$('.modal')).forEach(el=>el.remove());
   if(state.route==='page'&&resourceLevel(state.page)<3){for(const action of ['lock-page','delete-page','verify-page','move-page','change-block-type','move-block','delete-block','restore-version'])$$(`[data-action="${action}"]`,$('.modal')).forEach(el=>el.remove());}
@@ -1408,8 +1409,92 @@ function openModal(title,content,cls='') {
 }
 function closeModal() {
   clearSearch();searchNavigation++;
-  clearInbox();clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;state.verificationView=null;$('#overlay-root').innerHTML='';
+  clearWikiMutation();clearInbox();clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;state.verificationView=null;$('#overlay-root').innerHTML='';
   closeSlash();
+}
+function wikiScope(){return {pageId:state.page?.id,channel:state.channel,epoch:state.channel?.base?.epoch,binding:state.session?.cache_binding,member:state.session?.member?.id,role:state.session?.member?.role,profile:state.offlineProfile?.id,workspace:state.workspace?.workspace_id,boot:state.bootGeneration,transportEpoch:FountainTransport.scopeEpoch,origin:FountainTransport.origin};}
+function wikiScopeCurrent(scope){return !!scope&&state.route==='page'&&state.page?.id===scope.pageId&&state.channel===scope.channel&&!scope.channel?.closed&&scope.channel?.base?.epoch===scope.epoch&&state.session?.cache_binding===scope.binding&&state.session?.member?.id===scope.member&&state.session?.member?.role===scope.role&&state.offlineProfile?.id===scope.profile&&state.workspace?.workspace_id===scope.workspace&&state.bootGeneration===scope.boot&&FountainTransport.scopeEpoch===scope.transportEpoch&&FountainTransport.origin===scope.origin&&!state.nativeOutboxPause&&!state.nativeRecoveryPaused;}
+function clearWikiMutation(){const view=state.wikiMutation;state.wikiMutation=null;if(view){view.request?.abort();if(view.modal?.isConnected)view.modal.closest('.modal-backdrop')?.remove();}}
+function clearWikiPage(){const view=state.wikiPage;state.wikiPage=null;view?.request?.abort();$('#wiki-owner-status')?.replaceChildren();$('#wiki-panel')?.replaceChildren();const home=$('#wiki-home-content');if(home)home.hidden=false;}
+function wikiCurrent(view){return state.wikiPage===view&&wikiScopeCurrent(view?.scope);}
+function wikiVerificationAllowed(){const view=state.wikiPage;return !!view&&wikiCurrent(view)&&(view.kind==='root'||view.info?.can_verify===true);}
+function renderWikiPage(view){
+  if(!wikiCurrent(view))return;
+  const panel=$('#wiki-panel'),owner=$('#wiki-owner-status'),home=$('#wiki-home-content');if(!panel||!owner)return;
+  if(home)home.hidden=view.kind==='root'&&view.view!=='home';
+  owner.replaceChildren();panel.replaceChildren();
+  if(view.kind==='root'){
+    panel.innerHTML=`<div class="wiki-heading">📚 위키</div><nav class="wiki-tabs" aria-label="위키 보기">${[['home','홈'],['all','모든 페이지'],['owned','내 담당 페이지']].map(([id,label])=>`<button class="text-btn ${view.view===id?'selected':''}" data-action="wiki-tab" data-view="${id}" aria-pressed="${view.view===id}">${label}</button>`).join('')}</nav>${view.view==='home'?'':`<form id="wiki-search-form" class="wiki-search"><label>위키 페이지 검색<input name="q" maxlength="200" value="${esc(view.query)}" placeholder="페이지 제목 검색"></label><button class="outline-btn" ${view.loading?'disabled':''}>검색</button><button type="button" class="outline-btn" data-action="wiki-refresh" ${view.loading?'disabled':''}>새로고침</button></form><div class="wiki-status" role="status">${state.offline?'목록은 인터넷에 연결한 뒤 확인할 수 있습니다.':view.loading?'페이지 목록을 확인하는 중…':`${view.total}개 페이지`}</div><div class="wiki-error" role="alert">${esc(view.error||'')}</div><div class="wiki-table" role="table" aria-label="위키 페이지 목록"><div class="wiki-table-head" role="row"><span role="columnheader">페이지</span><span role="columnheader">지식 담당자</span><span role="columnheader">검증</span></div>${view.items.map(item=>`<div class="wiki-table-row" role="row"><button role="cell" class="wiki-page-link" data-action="page" data-id="${esc(item.id)}">${esc(item.icon||'📄')} ${esc(item.title||'제목 없음')}</button><span role="cell">${esc(item.owner?.name||'담당자 정보 비공개')}</span><span role="cell">${wikiVerificationLabel(item.verification)}</span></div>`).join('')||(!view.loading?'<div class="wiki-empty">표시할 페이지가 없습니다.</div>':'')}</div>${view.hasMore?`<button class="outline-btn wiki-more" data-action="wiki-more" ${view.loading?'disabled':''}>더 보기</button>`:''}`}`;
+  }else if(view.info?.in_wiki){
+    owner.innerHTML=`<span>위키 페이지</span>${view.info.wiki?`<button class="text-btn" data-action="page" data-id="${esc(view.info.wiki.id)}">${esc(view.info.wiki.title||'위키 홈')}</button>`:''}<span>지식 담당자: ${esc(view.info.owner?.name||'정보 비공개')}</span>${view.info.can_manage&&pageEditable()&&!state.offline?'<button class="text-btn" data-action="wiki-owner">담당자 변경</button>':''}${!view.info.can_verify?'<span class="wiki-owner-note">검증은 편집 권한이 있는 지식 담당자가 설정합니다.</span>':''}`;
+  }else if(view.error){owner.innerHTML=`<span role="status">${esc(view.error)}</span><button class="text-btn" data-action="wiki-refresh">다시 확인</button>`;}
+  renderVerificationStatus();
+}
+function validWikiOwner(value){return value===null||!!value&&typeof value.id==='string'&&value.id.length>0&&typeof value.name==='string';}
+function wikiVerificationLabel(value){if(value==null)return '검증 미설정';if(!verificationTimestamp(value.verified_at)||value.expires_at!=null&&!verificationTimestamp(value.expires_at))return '검증 상태 확인 필요';return value.expires_at!=null&&Date.parse(value.expires_at)<=Date.now()?'검증 만료':'검증됨';}
+async function syncWikiPage(force=false){
+  if(state.route!=='page'||!state.page||!state.channel||state.nativeOutboxPause||state.nativeRecoveryPaused)return;
+  let view=state.wikiPage;
+  if(view&&!wikiCurrent(view)){clearWikiPage();view=null;}
+  const kind=state.page.is_wiki===true?'root':'page',revision=state.page.revision;
+  if(view&&view.root===(kind==='root')&&!force&&view.revision===revision){renderWikiPage(view);return view.pending;}
+  if(!view||view.root!==(kind==='root')){clearWikiPage();view={scope:wikiScope(),root:kind==='root',kind,view:'home',query:'',items:[],total:0,hasMore:false,loading:false,info:null,error:null};state.wikiPage=view;}
+  view.revision=revision;view.request?.abort();view.serial=(view.serial||0)+1;view.loading=false;view.request=new AbortController();view.info=null;view.error=null;
+  if(kind==='root'){view.kind='root';renderWikiPage(view);if(view.view!=='home')await loadWikiPages(view);return;}
+  view.kind='checking';renderWikiPage(view);
+  if(state.offline||state.localPageOnly){view.error='위키 담당자와 검증 설정은 연결 후 확인할 수 있습니다.';renderWikiPage(view);return;}
+  const serial=view.serial=(view.serial||0)+1;
+  view.pending=(async()=>{try{
+    const info=await api('/pages/'+encodeURIComponent(view.scope.pageId)+'/wiki-owner',undefined,'GET',{signal:view.request.signal,current:()=>wikiCurrent(view)&&view.serial===serial});
+    if(!wikiCurrent(view)||view.serial!==serial)return;
+    if(typeof info.in_wiki!=='boolean'||!validWikiOwner(info.owner)||!Array.isArray(info.members)||!info.members.every(member=>member!==null&&validWikiOwner(member))||!Number.isSafeInteger(info.revision)||typeof info.can_manage!=='boolean'||typeof info.can_verify!=='boolean'||info.wiki!==null&&(!info.wiki||typeof info.wiki.id!=='string'||typeof info.wiki.title!=='string'))throw new Error('위키 담당자 정보를 확인하지 못했습니다.');
+    if(info.revision!==state.page.revision){view.error='페이지가 변경되었습니다. 다시 확인해 주세요.';return;}
+    view.info=info;view.kind=info.in_wiki?'child':'ordinary';
+  }catch(error){if(!wikiCurrent(view)||view.serial!==serial)return;view.info=null;view.kind='unknown';view.error=[403,404].includes(error.status)?'현재 위키 정보를 확인할 수 없습니다.':error.message;}
+  finally{if(wikiCurrent(view)&&view.serial===serial){view.pending=null;renderWikiPage(view);invalidateVerificationView();}}})();return view.pending;
+}
+async function loadWikiPages(view,more=false){
+  if(!wikiCurrent(view)||view.loading||view.kind!=='root'||view.view==='home')return;
+  if(state.offline){view.error='페이지 목록은 인터넷 연결 후 확인할 수 있습니다.';renderWikiPage(view);return;}
+  view.loading=true;view.error=null;const offset=more?view.items.length:0,tab=view.view,query=view.query,serial=view.serial=(view.serial||0)+1;view.request?.abort();view.request=new AbortController();renderWikiPage(view);
+  try{
+    const result=await api('/pages/'+encodeURIComponent(view.scope.pageId)+'/wiki?view='+tab+'&q='+encodeURIComponent(query)+'&limit=50&offset='+offset,undefined,'GET',{signal:view.request.signal,current:()=>wikiCurrent(view)&&view.serial===serial});
+    if(!wikiCurrent(view)||view.serial!==serial)return;
+    if(!result.wiki||result.wiki.id!==view.scope.pageId||!Array.isArray(result.items)||result.items.length>50||!result.items.every(item=>typeof item.id==='string'&&typeof item.title==='string'&&validWikiOwner(item.owner)&&typeof item.can_edit==='boolean'&&typeof item.can_verify==='boolean')||!Number.isSafeInteger(result.total)||typeof result.has_more!=='boolean'||result.offset!==offset||result.limit!==50)throw new Error('위키 목록을 확인하지 못했습니다.');
+    const items=more?[...view.items,...result.items]:result.items;if(new Set(items.map(item=>item.id)).size!==items.length)throw new Error('목록이 변경되었습니다. 새로고침해 주세요.');view.items=items;view.total=result.total;view.hasMore=result.has_more;
+  }catch(error){if(!wikiCurrent(view)||view.serial!==serial)return;if([401,403,404].includes(error.status)){view.items=[];view.total=0;view.hasMore=false;}view.error=error.message;}
+  finally{if(wikiCurrent(view)&&view.serial===serial){view.loading=false;renderWikiPage(view);}}
+}
+async function wikiTab(tab){
+  const view=state.wikiPage;if(!wikiCurrent(view)||view.kind!=='root'||!['home','all','owned'].includes(tab))return;
+  if(state.composition){toast('입력 중인 글자를 완료한 뒤 보기를 바꿔 주세요.');return;}
+  reconcileEditor();view.request?.abort();view.serial=(view.serial||0)+1;view.loading=false;view.view=tab;view.items=[];view.total=0;view.hasMore=false;view.error=null;renderWikiPage(view);if(tab!=='home')await loadWikiPages(view);
+}
+function wikiMutationCurrent(view){return state.wikiMutation===view&&view.modal?.isConnected&&$('.wiki-mutation-modal')===view.modal&&wikiScopeCurrent(view.scope)&&pageEditable()&&!state.offline&&!state.localPageOnly;}
+function wikiToggleModal(){
+  if(!pageEditable()||resourceLevel(state.page)<4||state.offline||state.localPageOnly||state.page.parent_id&&!state.page.is_wiki)throw new Error('독립 페이지의 전체 권한으로 연결된 상태에서 설정할 수 있습니다.');
+  const scope=wikiScope(),revision=state.page.revision,remove=state.page.is_wiki===true;
+  if(!Number.isSafeInteger(revision))throw new Error('페이지를 다시 열어 버전을 확인해 주세요.');
+  openModal(remove?'위키 해제':'위키로 전환',`<p>${remove?'일반 페이지로 되돌립니다. 본문, 하위 페이지와 공유 권한은 유지됩니다.':'이 페이지의 본문은 위키 홈으로 유지됩니다. 모든 페이지와 내 담당 페이지 보기를 사용할 수 있습니다.'}</p><div class="wiki-error" role="alert"></div><div class="form-actions"><button class="outline-btn" data-action="close-modal">취소</button><button class="solid-btn" data-action="confirm-wiki-toggle">${remove?'위키 해제':'위키로 전환'}</button></div>`,'wiki-mutation-modal');state.wikiMutation={scope,revision,remove,kind:'toggle',modal:$('.wiki-mutation-modal'),busy:false};
+}
+async function wikiOwnerModal(){
+  const initial=wikiScope(),overlay=$('#overlay-root').firstChild;await syncWikiPage(true);if(!wikiScopeCurrent(initial)||$('#overlay-root').firstChild!==overlay)return;const page=state.wikiPage;if(!wikiCurrent(page)||!page.info?.in_wiki||!page.info.can_manage||!pageEditable())throw new Error('현재 위키 페이지의 편집 권한이 필요합니다.');
+  const scope=wikiScope(),info=page.info;
+  openModal('지식 담당자 변경',`<p>담당자 지정으로 문서 접근 권한이 추가되지 않습니다. 지식 담당자는 편집 권한이 있을 때 이 페이지를 검증할 수 있습니다.</p><form id="wiki-owner-form" class="form-grid"><label>지식 담당자<select name="owner_id" required><option value="">담당자 선택</option>${info.members.map(member=>`<option value="${esc(member.id)}" ${member.id===info.owner?.id?'selected':''}>${esc(member.name||'이름 없는 멤버')}</option>`).join('')}</select></label><div class="wiki-error" role="alert"></div><div class="form-actions"><button type="button" class="outline-btn" data-action="close-modal">취소</button><button type="submit" class="solid-btn">담당자 저장</button></div></form>`,'wiki-mutation-modal');state.wikiMutation={scope,revision:info.revision,kind:'owner',modal:$('.wiki-mutation-modal'),busy:false,ids:info.members.map(member=>member.id)};
+}
+async function saveWikiMutation(){
+  const view=state.wikiMutation;if(!wikiMutationCurrent(view)||view.busy)return;const error=$('.wiki-error',view.modal);let owner;
+  try{
+    if(view.kind==='owner'){owner=$('[name="owner_id"]',view.modal).value;if(!view.ids.includes(owner))throw new Error('담당자를 선택해 주세요.');}
+    view.busy=true;error.textContent='';for(const control of $$('input,select,button',view.modal))if(control.dataset.action!=='close-modal')control.disabled=true;
+    const current=()=>wikiMutationCurrent(view);
+    if(!current())return;await saveTitle();if(!current())return;await savePage();if(!current())return;
+    if(state.page.revision!==view.revision)throw new Error('페이지가 설정을 연 뒤 변경되었습니다. 취소하고 최신 페이지에서 다시 확인해 주세요.');
+    view.request=new AbortController();await api('/pages/'+encodeURIComponent(view.scope.pageId)+(view.kind==='owner'?'/wiki-owner':'/wiki'),view.kind==='owner'?{owner_id:owner,revision:view.revision}:{revision:view.revision},view.kind==='owner'?'PATCH':view.remove?'DELETE':'POST',{signal:view.request.signal,current});if(!current())return;
+    const snapshot=await api('/pages/'+encodeURIComponent(view.scope.pageId)+'/collaboration',undefined,'GET',{signal:view.request.signal,current});if(!current())return;await view.scope.channel.receive(snapshot,'wiki');if(!current())return;
+    const index=state.workspace.pages.findIndex(page=>page.id===view.scope.pageId);if(index>=0)state.workspace.pages[index]=state.page;renderSidebar();closeModal();await syncWikiPage(true);
+  }catch(failure){if(wikiMutationCurrent(view)){error.textContent=failure.status===409?'페이지가 변경되었습니다. 입력은 유지됩니다. 취소하고 최신 정보를 다시 확인해 주세요.':failure.message;if([403,404].includes(failure.status))clearWikiPage();}}
+  finally{if(wikiMutationCurrent(view)){view.busy=false;for(const control of $$('input,select,button',view.modal))control.disabled=false;}}
 }
 function clearInbox(){const view=state.inboxView;state.inboxView=null;if(view){view.closed=true;view.request?.abort();view.items=[];if(view.modal?.isConnected)view.modal.closest('.modal-backdrop')?.remove();}}
 function inboxScopeCurrent(view) {
@@ -1878,7 +1963,7 @@ function renderVerificationStatus() {
   clearTimeout(state.verificationTimer);state.verificationTimer=null;
   const element=$('#page-verification-status');if(state.route!=='page'||!state.page||!element)return;
   const {value,valid,expired,label,names}=verificationSummary();
-  element.innerHTML=`<span class="verification-badge ${valid&&!expired?'verified':''}">${valid&&!expired?'✓ ':''}${label}</span>${names.length?`<span>${names.map(esc).join(', ')}</span>`:value?'<span>담당자 정보 비공개</span>':''}${valid?`<span>확인 <time datetime="${esc(value.verified_at)}">${esc(verificationDate(value.verified_at))}</time> · ${value.expires_at?`<time datetime="${esc(value.expires_at)}">${esc(verificationDate(value.expires_at))}</time> 만료`:'만료 없음'}</span>`:''}${pageEditable()&&!state.offline&&!state.localPageOnly?'<button class="text-btn" data-action="verify-page">검증 설정</button>':''}`;
+  element.innerHTML=`<span class="verification-badge ${valid&&!expired?'verified':''}">${valid&&!expired?'✓ ':''}${label}</span>${names.length?`<span>${names.map(esc).join(', ')}</span>`:value?'<span>담당자 정보 비공개</span>':''}${valid?`<span>확인 <time datetime="${esc(value.verified_at)}">${esc(verificationDate(value.verified_at))}</time> · ${value.expires_at?`<time datetime="${esc(value.expires_at)}">${esc(verificationDate(value.expires_at))}</time> 만료`:'만료 없음'}</span>`:''}${pageEditable()&&wikiVerificationAllowed()&&!state.offline&&!state.localPageOnly?'<button class="text-btn" data-action="verify-page">검증 설정</button>':''}`;
   const page=state.page.id,binding=state.session?.cache_binding,boot=state.bootGeneration;
   if(valid&&value.expires_at&&!expired){const remaining=Date.parse(value.expires_at)-Date.now();state.verificationTimer=setTimeout(()=>{if(state.route==='page'&&state.page?.id===page&&state.session?.cache_binding===binding&&state.bootGeneration===boot)renderVerificationStatus();},Math.min(60000,Math.max(1,remaining)));}
 }
@@ -1900,16 +1985,18 @@ function verificationScopeCurrent(view) {
   return !!scope&&state.verificationView===view&&view.modal?.isConnected&&$('.verification-modal')===view.modal&&state.route==='page'&&state.page?.id===scope.pageId&&state.channel===scope.channel&&scope.channel.pageId===scope.pageId&&!scope.channel.closed&&scope.channel.base?.epoch===scope.epoch&&pageEditable()&&!state.offline&&!state.localPageOnly&&!state.nativeRecoveryPaused&&!state.nativeOutboxPause&&state.session?.cache_binding===scope.binding&&state.session?.member?.id===scope.member&&state.session?.member?.role===scope.role&&state.offlineProfile?.id===scope.profile&&state.workspace?.workspace_id===scope.workspace&&state.bootGeneration===scope.boot&&FountainTransport.scopeEpoch===scope.transportEpoch;
 }
 function invalidateVerificationView() {
-  const view=state.verificationView;if(!view||verificationScopeCurrent(view))return;
+  const view=state.verificationView;if(!view||verificationScopeCurrent(view)&&(state.wikiPage?.kind==='checking'||wikiVerificationAllowed()))return;
   if(view.modal?.isConnected){$('#verification-error',view.modal).textContent='문서나 로그인 상태가 변경되었습니다. 입력을 확인한 뒤 취소하고 다시 열어 주세요.';for(const control of $('#verification-form',view.modal).elements)if(control.dataset.action!=='close-modal')control.disabled=true;}
 }
-function verificationModal() {
+async function verificationModal() {
+  const initial=wikiScope(),overlay=$('#overlay-root').firstChild;await syncWikiPage();if(!wikiScopeCurrent(initial)||$('#overlay-root').firstChild!==overlay)return;if(!wikiVerificationAllowed())throw new Error('현재 지식 담당자와 편집 권한을 확인한 뒤 검증할 수 있습니다.');
   if(state.route!=='page'||!state.channel||!pageEditable()||state.offline||state.localPageOnly)throw new Error('연결된 페이지의 편집 권한이 필요합니다.');
   if(!Number.isSafeInteger(state.page.revision)||state.page.revision<0)throw new Error('페이지를 다시 열어 최신 버전을 확인해 주세요.');
   const scope={pageId:state.page.id,channel:state.channel,epoch:state.channel.base?.epoch,binding:state.session?.cache_binding,member:state.session?.member?.id,role:state.session?.member?.role,profile:state.offlineProfile?.id,workspace:state.workspace?.workspace_id,boot:state.bootGeneration,transportEpoch:FountainTransport.scopeEpoch};
-  const {value,valid,label}=verificationSummary(),members=verificationMembers(),selected=verificationOwners(value).filter(id=>members.some(member=>member.id===id)),owners=selected.length?selected:[scope.member],expiry=valid?value.expires_at||null:null,initialTime=expiry?verificationLocalTime(expiry):'';
+  const wiki=state.wikiPage?.info,members=wiki?.in_wiki?[wiki.owner].filter(Boolean):verificationMembers();
+  const {value,valid,label}=verificationSummary(),selected=verificationOwners(value).filter(id=>members.some(member=>member.id===id)),owners=selected.length?selected:[scope.member],expiry=valid?value.expires_at||null:null,initialTime=expiry?verificationLocalTime(expiry):'';
   const zone=Intl.DateTimeFormat().resolvedOptions().timeZone||'기기 시간대';
-  openModal('페이지 검증',`<form id="verification-form" class="form-grid" novalidate><p class="muted">담당자가 내용을 확인한 페이지임을 표시합니다. 담당자 지정으로 문서 접근 권한이 추가되지 않습니다.</p><div class="verification-current"><strong>${esc(label)}</strong>${valid?`<span>확인 ${esc(verificationDate(value.verified_at))}</span>`:''}</div><fieldset class="verification-owners"><legend>검증 담당자 · 한 명 이상</legend>${members.map(member=>`<label><input type="checkbox" name="owners" value="${esc(member.id)}" ${owners.includes(member.id)?'checked':''}><span>${esc(member.name||'이름 없는 멤버')}${member.id===scope.member?' (나)':''}</span></label>`).join('')||'<p>선택할 수 있는 활성 멤버가 없습니다.</p>'}</fieldset><label>검증 유효 기간<select name="expiry_mode"><option value="infinite" ${!expiry?'selected':''}>만료 없음</option><option value="finite" ${expiry?'selected':''}>만료일 지정</option></select></label><label id="verification-expiry-label" ${!expiry?'hidden':''}>만료 날짜와 시간<input name="expires" type="datetime-local" step="1" value="${esc(initialTime)}"><small class="muted">기기 시간대: ${esc(zone)}</small></label><div id="verification-error" role="alert" aria-live="assertive"></div><div class="form-actions">${value!=null?'<button type="button" class="danger-btn" data-action="remove-verification">검증 해제</button>':''}<button type="button" class="outline-btn" data-action="close-modal">취소</button><button type="submit" class="solid-btn">검증 저장</button></div></form>`,'verification-modal');
+  openModal('페이지 검증',`<form id="verification-form" class="form-grid" novalidate><p class="muted">담당자가 내용을 확인한 페이지임을 표시합니다. 담당자 지정으로 문서 접근 권한이 추가되지 않습니다.</p><div class="verification-current"><strong>${esc(label)}</strong>${valid?`<span>확인 ${esc(verificationDate(value.verified_at))}</span>`:''}</div><fieldset class="verification-owners"><legend>${wiki?.in_wiki?'검증 담당자 · 현재 지식 담당자':'검증 담당자 · 한 명 이상'}</legend>${members.map(member=>`<label><input type="checkbox" name="owners" value="${esc(member.id)}" ${owners.includes(member.id)?'checked':''}><span>${esc(member.name||'이름 없는 멤버')}${member.id===scope.member?' (나)':''}</span></label>`).join('')||'<p>선택할 수 있는 활성 멤버가 없습니다.</p>'}</fieldset><label>검증 유효 기간<select name="expiry_mode"><option value="infinite" ${!expiry?'selected':''}>만료 없음</option><option value="finite" ${expiry?'selected':''}>만료일 지정</option></select></label><label id="verification-expiry-label" ${!expiry?'hidden':''}>만료 날짜와 시간<input name="expires" type="datetime-local" step="1" value="${esc(initialTime)}"><small class="muted">기기 시간대: ${esc(zone)}</small></label><div id="verification-error" role="alert" aria-live="assertive"></div><div class="form-actions">${value!=null?'<button type="button" class="danger-btn" data-action="remove-verification">검증 해제</button>':''}<button type="button" class="outline-btn" data-action="close-modal">취소</button><button type="submit" class="solid-btn">검증 저장</button></div></form>`,'verification-modal');
   const modal=$('.verification-modal'),view={scope,modal,revision:state.page.revision,expiry,initialTime:$('[name="expires"]',modal).value,busy:false};state.verificationView=view;
   $('[name="expiry_mode"]',modal).onchange=event=>{$('#verification-expiry-label',modal).hidden=event.target.value!=='finite';};
   modal.onkeydown=event=>{
@@ -1920,7 +2007,7 @@ function verificationModal() {
   };
 }
 async function saveVerification(remove) {
-  const view=state.verificationView;if(view?.busy)return;if(!verificationScopeCurrent(view)){invalidateVerificationView();return;}
+  const view=state.verificationView;if(view?.busy)return;if(!verificationScopeCurrent(view)||!wikiVerificationAllowed()){invalidateVerificationView();return;}
   const form=$('#verification-form',view.modal),error=$('#verification-error',view.modal);
   const current=()=>verificationScopeCurrent(view);
   try{
@@ -1932,6 +2019,7 @@ async function saveVerification(remove) {
     view.busy=true;error.textContent='';for(const control of form.elements)control.disabled=true;form.setAttribute('aria-busy','true');
     if(!current())return;await saveTitle();if(!current())return;
     await savePage();if(!current())return;
+    await syncWikiPage();if(!current())return;if(!wikiVerificationAllowed())throw new Error('현재 지식 담당자와 편집 권한을 다시 확인해 주세요.');
     if(state.page.revision!==view.revision)throw new Error('페이지가 설정을 연 뒤 변경되었습니다. 입력을 확인한 뒤 취소하고 검증 설정을 다시 열어 주세요.');
     await api('/pages/'+encodeURIComponent(view.scope.pageId)+'/verify',remove?{revision:view.revision}:{owners,expires_at:expires,revision:view.revision},remove?'DELETE':'POST',{current});
     if(!current())return;
@@ -2213,8 +2301,9 @@ async function doAction(target,grouped=false) {
     state.comments.find(c=>c.id===id).resolved=true;
     $('#comments').innerHTML=commentsHTML();
     break;
-    case'page-menu':openModal('페이지 메뉴',`<div class="form-grid"><button class="outline-btn" data-action="pin-page">기기에 보관 · 오프라인 편집</button><button class="outline-btn" data-action="copy-blocks">${icon('link')}블록 복사</button><button class="outline-btn" data-action="lock-page">${icon('lock')}${state.page.locked?'페이지 잠금 해제':'페이지 잠그기'}</button><button class="outline-btn" data-action="verify-page">페이지 검증 설정</button><button class="outline-btn" data-action="move-page">페이지 이동</button><button class="outline-btn" data-action="duplicate-page">페이지 복제</button><button class="outline-btn" data-action="history">${icon('clock')}페이지 기록</button><button class="danger-btn" data-action="delete-page">${icon('trash')}휴지통으로 이동</button></div>`);
+    case'page-menu':{const initial=wikiScope(),overlay=$('#overlay-root').firstChild;await syncWikiPage();if(!wikiScopeCurrent(initial)||$('#overlay-root').firstChild!==overlay)break;openModal('페이지 메뉴',`<div class="form-grid"><button class="outline-btn" data-action="pin-page">기기에 보관 · 오프라인 편집</button><button class="outline-btn" data-action="copy-blocks">${icon('link')}블록 복사</button><button class="outline-btn" data-action="lock-page">${icon('lock')}${state.page.locked?'페이지 잠금 해제':'페이지 잠그기'}</button>${pageEditable()&&wikiVerificationAllowed()&&!state.offline&&!state.localPageOnly?'<button class="outline-btn" data-action="verify-page">페이지 검증 설정</button>':''}<button class="outline-btn" data-action="move-page">페이지 이동</button><button class="outline-btn" data-action="duplicate-page">페이지 복제</button>${resourceLevel(state.page)>=4&&!state.page.locked&&!state.offline&&!state.localPageOnly&&(!state.page.parent_id||state.page.is_wiki===true)?`<button class="outline-btn" data-action="wiki-toggle">${state.page.is_wiki===true?'위키 해제':'위키로 전환'}</button>`:''}<button class="outline-btn" data-action="history">${icon('clock')}페이지 기록</button><button class="danger-btn" data-action="delete-page">${icon('trash')}휴지통으로 이동</button></div>`);
     break;
+    }
     case'lock-page':{const locked=!state.page.locked;closeModal();await updatePage({locked});renderPage();break;}
     case'delete-page':await api('/pages/'+state.page.id, {
     },'DELETE');
@@ -2234,7 +2323,13 @@ async function doAction(target,grouped=false) {
       await navigate('page',p.id||p.page.id);
       break;
     }
-    case'verify-page':verificationModal();break;
+    case'wiki-toggle':wikiToggleModal();break;
+    case'confirm-wiki-toggle':await saveWikiMutation();break;
+    case'wiki-owner':await wikiOwnerModal();break;
+    case'wiki-tab':await wikiTab(target.dataset.view);break;
+    case'wiki-refresh':{const view=state.wikiPage;if(wikiCurrent(view)&&view.kind==='root')await loadWikiPages(view);else await syncWikiPage(true);break;}
+    case'wiki-more':if(state.wikiPage?.hasMore)await loadWikiPages(state.wikiPage,true);break;
+    case'verify-page':await verificationModal();break;
     case'remove-verification':await saveVerification(true);break;
     case'move-page':openModal('페이지 이동',`<form id="move-page-form" class="form-grid"><label>상위 페이지<select name="parent_id"><option value="">최상위 페이지</option>${state.workspace.pages.filter(p=>p.id!==state.page.id&&!p.archived).map(p=>`<option value="${esc(p.id)}" ${p.id===state.page.parent_id?'selected':''}>${esc(p.title)}</option>`).join('')}</select></label><button class="solid-btn">이동하기</button></form>`);
     break;
@@ -2506,6 +2601,8 @@ document.addEventListener('dragend',()=> {
 document.addEventListener('submit',async event=> {
   if(state.nativeOutboxPause&&!event.target.closest?.('.native-recovery-dialog')){event.preventDefault();return;}
   if(state.nativeRecoveryPaused)return;
+  if(event.target.id==='wiki-owner-form'){event.preventDefault();await saveWikiMutation();return;}
+  if(event.target.id==='wiki-search-form'){event.preventDefault();const view=state.wikiPage;if(wikiCurrent(view)&&!view.loading){view.query=event.target.q.value;view.items=[];view.hasMore=false;await loadWikiPages(view);}return;}
   if(event.target.id==='verification-form'){event.preventDefault();await saveVerification(false);return;}
   const formElement=event.target; if(!formElement.id)return; event.preventDefault(); const data=Object.fromEntries(new FormData(formElement)),submit=$('button[type=submit],button.solid-btn',formElement); if(submit)submit.disabled=true; try {
     switch(formElement.id) {
@@ -2675,7 +2772,7 @@ window.addEventListener('beforeunload',event=> {
   }
 });
 function renderLogin(preserve=true) {
-  clearInbox();clearScimPanel();stopBackup();
+  clearWikiMutation();clearWikiPage();clearInbox();clearScimPanel();stopBackup();
   if(state.nativeRecoveryPaused)return;
   if(preserve)return suspendLoginInput().then(current=>{if(current)renderLogin(false);});
   closeDocument();closeMutations();state.offlineProfile=null;state.offline=false;
@@ -2694,7 +2791,7 @@ function renderLogin(preserve=true) {
   if(state.authRetentionError&&$('#login-error'))$('#login-error').textContent=state.authRetentionError;
 }
 async function boot() {
-  clearInbox();clearScimPanel();clearSearch();
+  clearWikiMutation();clearWikiPage();clearInbox();clearScimPanel();clearSearch();
   if(state.nativeRecoveryPaused)return;
   const generation=(state.bootGeneration||0)+1;state.bootGeneration=generation;
   const cachedIdentity=await window.FountainOffline?.getProfile().catch(()=>null);

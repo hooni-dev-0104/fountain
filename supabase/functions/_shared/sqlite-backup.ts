@@ -10,6 +10,7 @@ export const SQLITE_DEFINITIONS={
   entities:'CREATE TABLE entities (kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(kind,id))',
   meta:'CREATE TABLE meta (key TEXT PRIMARY KEY, data TEXT NOT NULL)',
   attachment_chunks:'CREATE TABLE attachment_chunks (attachment_id TEXT NOT NULL, offset INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(attachment_id,offset))',
+  content_provenance:"CREATE TABLE content_provenance (kind TEXT NOT NULL,id TEXT NOT NULL,generation TEXT NOT NULL,creator_id TEXT,creator_cause TEXT,\n            editor_id TEXT,edited_at TEXT,editor_cause TEXT,manager_id TEXT,manager_at TEXT,PRIMARY KEY(kind,id))",
 } as const;
 export const SQLITE_PRIVATE_KINDS=new Set(['session','clipboard','upload','presence']);
 const OMIT_META=new Set(['local_cache_binding','attachment_file_root','attachment_file_gc_cursor','_backup_storage_reserved']);
@@ -19,8 +20,20 @@ export type BackupBlob={size:number;open:()=>AsyncIterable<Uint8Array>|Iterable<
 export type BackupEntity={kind:string;id:string;data:string|Record<string,unknown>;created_at:string;updated_at:string};
 export type BackupMeta={key:string;data:string|unknown};
 export type BackupChunk={attachment_id:string;offset:number;data:Uint8Array|BackupBlob};
-export type SQLiteBackupSource={entities:Rows<BackupEntity>;meta:Rows<BackupMeta>;chunks:Rows<BackupChunk>};
-export type SQLiteBackupSummary={pageSize:number;pages:number;byteLength:number;sourceSHA256:string;counts:{entities:number;meta:number;attachment_chunks:number};entityKinds:Record<string,number>};
+export const PROVENANCE_COLUMNS=['kind','id','generation','creator_id','creator_cause','editor_id','edited_at','editor_cause','manager_id','manager_at'] as const;
+export type BackupProvenance={kind:string;id:string;generation:string;creator_id:string|null;creator_cause:string;editor_id:string|null;edited_at:string|null;editor_cause:string;manager_id:string|null;manager_at:string|null};
+export function validateBackupProvenance(value:unknown):asserts value is BackupProvenance{
+  check(value!==null&&typeof value==='object'&&!Array.isArray(value));const row=value as Record<string,unknown>;
+  check(Object.keys(row).length===10&&PROVENANCE_COLUMNS.every(key=>Object.hasOwn(row,key)));
+  check(['page','database','row'].includes(row.kind as string));
+  for(const key of ['id','creator_id','editor_id','manager_id']){const item=row[key];if(item===null&&key!=='id')continue;validText(item);check(Array.from(item).length>0&&Array.from(item).length<=160);}
+  check(typeof row.generation==='string'&&/^[a-f0-9]{32}$/.test(row.generation));
+  for(const key of ['creator_cause','editor_cause'])check(['human','automation','import','public_form','system','unknown'].includes(row[key] as string));
+  const date=(item:unknown)=>{if(item===null)return true;if(typeof item!=='string')return false;const m=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|([+-])(\d{2}):(\d{2}))$/.exec(item);if(!m)return false;const [y,mo,d,h,mi,se]=m.slice(1,7).map(Number),v=new Date(0);v.setUTCFullYear(y,mo-1,d);v.setUTCHours(h,mi,se,0);if(y<1||mo<1||mo>12||d<1||v.getUTCFullYear()!==y||v.getUTCMonth()+1!==mo||v.getUTCDate()!==d||h>23||mi>59||se>59||Number(m[10]??0)>23||Number(m[11]??0)>59)return false;const offset=(Number(m[10]??0)*60+Number(m[11]??0))*60000*(m[9]==='-'?-1:1);const year=new Date(v.getTime()-offset).getUTCFullYear();return year>=1&&year<=9999;};
+  check(date(row.edited_at)&&date(row.manager_at)&&(row.editor_id!==null||row.edited_at===null)&&((row.manager_id===null)===(row.manager_at===null)));
+}
+export type SQLiteBackupSource={entities:Rows<BackupEntity>;meta:Rows<BackupMeta>;chunks:Rows<BackupChunk>;provenance?:Rows<BackupProvenance>};
+export type SQLiteBackupSummary={pageSize:number;pages:number;byteLength:number;sourceSHA256:string;counts:{entities:number;meta:number;attachment_chunks:number;content_provenance?:number};entityKinds:Record<string,number>};
 export type SQLiteBackupSink={write(bytes:Uint8Array):void|Promise<void>;close?(summary:SQLiteBackupSummary):void|Promise<void>;abort?(error:SQLiteBackupError):void|Promise<void>};
 export type SQLiteBackupOptions={pageSize?:4096|65536;maxPlanBytes?:number};
 export class SQLiteBackupError extends Error{constructor(message:string){super(message);this.name='SQLiteBackupError';}}
@@ -71,13 +84,14 @@ function jsonText(value:unknown):string{
 }
 type Manifest={size:number;sha256:string;offset:number;hash:IncrementalSHA256};
 type NormalizedRow={key:Key;record:RecordSource;attachment?:Manifest;kind?:string};
-type NormalizedSnapshot={manifests:Map<string,Manifest>;kinds:Record<string,number>};
+type NormalizedSnapshot={manifests:Map<string,Manifest>;kinds:Record<string,number>;resources:Set<string>};
 async function* entities(source:SQLiteBackupSource,state:NormalizedSnapshot):AsyncGenerator<NormalizedRow>{
   for await(const row of source.entities()){
     check(row&&typeof row==='object'&&Object.keys(row).length===5&&['kind','id','data','created_at','updated_at'].every(key=>Object.hasOwn(row,key)));validText(row.kind);if(SQLITE_PRIVATE_KINDS.has(row.kind)||row.kind==='attachment_chunk')continue;
     check(/^[a-z][a-z0-9_]{0,63}$/.test(row.kind));validText(row.id);check(Array.from(row.id).length>0&&Array.from(row.id).length<=160);validText(row.created_at);validText(row.updated_at);
     const data=jsonText(row.data);let parsed:any;try{parsed=JSON.parse(data);}catch{throw new SQLiteBackupError('Invalid JSON entity');}check(parsed&&typeof parsed==='object'&&!Array.isArray(parsed)&&parsed.id===row.id,'Entity identity mismatch');
     if(row.kind==='attachment'&&parsed.storage==='chunks'){check(Number.isSafeInteger(parsed.size)&&parsed.size>=0&&parsed.size<=MAX_ATTACHMENT&&typeof parsed.sha256==='string'&&/^[a-f0-9]{64}$/.test(parsed.sha256),'Invalid finalized attachment manifest');check(!state.manifests.has(row.id),'Duplicate attachment');state.manifests.set(row.id,{size:parsed.size,sha256:parsed.sha256,offset:0,hash:new IncrementalSHA256()});}
+    if(['page','database','row'].includes(row.kind))state.resources.add(JSON.stringify([row.kind,row.id]));
     Object.defineProperty(state.kinds,row.kind,{value:(Object.hasOwn(state.kinds,row.kind)?state.kinds[row.kind]:0)+1,writable:true,enumerable:true,configurable:true});yield {key:[row.kind,row.id],record:record([row.kind,row.id,data,row.created_at,row.updated_at]),kind:row.kind};
   }
 }
@@ -92,6 +106,9 @@ async function* chunks(source:SQLiteBackupSource,state:NormalizedSnapshot):Async
   for(const manifest of state.manifests.values())check(manifest.offset===manifest.size&&manifest.hash.hex()===manifest.sha256,'Finalized attachment size or SHA-256 does not match its chunks');
 }
 type Overflow={first:number;count:number};
+async function* provenance(source:SQLiteBackupSource,state:NormalizedSnapshot):AsyncGenerator<NormalizedRow>{
+  for await(const row of source.provenance?.()??[]){validateBackupProvenance(row);check(state.resources.has(JSON.stringify([row.kind,row.id])),'Provenance resource is missing');yield {key:[row.kind,row.id],record:record(PROVENANCE_COLUMNS.map(key=>row[key]))};}
+}
 type RowPlan={rowid:number;size:number;local:number;overflow:Overflow|null;cellSize:number};
 type Leaf={page:number;start:number;end:number;maxRowid:number};
 type TableNode={page:number;children:TableTree[];maxRowid:number};
@@ -146,8 +163,9 @@ export class SQLiteBackupWriter{
   async write(source:SQLiteBackupSource,sink:SQLiteBackupSink):Promise<SQLiteBackupSummary>{
     let closed=false;
     try{
-      const allocate=new Allocator(this.pageSize),firstHash=new IncrementalSHA256(),firstState:NormalizedSnapshot={manifests:new Map(),kinds:{}},plans:TablePlan[]=[];let planBytes=0;
-      const readers=[entities,metadata,chunks] as const;
+      const allocate=new Allocator(this.pageSize),firstHash=new IncrementalSHA256(),firstState:NormalizedSnapshot={manifests:new Map(),kinds:{},resources:new Set()},plans:TablePlan[]=[];let planBytes=0;
+      const names=source.provenance?['entities','meta','attachment_chunks','content_provenance']:['entities','meta','attachment_chunks'];
+      const readers=source.provenance?[entities,metadata,chunks,provenance]:[entities,metadata,chunks];
       for(let table=0;table<readers.length;table++){
         firstHash.update(Uint8Array.of(table));const rows:RowPlan[]=[],leaves:Leaf[]=[],keys:Uint8Array[]=[];let previous:Key|null=null,start=0,used=8;
         for await(const row of readers[table](source,firstState)){
@@ -159,10 +177,10 @@ export class SQLiteBackupWriter{
         }
         leaves.push({page:allocate.reserve(),start,end:rows.length,maxRowid:rows.length});const tree=tableParents(leaves,allocate),index=indexTree(keys,allocate);plans.push({rows,leaves,parents:tree.parents,root:tree.root,keys,index});
       }
-      const pages=allocate.next-1,summary:SQLiteBackupSummary={pageSize:this.pageSize,pages,byteLength:pages*this.pageSize,sourceSHA256:firstHash.hex(),counts:{entities:plans[0].rows.length,meta:plans[1].rows.length,attachment_chunks:plans[2].rows.length},entityKinds:firstState.kinds};
+      const pages=allocate.next-1,summary:SQLiteBackupSummary={pageSize:this.pageSize,pages,byteLength:pages*this.pageSize,sourceSHA256:firstHash.hex(),counts:{entities:plans[0].rows.length,meta:plans[1].rows.length,attachment_chunks:plans[2].rows.length,...(source.provenance?{content_provenance:plans[3].rows.length}:{})},entityKinds:firstState.kinds};
       let emitted=1;const write=async(number:number,bytes:Uint8Array)=>{if(emitted===allocate.lockPage&&number===emitted+1){await sink.write(new Uint8Array(this.pageSize));emitted++;}check(number===emitted&&bytes.length===this.pageSize,'SQLite page plan changed');await sink.write(bytes);emitted++;};
-      await write(1,headerPage(this.pageSize,pages,['entities','meta','attachment_chunks'].map((name,index)=>[name,plans[index].root,plans[index].index.page])));
-      const secondHash=new IncrementalSHA256(),secondState:NormalizedSnapshot={manifests:new Map(),kinds:{}};
+      await write(1,headerPage(this.pageSize,pages,names.map((name,index)=>[name,plans[index].root,plans[index].index.page])));
+      const secondHash=new IncrementalSHA256(),secondState:NormalizedSnapshot={manifests:new Map(),kinds:{},resources:new Set()};
       for(let table=0;table<readers.length;table++){
         const plan=plans[table];secondHash.update(Uint8Array.of(table));let index=0,leafIndex=0,cells:Uint8Array[]=[],previous:Key|null=null;
         for await(const row of readers[table](source,secondState)){

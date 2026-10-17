@@ -9,18 +9,19 @@
  */
 import {IncrementalSHA256} from './storage.ts';
 import type {HashState} from './storage.ts';
-import {SQLITE_DEFINITIONS,SQLiteBackupError} from './sqlite-backup.ts';
+import {SQLITE_DEFINITIONS,SQLiteBackupError,validateBackupProvenance,PROVENANCE_COLUMNS} from './sqlite-backup.ts';
 import type {SQLiteBackupSummary} from './sqlite-backup.ts';
 import {canonicalJSON} from './store.ts';
 
-export type BackupTable='entities'|'meta'|'attachment_chunks';
+export type BackupTable='entities'|'meta'|'attachment_chunks'|'content_provenance';
+import type {BackupProvenance} from './sqlite-backup.ts';
 export type BackupReference={ref:string;size:number;type:'text'|'blob'};
 export type ResumeEntity={kind:string;id:string;data:BackupReference;created_at:string;updated_at:string;attachment?:{size:number;sha256:string}};
 export type ResumeMeta={key:string;data:BackupReference};
 export type ResumeChunk={attachment_id:string;offset:number;data:BackupReference};
 export interface ResumableBackupSource{
  snapshotId:string;
- describe(table:BackupTable,index:number):Promise<ResumeEntity|ResumeMeta|ResumeChunk|null>;
+ describe(table:BackupTable,index:number):Promise<ResumeEntity|ResumeMeta|ResumeChunk|BackupProvenance|null>;
  read(ref:string,offset:number,length:number):Promise<Uint8Array>;
 }
 /** Reads include this step's staged writes; external CAS controls visibility.
@@ -38,7 +39,7 @@ export interface ResumableBackupSink{
 }
 export type ResumableBackupIO={source:ResumableBackupSource;plans:ResumableBackupPlanStore;sink:ResumableBackupSink};
 export type BackupStepBudget={maxInputBytes?:number;maxOutputBytes?:number;maxOperations?:number};
-const TABLES:BackupTable[]=['entities','meta','attachment_chunks'],SLICE=65536,CHUNK_SIZE=4*1024*1024,HASH=/^[a-f0-9]{64}$/;
+const TABLES:BackupTable[]=['entities','meta','attachment_chunks','content_provenance'],SLICE=65536,CHUNK_SIZE=4*1024*1024,HASH=/^[a-f0-9]{64}$/;
 // SQLite's 32-bit page count and maximum 64KiB page size, not attachment quota.
 const HASH_LIMIT=0xffffffff*65536;
 const PRIVATE=new Set(['session','clipboard','upload','presence','attachment_chunk']);
@@ -114,7 +115,7 @@ type IndexFrame={count:number;depth:number;root:boolean;childCount:number;each:n
 type Phase='plan-rows'|'plan-parents'|'plan-index'|'check-manifests'|'header'|'emit-rows'|'emit-parents'|'emit-index'|'check-manifests2'|'verify'|'done';
 export type ResumableBackupSummary=Omit<SQLiteBackupSummary,'entityKinds'>&{entityKindCount:number};
 export type SQLiteBackupCheckpoint={
- version:1;snapshotId:string;pageSize:4096|65536;sequence:number;phase:Phase;table:number;nextPage:number;outputPage:number;
+ version:1|2;snapshotId:string;pageSize:4096|65536;sequence:number;phase:Phase;table:number;nextPage:number;outputPage:number;
  sourceIndex:number;rowIndex:number;previous:Key|null;leafIndex:number;cells:string[];row:RowWork|null;
  tablePlan:TablePlan;leafStart:number;leafUsed:number;leafMax:number;
  parent:{level:number;count:number;cursor:number;groups:number;each:number;extra:number;group:number;children:RefNode[]}|null;
@@ -150,11 +151,11 @@ function queue(c:SQLiteBackupCheckpoint,number:number,bytes:Uint8Array){
  if(c.outputPage===lock&&number===lock+1){c.writes.push({page:lock,data:pack(new Uint8Array(c.pageSize))});c.outputPage++;}
  check(number===c.outputPage&&bytes.length===c.pageSize,'SQLite page plan changed');c.writes.push({page:number,data:pack(bytes)});c.outputPage++;
 }
-function initial(snapshotId:string,pageSize:4096|65536):SQLiteBackupCheckpoint{
+function initial(snapshotId:string,pageSize:4096|65536,includeHistory=false):SQLiteBackupCheckpoint{
  check(typeof snapshotId==='string'&&snapshotId.length>0&&snapshotId.length<=512&&[4096,65536].includes(pageSize));const hash=newHash().state();
- return {version:1,snapshotId,pageSize,sequence:0,phase:'plan-rows',table:0,nextPage:2,outputPage:1,sourceIndex:0,rowIndex:0,previous:null,leafIndex:0,cells:[],row:null,tablePlan:emptyPlan(),leafStart:0,leafUsed:8,leafMax:0,parent:null,index:null,manifestCount:0,manifestIndex:0,roots:[],counts:[],sourceHash:add(hash,Uint8Array.of(0)),secondHash:hash,outputHash:hash,verifyHash:hash,verifyOffset:0,writes:[],kindCount:0,kind:null,summary:null,sha256:null};
+ return {version:includeHistory?2:1,snapshotId,pageSize,sequence:0,phase:'plan-rows',table:0,nextPage:2,outputPage:1,sourceIndex:0,rowIndex:0,previous:null,leafIndex:0,cells:[],row:null,tablePlan:emptyPlan(),leafStart:0,leafUsed:8,leafMax:0,parent:null,index:null,manifestCount:0,manifestIndex:0,roots:[],counts:[],sourceHash:add(hash,Uint8Array.of(0)),secondHash:hash,outputHash:hash,verifyHash:hash,verifyOffset:0,writes:[],kindCount:0,kind:null,summary:null,sha256:null};
 }
-export function createSQLiteBackupCheckpoint(snapshotId:string,pageSize:4096|65536=4096):SQLiteBackupCheckpoint{return initial(snapshotId,pageSize);}
+export function createSQLiteBackupCheckpoint(snapshotId:string,pageSize:4096|65536=4096,includeHistory=false):SQLiteBackupCheckpoint{return initial(snapshotId,pageSize,includeHistory);}
 
 /** I/O side effects belong to the caller's private job revision. A returned
  * checkpoint is not accepted until the external lease/CAS/receipt commits it.
@@ -167,7 +168,9 @@ export async function stepSQLiteBackup(previous:SQLiteBackupCheckpoint,io:Resuma
  check(Number.isSafeInteger(maxInput)&&maxInput>=128&&maxInput<=262144&&Number.isSafeInteger(maxOutput)&&maxOutput>=previous.pageSize&&maxOutput<=262144&&Number.isSafeInteger(maxOperations)&&maxOperations>=32&&maxOperations<=4096,'Invalid SQLite step budget');
  // Checkpoints come only from private authenticated storage. Fail closed on
  // cross-snapshot/version use; source/plans/authority are not embedded here.
- check(previous.version===1&&previous.snapshotId===io.source.snapshotId&&[4096,65536].includes(previous.pageSize)&&Number.isSafeInteger(previous.sequence)&&previous.sequence>=0,'Invalid private SQLite checkpoint');
+ check((previous.version===1||previous.version===2)&&previous.snapshotId===io.source.snapshotId&&[4096,65536].includes(previous.pageSize)&&Number.isSafeInteger(previous.sequence)&&previous.sequence>=0,'Invalid private SQLite checkpoint');
+ check(Number.isInteger(previous.table)&&previous.table>=0&&previous.table<(previous.version===2?4:3)&&Array.isArray(previous.roots)&&previous.roots.length<=(previous.version===2?4:3)&&Array.isArray(previous.counts)&&previous.counts.length<=(previous.version===2?4:3),'Invalid private SQLite checkpoint layout');
+ check(!['check-manifests','header','emit-rows','emit-parents','emit-index','check-manifests2','verify','done'].includes(previous.phase)||(previous.roots.length===(previous.version===2?4:3)&&previous.counts.length===(previous.version===2?4:3)),'Invalid private SQLite checkpoint layout');
  const c=structuredClone(previous),allocate=new Allocator(c.pageSize);allocate.next=c.nextPage;
  const checksum=(key:string,value:unknown)=>sha(encoder.encode(key+'\u0000'+canonicalJSON(value)));
  const get=async(key:string):Promise<any>=>{
@@ -186,9 +189,11 @@ export async function stepSQLiteBackup(previous:SQLiteBackupCheckpoint,io:Resuma
    text(row.kind,64);text(row.id);if(PRIVATE.has(row.kind))return 'skip';check(/^[a-z][a-z0-9_]{0,63}$/.test(row.kind)&&Array.from(row.id).length>0&&Array.from(row.id).length<=160);text(row.created_at,256);text(row.updated_at,256);reference(row.data,'text');
    if(row.attachment!==undefined){check(row.kind==='attachment'&&row.attachment&&Number.isSafeInteger(row.attachment.size)&&row.attachment.size>=0&&row.attachment.size<=5_000_000_000&&HASH.test(row.attachment.sha256));
     const key=manifestKey(row.id);check(await get(key)===null,'Duplicate attachment');await put(key,{size:row.attachment.size,sha256:row.attachment.sha256,offset:0,hash:newHash().state()});if(c.phase==='plan-rows'){await put('manifest-id/'+c.manifestCount,row.id);c.manifestCount++;}}
+   if(c.version===2&&['page','database','row'].includes(row.kind)&&c.phase==='plan-rows')await put('provenance-source/'+row.kind+'/'+row.id,true);
    return {key:[row.kind,row.id],value:record([row.kind,row.id,row.data,row.created_at,row.updated_at])};
   }
   if(c.table===1){text(row.key);if(PRIVATE_META.has(row.key))return 'skip';check(Array.from(row.key).length>0&&Array.from(row.key).length<=160);reference(row.data,'text');return {key:[row.key],value:record([row.key,row.data])};}
+  if(c.table===3){validateBackupProvenance(row);check(await get('provenance-source/'+row.kind+'/'+row.id)===true,'Provenance resource is missing');return {key:[row.kind,row.id],value:record(PROVENANCE_COLUMNS.map(key=>row[key]))};}
   text(row.attachment_id);const manifest:Manifest|null=await get(manifestKey(row.attachment_id));if(!manifest)return 'skip';reference(row.data,'blob');check(Number.isSafeInteger(row.offset)&&row.offset===manifest.offset&&row.offset<manifest.size&&row.data.size===Math.min(CHUNK_SIZE,manifest.size-row.offset),'Attachment chunks changed or are noncontiguous');manifest.offset+=row.data.size;
   return {key:[row.attachment_id,row.offset],value:record([row.attachment_id,row.offset,row.data]),manifestId:row.attachment_id,manifest};
  }
@@ -257,11 +262,11 @@ export async function stepSQLiteBackup(previous:SQLiteBackupCheckpoint,io:Resuma
     const number=reserve(),node={page:number,entries:frame.entries,children:frame.children};await put(tableKey('index',index.ordinal++),node);index.frames.pop();
     if(index.frames.length){index.frames.at(-1)!.children.push(number);continue;}
     check(index.cursor===c.tablePlan.rows,'SQLite index cursor changed');c.tablePlan.indexRoot=number;c.tablePlan.indices=index.ordinal;await put('table/'+c.table,c.tablePlan);c.roots.push([TABLES[c.table],c.tablePlan.root,number]);c.counts.push(c.tablePlan.rows);c.index=null;
-    if(c.table<2){c.table++;c.tablePlan=emptyPlan();c.sourceIndex=0;c.rowIndex=0;c.previous=null;c.leafStart=0;c.leafUsed=8;c.sourceHash=add(c.sourceHash,Uint8Array.of(c.table));c.phase='plan-rows';}else {c.phase='check-manifests';c.manifestIndex=0;}continue;
+    if(c.table<(c.version===2?3:2)){c.table++;c.tablePlan=emptyPlan();c.sourceIndex=0;c.rowIndex=0;c.previous=null;c.leafStart=0;c.leafUsed=8;c.sourceHash=add(c.sourceHash,Uint8Array.of(c.table));c.phase='plan-rows';}else {c.phase='check-manifests';c.manifestIndex=0;}continue;
    }
    if(c.phase==='check-manifests'||c.phase==='check-manifests2'){
     if(c.manifestIndex<c.manifestCount){const id=await get('manifest-id/'+c.manifestIndex++),manifest:Manifest=await get(manifestKey(id));check(manifest&&manifest.offset===manifest.size&&hashFrom(manifest.hash).hex()===manifest.sha256,'Finalized attachment size or SHA-256 does not match its chunks');continue;}
-    if(c.phase==='check-manifests'){c.summary={pageSize:c.pageSize,pages:c.nextPage-1,byteLength:(c.nextPage-1)*c.pageSize,sourceSHA256:hashFrom(c.sourceHash).hex(),counts:{entities:c.counts[0],meta:c.counts[1],attachment_chunks:c.counts[2]},entityKindCount:c.kindCount};c.phase='header';}
+    if(c.phase==='check-manifests'){c.summary={pageSize:c.pageSize,pages:c.nextPage-1,byteLength:(c.nextPage-1)*c.pageSize,sourceSHA256:hashFrom(c.sourceHash).hex(),counts:{entities:c.counts[0],meta:c.counts[1],attachment_chunks:c.counts[2],...(c.version===2?{content_provenance:c.counts[3]}:{})},entityKindCount:c.kindCount};c.phase='header';}
     // A separate accepted step must publish private artifact parts before readback.
     else {check(c.outputPage===c.summary!.pages+1&&hashFrom(c.secondHash).hex()===c.summary!.sourceSHA256,'Snapshot content changed during export');c.phase='verify';break;}continue;
    }
@@ -271,7 +276,7 @@ export async function stepSQLiteBackup(previous:SQLiteBackupCheckpoint,io:Resuma
    }
    if(c.phase==='emit-index'){
     if(c.leafIndex<c.tablePlan.indices){const node=await get(tableKey('index',c.leafIndex++)),cells=node.entries.map((entry:string,i:number)=>{const bytes=unpack(entry),content=join([varint(bytes.length),bytes]);if(!node.children.length)return content;const pointer=new Uint8Array(4);put32(pointer,0,node.children[i]);return join([pointer,content]);});queue(c,node.page,page(node.children.length?2:10,c.pageSize,cells,node.children.at(-1)));continue;}
-    if(c.table<2){c.table++;c.sourceIndex=0;c.rowIndex=0;c.previous=null;c.leafIndex=0;c.cells=[];c.tablePlan=await get('table/'+c.table);c.secondHash=add(c.secondHash,Uint8Array.of(c.table));c.phase='emit-rows';}else {c.phase='check-manifests2';c.manifestIndex=0;}continue;
+    if(c.table<(c.version===2?3:2)){c.table++;c.sourceIndex=0;c.rowIndex=0;c.previous=null;c.leafIndex=0;c.cells=[];c.tablePlan=await get('table/'+c.table);c.secondHash=add(c.secondHash,Uint8Array.of(c.table));c.phase='emit-rows';}else {c.phase='check-manifests2';c.manifestIndex=0;}continue;
    }
    if(c.phase==='verify'){
     if(c.verifyOffset===c.summary!.byteLength){check(hashFrom(c.verifyHash).hex()===hashFrom(c.outputHash).hex(),'Private SQLite output changed');c.sha256=hashFrom(c.outputHash).hex();c.phase='done';continue;}

@@ -1,0 +1,241 @@
+{
+  "schema_version": 1,
+  "observed_at": "2026-10-17",
+  "evidence_kind": "official_documentation_body",
+  "paid_account_runtime_observed": false,
+  "notion_private_server_observed": false,
+  "inventory_complete": false,
+  "production_parity_verified": false,
+  "sources": [
+    {
+      "id": "enterprise-roles",
+      "url": "https://www.notion.com/help/enterprise-admins",
+      "sections": [
+        "Admin roles",
+        "Good to know",
+        "Membership admin"
+      ],
+      "observed": [
+        "관리 역할은 기본 역할에 더해지며 여러 역할의 권한은 합집합이다. 일반 페이지/DB 권한은 바뀌지 않는다.",
+        "조직 소유자만 사용자 지정 역할 생성·개별 배정·철회를 한다. 게스트/조직 소유자 배정과 SCIM/그룹 배정은 지원하지 않는다.",
+        "사용자 지정 역할은 고른 액션만 포함하며 새 기능을 자동 추가하지 않는다. 일부 액션만 작업공간으로 한정할 수 있다.",
+        "준비된 역할은 Compliance(감사/검색/법적 보류), People(사람/그룹/팀), IT(인증/보안/연결), Analytics, Billing(판매 계약의 크레딧)이다.",
+        "멤버 관리자는 멤버를 추가할 수 있지만 소유자 또는 다른 멤버 관리자를 지정할 수 없다."
+      ]
+    },
+    {
+      "id": "content-search",
+      "url": "https://www.notion.com/help/admin-content-search",
+      "sections": [
+        "Access content search",
+        "Updating page permissions"
+      ],
+      "observed": [
+        "Enterprise 전체 콘텐츠의 ID/제목/본문 검색과 생성일/생성자/Audience/Shared with 필터, 위치/생성/편집/접근자 메타데이터를 설명한다.",
+        "Audience는 가장 넓은 공유 범위이다. 소유자는 CSV 내보내기·제한 페이지 권한 변경·철회·게시 해제를 할 수 있다.",
+        "관리 역할로 검색을 위임하고 작업공간을 제한할 수 있다. 여러 Enterprise 작업공간 검색도 설명하며 도메인 검증은 필수가 아니다."
+      ]
+    },
+    {
+      "id": "retention",
+      "url": "https://www.notion.com/help/custom-data-retention-settings",
+      "sections": [
+        "Page and AI chat retention",
+        "Search deleted and retained pages",
+        "Restore deleted and retained pages"
+      ],
+      "observed": [
+        "휴지통과 휴지통에서 제거된 뒤의 별도 보존 기간을 설명한다. 각 기간은 기본 30일, 설정 범위 1일~10년이다.",
+        "콘텐츠 검색은 휴지통/보존 상태를 구분하며 원래 권한 조회, 원래 위치/개인 페이지 복원, 영구 삭제를 제공한다.",
+        "삭제된 AI 채팅은 휴지통을 거치지 않고 보존 기간에 적용된다. 영구 삭제 뒤에는 소유자도 복원하지 못한다."
+      ]
+    },
+    {
+      "id": "organization-controls",
+      "url": "https://www.notion.com/help/organization-level-controls",
+      "sections": [
+        "Who can apply organization level controls?",
+        "How organization level controls impact workspaces",
+        "People",
+        "Security"
+      ],
+      "observed": [
+        "Enterprise 조직 설정·여러 조직 소유자·여러 작업공간과 통합 사람/보안/감사/검색/분석을 설명한다.",
+        "조직 관리 설정은 작업공간 소유자가 수정할 수 없다. 보안은 작업공간 관리/모두 허용/모두 금지를 제공하며 구체적인 팀스페이스 예외가 상위 정책을 덮어쓸 수 있다."
+      ]
+    },
+    {
+      "id": "legal-holds",
+      "url": "https://www.notion.com/help/legal-holds",
+      "sections": [
+        "Create legal holds",
+        "Export legal holds",
+        "Manage & release legal holds"
+      ],
+      "observed": [
+        "사용자의 생성·편집·조회 조합으로 조직 전체 법적 보류를 설정하며 삭제 일정에 우선해 콘텐츠를 보존한다.",
+        "보류 탐색/수정/해제와 PDF 본문/CSV 메타데이터 내보내기, 제거된 사용자·감사 로그에 따른 과거 사건 범위를 설명한다."
+      ]
+    },
+    {
+      "id": "managed-users",
+      "url": "https://www.notion.com/help/managed-users-dashboard",
+      "sections": [
+        "Managing user accounts",
+        "Managed users dashboard"
+      ],
+      "observed": [
+        "검증 도메인 계정의 프로필/외부 작업공간/활동/2단계 인증 상태와 정지·삭제·로그아웃·암호 재설정을 관리한다.",
+        "세션 기간은 1시간~180일이고 모든 기기에 적용한다. 외부 작업공간 접근·제거 및 사용자에게 관리 계정 표시를 설명한다."
+      ]
+    },
+    {
+      "id": "ip-restrictions",
+      "url": "https://www.notion.com/help/ip-address-restrictions",
+      "sections": [
+        "Set up allowed IP addresses for your organisation",
+        "How IP address restrictions impact managed users"
+      ],
+      "observed": [
+        "Enterprise 조직 소유자가 IPv4/IPv6·CIDR 허용 규칙을 관리한다. 자기 IP 누락 경고와 활성화를 설명한다.",
+        "기본 모드는 다음 로그인까지 세션 유지이며 다른 모드는 IP 이탈 즉시 재인증이다. 관리자 API 토큰에는 적용하지 않는다."
+      ]
+    },
+    {
+      "id": "network-control",
+      "url": "https://www.notion.com/help/network-control",
+      "sections": [
+        "How it works",
+        "Approve workspaces for your network"
+      ],
+      "observed": [
+        "Enterprise에서 SSL 프록시/CASB의 X-Notion-Allowed-Workspaces 목록으로 허용 작업공간을 제한한다. 기존 세션에도 적용한다.",
+        "관리자 API 토큰 호출은 적용 대상이 아니다."
+      ]
+    },
+    {
+      "id": "mfa-enforcement",
+      "url": "https://www.notion.com/help/mfa-enforcement",
+      "sections": [
+        "Require MFA for workspace access"
+      ],
+      "observed": [
+        "조직 소유자가 하나 또는 여러 Enterprise 작업공간에 게스트 MFA를 요구한다. 미완료 게스트는 추가 검증 전 접근하지 못한다."
+      ]
+    },
+    {
+      "id": "admin-apis",
+      "url": "https://www.notion.com/help/admin-apis-for-enterprise-organizations",
+      "sections": [
+        "Set up admin connection and token",
+        "See admin API activity in your audit log"
+      ],
+      "observed": [
+        "조직 소유자가 관리 봇/범위 토큰을 발급·회전·철회한다. 작업공간 내보내기·법적 보류·관리 계정 로그아웃을 지원한다.",
+        "감사 행위자는 관리 봇이며 토큰은 일반 페이지 API/SCIM과 구분한다. 원본의 IP/네트워크 제한은 관리자 토큰에 적용하지 않는다."
+      ]
+    },
+    {
+      "id": "admin-api-reference",
+      "url": "https://developers.notion.com/reference/admin/intro",
+      "sections": [
+        "Creating & managing tokens",
+        "Conventions",
+        "Pagination"
+      ],
+      "observed": [
+        "Enterprise 조직 봇 토큰의 HTTPS JSON REST API와 목록 커서 페이지 나눔을 설명한다. 개별 엔드포인트 전체 계약은 별도 조사 대상이다."
+      ]
+    },
+    {
+      "id": "deploy-macos",
+      "url": "https://www.notion.com/help/deploy-notion-for-macos",
+      "sections": [
+        "Installing Notion on shared machines",
+        "Distribute Notion",
+        "Disable automatic updates"
+      ],
+      "observed": [
+        "공유/사용자별 설치와 Intel/Apple Silicon/Universal 배포, 사용자 설정/MDM plist를 통한 자동 업데이트 제어를 설명한다."
+      ]
+    },
+    {
+      "id": "deploy-windows",
+      "url": "https://www.notion.com/help/deploy-notion-for-windows",
+      "sections": [
+        "Distribute Notion",
+        "Disable automatic updates"
+      ],
+      "observed": [
+        "NSIS 설치기의 무인 설치/삭제와 사용자 지정 설치 경로를 설명한다. 현재 Windows 자동 업데이트 비활성화는 지원하지 않는다."
+      ]
+    },
+    {
+      "id": "mobile-intune",
+      "url": "https://www.notion.com/help/set-up-microsoft-intune-with-notion-ios-and-android",
+      "sections": [
+        "What you’ll need to start",
+        "What policies are supported"
+      ],
+      "observed": [
+        "Enterprise 표준 iOS/Android 앱의 Intune 앱 보호를 설명한다. Intune/Entra 관리자와 대상 사용자별 라이선스가 필요하다.",
+        "복사/공유/캡처/백업 제한, PIN/생체 인증, 조건부 실행과 선택적 업무 데이터 삭제를 지원한다."
+      ]
+    }
+  ],
+  "inferred_independent_implementation_requirements": [
+    "관리 API는 실제 행위자와 액션별 권한을 검사하고 변경을 감사한다. 동시 철회/응답/CAS 시점은 독립 구현의 보안 요구이며 원본 서버 동작 관찰이 아니다.",
+    "역할 생성·배정은 인증 사용자 메타데이터, 일반 멤버 PATCH, SCIM/그룹, 복원/가져오기로 위조할 수 없어야 한다.",
+    "헤더만 검색하는 검증 목록은 본문 검색의 대체 증거가 아니다. 원래 owner_id/수정 시각만으로 생성자/최종 편집자를 만들어내지 않는다."
+  ],
+  "unknown": [
+    "유료 계정의 실제 UI 전체 동작, 원본 비공개 RPC·검색 인덱스·일치/정렬/페이지 나눔 구현",
+    "공식 문서가 열거하지 않은 전체 추가 필터와 DB 행 처리, 위임 역할의 CSV/권한 변경 세부 액션 조합",
+    "법적 보류 도움말의 조직 소유자 전용 설명과 준비된 Compliance 역할 허용 설명 사이의 실제 화면/액션 차이",
+    "Intune 라이선스·IdP·프록시·관리 장치·외부 조직을 포함한 실제 운영 검증"
+  ],
+  "implementation_snapshot": {
+    "baseline_commit": "bb06ce028c2c67ec44700844adfd6e93c3157a74",
+    "scope": "조사 시점 소스의 좁은 확인이며 구현 완료/원본 동등성 증거가 아니다. 병렬 구현 뒤 최신 실행 증거로 갱신해야 한다.",
+    "observed": [
+      {
+        "classification": "observed_source",
+        "files": [
+          "fountain/access.py",
+          "supabase/functions/_shared/access.ts"
+        ],
+        "finding": "현재 기본 권한은 owner/admin/member/guest와 require_admin이다. 이 기본 역할만으로 추가 관리자 액션/여러 역할 합집합/조직 범위가 입증되지 않는다."
+      },
+      {
+        "classification": "observed_source",
+        "files": [
+          "fountain/search.py:184",
+          "supabase/functions/_shared/search.ts"
+        ],
+        "finding": "일반 검색은 현재 Access ACL을 통과한 활성 페이지/DB/행의 제목·허용 본문을 대상으로 한다. 관리자 전용 전체 검색 계약의 증거가 아니다."
+      },
+      {
+        "classification": "observed_source",
+        "files": [
+          "fountain/verified_pages.py:42",
+          "fountain/verified_pages.py:110",
+          "supabase/functions/_shared/verified-pages.ts"
+        ],
+        "finding": "검증 목록은 현재 ACL의 검증/만료 페이지·행을 헤더 기반으로 투영하고 제목만 검색한다."
+      },
+      {
+        "classification": "observed_source",
+        "files": [
+          "fountain/advanced.py:398",
+          "supabase/functions/_shared/advanced.ts:159"
+        ],
+        "finding": "보존 정리는 만료된 archived 페이지와 대화록을 삭제한다. 휴지통 뒤 별도 retained 단계나 법적 보류를 구현했다는 증거가 아니다."
+      },
+      {
+        "classification": "inferred_gap",
+        "files": [],
+        "finding": "이 조사에서 조직 전체 정책·개별 관리자 역할 배정·관리 계정 도메인/IP/네트워크/MFA·관리 봇·Intune의 실제 운영 증거는 확보하지 못했다. 부재 검색만으로 전체 저장소 미구현을 증명하지 않는다."
+      }
+    ]
+  }
+}

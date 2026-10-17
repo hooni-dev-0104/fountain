@@ -550,14 +550,20 @@
     "weight": 3,
     "status": "discovered",
     "original_evidence": [
-      "evidence/original-boundaries.md"
+      "evidence/original-boundaries.md",
+      "evidence/admin-governance-original.md"
     ],
     "acceptance": [
-      "역할별 권한과 감사 기록을 갖춘 관리자 기능을 검증한다"
+      "Enterprise 소유자와 명시적으로 위임받은 관리자만 허용 범위의 전체 콘텐츠를 설정에서 ID·제목·본문으로 검색하며, 작업공간 범위를 벗어난 결과·개수·필터 선택지를 반환하지 않는다.",
+      "생성일·생성자·Audience·Shared with 필터와 페이지 위치·생성자/생성일·접근자·마지막 편집자/편집일을 제공하고, Audience는 웹·외부·내부·비공개 중 가장 넓은 실제 공유 범위를 표시한다.",
+      "소유자가 검색 메타데이터를 CSV로 내보내고 제한된 페이지의 권한 변경·권한 철회·게시 해제를 수행한다. 위임 역할의 각 관리 액션 범위는 명시적으로 검사하며 일반 페이지·DB ACL은 역할 부여로 확대하지 않는다.",
+      "휴지통·별도 보존 상태를 검색하고 원래 권한을 확인한 뒤 원래 위치 또는 개인 페이지로 복원하거나 영구 삭제한다. 보존/법적 보류 정책과 충돌하지 않음을 검증한다.",
+      "FEATURE-admin-roles의 누적 역할·개별 배정·작업공간 범위·철회를 적용한다. 실제 행위자와 변경을 감사 기록으로 남긴다. 감사/CAS/철회 시점 정책은 독립 구현 요구이며 원본 내부 동작을 관찰했다는 뜻이 아니다."
     ],
     "verification": [],
     "limitations": [
-      "구현·실제 연결·원본 비교 증거가 아직 전체 요구를 충족하지 않는다."
+      "일반 ACL 검색과 검증 페이지 목록은 존재하나 관리자 전용 전체 본문 검색·공유 메타데이터/CSV·제한 페이지 관리·위임 역할 전체 계약의 구현/실제 클라우드/원본 비교 증거는 없다.",
+      "원본 검색 일치 규칙·전체 추가 필터·정렬·페이지 나눔·DB 행 포함 방식·위임 CSV/권한 변경의 세부 액션 목록은 유료 원본에서 미관찰이다. 생성자·마지막 편집자를 owner_id나 수정 시각만으로 추정하지 않는다."
     ]
   },
   {
@@ -609,6 +615,200 @@
     "verification": [],
     "limitations": [
       "구현·실제 연결·원본 비교 증거가 아직 전체 요구를 충족하지 않는다."
+    ]
+  },
+  {
+    "id": "FEATURE-organization-governance",
+    "name": "조직·여러 작업공간 통합 관리",
+    "priority": "P1",
+    "weight": 3,
+    "status": "discovered",
+    "original_evidence": [
+      "evidence/admin-governance-original.md"
+    ],
+    "acceptance": [
+      "조직 생성·조직 소유자와 여러 작업공간을 관리하고 조직별 멤버/게스트 중복 제거, 작업공간별 탐색·정책·검색/감사 범위를 제공한다.",
+      "조직 관리 설정과 작업공간/팀스페이스의 구체적인 적용·우선순위를 검사한다. 단일 작업공간과 팀스페이스를 여러 작업공간 구현 완료로 취급하지 않는다."
+    ],
+    "verification": [],
+    "limitations": [
+      "공식 문서 본문에서 기능을 확인했다. 독립 구현·실제 공급자/기기/조직 운영·유료 원본 비교 증거는 아직 전체 계약을 충족하지 않는다."
+    ],
+    "original_source_ids": [
+      "organization-controls"
+    ]
+  },
+  {
+    "id": "FEATURE-admin-roles",
+    "name": "준비된 관리자 역할·사용자 지정 역할",
+    "priority": "P1",
+    "weight": 3,
+    "status": "discovered",
+    "original_evidence": [
+      "evidence/admin-governance-original.md"
+    ],
+    "acceptance": [
+      "조직 소유자만 준비된 역할과 사용자 지정 액션/작업공간 범위를 개별 멤버에게 배정·철회한다. 여러 역할은 합집합이며 일반 페이지/DB 접근은 그대로 유지한다.",
+      "게스트·조직 소유자 배정 및 SCIM/그룹을 통한 역할 배정을 막는다. 사용자 지정 역할은 새 기능을 자동 포함하지 않는다.",
+      "Compliance·People·IT·Analytics·Billing의 공식 범위를 추적하며, Billing의 판매 계약/Notion 크레딧과 가족 앱의 무료 운영 정책을 구분한다. 멤버 관리자는 새 소유자·멤버 관리자를 지정하지 못한다."
+    ],
+    "verification": [],
+    "limitations": [
+      "공식 문서 본문에서 기능을 확인했다. 독립 구현·실제 공급자/기기/조직 운영·유료 원본 비교 증거는 아직 전체 계약을 충족하지 않는다."
+    ],
+    "original_source_ids": [
+      "enterprise-roles"
+    ]
+  },
+  {
+    "id": "FEATURE-legal-holds",
+    "name": "법적 보류·보존 콘텐츠 내보내기",
+    "priority": "P1",
+    "weight": 3,
+    "status": "discovered",
+    "original_evidence": [
+      "evidence/admin-governance-original.md"
+    ],
+    "acceptance": [
+      "조직 전체에서 사용자 생성/편집/조회 범위로 법적 보류를 만들고 내용 탐색·수정·해제 및 PDF/CSV 내보내기를 제공한다.",
+      "보류 중인 콘텐츠·회의 대화록은 일반 삭제 일정으로 제거하지 않고, 해제 후 보존 정책을 다시 적용한다. 제거된 사용자와 과거 사건 범위는 실제 보유 감사 근거로 검증한다."
+    ],
+    "verification": [],
+    "limitations": [
+      "공식 문서 본문에서 기능을 확인했다. 독립 구현·실제 공급자/기기/조직 운영·유료 원본 비교 증거는 아직 전체 계약을 충족하지 않는다."
+    ],
+    "original_source_ids": [
+      "legal-holds"
+    ]
+  },
+  {
+    "id": "FEATURE-managed-users",
+    "name": "검증 도메인의 관리 계정·외부 작업공간 통제",
+    "priority": "P1",
+    "weight": 3,
+    "status": "discovered",
+    "original_evidence": [
+      "evidence/admin-governance-original.md"
+    ],
+    "acceptance": [
+      "검증 도메인 기반 관리 계정을 검색·필터하고 프로필·외부 작업공간·활동/2단계 인증 상태를 관리하며 관리 계정임을 표시한다.",
+      "정지/재활성화·삭제·개별/전체 로그아웃·암호 재설정·1시간~180일 세션 정책과 외부 작업공간 접근/제거를 검증한다. 기존 가족 계정 관리/SCIM과 동일한 기능으로 축소하지 않는다."
+    ],
+    "verification": [],
+    "limitations": [
+      "공식 문서 본문에서 기능을 확인했다. 독립 구현·실제 공급자/기기/조직 운영·유료 원본 비교 증거는 아직 전체 계약을 충족하지 않는다."
+    ],
+    "original_source_ids": [
+      "managed-users"
+    ]
+  },
+  {
+    "id": "FEATURE-ip-restrictions",
+    "name": "조직 IP 허용 목록·세션 적용 모드",
+    "priority": "P1",
+    "weight": 3,
+    "status": "discovered",
+    "original_evidence": [
+      "evidence/admin-governance-original.md"
+    ],
+    "acceptance": [
+      "조직 소유자가 IPv4/IPv6 주소·CIDR 허용 규칙을 만들고 활성화하며 자기 잠금 위험을 표시한다.",
+      "관리 계정의 로그인 제한과 IP 이탈 시 세션 유지/재인증 모드를 검증하고 규칙 변경을 감사한다. 원본에서 관리자 API 토큰은 이 제한의 대상이 아님을 명시한다."
+    ],
+    "verification": [],
+    "limitations": [
+      "공식 문서 본문에서 기능을 확인했다. 독립 구현·실제 공급자/기기/조직 운영·유료 원본 비교 증거는 아직 전체 계약을 충족하지 않는다."
+    ],
+    "original_source_ids": [
+      "ip-restrictions"
+    ]
+  },
+  {
+    "id": "FEATURE-network-control",
+    "name": "기업 네트워크의 작업공간 접근 제어",
+    "priority": "P1",
+    "weight": 3,
+    "status": "discovered",
+    "original_evidence": [
+      "evidence/admin-governance-original.md"
+    ],
+    "acceptance": [
+      "신뢰한 프록시/CASB가 전달하는 허용 작업공간 목록으로 로그인 및 이미 열린 세션의 작업공간 접근을 제어한다.",
+      "사용자가 임의로 보낸 헤더를 관리 권한으로 신뢰하지 않는다. 관리자 API 토큰 예외와 실제 프록시 배포를 별도로 검사한다."
+    ],
+    "verification": [],
+    "limitations": [
+      "공식 문서 본문에서 기능을 확인했다. 독립 구현·실제 공급자/기기/조직 운영·유료 원본 비교 증거는 아직 전체 계약을 충족하지 않는다."
+    ],
+    "original_source_ids": [
+      "network-control"
+    ]
+  },
+  {
+    "id": "FEATURE-guest-mfa-enforcement",
+    "name": "작업공간별 게스트 MFA 강제",
+    "priority": "P1",
+    "weight": 3,
+    "status": "discovered",
+    "original_evidence": [
+      "evidence/admin-governance-original.md"
+    ],
+    "acceptance": [
+      "조직 소유자가 하나 이상의 Enterprise 작업공간에 게스트 MFA 요구를 설정하고 두 번째 인증을 마치기 전 접근을 차단한다.",
+      "Supabase의 MFA 제공 기능 존재와 앱에서 검증된 세션의 게스트 정책 집행을 구분한다. 공식 문서의 게스트 범위를 모든 멤버 정책으로 확대하지 않는다."
+    ],
+    "verification": [],
+    "limitations": [
+      "공식 문서 본문에서 기능을 확인했다. 독립 구현·실제 공급자/기기/조직 운영·유료 원본 비교 증거는 아직 전체 계약을 충족하지 않는다."
+    ],
+    "original_source_ids": [
+      "mfa-enforcement"
+    ]
+  },
+  {
+    "id": "FEATURE-admin-apis",
+    "name": "조직 관리자 봇·범위 토큰·관리 API",
+    "priority": "P1",
+    "weight": 3,
+    "status": "discovered",
+    "original_evidence": [
+      "evidence/admin-governance-original.md"
+    ],
+    "acceptance": [
+      "조직 소유자가 관리 봇과 최소 범위 토큰을 발급·회전·철회하고 생성자/최근 사용 정보를 확인한다.",
+      "작업공간 내보내기·법적 보류 생성/해제·관리 계정 로그아웃을 범위별 API로 실행하며 감사 행위자는 관리 봇으로 기록한다. 일반 페이지 API·SCIM 토큰과 구분한다."
+    ],
+    "verification": [],
+    "limitations": [
+      "공식 문서 본문에서 기능을 확인했다. 독립 구현·실제 공급자/기기/조직 운영·유료 원본 비교 증거는 아직 전체 계약을 충족하지 않는다."
+    ],
+    "original_source_ids": [
+      "admin-apis",
+      "admin-api-reference"
+    ]
+  },
+  {
+    "id": "FEATURE-managed-deployment",
+    "name": "관리형 데스크톱 배포·모바일 앱 보호",
+    "priority": "P1",
+    "weight": 3,
+    "status": "discovered",
+    "original_evidence": [
+      "evidence/admin-governance-original.md"
+    ],
+    "acceptance": [
+      "macOS의 공유/사용자 설치와 MDM 자동 업데이트 정책, Windows 무인 설치/사용자 지정 경로를 지원하고 실제 대상 OS에서 검증한다.",
+      "iOS/Android의 Intune 앱 보호와 복사·공유·화면 캡처·백업 제한, PIN/생체 인증·조건부 실행·선택적 데이터 삭제를 실제 할당 정책/기기로 검증한다.",
+      "원본의 Windows 자동 업데이트 비활성화 미지원과 Intune 별도 라이선스 필요를 기록한다. 단순 portable/시뮬레이터 패키지를 관리형 배포 완료로 간주하지 않는다."
+    ],
+    "verification": [],
+    "limitations": [
+      "공식 문서 본문에서 기능을 확인했다. 독립 구현·실제 공급자/기기/조직 운영·유료 원본 비교 증거는 아직 전체 계약을 충족하지 않는다."
+    ],
+    "original_source_ids": [
+      "deploy-macos",
+      "deploy-windows",
+      "mobile-intune"
     ]
   }
 ]

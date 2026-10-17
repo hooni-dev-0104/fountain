@@ -4,13 +4,13 @@
 
 ## 현재 범위와 완료 기준
 
-2026-10-17 확인 시점의 Supabase 프로젝트는 `ehnovtfadpkwtubmwltl`이다. `fountain-api` version 18에 문서·DB·통합 검색·공동 편집·동기화·첨부·presence/SSE·AI·계정·백업·연동 권한 관리·SCIM bearer handler가 연결됐다. 서비스 객체는 actor를 공유하지 않고 사람의 요청은 각 쿠키, SCIM은 별도 위임 토큰으로 인증한다. 운영 원본은 entities 153개·meta 6개, 실사용 Auth 사용자·identity mapping은 0개다. `fountain-files`는 비공개 bucket이며 QA 정리 후 객체는 0개다. `/health`의 `ready:false`는 전체 전환이 아직 끝나지 않았다는 뜻이다. API 13에서는 배포 설정의 `setupEnabled`만 켰으며 39개 배포 파일을 다시 대조했다. 원본 `local` 소유자용 연결은 해시만 저장한 유효기간 있는 일회용 코드와 사용자의 명시적 앱 입력이 필요하다. 계정 생성·소유자 연결을 자동 수행하지 않았다. [연결 준비 검증](research/owner-onboarding-preparation.json).
+2026-10-17 확인 시점의 Supabase 프로젝트는 `ehnovtfadpkwtubmwltl`이다. `fountain-api` version 19에 문서·DB·통합 검색·공동 편집·동기화·첨부·presence/SSE·AI·계정·백업·연동 권한 관리·SCIM bearer handler가 연결됐다. 서비스 객체는 actor를 공유하지 않고 사람의 요청은 각 쿠키, SCIM은 별도 위임 토큰으로 인증한다. 운영 원본은 entities 153개·meta 6개, 실사용 Auth 사용자·identity mapping은 0개다. `fountain-files`는 비공개 bucket이며 QA 정리 후 객체는 0개다. `/health`의 `ready:false`는 전체 전환이 아직 끝나지 않았다는 뜻이다. API 13에서는 배포 설정의 `setupEnabled`만 켰으며 39개 배포 파일을 다시 대조했다. 원본 `local` 소유자용 연결은 해시만 저장한 유효기간 있는 일회용 코드와 사용자의 명시적 앱 입력이 필요하다. 계정 생성·소유자 연결을 자동 수행하지 않았다. [연결 준비 검증](research/owner-onboarding-preparation.json).
 
 API 14에서는 페이지 검증의 복수 담당자·활성/열람 자격·만료값·문서 revision 검사를 맞췄다. 격리된 실제 Supabase 계정 2개와 별도의 멤버 기록으로 담당자 1,000명 처리, 권한·비공개 응답·충돌·원본 보존을 확인하고 검증 자료를 정리했다. 새 권한이나 DB 스키마를 추가하지 않았다. [페이지 검증 안내](PAGE_VERIFICATION.md) · [실행 증거](research/page-verification-evidence.json).
 
 API 15에서는 현재 검증 만료를 담당자별 알림함에 표시하고 읽음·보관을 계정별로 저장한다. 실제 Supabase 계정 2개·세션 3개로 수신자 격리·기기 간 상태·만료·재검증·접근 철회를 확인했다. 배포 40개 파일을 소스와 대조했고 격리 QA 데이터와 계정을 정리했다. 배경 전달·이메일/푸시는 아직 연결되지 않았다. [알림함 안내](INBOX.md) · [실행 증거](research/inbox-evidence.json).
 
-Auth/Vault·Store부터 계정 생성·관리·백업·분할 백업·연동 권한 관리·예약 실행·SCIM·파일 물리 정리·기존 inline 첨부 읽기와 위키 헤더까지 migration 27개를 적용했다. 적용된 SQL은 `supabase/migrations`의 실제 버전 파일로만 보관하고 중복 초안은 제거했다. 공개 RPC는 service_role 전용이며, private 테이블은 강제 RLS와 직접 접근 거절을 유지한다. 익명·일반 로그인 역할의 실행 권한 거절, 연결되지 않은 세션의 백업/정리 거절 등 실제 PostgreSQL 검사 10개가 통과했다. 이 구조는 서버의 신뢰된 권한 검사이며 최종 사용자별 RLS를 사용한다는 뜻이 아니다.
+Auth/Vault·Store부터 계정 생성·관리·백업·분할 백업·연동 권한 관리·예약 실행·SCIM·파일 물리 정리·기존 inline 첨부 읽기와 위키·DB 검증 메타데이터까지 migration 28개를 적용했다. 적용된 SQL은 `supabase/migrations`의 실제 버전 파일로만 보관하고 중복 초안은 제거했다. 공개 RPC는 service_role 전용이며, private 테이블은 강제 RLS와 직접 접근 거절을 유지한다. 익명·일반 로그인 역할의 실행 권한 거절, 연결되지 않은 세션의 백업/정리 거절 등 실제 PostgreSQL 검사 10개가 통과했다. 이 구조는 서버의 신뢰된 권한 검사이며 최종 사용자별 RLS를 사용한다는 뜻이 아니다.
 
 원본 첨부 1개·80바이트는 이미 PostgreSQL의 inline base64 형식으로 저장돼 있으며 외부 chunk 행은 0개다. 일반 Store snapshot에서 이 바이트를 숨기는 계약은 유지하면서 전용 인증 RPC와 64KiB 다운로드 경로를 추가했다. 별도 계정 두 개로 최대 5,000,000바이트 전체 SHA·공유 권한·HEAD·Range·오류를 확인했고 실제 SQL의 인증 철회·원본 변경 거절 19개도 통과했다. 읽기는 원본·revision·receipt·쿼터를 바꾸지 않으며 Storage 객체를 만들지 않는다. 원본 첨부는 portable 백업과 동일하고, 원본 소유자 계정으로의 최종 접근 검증은 아직 남아 있다. [실행 결과·범위](research/inline-attachment-verification.md).
 
@@ -68,7 +68,7 @@ SCIM bearer 요청은 사람의 쿠키와 분리해 현재 활성·미만료 gra
 
 API 9 검증 당시 `deployment.setupEnabled`는 false였다. 현재는 위 초기 소유자 연결 준비를 위해 true이며 web origin과 실사용 계정·공개 HTTPS 호스트 연결은 아직 완료되지 않았다. 정적 웹 배포물은 16개 allowlist 파일이며 모바일에는 19개 public asset을 복사해 두 플랫폼의 SHA 38개를 비교했다. localhost:8787은 기존 동작 보존용 불변 Python 미리보기이며 새 클라우드 운영 전환이 아니다. 외부 IdP와 SAML·전체 다섯 플랫폼 편집 전파 검증은 남아 있다. 원본 운영 workspace의 예약 실행·파일 정리는 아직 등록하지 않았다. 연결된 Vercel MCP는 실제 팀 조회에서 플랜 정보를 반환하지 않아 무료 정적 웹 배포의 요금제를 확인하지 못했으며, 이는 다른 백엔드 구현을 막는 추가 승인 대기가 아니다.
 
-[라우트 인벤토리](../supabase/tests/route-inventory.json)는 현재 Python 라우트의 **method/path 213개 행**을 기록한다. HEAD와 기존 suffix alias도 별도 행이다. 각 행에는 인증 경계, 익명 접근 여부, handler/domain/module, 실제 Python AST 분기의 근거와 cloud 상태가 있다. `public`은 익명 인증 경계를 뜻하며 단순히 게시된 콘텐츠라는 뜻이 아니다.
+[라우트 인벤토리](../supabase/tests/route-inventory.json)는 현재 Python 라우트의 **method/path 217개 행**을 기록한다. HEAD와 기존 suffix alias도 별도 행이다. 각 행에는 인증 경계, 익명 접근 여부, handler/domain/module, 실제 Python AST 분기의 근거와 cloud 상태가 있다. `public`은 익명 인증 경계를 뜻하며 단순히 게시된 콘텐츠라는 뜻이 아니다.
 
 - `pending`: 이 인벤토리의 기본 `createBackend` fixture에서 업무 handler가 연결되지 않음. 현재 운영 배포의 기능 상태는 위 실제 검증 기록을 따른다.
 - `staged-auth`: 세션 경계 구현 단계. 실제 사용자 연결과 다기기 흐름 검증이 남음.
@@ -79,6 +79,8 @@ API 9 검증 당시 `deployment.setupEnabled`는 false였다. 현재는 위 초�
 현재 모든 행의 `productionParityVerified`는 `false`다. fixture, 모델 테스트, 함수 배포, 타입 또는 health 검사만으로 이 값을 바꾸지 않는다. 실제 Supabase Auth/DB/Storage와 연결한 해당 HTTP 계약 및 권한·오류·재시도·데이터 보존 증거가 필요하다.
 
 기본 위키는 API 18과 migration 27개에 반영됐다. 전환·해제·세 보기·담당자·검증을 구현하고 실제 Supabase의 큰 문서/깊은 계층/두 계정 권한과 400페이지 가져오기를 검사했다. 위키·검증 및 상속 ACL은 본문 없는 내부 헤더를 쓰고 실제 변경 대상의 원문을 보존한다. 검증용 계정·행·세션은 정리했으며 verifier 74는 이전 nonce에도 404다. 원본 153개 entity·6개 meta와 기존 미리보기는 보존했다. [위키 안내](WIKI.md) · [실행 증거와 남은 범위](research/wiki-evidence.json).
+
+DB의 담당자·검증 속성은 API 19의 45개 파일과 migration 28개에 반영됐다. 담당자 기본값·인원 제한·검증/해제·행 및 속성 설정 CAS·오프라인 담당자 편집을 구현했다. 실제 두 계정·세 세션의 10개 검사, worker 4의 예약 성공/위조 롤백 두 작업과 각각의 pg_net HTTP 200·commit receipt를 확인했다. 약 85.4MB의 행 데이터에서도 만료 알림함은 원본 행·DB·페이지 본문을 읽지 않았고 읽음·보관 변경은 원문을 보존했다. maintenance 4는 변경된 공통 모듈을 포함하도록 갱신했으며 새로운 정리 업무 주기를 실행한 것은 아니다. 예약·정리 함수의 익명 거절 경계 총 16개를 확인했다. 테스트 계정·세션·29개 테이블의 자료와 Cron을 정리했고 verifier 77은 이전 nonce에도 404다. Python 실제 PostgreSQL 579개와 Node 62개 스크립트, 별도 접근 대조 1,651건을 통과했다. 원본과 기존 미리보기는 보존됐으며 실사용 소유자 연결·무료 공개 호스트·모든 플랫폼 가족 여정은 남아 있다. [DB 담당자·검증 안내](DATABASE_VERIFICATION.md) · [증거와 제한](research/database-verification-evidence.json).
 
 ## 구성
 
@@ -105,7 +107,7 @@ API 9 검증 당시 `deployment.setupEnabled`는 false였다. 현재는 위 초�
 node supabase/tests/route-inventory.mjs
 ```
 
-검사는 Python 표준 AST만 읽으며 서버 모듈을 import하거나 DB에 접속하지 않는다. 위키 위임을 포함한 Python 라우팅·인가 함수 9개의 fingerprint, 실제 분기가 도달하는 return/HTTP handler, 모든 비예외 terminal의 포함 여부와 각 대표 경로의 7개 HTTP method를 대조한다. Edge entry fingerprint도 검사하므로 handler 설치가 바뀌면 coverage를 다시 감사해야 한다. 격리된 Edge boundary 호출은 미구현 domain 요청이 성공으로 위장하지 않고 503을 반환하는지 확인하는 검사이며 실제 클라우드 업무 처리 증거가 아니다.
+검사는 Python 표준 AST만 읽으며 서버 모듈을 import하거나 DB에 접속하지 않는다. 위키·DB 검증 위임을 포함한 Python 라우팅·인가 함수 10개의 fingerprint, 실제 분기가 도달하는 return/HTTP handler, 모든 비예외 terminal의 포함 여부와 각 대표 경로의 7개 HTTP method를 대조한다. Edge entry fingerprint도 검사하므로 handler 설치가 바뀌면 coverage를 다시 감사해야 한다. 격리된 Edge boundary 호출은 미구현 domain 요청이 성공으로 위장하지 않고 503을 반환하는지 확인하는 검사이며 실제 클라우드 업무 처리 증거가 아니다.
 
 소스가 바뀌어 실패하면 먼저 endpoint·인증·별칭과 cloud 검증 상태를 검토하고 JSON을 수정한다. 그 다음에만 근거를 갱신한다.
 

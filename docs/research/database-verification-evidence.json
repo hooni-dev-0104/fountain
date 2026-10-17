@@ -1,0 +1,680 @@
+{
+  "date": "2026-10-17",
+  "feature": "Database Owner and Verification independent implementation",
+  "original": {
+    "official": "https://www.notion.com/help/wikis-and-verified-pages",
+    "clientVersion": "7.39.0",
+    "asarSHA256": "889137431e69a9e8795b88cb071d451f5592797dcfe4ca13499dcb23ddc8d8ac",
+    "rea": "notion-desktop.md",
+    "scope": "Official documented settings and selected shipped desktop/public JavaScript; no recovered private server or live paid-account full parity"
+  },
+  "sourceSHA256": {
+    "fountain/access.py": "c376cc268568e4f2359ec13473b9f859cc862b77f1682e031c80699a7e24be5a",
+    "fountain/advanced.py": "d76835d0700130cb9074196bc1b3460ec1ba39ca6b5d950c8e4d1ded75abaf29",
+    "fountain/authorization.py": "b7ba56e1805fa48c44cc4909e871dfa6026075315fcf56ee7fdc97f98929bfa5",
+    "fountain/core.py": "e16d18b462eab39527797b6bd5ca4706922860afdd5feca595071d4ac91fd893",
+    "fountain/database_verification.py": "45a881051bc4a85bdb79a862973a1ff7d1e88e308d2ff87a518b1438cff24494",
+    "fountain/inbox.py": "7f59e2f8b572ddb508b7aaabc8aebaa6d9976c2360047a1493702f8f0396d637",
+    "fountain/search.py": "7de4c1984d4068d071aa23aab1681956202d491823453d400735a3b971186e08",
+    "fountain/server.py": "fe658ed0f4afd6d6e72ba23ed2913edfef6a2ac3003ca17b3e30bfbf6ba9adb7",
+    "fountain/sync.py": "2ca2f16680a030acbfcef6768e9d599e82201447d91d00c63ebbb73bde1c5e8a",
+    "fountain/verification_index.py": "3b3f5e59ec98878fc1f4f86e02b790015478c3486a4455ffe0117363910e1109",
+    "static/app.js": "cecdfcf49a4737387d3970696b95f1637b5c4cc56dd74cc1fa83ee23cf220564",
+    "static/mutations.js": "34b8fc10b06f59ef407cd642e1ae77ee636f0ad3c802c044966201340cdf9077",
+    "static/recovery-import.js": "cdef00846362e1591cfc9de1ecd186c06e5abbf1f19be0f25c55d259d20a275d",
+    "static/style.css": "aae5fe816e56e80f51f4aec483da89e07556eff38f03229108b242d0d9df6dad",
+    "static/sw.js": "531e0ff54cd6569515d386033eccda5265ad757965054bfa5f280e32a123c84e",
+    "supabase/functions/_shared/access.ts": "b007542ffa4c8950046f85a071fca2bbe2a8d5200a9fd11606a8d3a2de721d23",
+    "supabase/functions/_shared/advanced.ts": "0401d5860fafaaba32d7fa26a8c3cb1eda199288be107f5cd267609e7e7c2015",
+    "supabase/functions/_shared/authorization.ts": "ceef8865f875f09d2d8f348ee6f746c9f9e4ab964999422b0ddee83f34f74eca",
+    "supabase/functions/_shared/core.ts": "1761a47fcf4925d98e5540e9f7b0c4a9af478a41bbe64d7a4611bdef05f888ee",
+    "supabase/functions/_shared/database-verification.ts": "c92f0e27a26c3c629631c3b86cf38e99e30c8a5377714d800b35a7e792173586",
+    "supabase/functions/_shared/datetime.ts": "fc82935fb250b571c27fb0fda4f505989ccb035d34175f0242853898d8c4ee7f",
+    "supabase/functions/_shared/domain.ts": "dd183e2cca911575ddc82e0d830fd152d14d399d51087d48f40ee1af3ee8c001",
+    "supabase/functions/_shared/inbox.ts": "7462eb0b47e3bedfbae98e512894e9d98884e1ae5f681c7e726e0996f737cb77",
+    "supabase/functions/_shared/scheduler.ts": "a784ecb68f174f874ad0b87a43147929989bc0caa81a8fc7e9d10267507c8a18",
+    "supabase/functions/_shared/search.ts": "7303f5356a8228479c98cfc9059acb5e053275cddae3f7f4943772069f79c8e2",
+    "supabase/functions/_shared/store.ts": "9c265a69f5fcd80940b4c01dd0fc5da4bdd0aaeff986975629af504a73657c90",
+    "supabase/functions/_shared/sync.ts": "85d8cc2b11279e09e219acf7e9a113f095bcf85a9b453b82a70e7535a86f1445",
+    "supabase/functions/_shared/verification-index.ts": "162b3d5ab39c9cc79885b4c66a56a9e144ed0a3c6f40ac711b286b88f86a132a",
+    "supabase/migrations/20261017063604_fountain_database_verification_index.sql": "68cc61c9bcbb1825ea31f98ad839c2d4f115e0eae6af26279450be27481ac6fb",
+    "supabase/tests/database-verification-inbox.mjs": "468deae716ba04b2d69971d741ab58c9ccf4d00b99ff26f81001329c4fb31024",
+    "supabase/tests/database-verification.mjs": "787a35d5343187ddb7f3df6534a11a5e876456a390a9ead104c7c32acdccc847",
+    "supabase/tests/inbox.mjs": "f66a51bea8ad74349ee165153af73e6f9b02fa896529bfebcd3fd41d2da8af30",
+    "supabase/tests/route-inventory.json": "d4900cc7ff403b3475aaa661152c58e196b0106b03d56668fed9d6f5f2f97e35",
+    "supabase/tests/route-inventory.mjs": "1e7264a46a42fb99c084fee4946961d881122e46a24bf7d9ed53dd94ef606cff",
+    "supabase/tests/verification-index.mjs": "fc5a19bfcf5796d0a8c4c5de5f195662259b39ed27485c6fb19925e2da815bb0",
+    "tests/browser-database-verification.mjs": "b2c58f5984154bc85c4caf24addc1f74367e169c48bfa47ac2dc3d2da394a4c2",
+    "tests/browser-projects.mjs": "73f34744c7a921a4a10ff24f8d47705627e208a38323c3e9d2eebe1d68e2c8b2",
+    "tests/database-verification-offline.mjs": "890a7dc6721ee21f6db6696db34af77147d3f753a9a3f59d75cff7cd1faa545e",
+    "tests/test_database_verification.py": "8ff71ee9e91fefed6cf2a74d19cd8630290014a3b29924741482a5ccd1c49bd2",
+    "tests/test_database_verification_inbox.py": "ebac30676dd7f475f325dfef691636f06826f238d3ef249408d3031a56bddcde",
+    "tests/test_verification_index.py": "83f503ad6460986e155ff9f847657735fe2b1872e0d8940b6ba2134d2f921fa5"
+  },
+  "main": {
+    "version": 19,
+    "files": 45,
+    "exactReadback": true,
+    "metadata": {
+      "mode": "main",
+      "characters": 687933,
+      "sha256": "80d6304d927d3fded5f396ebbab05fe705a5ded9b9aabc5ec7af6b0b5a56b8ef",
+      "files": 45,
+      "sourceHashes": {
+        "fountain-api/index.ts": "a0cdab7c410766064118e2e754dc30e4647c280d65fa02830d856613e3f33894",
+        "_shared/access.ts": "b007542ffa4c8950046f85a071fca2bbe2a8d5200a9fd11606a8d3a2de721d23",
+        "_shared/accounts.ts": "16f02ad2f92b610ac1ceaa38dce47b841132b41099100ac38274f3a5a6b5722e",
+        "_shared/activity.ts": "638ebe8df5d3354bf0e5fd7de09580ee5528d5341e247c3ac075c86b01214b49",
+        "_shared/advanced.ts": "0401d5860fafaaba32d7fa26a8c3cb1eda199288be107f5cd267609e7e7c2015",
+        "_shared/ai.ts": "373be5efd6f8e7ebbb7bb48af1630ce32d1e8a6916b94601adfabf2ecaf96c07",
+        "_shared/application.ts": "21648cbfef5d9a9e566c381459b5c3a3bb2fa006d722bb0e5728c35934e7c2fb",
+        "_shared/auth.ts": "d6057256f6944c8e45ec46e56e3cbba4576f24d2845aca20d51d7af89c29d978",
+        "_shared/authorization.ts": "ceef8865f875f09d2d8f348ee6f746c9f9e4ab964999422b0ddee83f34f74eca",
+        "_shared/backend.ts": "9cb2c86f26bdcab840f9d215191dc4c956ac2ff7d3b91d5a39e7e9f79844736d",
+        "_shared/backup-jobs.ts": "be37c60cfd765abed418fc5fbb1cc1db3ca9a2908b44e9ec5f21ad42bdd9d657",
+        "_shared/backup.ts": "bf0fa673ab73cd1fa6546d661175d0454cf0a3be8a2d533bc972502b27ab02e9",
+        "_shared/collaboration.ts": "d5484872723c7f81912e5a75b93432ea90c39303c7dec97836930ed5a1c7c27a",
+        "_shared/core.ts": "1761a47fcf4925d98e5540e9f7b0c4a9af478a41bbe64d7a4611bdef05f888ee",
+        "_shared/crdt.ts": "428c6fd508b9244ae8e15caa2dee218380affa3ab3d27a4f0199809b12692487",
+        "_shared/database-verification.ts": "c92f0e27a26c3c629631c3b86cf38e99e30c8a5377714d800b35a7e792173586",
+        "_shared/datetime.ts": "fc82935fb250b571c27fb0fda4f505989ccb035d34175f0242853898d8c4ee7f",
+        "_shared/domain.ts": "dd183e2cca911575ddc82e0d830fd152d14d399d51087d48f40ee1af3ee8c001",
+        "_shared/events.ts": "d4fef9eef4a378cf7a3269db6ced20c0b21ba72bf9ee0f5536e15b23d6e0d940",
+        "_shared/files.ts": "ecc8a1ff91e30af51c854b0bbcfd5f4c79d5d382abc815f47984f66bc6e07b82",
+        "_shared/gc-fence.ts": "e2bf7ab3075fc5f42273c9c3265c25c5425fda431d188ab8e1a85706fb56e5d7",
+        "_shared/grant-admin.ts": "81404437efd77e7ad1d36898cc9fbb1f3aa482d8fb493791916c54787ea599bb",
+        "_shared/http.ts": "476ea9cee5938ce7a27b414149acb905323fd127aab8433ad98798fe7bb89303",
+        "_shared/inbox.ts": "7462eb0b47e3bedfbae98e512894e9d98884e1ae5f681c7e726e0996f737cb77",
+        "_shared/inline-attachments.ts": "06e1be1b44bb83e9b58fbc8584fb0694c5a17a34c074eb7b6546e02587cc268d",
+        "_shared/onboarding.ts": "646588c79d737d6f65686cff01d3e60b9085cbb332607c8dc5567180c547f597",
+        "_shared/page-headers.ts": "c167af83d26be209c592593bcc94aa89e8e6ce522b58e793c4e2e8a9c4407a9e",
+        "_shared/presence.ts": "fbb96b11f3ba6d55089264ffd2449ec1375ce8717b026c18c3507228d68526e7",
+        "_shared/publishing.ts": "ce89ac8e1f3b2a8f35da64301f57c2b84839702b4f4ea4aa16b9dec206ba7068",
+        "_shared/realtime.ts": "e208e912ea641bbfb656045fb136553f341687c2bedb4d07be344bfae633b1ef",
+        "_shared/scheduler.ts": "a784ecb68f174f874ad0b87a43147929989bc0caa81a8fc7e9d10267507c8a18",
+        "_shared/scim-http.ts": "47e09c8868261ddb023d48cc7c0fe4422f0d9c14f8d52891d1d5d71e2b4f18bb",
+        "_shared/scim.ts": "50ec923f7ff4fa99ea1e382bfdfa282a539c8e2785be8628a8d57daafcefbbef",
+        "_shared/search.ts": "7303f5356a8228479c98cfc9059acb5e053275cddae3f7f4943772069f79c8e2",
+        "_shared/sqlite-backup-resumable.ts": "282f9b471f17f8f5488836a4c6af8924d100fb60df36769425c7c10c00f149a2",
+        "_shared/sqlite-backup.ts": "530d73639027d66a330fd1134df1e985b3f876146880fc8b068e7dccaa3b7a1b",
+        "_shared/storage.ts": "c7b284d0cd7be79597fb7ae2c29f15bdd353ace7dbdac082eeff408208976dd2",
+        "_shared/store.ts": "9c265a69f5fcd80940b4c01dd0fc5da4bdd0aaeff986975629af504a73657c90",
+        "_shared/sync.ts": "85d8cc2b11279e09e219acf7e9a113f095bcf85a9b453b82a70e7535a86f1445",
+        "_shared/tasks.ts": "0a710e3ef824aa14b990ed57148f4a69948113b9378a175a148883d52f1e47f4",
+        "_shared/transaction.ts": "3a921b2471ee0a8bed764393baaaa412d8a90ef77a9c002f83b5a962e7e24a10",
+        "_shared/vault.ts": "9adad6cfa58e0498ca284c8d26650bc7fcd7afd3261bc0405db7e45c3ed9100a",
+        "_shared/verification-index.ts": "162b3d5ab39c9cc79885b4c66a56a9e144ed0a3c6f40ac711b286b88f86a132a",
+        "_shared/wiki.ts": "38a4ad408a20250405e1b27b8be45031d5f9ee8774b1347b93aa7bc5366de7e7",
+        "fountain-api/deployment.ts": "9433b0ee859250bb37835b4066b7511ee9acf1535ec962f80ca8e8182ba917a5"
+      }
+    }
+  },
+  "migration": {
+    "migration": "20261017063604",
+    "sha256": "68cc61c9bcbb1825ea31f98ad839c2d4f115e0eae6af26279450be27481ac6fb",
+    "exactLiveBody": true,
+    "authorityUnchanged": true,
+    "serverVersion": "17.11",
+    "owner": "postgres",
+    "acl": "{postgres=X/postgres}",
+    "settings": [
+      "search_path=pg_catalog"
+    ],
+    "anonExecute": false,
+    "authenticatedExecute": false,
+    "serviceDirectExecute": false
+  },
+  "worker": {
+    "version": 4,
+    "files": 27,
+    "metadata": {
+      "mode": "worker",
+      "characters": 436657,
+      "sha256": "10ee3cf78838881ad4da4643812b1c678d0cf43e299bf39305ee9694fce397cc",
+      "files": 27,
+      "sourceHashes": {
+        "fountain-worker/index.ts": "265149cf2c059eb8c246c095d9196cf1949f8b1cca7a5a4945e62a6378e531d8",
+        "_shared/access.ts": "b007542ffa4c8950046f85a071fca2bbe2a8d5200a9fd11606a8d3a2de721d23",
+        "_shared/advanced.ts": "0401d5860fafaaba32d7fa26a8c3cb1eda199288be107f5cd267609e7e7c2015",
+        "_shared/auth.ts": "d6057256f6944c8e45ec46e56e3cbba4576f24d2845aca20d51d7af89c29d978",
+        "_shared/authorization.ts": "ceef8865f875f09d2d8f348ee6f746c9f9e4ab964999422b0ddee83f34f74eca",
+        "_shared/collaboration.ts": "d5484872723c7f81912e5a75b93432ea90c39303c7dec97836930ed5a1c7c27a",
+        "_shared/core.ts": "1761a47fcf4925d98e5540e9f7b0c4a9af478a41bbe64d7a4611bdef05f888ee",
+        "_shared/crdt.ts": "428c6fd508b9244ae8e15caa2dee218380affa3ab3d27a4f0199809b12692487",
+        "_shared/database-verification.ts": "c92f0e27a26c3c629631c3b86cf38e99e30c8a5377714d800b35a7e792173586",
+        "_shared/datetime.ts": "fc82935fb250b571c27fb0fda4f505989ccb035d34175f0242853898d8c4ee7f",
+        "_shared/domain.ts": "dd183e2cca911575ddc82e0d830fd152d14d399d51087d48f40ee1af3ee8c001",
+        "_shared/http.ts": "476ea9cee5938ce7a27b414149acb905323fd127aab8433ad98798fe7bb89303",
+        "_shared/inbox.ts": "7462eb0b47e3bedfbae98e512894e9d98884e1ae5f681c7e726e0996f737cb77",
+        "_shared/page-headers.ts": "c167af83d26be209c592593bcc94aa89e8e6ce522b58e793c4e2e8a9c4407a9e",
+        "_shared/publishing.ts": "ce89ac8e1f3b2a8f35da64301f57c2b84839702b4f4ea4aa16b9dec206ba7068",
+        "_shared/scheduler-transport.ts": "835b9296a77cdfff8020a1b0e87886ecfcc048b74fb4a3fa9cedf3ed2e2fb5ad",
+        "_shared/scheduler-worker.ts": "0b737d2fa1f3a94c6d4b8f35c57cbe97eeca647847434b34f4f48bb69af9fa7d",
+        "_shared/scheduler.ts": "a784ecb68f174f874ad0b87a43147929989bc0caa81a8fc7e9d10267507c8a18",
+        "_shared/scim.ts": "50ec923f7ff4fa99ea1e382bfdfa282a539c8e2785be8628a8d57daafcefbbef",
+        "_shared/search.ts": "7303f5356a8228479c98cfc9059acb5e053275cddae3f7f4943772069f79c8e2",
+        "_shared/storage.ts": "c7b284d0cd7be79597fb7ae2c29f15bdd353ace7dbdac082eeff408208976dd2",
+        "_shared/store.ts": "9c265a69f5fcd80940b4c01dd0fc5da4bdd0aaeff986975629af504a73657c90",
+        "_shared/sync.ts": "85d8cc2b11279e09e219acf7e9a113f095bcf85a9b453b82a70e7535a86f1445",
+        "_shared/tasks.ts": "0a710e3ef824aa14b990ed57148f4a69948113b9378a175a148883d52f1e47f4",
+        "_shared/transaction.ts": "3a921b2471ee0a8bed764393baaaa412d8a90ef77a9c002f83b5a962e7e24a10",
+        "_shared/verification-index.ts": "162b3d5ab39c9cc79885b4c66a56a9e144ed0a3c6f40ac711b286b88f86a132a",
+        "_shared/wiki.ts": "38a4ad408a20250405e1b27b8be45031d5f9ee8774b1347b93aa7bc5366de7e7"
+      }
+    },
+    "exactReadback": true
+  },
+  "maintenance": {
+    "version": 4,
+    "files": 12,
+    "metadata": {
+      "mode": "maintenance",
+      "characters": 199323,
+      "sha256": "775961c745644ca8d94b0dcdae1523c520445f7ea6e00e448f6d5046b2bbb4a4",
+      "files": 12,
+      "sourceHashes": {
+        "fountain-maintenance/index.ts": "8e0322f92de7126d460dfc8d9ec479758b8f14bd76fb66fd6b83bd83c2005f8e",
+        "_shared/access.ts": "b007542ffa4c8950046f85a071fca2bbe2a8d5200a9fd11606a8d3a2de721d23",
+        "_shared/auth.ts": "d6057256f6944c8e45ec46e56e3cbba4576f24d2845aca20d51d7af89c29d978",
+        "_shared/crdt.ts": "428c6fd508b9244ae8e15caa2dee218380affa3ab3d27a4f0199809b12692487",
+        "_shared/database-verification.ts": "c92f0e27a26c3c629631c3b86cf38e99e30c8a5377714d800b35a7e792173586",
+        "_shared/datetime.ts": "fc82935fb250b571c27fb0fda4f505989ccb035d34175f0242853898d8c4ee7f",
+        "_shared/http.ts": "476ea9cee5938ce7a27b414149acb905323fd127aab8433ad98798fe7bb89303",
+        "_shared/maintenance-transport.ts": "fcf09cfbbe8f63e9d0c021f12111168b9d8fed08d1cf01d595ab1a2f133a0c8b",
+        "_shared/page-headers.ts": "c167af83d26be209c592593bcc94aa89e8e6ce522b58e793c4e2e8a9c4407a9e",
+        "_shared/storage.ts": "c7b284d0cd7be79597fb7ae2c29f15bdd353ace7dbdac082eeff408208976dd2",
+        "_shared/store.ts": "9c265a69f5fcd80940b4c01dd0fc5da4bdd0aaeff986975629af504a73657c90",
+        "_shared/verification-index.ts": "162b3d5ab39c9cc79885b4c66a56a9e144ed0a3c6f40ac711b286b88f86a132a"
+      }
+    },
+    "exactReadback": true
+  },
+  "actualCloud": {
+    "project": "ehnovtfadpkwtubmwltl",
+    "scope": "fountain-qa-cloud-verification-f6dacc58e81b4a0a",
+    "qaVersion": 75,
+    "authAccounts": 2,
+    "concurrentSessions": 3,
+    "basicChecks": [
+      "actual_two_scoped_auth_accounts_three_sessions",
+      "actual_schema_autopair_frozen_legacy_creator_no_backfill_source_changes",
+      "actual_member_and_nonowner_editor_verification_finite_and_indefinite",
+      "actual_forgery_strict_fields_bad_dates_and_ineligible_owners_rejected_without_changes",
+      "actual_default_none_only_new_rows_actual_actor_and_explicit_owner_separate",
+      "actual_multi_owner_edit_preserves_stamp_limit_tightening_atomic_rejection",
+      "actual_two_session_row_and_schema_cas_prevent_lost_updates",
+      "actual_form_creator_default_forged_answers_and_automation_atomic_stamp_rejection",
+      "actual_guest_owner_redaction_private_creator_no_acl_bypass_and_prefilter_privacy",
+      "actual_removal_guest_dto_private_strip_and_same_id_readd_never_revives_trust"
+    ],
+    "expiryInboxChecks": [
+      "actual_85MB_unrelated_rows_large_verified_row_owner_and_guest_inboxes_without_any_source_bodies",
+      "actual_private_read_archive_receipts_current_condition_visibility_and_receipt_only_writes",
+      "actual_three_sessions_logged_out_before_auth_cleanup"
+    ],
+    "scheduledEffectsChecks": [
+      "actual_pg_net_worker_typed_owner_change_creator_default_title_only_page_and_atomic_forgery_rollback"
+    ],
+    "actualPgNetJobs": [
+      {
+        "automation_id": "7afb8564ad814f928e4fba968966a887",
+        "state": "done",
+        "outcome": "data_succeeded",
+        "generation": 1,
+        "net_status": 200,
+        "receipts": 1
+      },
+      {
+        "automation_id": "896c8c626e8946478f72ecbaa755c1b8",
+        "state": "done",
+        "outcome": "data_failed",
+        "generation": 1,
+        "net_status": 200,
+        "receipts": 1
+      }
+    ],
+    "largeRows": {
+      "actualSQL": true,
+      "actualRows": 1609,
+      "bodyBytes": 85407331,
+      "indexBytes": 2332,
+      "databases": 2,
+      "verifiedRows": 2,
+      "sourceDigest": "274d036e4b1413c8e8ae9e40b0754517c9334656886098696e6e56d31156e9c3",
+      "expirySource": "operator_fixture_not_elapsed_24hours",
+      "persistedForgeryIgnored": true,
+      "noBodiesSelected": true,
+      "afterInboxReceipts": {
+        "source_digest": "274d036e4b1413c8e8ae9e40b0754517c9334656886098696e6e56d31156e9c3",
+        "receipts": 1,
+        "auth_sessions": 0,
+        "active_vault": 0,
+        "active_scheduler": 0
+      },
+      "sourcePreserved": true,
+      "passed": true
+    },
+    "mainAnonymousBoundaries": {
+      "actualSupabaseHTTPS": true,
+      "version": 19,
+      "passed": true,
+      "checks": [
+        {
+          "method": "GET",
+          "path": "/api/databases/qa-db-verification/rows/qa-row-legacy/verification",
+          "status": 401,
+          "passed": true
+        },
+        {
+          "method": "POST",
+          "path": "/api/databases/qa-db-verification/rows/qa-row-legacy/verification",
+          "status": 401,
+          "passed": true
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/databases/qa-db-verification/rows/qa-row-legacy/verification",
+          "status": 401,
+          "passed": true
+        },
+        {
+          "method": "GET",
+          "path": "/health",
+          "status": 200,
+          "passed": true
+        },
+        {
+          "method": "GET",
+          "path": "/api/session",
+          "status": 200,
+          "passed": true
+        },
+        {
+          "method": "GET",
+          "path": "/api/pages/welcome/wiki-owner",
+          "status": 401,
+          "passed": true
+        },
+        {
+          "method": "GET",
+          "path": "/api/pages/welcome/wiki",
+          "status": 401,
+          "passed": true
+        },
+        {
+          "method": "POST",
+          "path": "/api/pages/welcome/wiki",
+          "status": 401,
+          "passed": true
+        },
+        {
+          "method": "GET",
+          "path": "/api/inbox",
+          "status": 401,
+          "passed": true
+        },
+        {
+          "method": "POST",
+          "path": "/api/session",
+          "status": 403,
+          "passed": true
+        },
+        {
+          "method": "GET",
+          "path": "/api/pages/welcome/wiki",
+          "status": 403,
+          "passed": true
+        },
+        {
+          "method": "GET",
+          "path": "/api/pages/welcome",
+          "status": 401,
+          "passed": true
+        }
+      ]
+    },
+    "backgroundAnonymousBoundaries": {
+      "actualHTTP": true,
+      "workerVersion": 4,
+      "maintenanceVersion": 4,
+      "checks": [
+        {
+          "function": "fountain-worker",
+          "method": "GET",
+          "suffix": "",
+          "status": 405
+        },
+        {
+          "function": "fountain-worker",
+          "method": "POST",
+          "suffix": "",
+          "status": 400
+        },
+        {
+          "function": "fountain-worker",
+          "method": "POST",
+          "suffix": "",
+          "status": 404
+        },
+        {
+          "function": "fountain-worker",
+          "method": "POST",
+          "suffix": "",
+          "status": 403
+        },
+        {
+          "function": "fountain-worker",
+          "method": "POST",
+          "suffix": "",
+          "status": 403
+        },
+        {
+          "function": "fountain-worker",
+          "method": "POST",
+          "suffix": "?x=1",
+          "status": 404
+        },
+        {
+          "function": "fountain-worker",
+          "method": "POST",
+          "suffix": "",
+          "status": 415
+        },
+        {
+          "function": "fountain-worker",
+          "method": "POST",
+          "suffix": "",
+          "status": 413
+        },
+        {
+          "function": "fountain-maintenance",
+          "method": "GET",
+          "suffix": "",
+          "status": 405
+        },
+        {
+          "function": "fountain-maintenance",
+          "method": "POST",
+          "suffix": "",
+          "status": 400
+        },
+        {
+          "function": "fountain-maintenance",
+          "method": "POST",
+          "suffix": "",
+          "status": 404
+        },
+        {
+          "function": "fountain-maintenance",
+          "method": "POST",
+          "suffix": "",
+          "status": 403
+        },
+        {
+          "function": "fountain-maintenance",
+          "method": "POST",
+          "suffix": "",
+          "status": 403
+        },
+        {
+          "function": "fountain-maintenance",
+          "method": "POST",
+          "suffix": "?x=1",
+          "status": 404
+        },
+        {
+          "function": "fountain-maintenance",
+          "method": "POST",
+          "suffix": "",
+          "status": 415
+        },
+        {
+          "function": "fountain-maintenance",
+          "method": "POST",
+          "suffix": "",
+          "status": 413
+        }
+      ],
+      "passed": true
+    },
+    "cleanup": {
+      "protectedAuthUsersDeleted": 2,
+      "ownedTables": 29,
+      "total_qa_rows_remaining": 0,
+      "storage_objects": 0,
+      "cron_jobs": 0,
+      "auth_users": 0,
+      "auth_sessions": 0,
+      "refresh_tokens": 0,
+      "original_mappings": 0,
+      "original_entities": 153,
+      "original_meta": 6,
+      "migrations": 28,
+      "retiredVersion": 77,
+      "oldNonceRoutes404": 3,
+      "allOriginalBusinessSessionFingerprintsUnchanged": true
+    },
+    "maximumInboxSnapshotBytes": 5970,
+    "expiryIsOperatorFixture": true
+  },
+  "regressions": {
+    "pythonActualPostgres": {
+      "actualPostgresConfigured": true,
+      "tests": 579,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": true
+    },
+    "nodeScripts": {
+      "scripts": 62,
+      "allPassed": true,
+      "routeInventoryRetest": "Initial stale inventory failure corrected by audit; normal Root run passed217routes/623method checks/14aliases/169boundaries",
+      "accessOracleSeparate": 1651,
+      "unicodeCasefoldVectors": 1530
+    },
+    "databaseVerificationStagedChecks": 45,
+    "normalizedPythonSQLiteProtocolCases": 32,
+    "inboxStagedChecks": 9,
+    "inboxPythonSQLiteProtocolCases": 8,
+    "offlineTypedOwnerScenarios": 21,
+    "indexKernelCases": 11,
+    "modelsAreNotActualCloud": true,
+    "trueTypeScriptCompiler": false
+  },
+  "ui": {
+    "actualChrome": "DB verification, projects and mutations passed current source; Inbox suite passed predecessor before narrow null-prototype fix",
+    "visualScore": 94,
+    "reference": "Existing Fountain UI; no Notion pixel parity",
+    "viewports": [
+      "desktop",
+      "390px"
+    ],
+    "independentFinalReview": "No new P1/P2; actual production producer __proto__ Owner own-key/JSON preserved and global prototype unchanged",
+    "repairedCases": [
+      "Awaited row records then navigate A to B cannot submit old draft to B",
+      "Schema changes interleaved after GET before PATCH return409 and retain draft",
+      "Owner id __proto__ is an own JSON property via null-prototype map",
+      "Malformed and exhausted verification cycle rejected",
+      "Microsecond expiry comparison retained",
+      "Deleted special schema never leaks raw stamp/generation/cycle",
+      "Import validates references against old schema before new generation stamping"
+    ]
+  },
+  "installers": {
+    "builtAt": "2026-10-17T06:48:55.979203+00:00",
+    "sourceSHA256": {
+      "app.js": "cecdfcf49a4737387d3970696b95f1637b5c4cc56dd74cc1fa83ee23cf220564",
+      "style.css": "aae5fe816e56e80f51f4aec483da89e07556eff38f03229108b242d0d9df6dad",
+      "mutations.js": "34b8fc10b06f59ef407cd642e1ae77ee636f0ad3c802c044966201340cdf9077",
+      "recovery-import.js": "cdef00846362e1591cfc9de1ecd186c06e5abbf1f19be0f25c55d259d20a275d",
+      "sw.js": "531e0ff54cd6569515d386033eccda5265ad757965054bfa5f280e32a123c84e"
+    },
+    "archives": [
+      {
+        "name": "Fountain-macOS-arm64.zip",
+        "bytes": 127621941,
+        "sha256": "164feede5469a75aa1a0b1f629abd49abfbc4262f6e2452407c7ca7558ee77a9",
+        "zipCRC": true,
+        "currentUIAssets": {
+          "app.js": 1,
+          "style.css": 1,
+          "mutations.js": 1,
+          "recovery-import.js": 1,
+          "sw.js": 1
+        }
+      },
+      {
+        "name": "Fountain-Windows-x64.zip",
+        "bytes": 158689129,
+        "sha256": "88c606b6d751d198b8c094d8a5e19435ddac941ec0a2d25b8b52fbb601b4cde4",
+        "zipCRC": true,
+        "currentUIAssets": {
+          "app.js": 1,
+          "style.css": 1,
+          "mutations.js": 1,
+          "recovery-import.js": 1,
+          "sw.js": 1
+        }
+      },
+      {
+        "name": "Fountain-iOS-Simulator-Release.zip",
+        "bytes": 3137312,
+        "sha256": "f389b22b8a44030d59226b0faeabab7f48a5f73e6d9ddee9348c2bdc1057185a",
+        "zipCRC": true,
+        "currentUIAssets": {
+          "app.js": 1,
+          "style.css": 1,
+          "mutations.js": 1,
+          "recovery-import.js": 1,
+          "sw.js": 1
+        }
+      },
+      {
+        "name": "Fountain-Android-debug.apk",
+        "bytes": 4717605,
+        "sha256": "589f79ec4108ac0de04fd4e2880e4d55c6a807a633328a19e1e0f0b8b83f84cb",
+        "zipCRC": true,
+        "currentUIAssets": {
+          "app.js": 1,
+          "style.css": 1,
+          "mutations.js": 1,
+          "recovery-import.js": 1,
+          "sw.js": 1
+        }
+      }
+    ],
+    "limits": [
+      "No Windows OS launch",
+      "No Electron GUI or browser launch by build worker",
+      "No simulator or physical device launch by build worker",
+      "iOS artifact is a simulator Release app, not a physical-device IPA",
+      "No public signing, notarization, app store release or deployment",
+      "Known real-secret scanning is a separate Root check"
+    ],
+    "androidDEX": {
+      "count": 6,
+      "unchangedFromPriorWikiPackage": true
+    },
+    "commands": [
+      {
+        "command": "node apps/web/build.mjs",
+        "exit": 0,
+        "publicFiles": 16
+      },
+      {
+        "command": "node apps/mobile/scripts/build.mjs",
+        "exit": 0,
+        "publicFiles": 19
+      },
+      {
+        "command": "apps/mobile/node_modules/.bin/cap copy ios; cap copy android",
+        "exit": 0,
+        "note": "Copy only, no sync or dependency changes"
+      },
+      {
+        "command": "node .data/database-verification/package-desktop.mjs",
+        "exit": 0,
+        "note": "Production builder and approved packager options, unique output, existing local Electron ZIP only"
+      },
+      {
+        "command": "env ANDROID_HOME=/opt/homebrew/share/android-commandlinetools JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home ./gradlew --offline -Pandroid.builder.sdkDownload=false :app:assembleDebug :app:lintDebug",
+        "exit": 0
+      },
+      {
+        "command": "apksigner verify --verbose Fountain-Android-debug.apk",
+        "exit": 0
+      },
+      {
+        "command": "xcodebuild -project apps/mobile/ios/App/App.xcodeproj -scheme FountainQA -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath .data/ios-database-verification-release CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- build",
+        "exit": 0
+      },
+      {
+        "command": "codesign --verify --deep --strict .data/ios-database-verification-release/Build/Products/Release-iphonesimulator/App.app",
+        "exit": 0
+      }
+    ]
+  },
+  "installerPrivateScan": {
+    "archives": [
+      {
+        "name": "Fountain-Windows-x64.zip",
+        "entriesScanned": 179,
+        "sha256": "88c606b6d751d198b8c094d8a5e19435ddac941ec0a2d25b8b52fbb601b4cde4"
+      },
+      {
+        "name": "Fountain-iOS-Simulator-Release.zip",
+        "entriesScanned": 98,
+        "sha256": "f389b22b8a44030d59226b0faeabab7f48a5f73e6d9ddee9348c2bdc1057185a"
+      },
+      {
+        "name": "Fountain-macOS-arm64.zip",
+        "entriesScanned": 883,
+        "sha256": "164feede5469a75aa1a0b1f629abd49abfbc4262f6e2452407c7ca7558ee77a9"
+      },
+      {
+        "name": "Fountain-Android-debug.apk",
+        "entriesScanned": 461,
+        "sha256": "589f79ec4108ac0de04fd4e2880e4d55c6a807a633328a19e1e0f0b8b83f84cb"
+      }
+    ],
+    "privateValuesScanned": 7,
+    "trackedFilesScanned": 608,
+    "privateMatches": 0,
+    "passed": true,
+    "valuesPrinted": false
+  },
+  "nativeExecution": {
+    "packagedMac14Checks": true,
+    "packagedMacAnonymousSupabaseTwoRounds": true,
+    "iosOwnedSimulatorInstallLaunch": "AA8931A4-B783-47B8-AA7D-243B8DB5A448, anonymous entry only",
+    "newAndroidBuildLintSignature": true,
+    "newAndroidEmulatorLaunch": false,
+    "windowsOSLaunch": false,
+    "newNativeAuthenticatedDBVerificationJourney": false
+  },
+  "policiesAreFountainDesign": [
+    "Initial person limit one and frozen legacy default without row backfill",
+    "Separate immutable actualcreator, knowledge Owner and assignment ACL",
+    "Import drops all special Owner values and trust; duplication applies new creator defaults",
+    "Removing/readding same ID never revives old verification"
+  ],
+  "simplifications": [
+    "Extract existing schedule date parser into pure datetime module without changing grammar; breaks foundational import cycle",
+    "One typed validation/projection implementation per runtime shared by row/forms/automation/sync/export",
+    "Body-free read-only composite metadata reuses existing snapshot RPC and preserves grants/budgets"
+  ],
+  "limitations": [
+    "Whole paid-plan inventory incomplete; all-area verified count remains0",
+    "No live original paid-account DB server comparison",
+    "Owner onboarding and free public web host unfinished",
+    "No Windows OS or physical iOS/Android release signing/distribution or complete five-platform family journey",
+    "Latest native launches do not prove authenticated DB verification native UI",
+    "No background expiry delivery/email/push",
+    "Existing16MiB response/64MiB aggregate/1000changes/64round budgets remain;85MB Inbox proof is not whole-workspace snapshot proof",
+    "Actual TypeScript compiler not installed or run; Node/Deno execution is separate",
+    "Maintenance4 updated common import closure and16 total background boundary checks, no new maintenance business cycle claimed"
+  ],
+  "goal": "active; full product not complete",
+  "pushed": false
+}

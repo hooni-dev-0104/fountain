@@ -40,7 +40,7 @@ class MemoryProvider {
     const all=Array.from(this.records.values()).filter(record=>selected.kinds.includes(record.kind)||(Object.hasOwn(selected.ids,record.kind)&&selected.ids[record.kind].includes(record.id))).sort((a,b)=>a.kind.localeCompare(b.kind)||a.createdAt.localeCompare(b.createdAt)||a.id.localeCompare(b.id));
     const index=request.cursor?.index||0,rows=clone(all.slice(index,index+selected.pageSize));
     for(const row of rows)if(row.kind==='attachment')delete row.data.data;
-    return {workspaceId:request.context.workspaceId,memberId:request.context.memberId,revision:this.revision,accessRevision:this.metadata.get('access_revision')||0,principal,entities:rows,meta:selected.metaKeys.map(key=>key===PAGE_HEADER_META_KEY?{key,present:true,value:Array.from(this.records.values()).filter(record=>record.kind==='page').map(record=>projectPageHeader(record.data)).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0)}:{key,present:this.metadata.has(key),value:this.metadata.has(key)?clone(this.metadata.get(key)):null}),nextCursor:index+rows.length<all.length?{index:index+rows.length,scope,revision:this.revision}:null};
+    return {workspaceId:request.context.workspaceId,memberId:request.context.memberId,revision:this.revision,accessRevision:this.metadata.get('access_revision')||0,principal,entities:rows,meta:selected.metaKeys.map(key=>key==='admin_member_generations_v1'?{key,present:true,value:Object.fromEntries([...this.metadata].filter(([name])=>/^_admin_member_generation_v1:[a-f0-9]{64}$/.test(name)))}:key===PAGE_HEADER_META_KEY?{key,present:true,value:Array.from(this.records.values()).filter(record=>record.kind==='page').map(record=>projectPageHeader(record.data)).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0)}:{key,present:this.metadata.has(key),value:this.metadata.has(key)?clone(this.metadata.get(key)):null}),nextCursor:index+rows.length<all.length?{index:index+rows.length,scope,revision:this.revision}:null};
   }
   async commit(request){
     this.requests.push(clone(request));if(this.beforeCommit)await this.beforeCommit();
@@ -86,6 +86,22 @@ await test('MissingSelection distinguishes absent IDs, partial list and missing 
  for(const [callback,expected]of [[()=>store.list('page'),{kinds:['page']}],[()=>store.get('page','third'),{ids:{page:['third']}}],[()=>store.meta('settings'),{metaKeys:['settings']}]])assert.throws(callback,error=>error instanceof MissingSelection&&canonicalJSON(error.selection)===canonicalJSON(expected));
  expectCode(()=>store.get('credential','alice'),'SELECTION_FORBIDDEN');
  assert.deepEqual(mergeSelection({ids:JSON.parse('{"page":["__proto__"]}'),metaKeys:['settings']},{kinds:['page'],ids:{row:['가족']}}),{kinds:['page'],ids:{row:['가족']},metaKeys:['settings'],pageSize:200});
+});
+await test('administration generations use one bounded selection and follow staging rollback',async()=>{
+ const provider=new MemoryProvider(),index='admin_member_generations_v1',prefix='_admin_member_generation_v1:';
+ for(let i=0;i<1001;i++)provider.metadata.set(prefix+i.toString(16).padStart(64,'0'),'a'.repeat(32));
+ provider.metadata.set(index,{forged:'MUST_NOT_USE'});
+ const store=await CloudStore.open(provider,context,{metaKeys:[index]},options),first=prefix+'0'.repeat(64);
+ assert.equal(Object.keys(store.admin_member_generations()).length,1001);
+ for(let i=0;i<1001;i++)assert.equal(store.meta(prefix+i.toString(16).padStart(64,'0')),'a'.repeat(32));
+ assert.deepEqual(provider.snapshotRequests[0].selection.metaKeys,[index]);
+ assert.equal(store.meta(prefix+'f'.repeat(64),null),null);
+ const copy=store.admin_member_generations();copy[first]='mutated';assert.equal(store.meta(first),'a'.repeat(32));
+ store.set_meta(first,'b'.repeat(32));assert.equal(store.admin_member_generations()[first],'b'.repeat(32));
+ assert.throws(()=>store.transaction(()=>{store.set_meta(first,'c'.repeat(32));throw Error('rollback');}),/rollback/);
+ assert.equal(store.meta(first),'b'.repeat(32));assert.equal(store.admin_member_generations()[first],'b'.repeat(32));
+ expectCode(()=>store.set_meta(index,{}),'SELECTION_FORBIDDEN');
+ assert(!JSON.stringify(store.admin_member_generations()).includes('MUST_NOT_USE'));
 });
 await test('permission projection uses pinned data and fails closed until expanded',async()=>{
  const provider=new MemoryProvider();let selected={ids:{page:['__proto__']}};

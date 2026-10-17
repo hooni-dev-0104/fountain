@@ -45,6 +45,8 @@ const enc = new TextEncoder();
 const MAX_BYTES = 16 * 1024 * 1024, MAX_RPC_BYTES = 48 * 1024 * 1024 + 4096, MAX_SELECTION = 1000, MAX_CHANGES = 1000, MAX_LOADED = 64 * 1024 * 1024;
 const FORBIDDEN_KINDS = new Set(['credential', 'session']);
 const FORBIDDEN_META = new Set(['local_cache_binding', 'attachment_file_root', 'attachment_file_gc_cursor']);
+const ADMIN_GENERATIONS_META_KEY = 'admin_member_generations_v1';
+const ADMIN_GENERATION_PREFIX = '_admin_member_generation_v1:';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const integer = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
 const fail = (code = 'STORAGE_UNAVAILABLE', status = 503, message = 'Workspace storage is unavailable'): never => { throw new StoreError(status, code, message); };
@@ -244,6 +246,10 @@ class StagingKernel<C extends DataContext> implements StoreReader {
   meta(key: string, fallback: any = null): any {
     this.readable(); metaKey(key);
     if (key === '_entity_revision') return this.currentRevision;
+    if (key.startsWith(ADMIN_GENERATION_PREFIX) && this.selection.metaKeys.includes(ADMIN_GENERATIONS_META_KEY)) {
+      const generations = this.admin_member_generations();
+      return has(generations, key) ? clone(generations[key]) : clone(fallback);
+    }
     if (!['workspace_id','access_revision'].includes(key) && !this.selection.metaKeys.includes(key)) throw new MissingSelection({metaKeys:[key]});
     if (key === PAGE_HEADER_META_KEY) {
       // Always derive from the pinned virtual snapshot and CURRENT staging log.
@@ -275,6 +281,15 @@ class StagingKernel<C extends DataContext> implements StoreReader {
   }
   get page_header_generation(): number { this.readable(); return this.headerGeneration; }
   page_headers(): Entity[] { return this.meta(PAGE_HEADER_META_KEY); }
+  admin_member_generations(): Entity {
+    const value = this.meta(ADMIN_GENERATIONS_META_KEY);
+    check(is_object(value) && Object.keys(value).every(key => /^_admin_member_generation_v1:[a-f0-9]{64}$/.test(key)), 'STORAGE_RESPONSE_INVALID', 503);
+    const result = clone(value);
+    for (const change of this.changes) {
+      if (change.op === 'meta' && change.key.startsWith(ADMIN_GENERATION_PREFIX)) result[change.key] = clone(change.value);
+    }
+    return result;
+  }
   get database_verification_generation():number { this.readable();return this.headerGeneration; }
   database_verification_rows():VerificationIndex { return this.meta(VERIFICATION_INDEX_META_KEY); }
   private stage(change: Change): void {
@@ -315,7 +330,7 @@ class StagingKernel<C extends DataContext> implements StoreReader {
     this.stage({op:'delete',kind:kindName,id:identity}); this.entities.get(kindName)!.delete(identity);
   }
   set_meta(key: string, value: any): any {
-    this.writable(); metaKey(key); check(!['_entity_revision','_backup_storage_reserved',PAGE_HEADER_META_KEY,VERIFICATION_INDEX_META_KEY].includes(key) && (key !== 'workspace_id' || value === this.context.workspaceId),'SELECTION_FORBIDDEN');
+    this.writable(); metaKey(key); check(!['_entity_revision','_backup_storage_reserved',PAGE_HEADER_META_KEY,VERIFICATION_INDEX_META_KEY,ADMIN_GENERATIONS_META_KEY].includes(key) && (key !== 'workspace_id' || value === this.context.workspaceId),'SELECTION_FORBIDDEN');
     json(value); this.meta(key); this.stage({op:'meta',key,value:clone(value)});this.metadata.set(key,clone(value));return clone(value);
   }
   audit(action:string, details:Entity, user:string=this.context.memberId):Entity {

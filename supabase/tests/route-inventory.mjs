@@ -145,6 +145,8 @@ for key,path in sorted({(r['source']['functions'][0],r['probe']) for r in manife
 verification_path='/api/databases/sample-database/rows/sample-row/verification'
 verification_aliases=[{'path':path,'method':method,'evidence':probe('fountain/server.py:Application._dispatch',method,path)}
  for path in [verification_path+'/',verification_path+'/extra'] for method in ['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']]
+verified_pages_paths=[{'path':path,'method':method,'evidence':probe('fountain/server.py:Application._dispatch',method,path)}
+ for path in ['/api/verified-pages','/api/verified-pages/','/api/verified-pages/extra'] for method in ['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']]
 def terminals(nodes,key):
  for node in nodes:
   if isinstance(node,(ast.FunctionDef,ast.ClassDef)):continue
@@ -156,7 +158,7 @@ all_terminals=[]
 for key,node in functions.items():
  if key.startswith('fountain/authorization.py:'):continue
  all_terminals.extend(terminals(node.body,key))
-print(json.dumps({'sources':sources,'collections':collections,'routes':routes,'matrix':matrix,'verificationAliases':verification_aliases,'terminals':all_terminals},ensure_ascii=False))
+print(json.dumps({'sources':sources,'collections':collections,'routes':routes,'matrix':matrix,'verificationAliases':verification_aliases,'verifiedPagesPaths':verified_pages_paths,'terminals':all_terminals},ensure_ascii=False))
 `;
 const result=spawnSync(process.env.FOUNTAIN_PYTHON||'python3',['-c',parser,root],{input:JSON.stringify(inventory),encoding:'utf8',maxBuffer:16*1024*1024});
 assert.equal(result.status,0,result.stderr);
@@ -214,6 +216,11 @@ for(const row of parsed.verificationAliases){
  const expected=row.path===verificationProbe+'/'&&['GET','HEAD','POST','DELETE'].includes(row.method);
  assert.equal(recognized,expected,'DB verification slash/suffix method mismatch: '+row.method+' '+row.path);
 }
+for(const row of parsed.verifiedPagesPaths){
+ const recognized=row.evidence.some(entry=>!nonRoutes.has(site(entry)));
+ const expected=row.path==='/api/verified-pages'&&['GET','HEAD'].includes(row.method);
+ assert.equal(recognized,expected,'Verified pages exact path/method mismatch: '+row.method+' '+row.path);
+}
 function matches(route,path){
  if(route.kind==='static-pattern'&&inventory.staticExcludedPrefixes.some(prefix=>path.startsWith(prefix)))return false;
  const pattern=route.path.split('/').map(segment=>/^\{[^}]+\+\}$/.test(segment)?'.+':/^\{[^}]+\}$/.test(segment)?'[^/]+':segment.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('/');
@@ -241,4 +248,4 @@ for(const route of inventory.routes.filter(route=>route.cloud.status==='pending'
 const health=await candidate(new Request('https://fixture.invalid/functions/v1/fountain-api/health'));
 assert.equal((await health.json()).ready,false);
 assert(!inventory.routes.some(route=>route.path==='/health'),'New health surface is not legacy route coverage.');
-console.log(JSON.stringify({ok:true,routes:inventory.routes.length,sourceFunctions:Object.keys(parsed.sources).length,methodMatrixChecks:parsed.matrix.length,delegatedWikiMethodChecks:2,delegatedDatabaseVerificationMethodChecks:2,databaseVerificationAliasChecks:parsed.verificationAliases.length,pendingBoundaryChecks:pendingChecks,cloudProductionParityVerified:0,parser:'Python AST including delegated wiki and DB verification method guards; server never imported; no database access'}));
+console.log(JSON.stringify({ok:true,routes:inventory.routes.length,sourceFunctions:Object.keys(parsed.sources).length,methodMatrixChecks:parsed.matrix.length,delegatedWikiMethodChecks:2,delegatedDatabaseVerificationMethodChecks:2,databaseVerificationAliasChecks:parsed.verificationAliases.length,verifiedPagesExactPathChecks:parsed.verifiedPagesPaths.length,pendingBoundaryChecks:pendingChecks,cloudProductionParityVerified:0,parser:'Python AST including delegated wiki and DB verification method guards; server never imported; no database access'}));

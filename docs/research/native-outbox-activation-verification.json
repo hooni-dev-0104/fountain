@@ -1,0 +1,443 @@
+{
+  "verifiedAt": "2026-10-17",
+  "scope": "Default-enabled mobile native durable storage; entire cross-platform Notion-equivalent goal remains active",
+  "releaseDefaults": {
+    "ios": true,
+    "android": true,
+    "outboxVersion": 1,
+    "newDependencies": false
+  },
+  "platforms": {
+    "ios": {
+      "runtime": "Owned iOS 27 Simulator; actual bundled WKWebView/Capacitor and private HTTPS/Auth/Postgres",
+      "manifestSHA256": "33ad7cbb703240cedf21eb8eae3a408c0ac5d0a203ea536e14f88ff454ad7d6f",
+      "binary": {
+        "app": "2f0a6acd1e1b8810ff2d451732a756cfd8465277330815ce9a7f847fddf90862",
+        "appDebug": "64094a3bb5cda872516c3ac3fd43a00baa84220816066901e1d648a5c19079e6",
+        "tests": "f2e5e467ee169676a0cf00a86214eabc81f649fffbeeee3b892795896829f318"
+      },
+      "sourceSHA256": {
+        "apps/mobile/ios/App/App/AppDelegate.swift": "7fefbd2af340fef5c8fc6e92bfcf3e52924bfedf1f53c3a6a66f2f195d36fff4",
+        "apps/mobile/ios/App/App/FountainSessionLogout.swift": "8cda6da19ad6b4eea3ca101b98e85a83dad2b579fd5023516d49e6235dad41ec",
+        "apps/mobile/ios/App/App/FountainOutbox.swift": "3c4a7884a8fe3333c88b60ffd4041897fe7d4b596cef9a930264d8b763792db3",
+        "apps/mobile/ios/App/App/FountainRecovery.swift": "9c5b3635776ba76bf3f827c7f3383472bef64e251cfd04e079ee3768cbd9782d",
+        "apps/mobile/ios/App/AppTests/FountainNativeTests.swift": "53cc7363119e639f0cfd5b19263ec450bbeada9b2d95d380369b4f7d80f6fa7e",
+        "apps/mobile/ios/App/App.xcodeproj/project.pbxproj": "420f9f11d037d9f3a892293d45abacb8ff3cd3e6c8f165c95f78b3d883b19d4f",
+        "apps/mobile/tests/ios-session-logout-fixture.swift": "6368d08a114854bb6baf0a70208d82963651226595f921960a1b216b10637fdd",
+        "apps/mobile/tests/ios-session-logout-sdk.swift": "5c95f1d3aacfc57d64fd40ecd2cf7c8d6d5cef1a8ce65ed35f0e56fd1f117fb7",
+        "apps/mobile/tests/ios-session-logout.py": "08cc420a94f7a4005bf7d5a35be76c0930b4e4f26b9dcb6af47277931c6d2de0"
+      },
+      "extraTestSourceSHA256": {
+        "apps/mobile/tests/ios-precommit-crash-sdk.swift": "ec5eac972c64106fcaf78849df2d044975d82bedf1c17095911e6150ea01fc02",
+        "apps/mobile/tests/ios-sqlite-lock-diagnostic-sdk.swift": "9ae1f18782277f3d8e1e706dd925c7e8b02e3726fa36f163de93ecd93ee8a3d6"
+      },
+      "phases": [
+        {
+          "qaActivationOverrideUsed": false,
+          "defaultEnabledWithoutOverride": true,
+          "outboxEnabled": true,
+          "phase": "login-edit",
+          "savedBadgeVerified": true,
+          "actualBackendReadMatched": true,
+          "actualBackendGETWireDelta": 1,
+          "processID": 93095,
+          "interceptedHTTPS": 56,
+          "offlineFailures": 0,
+          "actualSessionDELETE": 2,
+          "before": {
+            "actualSQLite": true,
+            "canonicalMatches": true,
+            "deltaReceipts": 3,
+            "grantVerified": true,
+            "head": 298,
+            "integrityOK": true,
+            "pendingMatches": false,
+            "pendingOperations": 0,
+            "scopeMatches": true
+          },
+          "after": {
+            "actualSQLite": true,
+            "canonicalMatches": true,
+            "deltaReceipts": 6,
+            "grantVerified": true,
+            "head": 302,
+            "integrityOK": true,
+            "pendingMatches": true,
+            "pendingOperations": 0,
+            "scopeMatches": true
+          },
+          "passed": true
+        },
+        {
+          "qaActivationOverrideUsed": false,
+          "defaultEnabledWithoutOverride": true,
+          "outboxEnabled": true,
+          "phase": "queue-offline",
+          "processID": 93269,
+          "interceptedHTTPS": 23,
+          "offlineFailures": 2,
+          "actualSessionDELETE": 0,
+          "before": {
+            "actualSQLite": true,
+            "canonicalMatches": true,
+            "deltaReceipts": 12,
+            "grantVerified": true,
+            "head": 310,
+            "integrityOK": true,
+            "pendingMatches": true,
+            "pendingOperations": 0,
+            "scopeMatches": true
+          },
+          "after": {
+            "actualSQLite": true,
+            "canonicalMatches": false,
+            "deltaReceipts": 15,
+            "grantVerified": true,
+            "head": 313,
+            "integrityOK": true,
+            "pendingMatches": true,
+            "pendingOperations": 2,
+            "scopeMatches": true
+          },
+          "passed": true
+        },
+        {
+          "qaActivationOverrideUsed": false,
+          "defaultEnabledWithoutOverride": true,
+          "outboxEnabled": true,
+          "phase": "restart-read",
+          "processID": 93358,
+          "interceptedHTTPS": 0,
+          "offlineFailures": 3,
+          "restoredPendingWithoutHTTPS": true,
+          "actualSessionDELETE": 0,
+          "before": {
+            "actualSQLite": true,
+            "canonicalMatches": false,
+            "deltaReceipts": 16,
+            "grantVerified": true,
+            "head": 314,
+            "integrityOK": true,
+            "pendingMatches": true,
+            "pendingOperations": 2,
+            "scopeMatches": true
+          },
+          "passed": true
+        },
+        {
+          "qaActivationOverrideUsed": false,
+          "defaultEnabledWithoutOverride": true,
+          "outboxEnabled": true,
+          "phase": "evict-read",
+          "processID": 93407,
+          "interceptedHTTPS": 0,
+          "offlineFailures": 3,
+          "restoredPendingWithoutHTTPS": true,
+          "actualSessionDELETE": 0,
+          "before": {
+            "actualSQLite": true,
+            "canonicalMatches": false,
+            "deltaReceipts": 17,
+            "grantVerified": true,
+            "head": 315,
+            "integrityOK": true,
+            "pendingMatches": true,
+            "pendingOperations": 2,
+            "scopeMatches": true
+          },
+          "passed": true
+        },
+        {
+          "qaActivationOverrideUsed": false,
+          "defaultEnabledWithoutOverride": true,
+          "outboxEnabled": true,
+          "phase": "logout",
+          "logoutFlowCompleted": true,
+          "pendingLogoutMarkerCleared": true,
+          "processID": 93448,
+          "interceptedHTTPS": 34,
+          "offlineFailures": 0,
+          "logoutVerified": true,
+          "actualSessionDELETE": 1,
+          "before": {
+            "actualSQLite": true,
+            "canonicalMatches": false,
+            "deltaReceipts": 22,
+            "grantVerified": true,
+            "head": 321,
+            "integrityOK": true,
+            "pendingMatches": true,
+            "pendingOperations": 2,
+            "scopeMatches": true
+          },
+          "after": {
+            "actualSQLite": true,
+            "canonicalMatches": true,
+            "deltaReceipts": 23,
+            "grantVerified": true,
+            "head": 323,
+            "integrityOK": true,
+            "pendingMatches": true,
+            "pendingOperations": 0,
+            "scopeMatches": true
+          },
+          "passed": true
+        }
+      ],
+      "allFivePreinstallHTTPSAllocated": 0,
+      "basicBridgeAndPrivateAssetCanaries": {
+        "actualXCTestPassed": true,
+        "activationOverrideUsed": false,
+        "defaultTestSelectionEnvUsed": false
+      }
+    },
+    "android": {
+      "runtime": "Owned Android API 36 Emulator; actual bundled WebView/Capacitor and private HTTPS/Auth/Postgres",
+      "manifestSHA256": "4a54d47afdd72705cba4a943ce3daf1d381b8f0abbb36c05af2b3bdeb6c41452",
+      "appSHA256": "088b4ae939cdfc770eefc6c1c6beca94041c488fc8943618a3930295c04de7cd",
+      "testSHA256": "8df66dc69dd9ede9943b0bc36b90f2dd30830a2e71b3068944929b44e6a5c7d4",
+      "sourceSHA256": {
+        "apps/mobile/android/app/src/main/java/dev/fountain/workspace/CookieVault.java": "88aef2e4f14e8c6b42b90b70e609bfc2c196d6361155eff52f4de220f12a7c3d",
+        "apps/mobile/android/app/src/main/java/dev/fountain/workspace/FountainNativePlugin.java": "d5c012601dbb530c08ad19f51e6bcefc785cf08786ab4b608b83fad0ff365db3",
+        "apps/mobile/android/app/src/main/java/dev/fountain/workspace/MainActivity.java": "f978c752a10a3da670b8e99448a39d853bce64a855a68f153d5c10d9cfc8c2c5",
+        "apps/mobile/android/app/src/main/java/dev/fountain/workspace/NativeBridgeReply.java": "5d0d5c065dc08048549eb6fd081a2f2fdfd95d76edb8f184c90fcc1215373750",
+        "apps/mobile/android/app/src/main/java/dev/fountain/workspace/NativeCookieBoundary.java": "dab6fea807362a3b67bc4d9a9debe73af40e09841f9bc6a109d345343227e3e3",
+        "apps/mobile/android/app/src/main/java/dev/fountain/workspace/NativeLocalGraph.java": "0a51da8dbc030b8a814af9b1e165a82bcdf02fae31ac09054e70d7113bc9f557",
+        "apps/mobile/android/app/src/main/java/dev/fountain/workspace/NativeOutbox.java": "cd96ff9b1a51d39250a0569207bc35aedfe640b7ab8c921136d585f36bda792a",
+        "apps/mobile/android/app/src/main/java/dev/fountain/workspace/NativePolicy.java": "7cc5948eb6ecfaa8011ad06ffcb8e444f3734e1873867391adff6bc5cda646b6",
+        "apps/mobile/android/app/src/main/java/dev/fountain/workspace/NativeReconcile.java": "f774a642c16f3f12567cc5c4d4cb8e0eb489c0cdc88aa98b885e9fba96a59d10",
+        "apps/mobile/android/app/src/main/java/dev/fountain/workspace/NativeRecovery.java": "fd6743d45f59a2897e9bc35a7c47d372d848b64cc4790570291a5ba97f607c59",
+        "apps/mobile/android/app/src/main/java/dev/fountain/workspace/NativeSessionBinding.java": "b55db04324cab3401b99300fe151960b0e1ac23b26e20bec13240c252f6854f1",
+        "apps/mobile/android/app/src/main/java/dev/fountain/workspace/NativeSyncReceipts.java": "14f3d0b528a6ea523b0643ec27740da69223ff0ef0e8726433b6a0364d35ae9c",
+        "apps/mobile/android/app/src/main/java/dev/fountain/workspace/OutboxPolicy.java": "e240c061dbab632edaf3e34180f6f8735fb1fb2cfd9233b1829287172f9f28af",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/AuthRetentionDeviceTest.java": "59c670355772b4104843f00a724b5e119ee72010d0723079496a8de07b1f8897",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/BackupDeviceTest.java": "ff133f540ce04bab961d9331245c9ca5cab579f003fc815314c80208d270e5af",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/CloudClientDeviceTest.java": "46e378cdb06000041509b6a24f506d41646a5a0458d112426c9204cbd9b3347b",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/CloudDirectRouteDeviceTest.java": "38917b7725951424df6bbee7f7a465f5cbb5bbdb58a01732e1f171ee37656243",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/CloudOutboxDeviceTest.java": "99ba55be385aa8b56c0e4ff1660efea4dde290f6e49b9a2e13ad026cd1e50894",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/CloudSessionDeviceTest.java": "f92a0c175571ccf088fec12fed9230f8811814501b6f1a1cbafb51d09f96bb8a",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/GrantTransitionDeviceTest.java": "730214394dc01d5ebd4dd5fb2592e819836a9b482f5ad4b3a91398850b8fbd8f",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/NativeArchiveRecoveryDeviceTest.java": "1efa94b48c410996c6af8f3ecf8ae886b3144e4b39941bbeb7da475e89c6e139",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/NativeBridgeReplyDeviceTest.java": "5c66112121df3c8212dcb95d5de42bf4fc9f6949d7660e02b55cee600c93e399",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/NativeExportPolicyDeviceTest.java": "270b0f51405af6aeb9e82c902006e06abd90a88bf3817eca70d7e0afdb695aef",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/NativeLargeRecordDeviceTest.java": "b36864a1319454e85d0bd21c6ae8e475c3cfa98152015e6da5ca9df2f21ccdfe",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/NativeLocalRecoveryDeviceTest.java": "b38650c6178a650344d4b7e36527602bacfda07180e3138d4b92d777f99edf8b",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/OfflineOwnershipDeviceTest.java": "b75ab377236ad7ad5449962816506d3ecfaba79e1568525a51aa499282e21ec0",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/OperationReplyProofDeviceTest.java": "d385e2772a68ed0c7f7bf9a5c561c47f998352403a5f937716f2e74aee388ece",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/PromotionProjectionDeviceTest.java": "3e5aede5295032c015a65ce377165e4e9ae811246294dc5247a5dbf3e34bc272",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/PublicWebNavigationDeviceTest.java": "e4dfac4209ae533693b045c9ccac993767a9945e06597a5df2927dcc8d188aa0",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/ReconcileDeviceTest.java": "f5bb90e927595828331afbb217febd4e07f983a672fb14edcb33692b011c97f4",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/ReconcileSettlementDeviceTest.java": "923facc1ca3b2da001ab9e5fbec817c38e423baa6882d8b415b8ff3e8d78ae6b",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/RecoveryDeviceTest.java": "f00a8b33a807a9962f19c49d3b39d340fdc3a00d300f9dea757e055ba9a79c21",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/RecoveryPublicationDeviceTest.java": "4cd0fba3b38282661288ad75347ce11ff5808d8415edf5a3e8985b4049159ce3",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/SessionBindingAdmissionDeviceTest.java": "cef71ecd1a8d6fff2f994a937364b9775197c00ed484c3148030956daf51f34d",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/SessionContextDurabilityDeviceTest.java": "eafa34b2c5a420426c70224e7d81c1ef17b7f99e5319101c7d78c26ac8f16afb",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/SharedReconcileVectorDeviceTest.java": "1ee1f08eb5e7c688ea434aa543ff509c62ca6003003d53927547ef551c6d7e2c",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/SyncReceiptDeviceTest.java": "9cffd7f2b5919ff1a00cd13a93e9adec69c4c173a85cac4a7c921b532af8cac6",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/TerminalCleanupDeviceTest.java": "b7258ab48a385fa42f89c2927879a077f39fcf36e805ff508c30db0835afed59",
+        "apps/mobile/android/app/src/androidTest/java/dev/fountain/workspace/PrecommitCrashDeviceTest.java": "e15acea210b3ce8d6135f363efc55363c251be4427dd35bcff365fc47b3bc0bc"
+      },
+      "phases": [
+        {
+          "qaActivationOverrideUsed": false,
+          "defaultEnabledWithoutOverride": true,
+          "outboxEnabled": true,
+          "phase": "login-edit",
+          "pid": 13473,
+          "head": 322,
+          "forwardedHTTPS": 39,
+          "blockedHTTPS": 0,
+          "nativeSnapshotAndAckCommitted": true,
+          "actualBackendReadMatched": true,
+          "privateQAOptInCleared": true,
+          "passed": true
+        },
+        {
+          "qaActivationOverrideUsed": false,
+          "defaultEnabledWithoutOverride": true,
+          "outboxEnabled": true,
+          "phase": "queue-offline",
+          "pid": 13653,
+          "head": 337,
+          "forwardedHTTPS": 16,
+          "blockedHTTPS": 1,
+          "nativePendingInputCommitted": true,
+          "privateQAOptInCleared": true,
+          "passed": true
+        },
+        {
+          "qaActivationOverrideUsed": false,
+          "defaultEnabledWithoutOverride": true,
+          "outboxEnabled": true,
+          "phase": "restart-read",
+          "pid": 13794,
+          "head": 338,
+          "forwardedHTTPS": 0,
+          "blockedHTTPS": 3,
+          "offlineNativePendingRestored": true,
+          "privateQAOptInCleared": true,
+          "passed": true
+        },
+        {
+          "qaActivationOverrideUsed": false,
+          "defaultEnabledWithoutOverride": true,
+          "outboxEnabled": true,
+          "phase": "evict-read",
+          "pid": 13920,
+          "head": 339,
+          "forwardedHTTPS": 0,
+          "blockedHTTPS": 3,
+          "offlineNativePendingRestored": true,
+          "nativeUnchangedByIDBEviction": true,
+          "privateQAOptInCleared": true,
+          "passed": true
+        },
+        {
+          "qaActivationOverrideUsed": false,
+          "defaultEnabledWithoutOverride": true,
+          "outboxEnabled": true,
+          "phase": "logout",
+          "pid": 14041,
+          "head": 346,
+          "forwardedHTTPS": 25,
+          "blockedHTTPS": 0,
+          "pendingFlushedAndLogoutVerified": true,
+          "privateQAOptInCleared": true,
+          "passed": true
+        }
+      ],
+      "savedBadge": "Actual test awaited final saved indicator after native COMMIT, then independently fetched backend data; earlier afterCommitUI sample is not the final check"
+    }
+  },
+  "publicAssetSHA256": {
+    "mutations.js": "c23b25fa917d298cab240b6c08e736c40cd073f8cd703cfde6f7961f9a802a26",
+    "index.html": "86c6eda1241a4c34e86d070d838280c4ea936dec7bb31da419c93d296698a43c",
+    "presence.js": "d96cdcf62db278b104d30964ec3f93c42a8cfea5175af3c792438abc74986189",
+    "capacitor.js": "3333389c8cccd266c26399aaf7fc2a695c110684dd6340aea47935416be86a0c",
+    "offline.js": "6d539ab8b2e3d45bc6720b8b28f849021d729de8b9f663934c88b794019f2a59",
+    "cordova.js": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "backup.js": "c0548d859efdc96005f0fcc0abf9778ee1078e788722547116a9cd198d9f6f0a",
+    "public.js": "2d3a139d0c21d8dec8e518ebad474035c20b851936aaba7a82140d4e56c13bc9",
+    "version-diff.js": "bb17e720430a7657de62639ebe484c90ca3a4e9f0caab9b77258caa2034699a2",
+    "bootstrap.js": "02e468d35b1ce052487a9a46bba42f7711834aa675aa7813920167b50f7544e9",
+    "recovery-import.js": "22eb1d697123de4bf04e72bf0b7e74652ffaccdf434fe9d6421fa9c3dd959fc0",
+    "uploads.js": "d1aa2da0439c8e21597dc41953c0582ac9341d694299d9486fe4991e725bb513",
+    "style.css": "168337bf0570dd1613519078ea2e647dc69402b4ebf245b925bb88b51e2d1875",
+    "native-outbox.js": "e4496986088b0ce699d607ba79a6c1f919553bd5d104ba3b062c3b0a64bbf250",
+    "cordova_plugins.js": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "native-transport.js": "e5ec63f562f9e3e62b5cbf8c76ffcbd830bd5eea13d01b2498968253fe087a42",
+    "native-configuration.css": "4eab6df8946194a29cbb0ae3524ea693551d5b8d776217ce02b8719d34fb8ca1",
+    "app.js": "a4ca135649dcd0cf723f530d444a911df5c59cb2dd029b073e031d9eed589bfc",
+    "sw.js": "dd3d1110eb030c24eacc95f5394331198d1a906619867ef2f6444f3d3d733ef2",
+    "collaboration.js": "4eeef2608ed14933590b6fd7ec05240461ee35678663840f998ff84ba1a6781c",
+    "native-recovery.js": "e17e0a521254eb4ce588a5292924f405ab60df71b1fefe5fff8c17500458d913"
+  },
+  "publicAssetsEqualAcrossNativeBuilds": true,
+  "buildVerification": {
+    "android": "Offline app + instrumentation APK build and lintDebug passed",
+    "ios": "Signed-for-simulator build-for-testing and exact rebuilt products passed",
+    "noActivationOverride": "Both native default flags true; iOS OUTBOX_QA=0 and Android QA property absent; test selection does not enable native capability"
+  },
+  "crashBoundary": {
+    "actualRootSIGKILL": true,
+    "platforms": [
+      "android",
+      "ios"
+    ],
+    "boundary": "After durable staging, before pending active COMMIT is called; accepted baseline transaction already exists",
+    "freshProcess": "Different process verifies exact staged input, unchanged source, absent pending accepted receipt, typed unaccepted settlement",
+    "authority": "Synthetic native component authority; not real account lifecycle",
+    "notClaimed": [
+      "mid-transaction kill",
+      "power loss",
+      "arbitrary pre-stage keystroke durability"
+    ],
+    "fixtureCleanup": [
+      {
+        "platform": "android",
+        "onlyExactOwnedCrashFixtureRemoved": true,
+        "archivedDBByteEquality": true,
+        "resultAndReadySemanticEquality": true
+      },
+      {
+        "platform": "ios",
+        "onlyExactOwnedCrashFixtureRemoved": true,
+        "archivedDBLogicalSixTablesEqual": true,
+        "rawBeforeCleanupAlsoArchived": true,
+        "resultAndReadySemanticEquality": true
+      }
+    ]
+  },
+  "earlierComponentEvidence": {
+    "ios": {
+      "checks": 320,
+      "breakdown": [
+        181,
+        62,
+        3,
+        56,
+        18
+      ],
+      "kind": "Shared/native SQLite fixture assertions, not 320 XCTest methods or real Auth tests"
+    },
+    "android": {
+      "actualSDKTestMethods": 155,
+      "logoutDurabilitySubsuite": 14,
+      "kind": "Verified v4 component binary before default flag change; engine sources unchanged"
+    },
+    "commonVectors": {
+      "native": 62,
+      "js": 5
+    },
+    "qaSQLiteInspection": {
+      "sameOwnershipLock": true,
+      "actualSerializedUpdateChecks": 384,
+      "actualSerializedReadPolls": 396,
+      "coreUnchanged": true,
+      "causeScope": "Concurrent QA inspection outside native ownership contract was a reproducible trigger; no specific descriptor-close mechanism claimed"
+    },
+    "androidAPI24": "Declared-AOSP24 fault model and lint, not API24 runtime"
+  },
+  "independentReviews": {
+    "preActivation": "APPROVE",
+    "defaultFlagAndTestDelta": "APPROVE after four QA-only iOS guard corrections",
+    "finalExact021Runtime": "APPROVE"
+  },
+  "cleanup": {
+    "qaSessionsRevokedBeforeAuthDeletion": true,
+    "ownedAuthUsersRemaining": 0,
+    "ownedAuthSessionsRemaining": 0,
+    "ownedRefreshTokensRemaining": 0,
+    "scopedTablesChecked": 29,
+    "qaRowsRemaining": 0,
+    "storageObjects": 0,
+    "cronJobs": 0,
+    "verifierRetiredVersion": 58,
+    "oldNoncePaths": [
+      "wire",
+      "cleanup-check",
+      "cleanup"
+    ],
+    "allOldNoncePathsStatus": 404,
+    "originalEntities": 153,
+    "originalMeta": 6,
+    "originalIdentityMappings": 0,
+    "sixOriginalBusinessSessionFingerprintsUnchanged": true
+  },
+  "backendDuringVerification": {
+    "apiVersion": 12,
+    "apiSHA256": "2dce2f77a0e62712e4c6c66a75912b4a4052f13ff1b303d456b867c964f9ae17",
+    "retrievedSourceFilesMatched": 39,
+    "originalNamespacePreserved": true,
+    "ready": false,
+    "preview8787Preserved": true
+  },
+  "remaining": [
+    "Actual original owner and family account onboarding",
+    "Verified free public HTTPS hosting and original cutover",
+    "Windows OS execution and simultaneous five-platform propagation",
+    "Physical mobile devices, distribution signing and long-running capacity tests",
+    "Actual AI provider, IdP and external search integrations",
+    "Real Supabase 5GB end-to-end transfer within available quota"
+  ]
+}

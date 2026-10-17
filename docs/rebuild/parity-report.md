@@ -4,7 +4,7 @@ Recorded gate: **incomplete**
 Weighted verified coverage: 0.0% (completion requires every feature verified)
 All P0 verified: False
 Inventory complete: False
-Unresolved areas: ["유료 Notion 실제 계정의 전체 동작과 비공개 서버 기능은 미관찰", "FEATURES.md의 남은 차이 및 이 목록의 모든 미검증 acceptance", "실제 소유자·가족 계정 연결과 공개 무료 웹 호스트", "Windows 실제 실행·물리 iOS/Android·서명 배포 및 다섯 플랫폼 전체 계정 동기화", "외부 AI·IdP·OAuth·메일/푸시·SIEM/DLP 제공자와 계약", "원본 전체 제품 영역의 인벤토리 완전성 미확인"]
+Unresolved areas: ["유료 Notion 실제 계정의 전체 동작과 비공개 서버 기능은 미관찰", "FEATURES.md의 남은 차이 및 이 목록의 모든 미검증 acceptance", "실제 소유자·가족 계정 연결과 공개 무료 웹 호스트", "Windows 실제 실행·물리 iOS/Android·서명 배포 및 다섯 플랫폼 전체 계정 동기화", "외부 AI·IdP·OAuth·메일/푸시·SIEM/DLP 제공자와 계약", "원본 전체 제품 영역의 인벤토리 완전성 미확인", "관리자 전체 콘텐츠 검색·별도 보존 상태, 조직 범위·준비된 전체 관리자 역할, 조직/여러 작업공간, 법적 보류, 관리 계정, IP/네트워크 통제, 게스트 MFA, 관리자 API와 관리형 배포의 전체 계약"]
 
 Recorded inventory only; evidence quality requires review.
 
@@ -42,3 +42,12 @@ Recorded inventory only; evidence quality requires review.
 | FEATURE-siem-dlp | 외부 SIEM·DLP 연결 | P1 | discovered | 3 |
 | FEATURE-provider-zero-retention | AI 공급자의 무보관 보증 | P1 | discovered | 3 |
 | FEATURE-support-service | 전담 고객 성공·지원 | P2 | discovered | 1 |
+| FEATURE-organization-governance | 조직·여러 작업공간 통합 관리 | P1 | discovered | 3 |
+| FEATURE-admin-roles | 준비된 관리자 역할·사용자 지정 역할 | P1 | implemented | 3 |
+| FEATURE-legal-holds | 법적 보류·보존 콘텐츠 내보내기 | P1 | discovered | 3 |
+| FEATURE-managed-users | 검증 도메인의 관리 계정·외부 작업공간 통제 | P1 | discovered | 3 |
+| FEATURE-ip-restrictions | 조직 IP 허용 목록·세션 적용 모드 | P1 | discovered | 3 |
+| FEATURE-network-control | 기업 네트워크의 작업공간 접근 제어 | P1 | discovered | 3 |
+| FEATURE-guest-mfa-enforcement | 작업공간별 게스트 MFA 강제 | P1 | discovered | 3 |
+| FEATURE-admin-apis | 조직 관리자 봇·범위 토큰·관리 API | P1 | discovered | 3 |
+| FEATURE-managed-deployment | 관리형 데스크톱 배포·모바일 앱 보호 | P1 | discovered | 3 |

@@ -1,0 +1,230 @@
+{
+  "sourceCommit": "790db74d14636787a4cfdc0298514749c9334cd9",
+  "status": "implemented_scoped_verified_and_deployed",
+  "wholeGoalComplete": false,
+  "scope": "Single-workspace explicit custom administration actions; not all-content search or complete Enterprise parity",
+  "sourceSHA256": {
+    "app.js": "073947bef25db3bca52fae743f073d058ac44871495a5ad1fe4cd35b9bcd52d7",
+    "style.css": "d9200cf0ff822f698097082ceefaf53cbe6346615bc2476902b7dd8eaffe3b79",
+    "mutations.js": "34b8fc10b06f59ef407cd642e1ae77ee636f0ad3c802c044966201340cdf9077",
+    "recovery-import.js": "cdef00846362e1591cfc9de1ecd186c06e5abbf1f19be0f25c55d259d20a275d",
+    "sw.js": "b89e69e0401388f47bef22a29e5b84fab07d6903a0e51ee2c11f0f61e932d745"
+  },
+  "python": {
+    "actualPostgresConfigured": true,
+    "tests": 629,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "passed": true
+  },
+  "node": {
+    "scripts": 66,
+    "allPassed": true,
+    "accessOracleCases": 1651,
+    "membershipExpectedOutcomes": 86,
+    "unicodeCasefoldMappings": 1530,
+    "roleSecurityChecks": 45,
+    "roleSQLiteParityResults": 91,
+    "adminDomainRpcModelCases": 9,
+    "domainModelActualSql": false
+  },
+  "sql": {
+    "migration": "20261017083802_fountain_admin_role_lifecycle",
+    "migrationCount": 29,
+    "sha256": "458751b5f9db412e2adf0605ebdbf05e3a464b58a093a7ba0aa61dcdfb670c20",
+    "applied": true,
+    "rollbackFixture": {
+      "passed": true,
+      "memberLifecycleVariants": 9,
+      "generationIndexEntries": 1001,
+      "sourceBodySelections": 0,
+      "exactKernelCommitRevision": 103,
+      "privateFunctionAclAndSearchPath": true,
+      "authCascade": true,
+      "mappingRelink": true,
+      "sameClockRecreate": true,
+      "preflightFailureRollback": true
+    },
+    "independentConnectionLock": {
+      "passed": true,
+      "authCascadeConflict": "PT409",
+      "memberUpdateConflict": "PT409",
+      "allChangesRolledBack": true,
+      "schemaAbsentAfter": true
+    },
+    "postMigrationPythonLifecycle": {
+      "tests": 20,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": true,
+      "schemaMigration": "20261017083802",
+      "allPostgresWritesRolledBack": true
+    }
+  },
+  "browser": {
+    "actualChrome": true,
+    "backend": "Disposable SQLite HTTP",
+    "capabilityCrudAndPrivacy": true,
+    "lateNetworkErrorRegression": true,
+    "writesPrecheckFailure": 0,
+    "writesPostcheckFailure": 1,
+    "sourceReview": "APPROVE after stale network rejection fence",
+    "visualScore": 94,
+    "visualReference": "Existing Fountain Settings, not original Notion",
+    "actualCloud": true,
+    "cloudChecks": [
+      "actual_owner_password_login_Secure_HttpOnly_opaque_cookie_and_scoped_workspace",
+      "actual_owner_Settings_roles_no_advanced_and_baseline_assignments_captured",
+      "actual_owner_UI_role_create_edit_escaped_labels_and_multiple_individual_assignment",
+      "actual_member_password_login_delegated_audit_analytics_only_no_advanced_private_page404",
+      "actual_cloud_390px_delegated_console_no_horizontal_overflow_44px_controls",
+      "actual_owner_revocation_restores_prior_roles_member_refresh_loses_browser_only_actions",
+      "actual_owner_UI_temporary_role_deleted",
+      "actual_admin_surface_reads_body_free_and_all_observed_admin_audit_analytics_GETs_without_domain_writes"
+    ],
+    "existingAnalyticsLoadsPageBodies": 2,
+    "bodyFreeScope": "New /api/admin/* GET endpoints; no blanket all-GET body-free claim"
+  },
+  "nativeArtifacts": {
+    "folder": ".data/installables-admin-roles-20261017",
+    "archives": [
+      {
+        "name": "Fountain-macOS-arm64.zip",
+        "sha256": "4c59eeeed583d693bfec67ea6523d7c6170c54cdd99b489efbee0220347c37e8",
+        "bytes": 127631697,
+        "crc": true,
+        "currentAssets": true
+      },
+      {
+        "name": "Fountain-Windows-x64.zip",
+        "sha256": "46fc43fe72a25e26c3a8c8324a72cd967b1d34ad371f85ef05e5117cf23e203d",
+        "bytes": 158698885,
+        "crc": true,
+        "currentAssets": true
+      },
+      {
+        "name": "Fountain-iOS-Simulator-Release.zip",
+        "sha256": "cee0e0f06785b8b384a8282c94ea3730673f4e2cf2c68c2f64274bf064272520",
+        "bytes": 3147032,
+        "crc": true,
+        "currentAssets": true
+      },
+      {
+        "name": "Fountain-Android-debug.apk",
+        "sha256": "16759e77f36915b0823167cb2172c58c9b4ce65c53c5f20c97e4e4c26517241e",
+        "bytes": 4729128,
+        "crc": true,
+        "currentAssets": true
+      }
+    ],
+    "macPackagedFixtureChecks": 14,
+    "windowsOsExecution": false,
+    "mobileExecutionThisIncrement": "Only dedicated iOS simulator anonymous entry; not actual Supabase session/role proof",
+    "physicalDevices": false,
+    "macAnonymousSupabaseRounds": 2,
+    "iosRuntimeProof": ".data/admin-roles-builds/ios-runtime-proof.json",
+    "iosSimulatorPid": 47806
+  },
+  "actualSupabase": {
+    "main": 21,
+    "files": 47,
+    "exactSourceReadback": true,
+    "migrationCount": 29,
+    "worker": 4,
+    "maintenance": 4,
+    "verifierQa": 81,
+    "verifierCleanup": 82,
+    "verifierRetired": 83,
+    "basicHttpGroups": 8,
+    "largeHttpGroups": 1,
+    "actualBrowserGroups": 8,
+    "largeAssignments": 1001,
+    "largeAdminOverview": {
+      "path": "/api/admin/roles",
+      "method": "GET",
+      "snapshots": 21,
+      "maxBytes": 230885,
+      "pageKind": false,
+      "bodyIds": [],
+      "rowBodyIds": [],
+      "databaseBodyIds": [],
+      "domainWrites": 0,
+      "replayStarts": 6,
+      "maxSelectorCount": 5,
+      "virtualGenerationSelected": true,
+      "individualGenerationSelectors": 0
+    },
+    "largeFixturesRemovedBeforeUI": true,
+    "browserBackend": "Chrome -> temporary fixture-SPKI HTTPS presentation proxy -> real Supabase/Auth/Postgres",
+    "actualPublicHosting": false,
+    "originalSixFingerprintsUnchanged": true,
+    "originalEntities": 153,
+    "originalMeta": 6,
+    "originalOwnerLinked": false,
+    "cleanup": {
+      "total_qa_rows_remaining": 0,
+      "storage_objects": 0,
+      "cron_jobs": 0,
+      "auth_users": 0,
+      "auth_sessions": 0,
+      "refresh_tokens": 0,
+      "original_mappings": 0,
+      "original_entities": 153,
+      "original_meta": 6,
+      "actualPostgres": true,
+      "workspaceTables": 29,
+      "protectedAuthUsersDeleted": 2,
+      "logoutAttempt": {
+        "httpStatus": 503,
+        "passed": false
+      },
+      "authoritativeAuthDeletionCompleted": true,
+      "originalWorkspaceTouched": false,
+      "logoutAttemptExplanation": "Older member session retained across unlink/relink; helper503 and sequencing mistake preserved. Exact provider cause unproven. Normal browser logout passed; final Auth/session/refresh/scoped SQL state independently zero.",
+      "runnerNowFailsClosedBeforeDependentStages": true,
+      "guardFailureNetworkCalls": 0
+    },
+    "retiredOldNoncePaths": [
+      {
+        "path": "wire",
+        "status": 404
+      },
+      {
+        "path": "cleanup-check",
+        "status": 404
+      },
+      {
+        "path": "cleanup-sessions",
+        "status": 404
+      },
+      {
+        "path": "cleanup",
+        "status": 404
+      }
+    ]
+  },
+  "security": {
+    "artifactPrivateMatches": 0,
+    "databaseAdvisor": {
+      "INFO": "23 intentionally deny-all private service tables",
+      "WARN": "pg_net installed in public; existing non-relocatable extension0.20.4, not changed by this migration",
+      "reference": "https://supabase.com/docs/guides/database/extensions/pg_net#troubleshooting"
+    },
+    "newDependencies": false,
+    "staticTypescriptCompilerRun": false,
+    "knownPrivateValuesScanned": 13,
+    "historyBlobsScanned": 1344,
+    "historyPrivateMatches": 0,
+    "githubOpenSecretAlerts": 0
+  },
+  "remaining": [
+    "Complete original all-content search/provenance/audience/CSV/permissions/publication actions",
+    "Organization-wide scopes and full ready-made roles, all original analytics tabs",
+    "Existing analytics aggregation still loads source page/row bodies",
+    "Actual owner/family onboarding, free public host and five-platform whole journey",
+    "Windows/physical devices/release signing; static TypeScript compiler not installed"
+  ],
+  "checkedAt": "2026-10-17T08:53:15.990182+00:00"
+}

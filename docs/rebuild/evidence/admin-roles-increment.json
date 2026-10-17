@@ -1,0 +1,12 @@
+{
+  "scope": "single-workspace explicit custom administration actions only",
+  "source": "../../research/admin-roles-evidence.json",
+  "implemented": true,
+  "wholeFeatureOrProductParityVerified": false,
+  "actualCloudVerified": true,
+  "main": 21,
+  "files": 47,
+  "migrations": 29,
+  "cleaned": true,
+  "retired": 83
+}

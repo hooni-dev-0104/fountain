@@ -294,12 +294,12 @@
       "evidence/original-boundaries.md"
     ],
     "acceptance": [
-      "Complete and verify: 실제 변경/조회/검색 이벤트 감사 로그·집계, 게스트/게시/내보내기 제한",
-      "Resolve: 외부 SIEM/DLP, 조직 분석, 관리자 역할 분리"
+      "Complete and verify: 실제 이벤트 감사·집계, 소유자의 개인별 사용자 정의 관리자 역할·복수 지정·철회와 감사/분석/멤버/그룹 구성원 액션; ADMIN_ROLES.md 참조",
+      "Resolve: 외부 SIEM/DLP, 조직 분석·다중 작업공간·준비된 전체 관리 역할, 전체 관리자 콘텐츠 검색과 원본 유료 정책 비교"
     ],
     "verification": [],
     "limitations": [
-      "외부 SIEM/DLP, 조직 분석, 관리자 역할 분리"
+      "외부 SIEM/DLP, 조직 분석·다중 작업공간·준비된 전체 관리 역할, 전체 관리자 콘텐츠 검색과 원본 유료 정책 비교"
     ],
     "implementation_inventory": "../FEATURES.md"
   },
@@ -643,7 +643,7 @@
     "name": "준비된 관리자 역할·사용자 지정 역할",
     "priority": "P1",
     "weight": 3,
-    "status": "discovered",
+    "status": "implemented",
     "original_evidence": [
       "evidence/admin-governance-original.md"
     ],
@@ -652,9 +652,15 @@
       "게스트·조직 소유자 배정 및 SCIM/그룹을 통한 역할 배정을 막는다. 사용자 지정 역할은 새 기능을 자동 포함하지 않는다.",
       "Compliance·People·IT·Analytics·Billing의 공식 범위를 추적하며, Billing의 판매 계약/Notion 크레딧과 가족 앱의 무료 운영 정책을 구분한다. 멤버 관리자는 새 소유자·멤버 관리자를 지정하지 못한다."
     ],
-    "verification": [],
+    "verification": [
+      {
+        "command": "Python629actualPGskip0 + Node66 + actualSupabaseQA81 HTTP8/large1 + realChrome8 + main21exact47/migration29",
+        "passed": true,
+        "evidence": "evidence/admin-roles-increment.json"
+      }
+    ],
     "limitations": [
-      "공식 문서 본문에서 기능을 확인했다. 독립 구현·실제 공급자/기기/조직 운영·유료 원본 비교 증거는 아직 전체 계약을 충족하지 않는다."
+      "현재 한 작업공간의 명시적 사용자 정의 6개 관리 액션·개인 복수 지정만 구현·검사했다. 조직 단위 범위·준비된 전체 역할·미구현 콘텐츠 검색/법적 보류/인증/과금 액션과 원본 유료 전체 비교는 남아 있다."
     ],
     "original_source_ids": [
       "enterprise-roles"

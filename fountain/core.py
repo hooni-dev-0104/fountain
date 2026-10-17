@@ -83,6 +83,8 @@ class Store:
         self.db.commit()
         from .content_index import ContentIndex
         ContentIndex(self).initialize()
+        from .retention_vault import RetentionVault
+        RetentionVault(self).initialize()
 
     @contextmanager
     def transaction(self):
@@ -131,7 +133,9 @@ class Store:
         entity_id = data.get("id") or uid()
         text(entity_id, "id", 160, False)
         from .content_index import ContentIndex, INVALIDATES
-        with self.transaction() if kind in INVALIDATES else self.lock:
+        from .retention_vault import RetentionVault, SNAPSHOT_KINDS
+        with self.transaction() if kind in INVALIDATES or kind in SNAPSHOT_KINDS or kind == 'upload' else self.lock:
+            RetentionVault(self).guard_entity(kind, entity_id, data)
             previous = self.get(kind, entity_id)
             data.update(id=entity_id, created_at=(previous or {}).get("created_at", now()), updated_at=now())
             self.db.execute("INSERT OR REPLACE INTO entities VALUES (?,?,?,?,?)", (
@@ -146,7 +150,9 @@ class Store:
 
     def delete(self, kind, entity_id):
         from .content_index import ContentIndex, INVALIDATES
-        with self.transaction() if kind in INVALIDATES else self.lock:
+        from .retention_vault import RetentionVault, SNAPSHOT_KINDS
+        with self.transaction() if kind in INVALIDATES or kind in SNAPSHOT_KINDS or kind == 'upload' else self.lock:
+            RetentionVault(self).guard_entity(kind, entity_id)
             previous = self.get(kind, entity_id) if kind in ('site','form') else None
             cursor = self.db.execute("DELETE FROM entities WHERE kind=? AND id=?", (kind, entity_id))
             if kind == "member" and cursor.rowcount:
@@ -198,6 +204,9 @@ class Store:
         require(type(offset) is int and offset >= 0 and isinstance(data, (bytes, bytearray))
                 and len(data) <= 4 * 1024 * 1024, "Invalid attachment chunk")
         with self.transaction():
+            from .retention_vault import RetentionVault
+            require(not RetentionVault(self).attachment_pinned(identity),
+                    "Retained attachment bytes are pinned", 409)
             self.db.execute("INSERT INTO attachment_chunks VALUES (?,?,?)", (identity, offset, bytes(data)))
 
     def chunk_list(self, identity):
@@ -207,6 +216,9 @@ class Store:
 
     def chunk_delete(self, identity):
         with self.transaction():
+            from .retention_vault import RetentionVault
+            require(not RetentionVault(self).attachment_pinned(identity),
+                    "Retained attachment bytes are pinned", 409)
             return self.db.execute("DELETE FROM attachment_chunks WHERE attachment_id=?", (identity,)).rowcount
 
     def presence_lookup(self, *, page=None, origin=None, now=None):

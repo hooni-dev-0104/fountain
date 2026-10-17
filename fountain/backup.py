@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
@@ -10,10 +11,11 @@ import sqlite3
 import sys
 import tempfile
 from contextlib import closing, nullcontext
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from .content_index import INDEX_DEFINITIONS
+from .content_index import INDEX_DEFINITIONS, header as content_header
+from .retention_vault import VAULT_COLUMNS, VAULT_DEFINITIONS, VAULT_TRIGGER_DEFINITIONS, SNAPSHOT_KINDS, RetentionVault, _same_attachment_source
 
 
 class BackupError(ValueError):
@@ -118,14 +120,171 @@ def _strict_json(value):
     return json.loads(value, parse_constant=invalid_constant)
 
 
+def _vault_json(encoded):
+    def pairs(values):
+        result = {}
+        for key, value in values:
+            if key in result:
+                raise BackupError('Duplicate private retention JSON key')
+            result[key] = value
+        return result
+    value = json.loads(encoded, object_pairs_hook=pairs, parse_constant=lambda _: (_ for _ in ()).throw(BackupError('Nonfinite retention JSON')))
+    if not isinstance(value, dict):
+        raise BackupError('Private retention JSON must be an object')
+    return value
+
+
+def inspect_portable_vault(connection):
+    """Validate private portable state without executing source-owned SQL."""
+    def require(condition):
+        if not condition:
+            raise BackupError('Invalid private retention state')
+    hex32 = lambda value: isinstance(value, str) and re.fullmatch('[a-f0-9]{32}', value) is not None
+    safe = lambda value: type(value) is int and 0 <= value <= 9007199254740991
+    tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_schema WHERE type='table'")}
+    require(set(VAULT_COLUMNS) <= tables)
+    normalize = lambda sql: re.sub(r'\s+', '', sql).casefold()
+    for table, names in VAULT_COLUMNS.items():
+        definition = connection.execute("SELECT sql FROM sqlite_schema WHERE type='table' AND name=?", (table,)).fetchone()[0]
+        require(normalize(definition) == normalize(VAULT_DEFINITIONS[table]))
+        info = connection.execute('PRAGMA table_xinfo('+table+')').fetchall()
+        require(tuple(row[1] for row in info) == names and all(row[4] is None and row[6] == 0 for row in info))
+    records = set()
+    roots = {}
+    for identity, encoded, created, updated in connection.execute('SELECT * FROM retention_records'):
+        row = _vault_json(encoded)
+        require(hex32(identity) and set(row) == {'version','root_kind','root_id','generation','state','deleted_at','retained_at','purge_after','retention_days','source_revision','record_revision','actor_id','cause','header','counts'})
+        require(type(row['version']) is int and row['version'] == 1 and row['root_kind'] == 'page' and _history_id(row['root_id']) and hex32(row['generation']) and row['state'] == 'retained')
+        require(type(row['retention_days']) is int and 1 <= row['retention_days'] <= 3650 and safe(row['source_revision']) and safe(row['record_revision']) and row['record_revision'] >= 1)
+        require(row['actor_id'] is None or _history_id(row['actor_id']))
+        require(row['cause'] in ('manual','policy') and isinstance(row['header'], dict))
+        for stamp in (created, updated, row['deleted_at'], row['retained_at'], row['purge_after']):
+            require(stamp is not None and _history_time(stamp))
+        require(datetime.fromisoformat(row['purge_after'].replace('Z','+00:00')) - datetime.fromisoformat(row['retained_at'].replace('Z','+00:00')) == timedelta(days=row['retention_days']))
+        require(isinstance(row['counts'], dict) and set(row['counts']) == {'entities','provenance','refs','reservations','links'})
+        for key, table in (('entities','retention_entities'),('provenance','retention_provenance'),('refs','retention_attachment_refs'),('reservations','retention_identity_reservations'),('links','retention_links')):
+            require(safe(row['counts'][key]) and row['counts'][key] == connection.execute('SELECT count(*) FROM '+table+' WHERE record_id=?', (identity,)).fetchone()[0])
+        root = connection.execute("SELECT generation,ownership,data FROM retention_entities WHERE record_id=? AND kind='page' AND id=?", (identity,row['root_id'])).fetchone()
+        require(root is not None and root[:2] == (row['generation'],'owned') and (_vault_json(root[2]).get('archived') is True or _vault_json(root[2]).get('deleted') is True))
+        require(row['header'] == content_header('page', _vault_json(root[2])))
+        records.add(identity)
+        roots[identity] = row['root_id']
+    for record, kind, identity, encoded, created, updated, generation, ownership in connection.execute('SELECT * FROM retention_entities'):
+        value = _vault_json(encoded)
+        require(record in records and kind in SNAPSHOT_KINDS and _history_id(identity) and value.get('id') == identity and ownership in ('owned','shared'))
+        require(ownership != 'shared' or kind in ('attachment','attachment_cloud','attachment_chunk'))
+        require(_history_time(created) and created is not None and _history_time(updated) and updated is not None)
+        require(hex32(generation) if kind in ('page','database','row') else generation is None or hex32(generation))
+        def owned(target_kind, target_id):
+            return _history_id(target_id) and connection.execute("SELECT 1 FROM retention_entities WHERE record_id=? AND kind=? AND id=? AND ownership='owned'", (record,target_kind,target_id)).fetchone() is not None
+        references = RetentionVault._attachment_ids(value,kind) if kind in ('page','version','collaboration','row') else set()
+        if kind == 'row':
+            database = connection.execute("SELECT data FROM retention_entities WHERE record_id=? AND kind='database' AND id=?", (record,value.get('database_id'))).fetchone()
+            require(database is not None)
+            for prop in _vault_json(database[0]).get('properties', []):
+                if isinstance(prop,dict) and prop.get('type') == 'files':
+                    for entry in (value.get('properties',{}).get(prop.get('id')) or []):
+                        candidate = entry if isinstance(entry,str) else entry.get('id') if isinstance(entry,dict) else None
+                        require(_history_id(candidate));references.add(candidate)
+        for attachment in references:
+            require(connection.execute("SELECT 1 FROM retention_entities WHERE record_id=? AND kind='attachment' AND id=?", (record,attachment)).fetchone() is not None)
+        if kind in ('page','database','row'):
+            require(connection.execute('SELECT generation FROM retention_provenance WHERE record_id=? AND kind=? AND id=?', (record,kind,identity)).fetchone() == (generation,))
+        if kind == 'page' and identity != roots[record]:
+            parent = value.get('parent_id')
+            require(owned('page',parent))
+            visited = {identity}
+            while parent != roots[record]:
+                require(parent not in visited)
+                visited.add(parent)
+                parent_data = connection.execute("SELECT data FROM retention_entities WHERE record_id=? AND kind='page' AND id=?", (record,parent)).fetchone()
+                require(parent_data is not None)
+                parent = _vault_json(parent_data[0]).get('parent_id')
+                require(owned('page',parent))
+        elif kind == 'database': require(owned('page',value.get('page_id') or value.get('parent_id')))
+        elif kind == 'row': require(owned('database',value.get('database_id')))
+        elif kind in ('version','comment','site','transcript'): require(owned('page',value.get('page_id')))
+        elif kind in ('collaboration','wiki_page'): require(owned('page',value.get('page_id') or identity))
+        elif kind == 'form': require(owned('database',value.get('database_id')))
+        elif kind == 'automation': require(owned('database',value.get('database_id')) or owned('row',value.get('row_id')))
+        if ownership == 'owned':
+            reservation = connection.execute('SELECT record_id,generation FROM retention_identity_reservations WHERE kind=? AND id=?', (kind,identity)).fetchone()
+            require(reservation is not None and reservation[0] == record and hex32(reservation[1]) and (generation is None or reservation[1] == generation))
+            live = connection.execute('SELECT data,created_at,updated_at FROM entities WHERE kind=? AND id=?', (kind,identity)).fetchone()
+            require(live is None or kind in ('attachment','attachment_cloud','attachment_chunk') and _same_attachment_source(kind,live,(encoded,created,updated)))
+    for kind, identity, record, generation in connection.execute('SELECT * FROM retention_identity_reservations'):
+        require(record in records and hex32(generation))
+        require(connection.execute("SELECT 1 FROM retention_entities WHERE record_id=? AND kind=? AND id=? AND ownership='owned'", (record,kind,identity)).fetchone() is not None)
+    for row in connection.execute('SELECT * FROM retention_provenance'):
+        record, kind, identity, generation, creator, creator_cause, editor, edited_at, editor_cause, manager, manager_at = row
+        require(record in records and kind in ('page','database','row') and hex32(generation))
+        require(all(value is None or _history_id(value) for value in (creator,editor,manager)))
+        require(creator_cause in PROVENANCE_CAUSES and editor_cause in PROVENANCE_CAUSES and _history_time(edited_at) and _history_time(manager_at) and (manager is None) == (manager_at is None) and (editor is not None or edited_at is None))
+        require(connection.execute('SELECT generation FROM retention_entities WHERE record_id=? AND kind=? AND id=?', (record,kind,identity)).fetchone() == (generation,))
+    for record, attachment, storage, physical, offset, size, digest in connection.execute('SELECT * FROM retention_attachment_refs'):
+        require(record in records and _history_id(attachment) and _history_id(physical) and storage in ('blob','file','cloud') and safe(offset) and offset % CHUNK_SIZE == 0 and type(size) is int and 0 < size <= CHUNK_SIZE and isinstance(digest,str) and re.fullmatch('[a-f0-9]{64}',digest) is not None)
+        require(connection.execute("SELECT 1 FROM retention_entities WHERE record_id=? AND kind='attachment' AND id=?", (record,attachment)).fetchone() is not None)
+        if storage == 'file':
+            require(physical == digest)
+            manifests = connection.execute("SELECT data FROM retention_entities WHERE record_id=? AND kind='attachment_chunk'", (record,))
+            require(any((value.get('attachment_id'),value.get('offset'),value.get('size'),value.get('sha256')) == (attachment,offset,size,digest) for (raw,) in manifests for value in [_vault_json(raw)]))
+        if storage == 'cloud':
+            manifest_row = connection.execute("SELECT data FROM retention_entities WHERE record_id=? AND id=? AND kind IN('attachment','attachment_cloud') ORDER BY CASE kind WHEN 'attachment_cloud' THEN 0 ELSE 1 END LIMIT 1", (record,attachment)).fetchone()
+            require(manifest_row is not None)
+            cloud = _vault_json(manifest_row[0]);items = cloud.get('cloud_chunks')
+            require(isinstance(items,list) and any(isinstance(item,dict) and set(item) == {'version','attachmentId','offset','size','sha256'} and item.get('version') == 1 and (item.get('attachmentId'),item.get('offset'),item.get('size'),item.get('sha256')) == (physical,offset,size,digest) for item in items))
+        if storage == 'blob': require(physical == attachment)
+        # A portable BLOB copy can satisfy an external physical pin while its
+        # original manifest remains immutable history. Actual restore validates
+        # and materializes its target backend separately.
+        blob = connection.execute('SELECT data FROM attachment_chunks WHERE attachment_id=? AND offset=?', (attachment,offset)).fetchone() if 'attachment_chunks' in tables else None
+        if blob is not None:
+            require(isinstance(blob[0],bytes) and len(blob[0]) == size and hashlib.sha256(blob[0]).hexdigest() == digest)
+        else: require(False)
+    for record, identity, encoded in connection.execute("SELECT record_id,id,data FROM retention_entities WHERE kind='attachment'"):
+        overlay = connection.execute("SELECT data FROM retention_entities WHERE record_id=? AND kind='attachment_cloud' AND id=?", (record,identity)).fetchone()
+        attachment = _vault_json(overlay[0] if overlay else encoded)
+        if attachment.get('storage') == 'chunks':
+            size = attachment.get('size');require(type(size) is int and 0 <= size <= MAX_ATTACHMENT_SIZE)
+            for offset in range(0,size,CHUNK_SIZE):
+                pins = connection.execute('SELECT size FROM retention_attachment_refs WHERE record_id=? AND attachment_id=? AND offset=?', (record,identity,offset)).fetchall()
+                require(pins and all(row == (min(CHUNK_SIZE,size-offset),) for row in pins))
+            require(connection.execute('SELECT count(DISTINCT offset) FROM retention_attachment_refs WHERE record_id=? AND attachment_id=?', (record,identity)).fetchone()[0] == (size+CHUNK_SIZE-1)//CHUNK_SIZE)
+    for record, kind, identity, encoded in connection.execute('SELECT * FROM retention_links'):
+        value = _vault_json(encoded)
+        require(record in records and kind == 'row' and _history_id(identity) and set(value) == {'generation','before','after'} and hex32(value['generation']))
+        require(isinstance(value['before'],list) and isinstance(value['after'],list) and all(_history_id(item) for item in value['before'] + value['after']) and len(set(value['before'])) == len(value['before']) and len(set(value['after'])) == len(value['after']))
+        require(all(item in value['before'] for item in value['after']))
+        for removed in set(value['before']) - set(value['after']):
+            require(connection.execute("SELECT 1 FROM retention_entities WHERE record_id=? AND kind='row' AND id=? AND ownership='owned'", (record,removed)).fetchone() is not None)
+    return {table: connection.execute('SELECT count(*) FROM '+table).fetchone()[0] for table in VAULT_COLUMNS}
+
+
 def _attachments(connection):
-    for identity, data in connection.execute("SELECT id,data FROM entities WHERE kind='attachment'"):
+    # One immutable logical attachment may be referenced by live entities and
+    # several retained records. Validate every copy, emit physical bytes once.
+    tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_schema WHERE type='table'")}
+    statement = "SELECT id,data FROM entities WHERE kind='attachment'"
+    if 'retention_entities' in tables:
+        statement += " UNION ALL SELECT id,data FROM retention_entities WHERE kind='attachment' UNION ALL SELECT id,data FROM retention_entities WHERE kind='attachment_cloud'"
+    seen = {}
+    for identity, data in connection.execute('SELECT id,data FROM ('+statement+") ORDER BY id,CASE WHEN json_extract(data,'$.storage')='chunks' THEN 0 ELSE 1 END"):
         try:
             attachment = _strict_json(data)
         except (ValueError, TypeError, RecursionError) as error:
             raise BackupError("Invalid attachment metadata") from error
         if not isinstance(attachment, dict) or attachment.get("id") != identity:
             raise BackupError("Invalid attachment metadata")
+        checksum = attachment.get('sha256')
+        if checksum is None and attachment.get('storage','inline') == 'inline' and isinstance(attachment.get('data'),str):
+            try: checksum = hashlib.sha256(base64.b64decode(attachment['data'],validate=True)).hexdigest()
+            except (ValueError,TypeError) as error: raise BackupError('Invalid inline retained attachment bytes') from error
+        fingerprint = (attachment.get('size'), checksum)
+        if identity in seen:
+            if seen[identity] != fingerprint:
+                raise BackupError("Retained attachment conflicts with its immutable physical source")
+            continue
+        seen[identity] = fingerprint
         yield identity, attachment
 
 
@@ -162,8 +321,8 @@ def _inspect_chunks(connection, tables, complete_only):
             raise BackupError("Finalized attachment size or SHA-256 does not match its chunks")
     if complete_only and "attachment_chunks" in tables:
         for (identity,) in connection.execute("SELECT DISTINCT attachment_id FROM attachment_chunks"):
-            row = connection.execute("SELECT data FROM entities WHERE kind='attachment' AND id=?", (identity,)).fetchone()
-            if not row or _strict_json(row[0]).get("storage") != "chunks":
+            if not any(current == identity and attachment.get('storage') == 'chunks'
+                       for current, attachment in _attachments(connection)):
                 raise BackupError("Backup contains incomplete or orphaned attachment chunks")
 
 
@@ -171,24 +330,31 @@ def _prune_chunks(connection):
     tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_schema WHERE type='table'")}
     if "attachment_chunks" not in tables:
         return
-    connection.execute("DELETE FROM attachment_chunks WHERE NOT EXISTS "
-                       "(SELECT 1 FROM entities WHERE kind='attachment' AND id=attachment_chunks.attachment_id)")
-    for identity, attachment in _attachments(connection):
-        if attachment.get("storage") != "chunks":
-            connection.execute("DELETE FROM attachment_chunks WHERE attachment_id=?", (identity,))
+    # Retained-only attachments are first-class physical sources. Do not prune
+    # their bytes just because the ordinary live entity was moved to the vault.
+    keep = {identity for identity, attachment in _attachments(connection) if attachment.get('storage') == 'chunks'}
+    for (identity,) in connection.execute('SELECT DISTINCT attachment_id FROM attachment_chunks'):
+        if identity not in keep:
+            connection.execute('DELETE FROM attachment_chunks WHERE attachment_id=?', (identity,))
 
 
 def _inspect(connection, *, validate_attachments=True, complete_only=False):
     objects = connection.execute("SELECT type,name,tbl_name,sql FROM sqlite_schema").fetchall()
     tables = {name for kind, name, _, _ in objects if kind == "table"}
     derivative = set(INDEX_DEFINITIONS)
-    ordinary = tables - derivative
+    vault = set(VAULT_COLUMNS)
+    if tables & vault not in (set(), vault):
+        raise BackupError("Source contains an incomplete retention vault schema")
+    ordinary = tables - derivative - vault
     if ordinary not in ({"entities", "meta"}, set(SCHEMA)) or tables & derivative not in (set(), {'content_provenance'}, derivative):
         raise BackupError("Source must contain exactly the Fountain tables")
     for kind, name, table, definition in objects:
-        implicit_index = (kind == "index" and table in set(SCHEMA) | derivative
+        implicit_index = (kind == "index" and table in set(SCHEMA) | derivative | vault
                           and name == f"sqlite_autoindex_{table}_1" and definition is None)
-        if not (kind == "table" and name in set(SCHEMA) | derivative) and not implicit_index:
+        known_guard = (kind == 'trigger' and name in VAULT_TRIGGER_DEFINITIONS
+                       and re.sub(r'\s+', '', definition or '').casefold()
+                       == re.sub(r'\s+', '', VAULT_TRIGGER_DEFINITIONS[name]).casefold())
+        if not (kind == "table" and name in set(SCHEMA) | derivative | vault) and not implicit_index and not known_guard:
             raise BackupError("Source contains unsupported database objects")
         if kind == "table" and (not definition or "VIRTUAL" in definition.upper()):
             raise BackupError("Virtual tables are not permitted")
@@ -222,6 +388,11 @@ def _inspect(connection, *, validate_attachments=True, complete_only=False):
     except (ValueError, TypeError, RecursionError) as error:
         raise BackupError("Source contains invalid JSON entity or metadata records") from error
     _inspect_provenance(connection, tables)
+    if tables & vault:
+        try:
+            inspect_portable_vault(connection)
+        except (ValueError, TypeError, KeyError) as error:
+            raise BackupError("Source contains invalid private retention state") from error
     if validate_attachments:
         _inspect_chunks(connection, tables, complete_only)
     return counts
@@ -254,6 +425,16 @@ def _copy(source_path, destination_path):
                 target.execute("PRAGMA trusted_schema=OFF")
                 # Recheck SQL objects before any mutation; validate final bytes after pruning.
                 _inspect(target, validate_attachments=False)
+                # Guards invoke connection-private authority functions. Only
+                # exact reviewed definitions passed _inspect; the portable copy
+                # carries data, never executable SQL or authority callbacks.
+                for (name,) in target.execute("SELECT name FROM sqlite_schema WHERE type='trigger'").fetchall():
+                    if name not in VAULT_TRIGGER_DEFINITIONS:
+                        raise BackupError('Unsupported retention guard')
+                    target.execute('DROP TRIGGER "' + name.replace('"', '""') + '"')
+                if target.execute("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='retention_records'").fetchone() is not None and target.execute('SELECT 1 FROM retention_records LIMIT 1').fetchone() is None:
+                    for table in reversed(tuple(VAULT_COLUMNS)):
+                        target.execute('DROP TABLE '+table)
                 target.execute("PRAGMA secure_delete=ON")
                 # Trusted full snapshots preserve non-derivable attribution;
                 # rebuild only search data and regenerate cursor credentials.

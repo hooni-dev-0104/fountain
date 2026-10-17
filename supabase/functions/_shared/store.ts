@@ -21,7 +21,8 @@ type KernelCommit<C> = {context:C;expectedRevision:number;transactionId:string;d
 interface KernelProvider<C> {snapshot(request:KernelSnapshot<C>):Promise<SnapshotPage>;commit(request:KernelCommit<C>):Promise<{revision:number}>;}
 export type SnapshotRequest = KernelSnapshot<StoreContext>;
 export type CommitRequest = KernelCommit<StoreContext>;
-export interface StoreProvider extends KernelProvider<StoreContext> {}
+export type AttachmentReferences={context:StoreContext;attachmentId:string;revision:number;referenced:boolean};
+export interface StoreProvider extends KernelProvider<StoreContext> {attachmentReferences?(request:{context:StoreContext;attachmentId:string}):Promise<AttachmentReferences>;}
 // Service authority is a separate wire contract. None of these are accepted by
 // validateContext(), and control-only maintenance has no domain principal.
 type GrantContext = Readonly<{workspaceId:string;grantId:string;grantVersion:number}>;
@@ -429,7 +430,8 @@ function rpcTransport(config:ProviderConfig,prefix:'store'|'service') {
   }
   const timeout=config.timeoutMs ?? 8000;check(integer(timeout) && timeout>0 && timeout<=15000);
   const request=config.fetch ?? globalThis.fetch;
-  async function rpc(name:string, body:Entity): Promise<any> {
+  async function rpc(name:string, body:Entity,responseLimit=MAX_BYTES): Promise<any> {
+    check(integer(responseLimit)&&responseLimit>0&&responseLimit<=MAX_BYTES);
     try {
       const response=await request(origin+'/rest/v1/rpc/fountain_cloud_'+prefix+'_'+name,{method:'POST',redirect:'error',signal:AbortSignal.timeout(timeout),headers:{...headers},body:json(body,MAX_RPC_BYTES)});
       if (!response.ok || response.redirected) {
@@ -451,7 +453,7 @@ function rpcTransport(config:ProviderConfig,prefix:'store'|'service') {
       const reader=response.body?.getReader();check(reader,'STORAGE_RESPONSE_INVALID',503);
       const parts:Uint8Array[]=[];let size=0;
       try {
-        for (;;) { const next=await reader.read();if(next.done)break;size+=next.value.length;check(size<=MAX_BYTES,'STORAGE_LIMIT',413);parts.push(next.value); }
+        for (;;) { const next=await reader.read();if(next.done)break;size+=next.value.length;check(size<=responseLimit,'STORAGE_LIMIT',413);parts.push(next.value); }
         const bytes=new Uint8Array(size);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.length;}
         return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes));
       } catch (error) { await reader.cancel().catch(()=>{});throw error; }
@@ -460,9 +462,20 @@ function rpcTransport(config:ProviderConfig,prefix:'store'|'service') {
   }
   return rpc;
 }
+// Match Python str.strip and SQL blank_chars; FEFF remains an opaque ID character.
+export function validAttachmentReferenceId(value:unknown):value is string{return valid_id(value)&&!/[\u0000\uD800-\uDFFF]/u.test(value)&&!/^[\u0009-\u000D\u001C-\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+$/u.test(value);}
+/** One bounded metadata fact, never a document body or authorization grant. */
+export function validateAttachmentReferences(value:unknown,context:StoreContext,attachmentId:string):AttachmentReferences{
+  try{
+    exact(value,['context','attachmentId','revision','referenced']);
+    check(canonicalJSON(validateContext(value.context))===canonicalJSON(context)&&value.attachmentId===attachmentId&&validAttachmentReferenceId(value.attachmentId)&&integer(value.revision)&&typeof value.referenced==='boolean','STORAGE_RESPONSE_INVALID',503);
+    return freeze(clone(value)) as AttachmentReferences;
+  }catch{return fail('STORAGE_RESPONSE_INVALID',503,'Attachment reference response is invalid');}
+}
 export function createStoreProvider(config:ProviderConfig):StoreProvider {
   const rpc=rpcTransport(config,'store');
   return Object.freeze({
+    attachmentReferences:async(request:{context:StoreContext;attachmentId:string})=>{const context=validateContext(request.context);check(validAttachmentReferenceId(request.attachmentId));return validateAttachmentReferences(await rpc('attachment_references',{p_context:context,p_attachment_id:request.attachmentId},4096),context,request.attachmentId);},
     snapshot: (request:SnapshotRequest) => rpc('snapshot',{p_context:request.context,p_selection:request.selection,p_cursor:request.cursor ?? null,p_expected_revision:request.expectedRevision ?? null}),
     commit: (request:CommitRequest) => rpc('commit',{p_context:request.context,p_expected_revision:request.expectedRevision,p_transaction_id:request.transactionId,p_digest:request.digest,p_canonical:request.canonical,p_changes:request.changes}),
   });

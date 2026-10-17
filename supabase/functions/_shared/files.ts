@@ -8,8 +8,8 @@ import type {Entity} from './access.ts';
 import {Authorization} from './authorization.ts';
 import {AuthError} from './auth.ts';
 import type {AuthContext} from './auth.ts';
-import {CloudStore,MissingSelection,StoreError,canonicalJSON,mergeSelection} from './store.ts';
-import type {Selection,StoreProvider} from './store.ts';
+import {CloudStore,MissingSelection,StoreError,canonicalJSON,mergeSelection,validateAttachmentReferences,validAttachmentReferenceId as referenceId} from './store.ts';
+import type {Selection,StoreProvider,AttachmentReferences} from './store.ts';
 import {createTransactions,storeContext} from './transaction.ts';
 import {createStorage,StorageError,checkQuota,byteRange,READ_SIZE,CHUNK_SIZE,MAX_FILE_SIZE} from './storage.ts';
 import type {ChunkManifest,AttachmentManifest} from './storage.ts';
@@ -168,11 +168,39 @@ export function createFiles(config:Config){
     const result=(await execute(initial,s=>{const item=load(s,new Access(s,s.principal),id,true);const exists=s.get('attachment',id);if(item.completed||exists&&!item.migration)return {id,cancelled:false,completed:true};retire(s,item);s.audit('upload.cancelled',{upload_id:id});return {id,cancelled:true,completed:false};})).value;
     if(result.cancelled){try{const gc=await garbageCollect(initial,id);if(!gc.removed)result.cleanup_pending=true;}catch(error){if(error instanceof AuthError||error instanceof APIError&&[401,403].includes(error.status))throw error;result.cleanup_pending=true;}}return result;
   }
+  function referenced(s:CloudStore,id:string):boolean{
+    let found=false;
+    const checkId=(value:unknown)=>{if(value===null)return;require(referenceId(value),'Attachment reference metadata is invalid',503);if(value===id)found=true;};
+    for(const page of s.list('page').concat(s.list('version'))){const blocks=get(page,'blocks',[]);require(Array.isArray(blocks),'Attachment reference metadata is invalid',503);for(const block of blocks){require(is_object(block),'Attachment reference metadata is invalid',503);if(Object.hasOwn(block,'attachment_id'))checkId(block.attachment_id);}}
+    for(const document of s.list('collaboration')){
+      if(!Object.hasOwn(document,'state'))continue;const state=document.state;require(is_object(state),'Attachment reference metadata is invalid',503);
+      const history=Object.hasOwn(state,'history')?state.history:undefined;require(!Object.hasOwn(state,'history')||is_object(history),'Attachment reference metadata is invalid',503);
+      const baseline=history&&Object.hasOwn(history,'baseline')?history.baseline:undefined;require(!history||!Object.hasOwn(history,'baseline')||is_object(baseline),'Attachment reference metadata is invalid',503);
+      for(const source of [state,baseline]){
+        if(source===undefined||!Object.hasOwn(source,'blocks'))continue;require(is_object(source.blocks),'Attachment reference metadata is invalid',503);
+        for(const block of Object.values(source.blocks)){require(is_object(block),'Attachment reference metadata is invalid',503);const fields=Object.hasOwn(block,'fields')?block.fields:undefined;require(!Object.hasOwn(block,'fields')||is_object(fields),'Attachment reference metadata is invalid',503);if(fields&&Object.hasOwn(fields,'attachment_id')){const register=fields.attachment_id;require(is_object(register)&&Object.hasOwn(register,'value'),'Attachment reference metadata is invalid',503);checkId(register.value);}}
+      }
+      if(history&&Object.hasOwn(history,'ops')){require(is_object(history.ops),'Attachment reference metadata is invalid',503);for(const operation of Object.values(history.ops)){require(is_object(operation),'Attachment reference metadata is invalid',503);if(operation.type==='block.set'&&operation.field==='attachment_id'){require(Object.hasOwn(operation,'value'),'Attachment reference metadata is invalid',503);checkId(operation.value);}}}
+    }
+    for(const row of s.list('row')){
+      require(referenceId(row.database_id),'Attachment reference metadata is invalid',503);const database=s.get('database',row.database_id);require(database,'Attachment reference metadata is invalid',503);const fields=database.properties,properties=Object.hasOwn(row,'properties')?row.properties:{};require(Array.isArray(fields)&&fields.every(prop=>is_object(prop)&&referenceId(prop.id)&&typeof prop.type==='string')&&is_object(properties),'Attachment reference metadata is invalid',503);
+      for(const property of fields){if(property.type!=='files')continue;if(!Object.hasOwn(properties,property.id))continue;const value=properties[property.id];if(value===null||value==='')continue;if(typeof value==='string'){checkId(value);continue;}require(Array.isArray(value),'Attachment reference metadata is invalid',503);for(const item of value){const identity=typeof item==='string'?item:is_object(item)&&Object.hasOwn(item,'id')?item.id:undefined;require(referenceId(identity),'Attachment reference metadata is invalid',503);checkId(identity);}}
+    }
+    return found;
+  }
   async function remove(initial:AuthContext,id:string):Promise<Entity>{
+    require(referenceId(id),'Invalid attachment id');
+    let references:AttachmentReferences|undefined;
+    if(config.provider.attachmentReferences){
+      await view(initial,(s,a)=>{new Authorization(a).attachment(id,true);resolve(s,a,id);});
+      const context=storeContext(initial);
+      let value:unknown;try{value=await config.provider.attachmentReferences({context,attachmentId:id});}catch(error){const status=error instanceof StoreError&&[401,403,409,413].includes(error.status)?error.status:503;throw new StoreError(status,status===401||status===403?'AUTH_REQUIRED':status===409?'STORAGE_CONFLICT':status===413?'STORAGE_LIMIT':'STORAGE_UNAVAILABLE','Attachment reference check is unavailable');}
+      references=validateAttachmentReferences(value,context,id);
+    }
     const result=(await execute(initial,s=>{
       const a=new Access(s,s.principal),original=new Authorization(a).attachment(id,true),file=resolve(s,a,id);
-      require(!s.list('page').concat(s.list('version')).some(page=>(get(page,'blocks',[]) as Entity[]).some(block=>get(block,'attachment_id')===id)),'Attachment is still referenced by a document',409);
-      for(const row of s.list('row')){const database=s.get('database',row.database_id)??{},fields=(get(database,'properties',[]) as Entity[]).filter(prop=>prop.type==='files');require(!fields.some(prop=>{const value=get(get(row,'properties',{}),prop.id,[]);return (Array.isArray(value)||typeof value==='string')&&value.includes(id);}),'Attachment is still referenced by a database row',409);}
+      if(references)require(s.revision===references.revision,'Attachment reference source changed; retry the deletion',409);
+      require(!(references?references.referenced:referenced(s,id)),'Attachment is still referenced by a document',409);
       const physical=file.storage_id??id,chunks=clone(file.cloud_chunks??[]);
       // A legacy source remains on disk/inline backups; this only retires cloud
       // references after an explicit authorized DELETE, never during migration.

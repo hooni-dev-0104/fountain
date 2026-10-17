@@ -1,3 +1,4 @@
+import {AdminAuthority} from './admin-roles.ts';
 import {schemaRevision} from './database-verification.ts';
 /** Route guards and response projection. Domain validation still runs after prepare.
  * Port of fountain/authorization.py; unknown routes are left to the router's 404.
@@ -63,9 +64,10 @@ export class Authorization {
       if (hidden.length) put_key(values, key, Array.from(new Set([...(next || []), ...hidden])));
     }
   }
-  member_change(method: string, identity: unknown, body: Entity): void {
+  member_change(method: string, identity: unknown, body: Entity, provisioning = false): void {
     const a = this.access;
-    a.require_admin();
+    if (provisioning) a.require_admin(true); // Existing independent SCIM authority; never a delegated action.
+    else new AdminAuthority(this.store, a).require_action('members.manage');
     const existing = truth(identity) ? this.store.get('member', identity) : null;
     const role = get(body, 'role', get(existing, 'role', 'member'));
     if (!a.owner) require(!['owner', 'admin'].includes(role) && (!existing || !['owner', 'admin'].includes(get(existing, 'role'))), 'Only owners can manage owner or admin membership', 403);
@@ -105,6 +107,10 @@ export class Authorization {
     const parts = path.replace(/^\/+|\/+$/g, '').split('/'), last = parts.at(-1);
     const writing = ['POST', 'PATCH', 'PUT', 'DELETE'].includes(method);
     if(parts.length===4&&parts[0]==='api'&&parts[1]==='pages'&&(['wiki','wiki-owner'].includes(last!)||last==='verify'&&['POST','DELETE'].includes(method))){this.store=pageHeaderReader(this.store);a.store=this.store;}
+    if (parts[0] === 'api' && parts[1] === 'admin') return; // Exact admin router owns action/field/verb guards.
+    if (['/api/audit','/api/analytics'].includes(path) && method === 'GET') {
+      new AdminAuthority(this.store, a).require_action(path === '/api/audit' ? 'audit.read' : 'analytics.read'); return;
+    }
     if (path.startsWith('/scim/v2/')) {
       a.require_admin(true);
       if (parts.length === 4 && parts[2] === 'Users' && writing) {
@@ -114,7 +120,7 @@ export class Authorization {
           if (get(operation, 'path') === 'active') changes.active = get(operation, 'value');
           if (!truth(get(operation, 'path')) && is_object(get(operation, 'value')) && has(operation.value, 'active')) changes.active = operation.value.active;
         }
-        this.member_change(method, parts[3], changes);
+        this.member_change(method, parts[3], changes, true);
       }
       return;
     }
@@ -245,8 +251,17 @@ export class Authorization {
     if (parts.length >= 2 && parts[0] === 'api') {
       const kind = parts[1], identity = parts.length > 2 ? parts[2] : null;
       if (['members', 'groups'].includes(kind)) {
+        const admin = new AdminAuthority(this.store, a);
+        require([2, 3].includes(parts.length), 'Route not found', 404);
+        require((parts.length === 2 ? ['GET', 'POST'] : ['GET', 'PATCH', 'DELETE']).includes(method), 'Unsupported membership method', 405);
         if (kind === 'members' && writing) this.member_change(method, identity, body);
-        else a.require_admin();
+        else if (method === 'GET') admin.require_action(kind === 'members' ? 'members.read' : 'groups.read');
+        else if (kind === 'groups' && method === 'PATCH' && truth(identity) && !a.owner && a.principal.role !== 'admin') {
+          admin.require_action('groups.membership.manage');
+          require(Object.keys(body).length === 1 && has(body, 'members') && Array.isArray(body.members) && body.members.length <= 1000,
+            'Delegated group management only changes existing group membership');
+          this.owned('group', identity);
+        } else a.require_admin();
         return;
       }
       if (kind === 'teamspaces') {
@@ -296,6 +311,17 @@ export class Authorization {
     }
     if (path === '/api/search') for (const key of ['results', 'pages']) if (has(result, key)) result[key] = result[key].filter((page: Entity) => a.can('page', page));
     const parts = path.replace(/^\/+|\/+$/g, '').split('/');
+    if ([2, 3].includes(parts.length) && parts[0] === 'api' && ['members', 'groups'].includes(parts[1])) {
+      const fields = parts[1] === 'members' ? ['id','name','email','role','active','created_at','updated_at'] : ['id','name','members','created_at','updated_at'];
+      const safe = (item: Entity): Entity => {
+        const value = Object.fromEntries(Object.entries(item).filter(([key, child]) => fields.includes(key) && typeof child === 'string'));
+        if (parts[1] === 'members' && has(item, 'active')) value.active = item.active === true;
+        if (parts[1] === 'groups' && has(item, 'members')) value.members = Array.isArray(item.members) ? item.members.filter(Access.verification_id) : [];
+        return value;
+      };
+      if (parts.length === 2 && Array.isArray(result[parts[1]])) result[parts[1]] = result[parts[1]].filter(is_object).map(safe);
+      else if (has(result, 'id')) result = safe(result);
+    }
     if (path === '/api/advanced') {
       for (const [kind, key] of [['teamspace', 'teamspaces'], ['page', 'sites'], ['database', 'automations'], ['database', 'forms']]) {
         if (key === 'teamspaces') result[key] = get(result, key, []).filter((item: Entity) => a.can(kind, item));
@@ -326,7 +352,7 @@ export class Authorization {
       const form = this.store.get('form', parts[2]);
       if (form && (!a.can('database', this.store.get('database', form.database_id)) || get(get(result, 'row', {}), 'access_level') === 0)) return {submitted: true, submission_id: get(get(result, 'submission', {}), 'id')};
     }
-    for (const [key, kind] of [['pages', 'page'], ['databases', 'database']]) for (const item of get(result, key, [])) {
+    for (const [key, kind] of [['pages', 'page'], ['databases', 'database']]) for (const item of Array.isArray(result[key]) ? result[key] : []) {
       if (!is_object(item)) continue; // Import responses contain IDs, not records.
       item.access_level = a.level(kind, item);
       if (!has(item, 'owner_id')) item.owner_id = 'local';
@@ -344,7 +370,7 @@ export class Authorization {
       result.is_wiki=result.is_wiki===true;
     }
     if (path === '/api/pages' && has(result, 'id')) {result.access_level = a.level('page', result);result.is_wiki=result.is_wiki===true;}
-    const pages=path==='/api/workspace'?[]:[...get(result,'pages',[]),...get(result,'results',[]),get(result,'page')];
+    const pages=path==='/api/workspace'?[]:[...(Array.isArray(result.pages)?result.pages:[]),...(Array.isArray(result.results)?result.results:[]),get(result,'page')];
     if(path.startsWith('/api/pages')&&has(result,'id')&&has(result,'title'))pages.push(result);
     for(const page of pages)if(is_object(page)&&has(page,'verification'))page.verification=a.project_verification(page);
     return result;

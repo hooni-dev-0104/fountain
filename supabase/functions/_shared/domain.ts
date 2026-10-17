@@ -1,3 +1,4 @@
+import {AdminAuthority} from './admin-roles.ts';
 import {DatabaseVerification,prepareSchema,checkSchemaRevision} from './database-verification.ts';
 /** Legacy HTTP contract on Supabase transactions; no Python process or disk. */
 import {Access,APIError,clone,get,has,is_object,require,truth} from './access.ts';
@@ -31,6 +32,7 @@ function jsonOption(query:URLSearchParams,key:string):any{
 }
 function coreRoute(r:DomainRequest):DomainResult|null{
   const {method,path,parts,body,query,store:s,access:a,authority,workspace:w}=r;
+  if(parts[0]==='api'&&parts[1]==='admin')return response(new AdminAuthority(s,a).route(method,path,body,query),method==='POST'&&path==='/api/admin/roles'?201:200);
   if(parts.length===4&&parts[0]==='api'&&['pages','databases'].includes(parts[1])&&parts[3]==='permissions'){
     const kind=parts[1]==='pages'?'page':'database',item=a.require_resource(kind,parts[2],method==='PATCH'?4:1);
     require(['GET','PATCH'].includes(method),'Unsupported permissions method',405);
@@ -110,8 +112,8 @@ export function dispatchStaged(s:CloudStore,method:string,path:string,input:Enti
   const body=clone(input),access=new Access(s,s.principal),authority=new Authorization(access,{ownerAccounts:'cloud-commit'}),workspace=new Workspace(s,{access});
   authority.prepare(method,path,body);
   const r={method,path,parts:path.replace(/^\/+|\/+$/g,'').split('/'),body,query,store:s,access,authority,workspace};
-  let routed:DomainResult|null=null;
-  for(const extension of extensions){routed=extension(r);if(routed)break;}
+  let routed:DomainResult|null= r.parts[0]==='api'&&r.parts[1]==='admin'?coreRoute(r):null;
+  if(!routed)for(const extension of extensions){routed=extension(r);if(routed)break;}
   routed??=coreRoute(r);
   if(!routed)throw new APIError(404,'Route not found');
   const writing=['POST','PATCH','PUT','DELETE'].includes(method);

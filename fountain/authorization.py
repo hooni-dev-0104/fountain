@@ -72,9 +72,13 @@ class Authorization:
                 if hidden:
                     values[key] = list(dict.fromkeys([*(values[key] or []), *hidden]))
 
-    def member_change(self, method, identity, body):
+    def member_change(self, method, identity, body, provisioning=False):
         a = self.access
-        a.require_admin()
+        if provisioning:
+            a.require_admin(owner_only=True)  # Independent, trusted SCIM service context.
+        else:
+            from .admin_roles import AdminAuthority
+            AdminAuthority(self.store, a).require_action('members.manage')
         existing = self.store.get('member', identity) if identity else None
         role = body.get('role', (existing or {}).get('role', 'member'))
         if not a.owner:
@@ -124,6 +128,12 @@ class Authorization:
                 or parts[3]=='verify' and method in {'POST','DELETE'})):
             from .wiki import page_header_reader
             self.store=page_header_reader(self.store);a.store=self.store
+        if parts[:2] == ['api', 'admin']:
+            return  # The exact admin router validates actions, fields and verbs.
+        if path in {'/api/audit', '/api/analytics'} and method == 'GET':
+            from .admin_roles import AdminAuthority
+            AdminAuthority(self.store, a).require_action('audit.read' if path == '/api/audit' else 'analytics.read')
+            return
         if path.startswith('/scim/v2/'):
             a.require_admin(owner_only=True)
             if len(parts) == 4 and parts[2] == 'Users' and writing:
@@ -133,7 +143,7 @@ class Authorization:
                     if not isinstance(operation, dict): continue
                     if operation.get('path') == 'active': changes['active'] = operation.get('value')
                     if not operation.get('path') and isinstance(operation.get('value'), dict) and 'active' in operation['value']: changes['active'] = operation['value']['active']
-                self.member_change(method, parts[3], changes)
+                self.member_change(method, parts[3], changes, provisioning=True)
             return
         if path in {'/api/health', '/api/workspace', '/api/search', '/api/search/advanced', '/api/verified-pages', '/api/capabilities', '/api/advanced'} and method == 'GET':
             return
@@ -285,8 +295,21 @@ class Authorization:
             kind = parts[1]
             identity = parts[2] if len(parts) > 2 else None
             if kind in {'members', 'groups'}:
-                if kind == 'members' and writing: self.member_change(method, identity, body)
-                else: a.require_admin()
+                from .admin_roles import AdminAuthority
+                admin = AdminAuthority(self.store, a)
+                require(len(parts) in {2, 3}, 'Route not found', 404)
+                require(method in ({'GET', 'POST'} if len(parts) == 2 else {'GET', 'PATCH', 'DELETE'}), 'Unsupported membership method', 405)
+                if kind == 'members' and writing:
+                    self.member_change(method, identity, body)
+                elif method == 'GET':
+                    admin.require_action('members.read' if kind == 'members' else 'groups.read')
+                elif kind == 'groups' and method == 'PATCH' and identity and not a.owner and a.principal.get('role') != 'admin':
+                    admin.require_action('groups.membership.manage')
+                    require(set(body) == {'members'} and isinstance(body['members'], list) and len(body['members']) <= 1000,
+                            'Delegated group management only changes existing group membership')
+                    self.owned('group', identity)
+                else:
+                    a.require_admin()
                 return
             if kind == 'teamspaces':
                 if identity:
@@ -348,6 +371,20 @@ class Authorization:
             for key in ('results', 'pages'):
                 if key in result: result[key] = [p for p in result[key] if a.can('page', p)]
         parts = path.strip('/').split('/')
+        if len(parts) in {2, 3} and parts[0] == 'api' and parts[1] in {'members', 'groups'}:
+            fields = ({'id', 'name', 'email', 'role', 'active', 'created_at', 'updated_at'} if parts[1] == 'members'
+                      else {'id', 'name', 'members', 'created_at', 'updated_at'})
+            def safe(item):
+                value = {key: child for key, child in item.items() if key in fields and isinstance(child, str)}
+                if parts[1] == 'members' and 'active' in item:
+                    value['active'] = item['active'] is True
+                if parts[1] == 'groups' and 'members' in item:
+                    value['members'] = [identity for identity in item['members'] if a.verification_id(identity)] if isinstance(item['members'], list) else []
+                return value
+            if len(parts) == 2 and isinstance(result.get(parts[1]), list):
+                result[parts[1]] = [safe(item) for item in result[parts[1]] if isinstance(item, dict)]
+            elif 'id' in result:
+                result = safe(result)
         if path == '/api/advanced':
             for kind, key in (('teamspace', 'teamspaces'), ('page', 'sites'), ('database', 'automations'), ('database', 'forms')):
                 if key == 'teamspaces':
@@ -377,7 +414,7 @@ class Authorization:
             if form and (not a.can('database', self.store.get('database', form['database_id'])) or result.get('row', {}).get('access_level') == 0):
                 return {'submitted': True, 'submission_id': result.get('submission', {}).get('id')}
         for key, kind in (('pages', 'page'), ('databases', 'database')):
-            for item in result.get(key, []):
+            for item in result[key] if isinstance(result.get(key), list) else []:
                 if not isinstance(item, dict):
                     continue  # Imports return new database IDs rather than entity records.
                 item['access_level'] = a.level(kind, item)
@@ -396,7 +433,7 @@ class Authorization:
         if path == '/api/pages' and 'id' in result:
             result['access_level'] = a.level('page', result)
             result['is_wiki'] = result.get('is_wiki') is True
-        pages = [] if path == '/api/workspace' else [*result.get('pages', []), *result.get('results', []), result.get('page')]
+        pages = [] if path == '/api/workspace' else [*(result['pages'] if isinstance(result.get('pages'), list) else []), *(result['results'] if isinstance(result.get('results'), list) else []), result.get('page')]
         if path.startswith('/api/pages') and 'id' in result and 'title' in result: pages.append(result)
         for page in pages:
             if isinstance(page, dict) and 'verification' in page: page['verification'] = a.project_verification(page)

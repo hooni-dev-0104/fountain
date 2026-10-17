@@ -1,0 +1,264 @@
+{
+  "verifiedAt": "2026-10-17T04:15:47.869419+00:00",
+  "sourceCommits": [
+    "a13aa3d",
+    "08608bc",
+    "76de925",
+    "a857e7b"
+  ],
+  "scope": "Individual-page content verification controls and safe Python/TypeScript parity; full Notion-equivalent/five-platform operational goal remains active",
+  "sourceSHA256": {
+    "fountain/access.py": "605f73c6bcbb919153892a1159e788ff665bdf7424a06e8dd7f5c5618a7b5aaf",
+    "fountain/advanced.py": "6ee90cb06af36eaac779803da85e4e17565cd99546b93b3b8369dc5d345e5b8b",
+    "fountain/authorization.py": "de39955e62b8a6325d461770d506359946ddd9cc762a21cd1e6d24e259b2ef95",
+    "supabase/functions/_shared/access.ts": "720fa87e20cca2bd734c746679617fafcf4750b477bae9f280f95df8ab2c5f4d",
+    "supabase/functions/_shared/advanced.ts": "3e7106aa2cb98410b47cd289514aabca6bbfb01e487246be7de7cc2d0f35b87f",
+    "supabase/functions/_shared/authorization.ts": "a04afc713d5b1ce3776d60023fc2536dd55502b2ad677eec4cd2a1280ad5a6ed",
+    "static/app.js": "9abd38c85d9901957550d27c5480fe9ed3d8dadbaadf9d99a58c8cffdd5c9f8c",
+    "static/style.css": "0559a0a8ad789dd954c9272cc558c763835067a4107acb4ae7cebbbeca0ceea1",
+    "tests/test_page_verification.py": "e616957225c17cb08de7ab664b4d2b806608e31a7b9918a407537c93632c46a2",
+    "supabase/tests/page-verification.mjs": "24165c533b21811da4862adafd20d1f77b06798f3d0c4d28c20507ca0c3e9f37",
+    "tests/browser-page-verification.mjs": "92fee05f1ba8f0d180da1075ed14c7b0ac3649d9077808fe1ae3925c83b7ec35",
+    "tests/browser-advanced.mjs": "8b73772b16698880c444a74de55457186e9de2ab07a302b19aad86546df2ff18"
+  },
+  "reference": {
+    "url": "https://www.notion.com/help/wikis-and-verified-pages",
+    "usedFor": [
+      "Individual-page verification",
+      "Multiple owners",
+      "Finite or indefinite expiry",
+      "Can-edit access and explicit removal"
+    ],
+    "notReverseEngineeredServerClaim": true
+  },
+  "mainAPI": {
+    "version": 14,
+    "sha256": "7270fe6ee21d04111ea2d846b97f6c83184578071616509151f111e1734d3c93",
+    "retrievedFilesMatched": 39,
+    "changedModules": [
+      "access.ts",
+      "authorization.ts",
+      "advanced.ts"
+    ],
+    "originalNamespaceSetupAndWebOriginsPreserved": true,
+    "ready": false,
+    "schemaMigrationsChanged": false
+  },
+  "actualSupabase": {
+    "actualAuthUsersCreated": 2,
+    "distinctWorkspaceMembersAssigned": 1000,
+    "bulkMembersWereSeparateAuthAccounts": false,
+    "httpChecks": [
+      "actual_initial_owner_bootstrap",
+      "actual_member_account_and_session",
+      "actual_legacy_projection_rejects_malformed_without_laundering_valid_expired",
+      "real_editor_multiple_owners_expiry_and_revision_without_acl_change",
+      "actual_guest_projection_hides_other_owner",
+      "actual_valid_hidden_owner_metadata_remains_verified",
+      "guest_visible_owner_update_preserves_hidden_assignee",
+      "stale_verify_and_remove_rejected_with_source_unchanged",
+      "guest_hidden_inactive_and_missing_owner_generic_denial",
+      "actual_editor_can_remove_verification",
+      "nine_invalid_expiry_cases_rejected_without_page_write",
+      "malformed_owner_and_revision_shapes_rejected",
+      "owner_cannot_assign_inactive_or_unreadable_person",
+      "legacy_single_owner_and_timezone_offset_supported",
+      "actual_read_only_cannot_verify_or_remove",
+      "actual_canonical_get_contains_current_verification",
+      "actual_cloud_100_and_1000_distinct_owners_succeed_without_selection_budget_increase",
+      "actual_sessions_logged_out"
+    ],
+    "legacySourceRecordsChecked": 10,
+    "legacySourceRecordsUnchanged": 10,
+    "pageActualOwnerAndACLUnchangedByVerification": true,
+    "actualCloudNotRPCModel": true
+  },
+  "regressionEvidence": {
+    "isolatedOriginalHEADPython": {
+      "tests": 10,
+      "failures": 5,
+      "errors": 4,
+      "baselineCommit": "da8f3c2a82ab7a13df18721333395934d4e66076",
+      "testFileSHA256": "52bb8443ce492285c6aa6f3c198432a0ad1d137627303330c53618210493816f",
+      "isFinalTestFile": false,
+      "scope": "Initial regression candidate against archived original source; setup failure logs kept separately"
+    },
+    "currentPythonRegressionTests": 62,
+    "currentNodeChecks": 105,
+    "node105IncludesProjectionParityCases": 58,
+    "additionalPythonSQLiteTSWriteParityCases": 40,
+    "CloudStoreSelectionRegression": {
+      "scope": "Real CloudStore/default transaction with paginated in-memory RPC provider; separate from actual Supabase proof",
+      "prior100Owners": "503 SELECTION_LIMIT, no commit",
+      "current100OwnersSnapshotCalls": 4,
+      "current1000OwnersSnapshotCalls": 9,
+      "selectionBudgetRaised": false,
+      "hiddenOwnerPreservationTested": true
+    },
+    "actualSQLiteChrome": [
+      "Multiple owners, actual self default, finite/infinite/remove/reload",
+      "Guest self-only choices and read-only denial",
+      "CAS409 and 403/500 input retention",
+      "Held title save makes no stale POST",
+      "Held mutation and canonical replies cannot alter new route/modal/login",
+      "Persisted malformed source passes actual HTTP projection and remains unchanged",
+      "Valid hidden-owner DTO remains verified",
+      "Expiry without document write",
+      "390px text/touch/no-overflow/footer reachability"
+    ],
+    "strictTypeScriptCheckExecuted": false,
+    "compilerInstallationApprovalPending": true,
+    "noDependenciesAdded": true
+  },
+  "visual": {
+    "score": 94,
+    "verdict": "pass",
+    "category_match": true,
+    "differences": [
+      "공유 창과 달리 담당자 선택과 만료 설정에 맞게 내용 높이를 조정했다."
+    ],
+    "suggestions": [],
+    "reasoning": "14px 글자와 44px 동작 영역이 확보됐고 390px 화면에서 가로 넘침 없이 모든 버튼이 보인다. 기존 앱의 색과 계층을 유지했다."
+  },
+  "desktopVisual": {
+    "score": 92,
+    "verdict": "pass"
+  },
+  "clientBuilds": {
+    "native": {
+      "androidAPK": {
+        "sha256": "a63a68ea0e6ba8003db9acf9beb93bbb17ced8c6ffa79ed71282db456faf5d3d",
+        "nativeDEXMatchesTested021": true,
+        "nativeDEXFiles": 6,
+        "publicAssetsMatch": true
+      },
+      "iosReleaseSimulator": {
+        "sha256": "499910337bc6a26f1ef573a2a351a2c27300e4e2c8e15e815e8df5d489843de9",
+        "testBundleAbsent": true,
+        "publicAssetsMatch": true
+      },
+      "publicSource": {
+        "app.js": "9abd38c85d9901957550d27c5480fe9ed3d8dadbaadf9d99a58c8cffdd5c9f8c",
+        "style.css": "0559a0a8ad789dd954c9272cc558c763835067a4107acb4ae7cebbbeca0ceea1"
+      }
+    },
+    "desktopAndWebUnitTests": 60,
+    "macOSPackagedFunctionalChecks": 14,
+    "macOSPackagedSecurityChecks": 5,
+    "macOSActualAnonymousSupabaseRounds": 2,
+    "iosReleaseSimulator": {
+      "actualReleaseSimulatorLaunch": true,
+      "pid": 6872,
+      "ownedSimulator": "Fountain QA",
+      "appSHA256": "499910337bc6a26f1ef573a2a351a2c27300e4e2c8e15e815e8df5d489843de9",
+      "testBundleAbsent": true,
+      "dataReset": false,
+      "fullAuthenticatedVerificationUIClaim": false,
+      "observedScreen": "Anonymous login entry gate",
+      "credentialsEntered": false,
+      "screenshotSHA256": "255d30e7192b579a2066120df1eb775469532918a7676732a38b086ae2e962aa"
+    },
+    "androidDebugEmulator": {
+      "ownedAVD": "FountainRecoveryQA",
+      "actualLaunch": true,
+      "pid": 3574,
+      "installedAPKHashMatched": true,
+      "apkSHA256": "a63a68ea0e6ba8003db9acf9beb93bbb17ced8c6ffa79ed71282db456faf5d3d",
+      "dataReset": false,
+      "fullAuthenticatedVerificationUIClaim": false,
+      "observedScreen": "Preserved-record recovery gate; native account connection form opened",
+      "connectionFormRendered": true,
+      "credentialsEntered": false,
+      "sourceReset": false,
+      "screenshotSHA256": "e80a23131bc346eb44bbd1420f18d58d3a64d3d4822a78712f381bbdf2071830"
+    },
+    "nativeAuthenticatedNewVerificationUIExecuted": false,
+    "WindowsOSRuntimeVerified": false,
+    "physicalDevicesVerified": false,
+    "generatedNativeAssetsIgnoredByGit": true,
+    "desktopActiveHumanClientAssetsCachedAndPreserved": true
+  },
+  "cleanup": {
+    "qaSessionsAndRefreshTokensRevokedBeforeAuthDeletion": true,
+    "ownedAuthUsersRemaining": 0,
+    "ownedAuthSessionsRemaining": 0,
+    "ownedRefreshTokensRemaining": 0,
+    "scopedTables": 29,
+    "qaRowsRemaining": 0,
+    "storageObjects": 0,
+    "cronJobs": 0,
+    "retiredVerifierVersion": 61,
+    "oldNonceRoutes": [
+      {
+        "path": "wire",
+        "oldNonceStatus": 404
+      },
+      {
+        "path": "cleanup-check",
+        "oldNonceStatus": 404
+      },
+      {
+        "path": "cleanup",
+        "oldNonceStatus": 404
+      }
+    ],
+    "originalSixBusinessSessionFingerprintsUnchanged": true,
+    "originalSQLiteAnd8787Preserved": true
+  },
+  "artifacts": {
+    "sourceCommit": "a857e7b",
+    "sourceAppSHA256": "9abd38c85d9901957550d27c5480fe9ed3d8dadbaadf9d99a58c8cffdd5c9f8c",
+    "sourceStyleSHA256": "0559a0a8ad789dd954c9272cc558c763835067a4107acb4ae7cebbbeca0ceea1",
+    "artifacts": [
+      {
+        "file": "Fountain-macOS-arm64.zip",
+        "bytes": 127607868,
+        "sha256": "d7004fddb9ac89bb26f0d8d4cf7fb93d98d7424218b62c2c96348eb3335231f7",
+        "crc": "passed",
+        "entries": 1453,
+        "currentPrivateValueMatches": 0
+      },
+      {
+        "file": "Fountain-Windows-x64.zip",
+        "bytes": 158675056,
+        "sha256": "0dae37082488c7731055ffb80129fb6706860bddcc17d3ce34836ac70351b2eb",
+        "crc": "passed",
+        "entries": 183,
+        "currentPrivateValueMatches": 0
+      },
+      {
+        "file": "Fountain-iOS-Simulator-Release.zip",
+        "bytes": 3123213,
+        "sha256": "e092aee98ef3cb07c12f8af1516175f8b1733544132f9d8bd4d5aff27c5b97c9",
+        "crc": "passed",
+        "entries": 121,
+        "currentPrivateValueMatches": 0
+      },
+      {
+        "file": "Fountain-Android-debug.apk",
+        "bytes": 4773858,
+        "sha256": "a63a68ea0e6ba8003db9acf9beb93bbb17ced8c6ffa79ed71282db456faf5d3d",
+        "crc": "passed",
+        "entries": 461,
+        "currentPrivateValueMatches": 0
+      }
+    ]
+  },
+  "newFeatureRemaining": [
+    "Wiki and database verification properties",
+    "Verification expiry inbox/email delivery",
+    "Actual original owner/family onboarding and five-platform authenticated verification",
+    "Public free-host eligibility and original operational cutover",
+    "Static TypeScript compiler check"
+  ],
+  "gitPushPerformed": false,
+  "actualSQLiteChromeProtocolFaults": "403/500 and delayed responses use browser protocol fault injection on disposable SQLite HTTP; not live provider outages",
+  "ownerSetupRenewal": {
+    "previousCodeExpiredUnused": true,
+    "newCodeStoredOnlyInIgnoredOwnerFile": true,
+    "ttlSeconds": 86400,
+    "expiresAt": "2026-10-18T04:18:26.678784+00:00",
+    "originalOwnerMapped": false,
+    "originalAccountCreatedByAgent": false
+  }
+}

@@ -4,7 +4,7 @@
 
 ## 현재 범위와 완료 기준
 
-2026-10-17 확인 시점의 Supabase 프로젝트는 `ehnovtfadpkwtubmwltl`이다. `fountain-api` version 19에 문서·DB·통합 검색·공동 편집·동기화·첨부·presence/SSE·AI·계정·백업·연동 권한 관리·SCIM bearer handler가 연결됐다. 서비스 객체는 actor를 공유하지 않고 사람의 요청은 각 쿠키, SCIM은 별도 위임 토큰으로 인증한다. 운영 원본은 entities 153개·meta 6개, 실사용 Auth 사용자·identity mapping은 0개다. `fountain-files`는 비공개 bucket이며 QA 정리 후 객체는 0개다. `/health`의 `ready:false`는 전체 전환이 아직 끝나지 않았다는 뜻이다. API 13에서는 배포 설정의 `setupEnabled`만 켰으며 39개 배포 파일을 다시 대조했다. 원본 `local` 소유자용 연결은 해시만 저장한 유효기간 있는 일회용 코드와 사용자의 명시적 앱 입력이 필요하다. 계정 생성·소유자 연결을 자동 수행하지 않았다. [연결 준비 검증](research/owner-onboarding-preparation.json).
+2026-10-17 확인 시점의 Supabase 프로젝트는 `ehnovtfadpkwtubmwltl`이다. `fountain-api` version 20에 문서·DB·통합 검색·공동 편집·동기화·첨부·presence/SSE·AI·계정·백업·연동 권한 관리·SCIM bearer handler가 연결됐다. 서비스 객체는 actor를 공유하지 않고 사람의 요청은 각 쿠키, SCIM은 별도 위임 토큰으로 인증한다. 운영 원본은 entities 153개·meta 6개, 실사용 Auth 사용자·identity mapping은 0개다. `fountain-files`는 비공개 bucket이며 QA 정리 후 객체는 0개다. `/health`의 `ready:false`는 전체 전환이 아직 끝나지 않았다는 뜻이다. API 13에서는 배포 설정의 `setupEnabled`만 켰으며 39개 배포 파일을 다시 대조했다. 원본 `local` 소유자용 연결은 해시만 저장한 유효기간 있는 일회용 코드와 사용자의 명시적 앱 입력이 필요하다. 계정 생성·소유자 연결을 자동 수행하지 않았다. [연결 준비 검증](research/owner-onboarding-preparation.json).
 
 API 14에서는 페이지 검증의 복수 담당자·활성/열람 자격·만료값·문서 revision 검사를 맞췄다. 격리된 실제 Supabase 계정 2개와 별도의 멤버 기록으로 담당자 1,000명 처리, 권한·비공개 응답·충돌·원본 보존을 확인하고 검증 자료를 정리했다. 새 권한이나 DB 스키마를 추가하지 않았다. [페이지 검증 안내](PAGE_VERIFICATION.md) · [실행 증거](research/page-verification-evidence.json).
 
@@ -68,7 +68,7 @@ SCIM bearer 요청은 사람의 쿠키와 분리해 현재 활성·미만료 gra
 
 API 9 검증 당시 `deployment.setupEnabled`는 false였다. 현재는 위 초기 소유자 연결 준비를 위해 true이며 web origin과 실사용 계정·공개 HTTPS 호스트 연결은 아직 완료되지 않았다. 정적 웹 배포물은 16개 allowlist 파일이며 모바일에는 19개 public asset을 복사해 두 플랫폼의 SHA 38개를 비교했다. localhost:8787은 기존 동작 보존용 불변 Python 미리보기이며 새 클라우드 운영 전환이 아니다. 외부 IdP와 SAML·전체 다섯 플랫폼 편집 전파 검증은 남아 있다. 원본 운영 workspace의 예약 실행·파일 정리는 아직 등록하지 않았다. 연결된 Vercel MCP는 실제 팀 조회에서 플랜 정보를 반환하지 않아 무료 정적 웹 배포의 요금제를 확인하지 못했으며, 이는 다른 백엔드 구현을 막는 추가 승인 대기가 아니다.
 
-[라우트 인벤토리](../supabase/tests/route-inventory.json)는 현재 Python 라우트의 **method/path 217개 행**을 기록한다. HEAD와 기존 suffix alias도 별도 행이다. 각 행에는 인증 경계, 익명 접근 여부, handler/domain/module, 실제 Python AST 분기의 근거와 cloud 상태가 있다. `public`은 익명 인증 경계를 뜻하며 단순히 게시된 콘텐츠라는 뜻이 아니다.
+[라우트 인벤토리](../supabase/tests/route-inventory.json)는 현재 Python 라우트의 **method/path 219개 행**을 기록한다. HEAD와 기존 suffix alias도 별도 행이다. 각 행에는 인증 경계, 익명 접근 여부, handler/domain/module, 실제 Python AST 분기의 근거와 cloud 상태가 있다. `public`은 익명 인증 경계를 뜻하며 단순히 게시된 콘텐츠라는 뜻이 아니다.
 
 - `pending`: 이 인벤토리의 기본 `createBackend` fixture에서 업무 handler가 연결되지 않음. 현재 운영 배포의 기능 상태는 위 실제 검증 기록을 따른다.
 - `staged-auth`: 세션 경계 구현 단계. 실제 사용자 연결과 다기기 흐름 검증이 남음.
@@ -81,6 +81,8 @@ API 9 검증 당시 `deployment.setupEnabled`는 false였다. 현재는 위 초�
 기본 위키는 API 18과 migration 27개에 반영됐다. 전환·해제·세 보기·담당자·검증을 구현하고 실제 Supabase의 큰 문서/깊은 계층/두 계정 권한과 400페이지 가져오기를 검사했다. 위키·검증 및 상속 ACL은 본문 없는 내부 헤더를 쓰고 실제 변경 대상의 원문을 보존한다. 검증용 계정·행·세션은 정리했으며 verifier 74는 이전 nonce에도 404다. 원본 153개 entity·6개 meta와 기존 미리보기는 보존했다. [위키 안내](WIKI.md) · [실행 증거와 남은 범위](research/wiki-evidence.json).
 
 DB의 담당자·검증 속성은 API 19의 45개 파일과 migration 28개에 반영됐다. 담당자 기본값·인원 제한·검증/해제·행 및 속성 설정 CAS·오프라인 담당자 편집을 구현했다. 실제 두 계정·세 세션의 10개 검사, worker 4의 예약 성공/위조 롤백 두 작업과 각각의 pg_net HTTP 200·commit receipt를 확인했다. 약 85.4MB의 행 데이터에서도 만료 알림함은 원본 행·DB·페이지 본문을 읽지 않았고 읽음·보관 변경은 원문을 보존했다. maintenance 4는 변경된 공통 모듈을 포함하도록 갱신했으며 새로운 정리 업무 주기를 실행한 것은 아니다. 예약·정리 함수의 익명 거절 경계 총 16개를 확인했다. 테스트 계정·세션·29개 테이블의 자료와 Cron을 정리했고 verifier 77은 이전 nonce에도 404다. Python 실제 PostgreSQL 579개와 Node 62개 스크립트, 별도 접근 대조 1,651건을 통과했다. 원본과 기존 미리보기는 보존됐으며 실사용 소유자 연결·무료 공개 호스트·모든 플랫폼 가족 여정은 남아 있다. [DB 담당자·검증 안내](DATABASE_VERIFICATION.md) · [증거와 제한](research/database-verification-evidence.json).
+
+검증된 페이지 관리는 API 20에 반영됐으며 46개 파일을 정확히 대조했다. 기존 헤더·DB 검증 메타데이터로 일반/위키 페이지와 DB 행을 통합하고 검색·담당자·팀스페이스·상태·종류·페이지 처리를 제공한다. 읽기 권한과 공개 담당자를 필터·개수보다 먼저 적용하고 이동 뒤 현재 상위 팀스페이스를 계산한다. 실제 Supabase의 담당자 1,000명과 약 163.5MB 원본, 실제 Chrome→한시적 HTTPS presentation proxy→Supabase 계정 흐름에서 본문 없는 목록·쓰기 0건·검색·기존 편집기·읽기 전용·로그아웃을 검사했다. 대용량 검사를 마친 뒤 큰 시험 자료를 제거하고 화면을 검사했으므로 전체 대용량 작업공간 초기화 증거는 아니다. SQL 변경은 없으며 migration 28개, worker·maintenance 4를 유지한다. Python 실제 PostgreSQL 588개·Node 63개 스크립트·별도 접근 대조 1,651건을 통과했다. 시험 세션은 제공자의 실제 로그아웃을 끝낸 뒤 계정 2개·29개 테이블 자료를 정리했고 verifier 80은 이전 nonce의 4개 경로에도 404다. [목록 안내](VERIFIED_PAGES.md) · [증거와 제한](research/verified-pages-evidence.json).
 
 ## 구성
 

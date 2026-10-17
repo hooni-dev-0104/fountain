@@ -65,7 +65,7 @@ window.addEventListener('fountain-native-outbox-pause',event=>{
   const paused={...detail,navigation,channel:state.channel,loaded:state.loaded,profile:state.offlineProfile,saveScheduled:!!state.saveTimer,titleScheduled:!!state.titleTimer,route:state.route,id:navigation?.id||(state.route==='page'?state.page?.id:state.database?.id),dom:[],input:null,forms:unsubmittedNativeForms(),resourceKind:navigation?.route==='database'?'database':state.route==='page'?'page':state.database?.id?'database':null,focus:document.activeElement,selection:state.route==='page'?selectedTextPosition():null};
   try{if(state.loaded)paused.input=authenticationInput(state.offlineProfile);}catch{ /* Keep the live DOM when it cannot yet be represented as a bounded draft. */ }
   if(previous?.channel)previous.channel.resumeNetwork?.(previous.owner+':'+previous.token);
-  state.nativeOutboxPause=paused;if(state.verifiedPages)closeModal();clearVerifiedPages();clearDatabaseVerification();clearDatabasePropertyView();clearInbox();clearWikiMutation();clearWikiPage();clearTimeout(state.saveTimer);clearTimeout(state.titleTimer);
+  state.nativeOutboxPause=paused;if(state.verifiedPages||state.adminConsole)closeModal();clearVerifiedPages();clearAdminConsole();clearDatabaseVerification();clearDatabasePropertyView();clearInbox();clearWikiMutation();clearWikiPage();clearTimeout(state.saveTimer);clearTimeout(state.titleTimer);
   state.channel?.pauseNetwork?.(detail.owner+':'+detail.token);
   state.presenceManager?.pause({leave:false});
   for(const node of [$('#main'),$('#sidebar'),$('#topbar'),$('#overlay-root')].filter(Boolean)){paused.dom.push({node,inert:previous?.dom.find(item=>item.node===node)?.inert??node.inert});node.inert=true;}
@@ -251,7 +251,7 @@ function pruneAdministrativeControls() {
   });
 }
 // Durable entity edits share the current login binding with document drafts.
-const serverOnlyActions=new Set(['new-database','teamspace','history','share','db-share','lock-page','delete-page','verify-page','move-page','duplicate-page','copy-blocks','new-property','task-settings','duplicate-row','restore-version','restore-page','trash','settings','ai','new-teamspace','wiki-toggle','confirm-wiki-toggle','wiki-owner','row-verification','owner-settings','verified-pages']);
+const serverOnlyActions=new Set(['new-database','teamspace','history','share','db-share','lock-page','delete-page','verify-page','move-page','duplicate-page','copy-blocks','new-property','task-settings','duplicate-row','restore-version','restore-page','trash','settings','ai','new-teamspace','wiki-toggle','confirm-wiki-toggle','wiki-owner','row-verification','owner-settings','verified-pages','admin-settings']);
 const activeMutationStatuses=new Set(['pending','deferred','applied']);
 function closeMutations() {
   if(state.recoveryImport)closeModal();
@@ -701,6 +701,7 @@ async function refreshWorkspace() {
   if(binding!==state.session?.cache_binding||member!==state.session?.member?.id||workspace.current_member_id&&workspace.current_member_id!==member||workspace.session_binding&&workspace.session_binding!==binding){const error=new Error('로그인 정보를 다시 확인합니다.');error.code='SESSION_CHANGED';throw error;}
   const controller=state.mutations,overlay=controller?await controller.workspace(workspace):workspace;
   if(binding!==state.session?.cache_binding||controller!==state.mutations){const error=new Error('로그인 계정이 변경되었습니다.');error.code='STALE_REQUEST';throw error;}
+  if(state.adminConsole&&state.serverWorkspace?.access_revision!==workspace.access_revision)closeModal();
   state.serverWorkspace=workspace;state.workspace=overlay;
   if(state.session?.authenticated&&window.FountainOffline)await cacheProfile().catch(error=>{if(error.name!=='SecurityError')toast(error.message);});
   renderSidebar();
@@ -722,7 +723,7 @@ function renderTopbar(title='홈',emoji='') {
 async function navigate(route,id) {
   if(state.nativeOutboxPause)return;
   if(state.nativeRecoveryPaused)return;
-  settingsOpenSequence++;if(!state.verifiedPages?.opening)clearVerifiedPages();
+  settingsOpenSequence++;if(!state.verifiedPages?.opening)clearVerifiedPages();clearAdminConsole();
   state.uploadTargetPageId=route==='page'?id:null;state.uploadManager?.pauseAll('다른 문서를 여는 동안 파일 전송을 일시 중지했습니다.');
   const binding=state.session?.cache_binding,generation=state.bootGeneration;
   const navigation={route,id,binding,generation,opening:false};state.nativeNavigation=navigation;
@@ -1433,7 +1434,7 @@ async function reloadDatabase() {
   applyDatabaseControls();
 }
 function openModal(title,content,cls='') {
-  settingsOpenSequence++;clearVerifiedPages();clearSearch();searchNavigation++;
+  settingsOpenSequence++;clearVerifiedPages();clearAdminConsole();clearSearch();searchNavigation++;
   clearDatabaseVerification();clearDatabasePropertyView();clearWikiMutation();clearInbox();clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;state.verificationView=null;closeSlash();
   $('#overlay-root').innerHTML=`<div class="modal-backdrop"><section class="modal ${cls}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="modal-head"><h2>${esc(title)}</h2><button class="modal-close" data-action="close-modal" aria-label="닫기">×</button></header><div class="modal-body">${content}</div></section></div>`;
   if(state.route==='page'&&resourceLevel(state.page)<4)$$('[data-action="delete-page"],[data-action="move-page"]',$('.modal')).forEach(el=>el.remove());
@@ -1443,7 +1444,7 @@ function openModal(title,content,cls='') {
   requestAnimationFrame(()=>{if(body?.isConnected)$('input:not([type=checkbox]),textarea,select,button',body)?.focus();});
 }
 function closeModal() {
-  settingsOpenSequence++;clearVerifiedPages();clearSearch();searchNavigation++;
+  settingsOpenSequence++;clearVerifiedPages();clearAdminConsole();clearSearch();searchNavigation++;
   clearDatabaseVerification();clearDatabasePropertyView();clearWikiMutation();clearInbox();clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;state.verificationView=null;$('#overlay-root').innerHTML='';
   closeSlash();
 }
@@ -1887,12 +1888,257 @@ async function openVerifiedPagesItem(index,edit=false){
   if(pageEditable()&&wikiVerificationAllowed())await verificationModal();else toast('현재 권한으로 문서의 검증 상태를 확인할 수 있습니다.');
 }
 
+// Delegated administration stays online and outside document/offline caches.
+let adminSettingsRequest=null;
+
+const adminActionLabels={'audit.read':'감사 로그 보기','analytics.read':'워크스페이스 분석 보기','members.read':'멤버 목록 보기','members.manage':'일반 멤버 관리','groups.read':'그룹 목록 보기','groups.membership.manage':'기존 그룹의 멤버 관리'};
+
+function clearAdminConsole(){adminSettingsRequest?.abort();
+  adminSettingsRequest=null;
+  const view=state.adminConsole;
+  state.adminConsole=null;
+  if(!view)return;
+  view.closed=true;
+  view.sequence++;
+  view.request?.abort();
+  view.watch?.abort();
+  clearTimeout(view.timer);
+  view.data=null;
+  view.overview=null;
+  view.editor=null;
+  view.capabilities=null;
+  if(view.content?.isConnected)view.content.replaceChildren();
+  }
+function adminConsoleCurrent(view){return !!view&&!view.closed&&state.adminConsole===view&&verifiedPagesIdentityCurrent(view.scope)&&view.content?.isConnected&&view.modal?.isConnected&&$('.modal')===view.modal&&state.nativeNavigation===view.navigation;
+  }
+function adminPermissions(value){if(!value||!Array.isArray(value.actions)||!value.actions.every(action=>Object.hasOwn(adminActionLabels,action))||typeof value.can_manage_roles!=='boolean')throw Error('관리 권한 응답을 확인할 수 없습니다.');
+  return {actions:[...new Set(value.actions)].sort(),can_manage_roles:value.can_manage_roles};
+  }
+function adminCan(view,action){return !!view.capabilities?.actions.includes(action);
+  }
+function adminTabs(view){return [['roles','관리 역할',view.capabilities?.can_manage_roles],['audit','감사 로그',adminCan(view,'audit.read')],['analytics','분석',adminCan(view,'analytics.read')],['members','멤버',adminCan(view,'members.read')],['groups','그룹 멤버',adminCan(view,'groups.read')]].filter(([, ,allowed])=>allowed);
+  }
+async function adminCheck(view,signal){const check=view.permissionSequence=(view.permissionSequence||0)+1,current=()=>adminConsoleCurrent(view)&&check===view.permissionSequence;
+  let permissions;
+  try{permissions=adminPermissions(await api('/admin/self',undefined,'GET',{signal,current}));}
+  catch(error){if(!current()){const stale=new Error('지난 관리 권한 확인 요청입니다.');stale.code='STALE_REQUEST';throw stale;}
+  view.data=null;view.overview=null;view.editor=null;view.capabilities=null;view.notice=null;
+  throw error;}
+  if(!current())return false;
+  const changed=view.capabilities&&JSON.stringify(view.capabilities)!==JSON.stringify(permissions);
+  view.capabilities=permissions;
+  if(changed){view.request?.abort();
+  view.request=null;
+  view.sequence++;
+  view.data=null;
+  view.overview=null;
+  view.editor=null;
+  view.error='관리 권한이 변경되었습니다. 현재 권한으로 새로고침해 주세요.';
+  view.busy=false;
+  if(!adminTabs(view).some(([id])=>id===view.tab))view.tab=adminTabs(view)[0]?.[0]||null;
+  renderAdminConsole(view);
+  }return !changed;
+  }
+function watchAdminConsole(view){clearTimeout(view.timer);
+  if(!adminConsoleCurrent(view))return;
+  view.timer=setTimeout(async()=>{if(!adminConsoleCurrent(view))return;
+  if(view.busy){watchAdminConsole(view);return;}
+  view.watch=new AbortController();
+  try{await adminCheck(view,view.watch.signal);
+  }catch(error){if(adminConsoleCurrent(view)&&error.name!=='AbortError'&&error.code!=='STALE_REQUEST'){view.request?.abort();
+  view.request=null;
+  view.sequence++;
+  view.data=null;
+  view.overview=null;
+  view.editor=null;
+  view.capabilities=null;
+  view.notice=null;
+  view.busy=false;
+  view.error=error.message;
+  renderAdminConsole(view);
+  }}finally{view.watch=null;
+  watchAdminConsole(view);
+  }},5000);
+  }
+function adminRoleOverview(value){if(!value||!/^[a-f0-9]{64}$/.test(value.revision)||!['catalog','roles','assignments','eligible_members'].every(key=>Array.isArray(value[key]))||!value.roles.every(role=>typeof role.id==='string'&&typeof role.name==='string'&&Array.isArray(role.actions)&&role.actions.every(action=>Object.hasOwn(adminActionLabels,action)))||!value.assignments.every(item=>typeof item.member_id==='string'&&Array.isArray(item.role_ids)))throw Error('관리 역할 목록 응답을 확인할 수 없습니다.');
+  return value;
+  }
+async function loadAdminConsole(view=state.adminConsole){if(!adminConsoleCurrent(view)||view.busy)return;
+  view.request?.abort();
+  const request=new AbortController();
+  view.request=request;
+  const sequence=++view.sequence,current=()=>adminConsoleCurrent(view)&&sequence===view.sequence;
+  view.busy=true;
+  view.error=null;
+  view.data=null;
+  view.overview=null;
+  view.editor=null;
+  renderAdminConsole(view);
+  try{if(!await adminCheck(view,request.signal)||!current())return;
+  if(!view.tab)view.tab=adminTabs(view)[0]?.[0]||null;
+  if(!adminTabs(view).some(([id])=>id===view.tab)){view.error='현재 계정에 위임된 관리 권한이 없습니다.';
+  return;
+  }const path={roles:'/admin/roles',audit:'/audit',analytics:'/analytics',members:'/members',groups:'/groups'}[view.tab];
+  const data=await api(path,undefined,'GET',{signal:request.signal,current});
+  if(!current()||!await adminCheck(view,request.signal)||!current())return;
+  if(view.tab==='roles')view.overview=adminRoleOverview(data);
+  else if(view.tab==='groups'&&adminCan(view,'groups.membership.manage')&&adminCan(view,'members.read')){const people=await api('/members',undefined,'GET',{signal:request.signal,current});
+  if(!current()||!await adminCheck(view,request.signal)||!current())return;
+  view.data={...data,members:normalizeList(people.members)};
+  }else view.data=data;
+  }catch(error){if(current()&&error.name!=='AbortError'){view.data=null;
+  view.overview=null;
+  view.error=error.message;
+  }}finally{if(current()){view.busy=false;
+  view.request=null;
+  renderAdminConsole(view);
+  watchAdminConsole(view);
+  }}}
+async function adminWrite(view,path,body,method){if(!adminConsoleCurrent(view)||view.busy)return;
+  const request=new AbortController();
+  view.request=request;
+  const sequence=++view.sequence,current=()=>adminConsoleCurrent(view)&&sequence===view.sequence;
+  view.busy=true;
+  view.error=null;
+  view.notice=null;
+  renderAdminConsole(view);
+  try{if(!await adminCheck(view,request.signal)||!current())return;
+  const result=await api(path,body,method,{signal:request.signal,current});
+  if(!current()||!await adminCheck(view,request.signal)||!current())return;
+  if(view.tab==='roles'){view.overview=adminRoleOverview(result);
+  view.editor=null;
+  view.notice='관리 역할을 저장했습니다.';
+  }else{view.data=null;
+  view.notice='변경을 저장했습니다.';
+  }view.busy=false;
+  view.request=null;
+  if(view.tab!=='roles'){await loadAdminConsole(view);
+  return;
+  }}catch(error){if(current()&&error.name!=='AbortError'){view.error=error.message;
+  if(error.status===409){view.overview=null;
+  view.editor=null;
+  view.error='다른 관리 변경이 먼저 저장되었습니다. 새로고침한 뒤 다시 편집해 주세요.';
+  }if([401,403].includes(error.status)){view.overview=null;
+  view.data=null;
+  view.editor=null;
+  view.capabilities=null;
+  }}}finally{if(current()){view.busy=false;
+  view.request=null;
+  renderAdminConsole(view);
+  watchAdminConsole(view);
+  }}}
+function renderAdminConsole(view){if(!adminConsoleCurrent(view))return;
+  const tabs=adminTabs(view),busy=view.busy?'disabled':'',overview=view.overview;
+  view.content.innerHTML=`<section class="admin-console"><h3>${view.roleTab?'관리 역할':'위임된 관리 설정'}</h3><p>관리 작업은 서버에 연결된 상태에서만 가능합니다. 관리 역할을 맡아도 일반 문서의 공유 권한은 그대로 적용됩니다.</p><nav class="admin-console-tabs" aria-label="위임된 관리 영역">${(view.roleTab?tabs.filter(([id])=>id==='roles'):tabs).map(([id,label])=>`<button type="button" class="outline-btn" data-admin-tab="${id}" aria-pressed="${view.tab===id}" ${busy}>${label}</button>`).join('')}</nav><button type="button" class="outline-btn" data-admin-refresh ${busy}>현재 권한과 목록 새로고침</button>${view.busy?'<p role="status">서버에서 확인하고 있습니다…</p>':''}${view.notice?`<p role="status">${esc(view.notice)}</p>`:''}${view.error?`<p role="alert">${esc(view.error)}</p>`:''}<div id="admin-console-body"></div></section>`;
+  const body=$('#admin-console-body',view.content);
+  if(view.tab==='roles'&&overview){body.innerHTML=`<div class="info-box">역할은 일반 멤버와 멤버 관리자에게 개별적으로 여러 개 지정할 수 있습니다. 읽기와 관리는 각각 명시적으로 선택합니다. 역할 삭제 시 해당 역할의 지정도 해제됩니다.</div><button type="button" class="outline-btn" data-admin-new ${busy}>관리 역할 만들기</button><div class="settings-list">${overview.roles.map(role=>`<article class="settings-item"><div><strong>${esc(role.name)}</strong><small>${esc(role.description||'')}<br>${role.actions.map(action=>esc(adminActionLabels[action])).join(' · ')}</small></div><div><button type="button" data-admin-edit="${esc(role.id)}" ${busy}>편집</button><button type="button" data-admin-delete="${esc(role.id)}" ${busy}>${view.deleteId===role.id?'역할 삭제 확인':'삭제'}</button></div></article>`).join('')||'<p>만든 관리 역할이 없습니다.</p>'}</div><div id="admin-role-editor"></div><h4>멤버별 역할 지정</h4><div class="settings-list">${overview.eligible_members.map(member=>{const assigned=overview.assignments.find(item=>item.member_id===member.id)?.role_ids||[];
+  return `<form class="admin-assignment-form form-grid" data-member-id="${esc(member.id)}"><fieldset ${busy}><legend>${esc(member.name||member.email||member.id)}</legend><small>${esc(member.email||'')} · ${esc(member.role)}</small>${overview.roles.map(role=>`<label class="checkbox-label"><input type="checkbox" name="role_ids" value="${esc(role.id)}" ${assigned.includes(role.id)?'checked':''}>${esc(role.name)}</label>`).join('')}<button class="solid-btn" ${busy}>역할 지정 저장</button><button type="button" class="outline-btn" data-admin-revoke="${esc(member.id)}" ${busy}>모든 관리 역할 해제</button></fieldset></form>`;
+  }).join('')||'<p>역할을 지정할 수 있는 멤버가 없습니다.</p>'}</div>`;
+  if(view.editor){const role=view.editor;
+  $('#admin-role-editor',body).innerHTML=`<form id="admin-role-form" class="form-grid"><fieldset ${busy}><legend>${role.id?'관리 역할 편집':'새 관리 역할'}</legend><label>역할 이름<input name="name" maxlength="100" required value="${esc(role.name||'')}"></label><label>설명<textarea name="description" maxlength="1000">${esc(role.description||'')}</textarea></label><p>관리 권한에는 해당 목록 읽기 권한도 필요합니다. 아래에서 두 권한을 함께 선택해 주세요.</p>${Object.entries(adminActionLabels).map(([id,label])=>`<label class="checkbox-label"><input type="checkbox" name="actions" value="${id}" ${role.actions.includes(id)?'checked':''}>${label}</label>`).join('')}<p data-admin-pair-error role="alert"></p><button class="solid-btn" ${busy}>역할 저장</button><button type="button" class="outline-btn" data-admin-cancel ${busy}>편집 취소</button></fieldset></form>`;
+  }}
+else if(view.data&&view.tab==='members'){const members=normalizeList(view.data.members);
+  body.innerHTML=`<h4>멤버 목록</h4>${adminCan(view,'members.manage')?'<form id="admin-member-new" class="form-grid"><label>이름<input name="name" maxlength="200" required></label><label>이메일<input name="email" type="email" required></label><p>새 멤버는 일반 멤버로 추가됩니다. 로그인 연결은 소유자가 관리합니다.</p><button class="solid-btn">일반 멤버 추가</button></form>':''}<div class="settings-list">${members.map(member=>`<article class="settings-item"><div><strong>${esc(member.name)}</strong><small>${esc(member.email||'')} · ${esc(member.role)} · ${member.active===false?'비활성':'활성'}</small></div>${adminCan(view,'members.manage')&&!['owner','admin'].includes(member.role)?`<button type="button" data-admin-member="${esc(member.id)}" ${busy}>멤버 관리</button>`:''}</article>`).join('')}</div><div id="admin-member-editor"></div>`;
+  if(view.editor){const member=view.editor;
+  $('#admin-member-editor',body).innerHTML=`<form id="admin-member-form" class="form-grid"><fieldset ${busy}><legend>일반 멤버 관리</legend><label>이름<input name="name" required value="${esc(member.name)}"></label><label>이메일<input name="email" type="email" value="${esc(member.email||'')}"></label><label>역할<select name="role"><option value="member" ${member.role==='member'?'selected':''}>일반 멤버</option><option value="guest" ${member.role==='guest'?'selected':''}>게스트</option></select></label><label class="checkbox-label"><input type="checkbox" name="active" ${member.active!==false?'checked':''}>활성 멤버</label><button class="solid-btn">멤버 저장</button><button type="button" class="outline-btn" data-admin-member-delete="${esc(member.id)}">${view.deleteId===member.id?'멤버 삭제 확인':'멤버 삭제'}</button></fieldset></form>`;
+  }}
+else if(view.data&&view.tab==='groups'){body.innerHTML=`<h4>기존 그룹</h4><p>이 화면에서는 기존 그룹의 멤버만 변경할 수 있습니다.</p><div class="settings-list">${normalizeList(view.data.groups).map(group=>`<article class="settings-item"><div><strong>${esc(group.name)}</strong><small>멤버 ${normalizeList(group.members).length}명</small></div>${adminCan(view,'groups.membership.manage')?`<button type="button" data-admin-group="${esc(group.id)}" ${busy}>그룹 멤버 편집</button>`:`<small>${normalizeList(group.members).map(id=>esc(id)).join(', ')}</small>`}</article>`).join('')}</div><div id="admin-group-editor"></div>`;
+  if(view.editor){const group=view.editor;
+  $('#admin-group-editor',body).innerHTML=`<form id="admin-group-form" class="form-grid"><fieldset ${busy}><legend>${esc(group.name)}의 멤버</legend>${adminCan(view,'members.read')?normalizeList(view.data.members).map(member=>`<label class="checkbox-label"><input type="checkbox" name="members" value="${esc(member.id)}" ${normalizeList(group.members).includes(member.id)?'checked':''}>${esc(member.name||member.email||member.id)} · ${esc(member.role)}</label>`).join(''):`<label>멤버 ID · 한 줄에 하나<textarea name="member_ids" spellcheck="false">${esc(normalizeList(group.members).join('\n'))}</textarea></label><p>멤버 목록 읽기 권한이 없어 이름은 표시하지 않습니다. 기존 멤버 ID만 입력할 수 있습니다.</p>`}<button class="solid-btn">그룹 멤버 저장</button></fieldset></form>`;
+  }}
+else if(view.data&&view.tab==='audit'){body.innerHTML=`<h4>감사 로그</h4><div class="settings-list">${normalizeList(view.data.events).map(event=>`<article class="settings-item"><div><strong>${esc(event.action||event.type||'활동')}</strong><small>${esc(event.created_at||'')} · ${esc(event.actor_name||event.actor_id||'')}</small><pre>${esc(JSON.stringify(event,null,2))}</pre></div></article>`).join('')||'<p>감사 기록이 없습니다.</p>'}</div>`;
+  }
+else if(view.data&&view.tab==='analytics'){body.innerHTML=`<h4>워크스페이스 분석</h4><pre>${esc(JSON.stringify(view.data,null,2))}</pre>`;
+  }
+for(const control of $$('button,input,select,textarea',view.content))if(view.busy)control.disabled=true;
+  view.content.onclick=event=>{const target=event.target.closest('button');
+  if(!target)return;
+  event.stopPropagation();
+  const run=async()=>{if(!adminConsoleCurrent(view)||view.busy)return;
+  if(target.hasAttribute('data-admin-refresh'))return loadAdminConsole(view);
+  if(target.dataset.adminTab){view.tab=target.dataset.adminTab;
+  view.notice=null;
+  view.deleteId=null;
+  return loadAdminConsole(view);
+  }if(target.hasAttribute('data-admin-new')){view.editor={name:'',description:'',actions:[]};
+  view.deleteId=null;
+  }else if(target.dataset.adminEdit)view.editor=structuredClone(view.overview.roles.find(role=>role.id===target.dataset.adminEdit));
+  else if(target.hasAttribute('data-admin-cancel'))view.editor=null;
+  else if(target.dataset.adminDelete){const id=target.dataset.adminDelete;
+  if(view.deleteId!==id){view.deleteId=id;
+  renderAdminConsole(view);
+  return;
+  }return adminWrite(view,'/admin/roles/'+encodeURIComponent(id),{revision:view.overview.revision},'DELETE');
+  }else if(target.dataset.adminRevoke)return adminWrite(view,'/admin/assignments/'+encodeURIComponent(target.dataset.adminRevoke),{role_ids:[],revision:view.overview.revision},'PUT');
+  else if(target.dataset.adminMember)view.editor=structuredClone(view.data.members.find(member=>member.id===target.dataset.adminMember));
+  else if(target.dataset.adminMemberDelete){const id=target.dataset.adminMemberDelete;
+  if(view.deleteId!==id){view.deleteId=id;
+  renderAdminConsole(view);
+  return;
+  }return adminWrite(view,'/members/'+encodeURIComponent(id),{},'DELETE');
+  }else if(target.dataset.adminGroup)view.editor=structuredClone(view.data.groups.find(group=>group.id===target.dataset.adminGroup));
+  else return;
+  renderAdminConsole(view);
+  };
+  run().catch(error=>{if(adminConsoleCurrent(view)){view.error=error.message;
+  renderAdminConsole(view);
+  }});
+  };
+  view.content.onsubmit=event=>{event.preventDefault();
+  event.stopPropagation();
+  if(!adminConsoleCurrent(view)||view.busy)return;
+  const form=event.target,data=new FormData(form);
+  let path,payload,method='POST';
+  if(form.id==='admin-role-form'){const actions=data.getAll('actions');
+  for(const [manage,read] of [['members.manage','members.read'],['groups.membership.manage','groups.read']])if(actions.includes(manage)&&!actions.includes(read)){$('[data-admin-pair-error]',form).textContent='관리 권한과 필요한 목록 읽기를 함께 선택해 주세요.';
+  return;
+  }path='/admin/roles'+(view.editor.id?'/'+encodeURIComponent(view.editor.id):'');
+  method=view.editor.id?'PATCH':'POST';
+  payload={name:data.get('name'),description:data.get('description'),actions,revision:view.overview.revision};
+  }else if(form.classList.contains('admin-assignment-form')){path='/admin/assignments/'+encodeURIComponent(form.dataset.memberId);
+  method='PUT';
+  payload={role_ids:data.getAll('role_ids'),revision:view.overview.revision};
+  }else if(form.id==='admin-member-new'){path='/members';
+  payload={name:data.get('name'),email:data.get('email'),role:'member'};
+  }else if(form.id==='admin-member-form'){path='/members/'+encodeURIComponent(view.editor.id);
+  method='PATCH';
+  payload={name:data.get('name'),email:data.get('email'),role:data.get('role'),active:data.has('active')};
+  }else if(form.id==='admin-group-form'){path='/groups/'+encodeURIComponent(view.editor.id);
+  method='PATCH';
+  payload={members:data.has('member_ids')?String(data.get('member_ids')).split(/\r?\n/).map(id=>id.trim()).filter(Boolean):data.getAll('members')};
+  }else return;
+  void adminWrite(view,path,payload,method);
+  };
+  }
+async function mountAdminConsole(content,{roleTab=false,capabilities=null}={}){clearAdminConsole();
+  const view={scope:verifiedPagesIdentity(),navigation:state.nativeNavigation,modal:content.closest('.modal'),content,roleTab,tab:roleTab?'roles':null,capabilities,sequence:0,busy:false,closed:false};
+  state.adminConsole=view;
+  await loadAdminConsole(view);
+  }
+async function openAdminConsole(){if(!verifiedPagesIdentityCurrent(verifiedPagesIdentity()))throw Error('현재 계정으로 서버에 연결해 주세요.');
+  openModal('위임된 관리 설정','<div id="admin-console-content"></div>','admin-settings-modal');
+  await mountAdminConsole($('#admin-console-content'));
+  }
+window.addEventListener('focus',()=>{const view=state.adminConsole;
+  if(adminConsoleCurrent(view)&&!view.busy)void adminCheck(view).catch(error=>{if(adminConsoleCurrent(view)&&error.name!=='AbortError'&&error.code!=='STALE_REQUEST'){view.data=null;
+  view.overview=null;
+  view.capabilities=null;
+  view.editor=null;
+  view.notice=null;
+  view.error='현재 관리 권한을 다시 확인해 주세요.';
+  renderAdminConsole(view);
+  }});
+  });
+
+
 async function openSettings(tab='members') {
   if(tab==='verified'){await openVerifiedPages();return;}
   clearScimPanel();
-  if(!isAdmin()){openModal('내 계정',`<p><strong>${esc(state.session?.member?.name||'가족')}</strong><br>${esc(state.session?.member?.email||'')}<br>${esc(state.session?.member?.role||'')}</p><button class="outline-btn" data-action="verified-pages">검증된 페이지</button><button class="outline-btn" data-action="logout">로그아웃</button>`);return;}
+  const selfScope=verifiedPagesIdentity(),selfTicket=++settingsOpenSequence,selfOverlay=$('#overlay-root').firstChild,selfNavigation=state.nativeNavigation;let self=null;adminSettingsRequest?.abort();const selfRequest=new AbortController();adminSettingsRequest=selfRequest;const selfCurrent=()=>verifiedPagesIdentityCurrent(selfScope)&&settingsOpenSequence===selfTicket&&$('#overlay-root').firstChild===selfOverlay&&state.nativeNavigation===selfNavigation;try{self=adminPermissions(await api('/admin/self',undefined,'GET',{signal:selfRequest.signal,current:selfCurrent}));}catch(error){if(!selfCurrent())return;if(error.status!==404)toast(error.message);}finally{if(adminSettingsRequest===selfRequest)adminSettingsRequest=null;}if(!selfCurrent())return;
+  if(!isAdmin()){openModal('내 계정',`<p><strong>${esc(state.session?.member?.name||'가족')}</strong><br>${esc(state.session?.member?.email||'')}<br>${esc(state.session?.member?.role||'')}</p><button class="outline-btn" data-action="verified-pages">검증된 페이지</button>${self?.actions.length?'<button class="outline-btn" data-action="admin-settings">위임된 관리 설정</button>':''}<button class="outline-btn" data-action="logout">로그아웃</button>`);return;}
   const identity=verifiedPagesIdentity(),ticket=++settingsOpenSequence,navigation=state.nativeNavigation,overlay=$('#overlay-root').firstChild;const current=()=>verifiedPagesIdentityCurrent(identity)&&isAdmin()&&settingsOpenSequence===ticket&&state.nativeNavigation===navigation&&$('#overlay-root').firstChild===overlay;
   state.settingsTab=tab;
+  if(tab==='admin-roles'&&isOwner()){openModal('워크스페이스 설정','<div class="settings-layout"><nav class="settings-tabs" id="settings-tabs"></nav><div class="settings-content" id="settings-content"></div></div>','settings-modal');$('.modal-body').style.padding='0';await renderSettings();return true;}
   try {
     const advanced=await api('/advanced',undefined,'GET',{current});if(!current())return;state.advanced=advanced;
   }
@@ -1905,20 +2151,22 @@ async function openSettings(tab='members') {
   $('.modal-body').style.padding='0';const modal=$('.settings-modal');
   await renderSettings();return modal.isConnected&&$('.settings-modal')===modal&&verifiedPagesIdentityCurrent(identity)&&state.settingsTab===tab&&state.nativeNavigation===navigation;
 }
-const settingsTabs=[['verified','검증된 페이지'],['accounts','가족 계정'],['members','멤버 및 그룹'],['security','보안 및 권한'],['scim','SCIM 계정 연동'],['automations','자동화'],['forms','폼'],['sites','사이트'],['AI','AI 및 연결'],['analytics','워크스페이스 분석'],['features','기능 제공 현황'],['export','가져오기 / 내보내기']];
+const settingsTabs=[['admin-roles','관리 역할'],['admin-settings','위임된 관리 설정'],['verified','검증된 페이지'],['accounts','가족 계정'],['members','멤버 및 그룹'],['security','보안 및 권한'],['scim','SCIM 계정 연동'],['automations','자동화'],['forms','폼'],['sites','사이트'],['AI','AI 및 연결'],['analytics','워크스페이스 분석'],['features','기능 제공 현황'],['export','가져오기 / 내보내기']];
 async function renderSettings() {
-  clearVerifiedPages();clearScimPanel();
+  clearVerifiedPages();clearAdminConsole();clearScimPanel();
   if(!$('#settings-tabs')||!$('#settings-content'))return;
   if(!isAdmin()&&state.settingsTab!=='verified'){$('#settings-content').textContent='관리자 권한이 필요합니다.';return;}
-  const tab=state.settingsTab;$('.settings-modal')?.classList.toggle('verified-settings-modal',tab==='verified');
-  $('#settings-tabs').innerHTML=settingsTabs.filter(([key])=>(isAdmin()||key==='verified')&&(!['accounts','security','scim','analytics','export','AI'].includes(key)||isOwner())).map(([key,name])=>`<button data-action="settings-tab" data-tab="${key}" class="${tab===key?'active':''}">${name}</button>`).join('');
-  let content=$('#settings-content');if(tab==='verified'){const fresh=content.cloneNode(false);content.replaceWith(fresh);content=fresh;}
+  const tab=state.settingsTab;$('.settings-modal')?.classList.toggle('verified-settings-modal',tab==='verified');$('.settings-modal')?.classList.toggle('admin-settings-modal',['admin-roles','admin-settings'].includes(tab));
+  $('#settings-tabs').innerHTML=settingsTabs.filter(([key])=>(isAdmin()||key==='verified')&&(!['admin-roles','accounts','security','scim','analytics','export','AI'].includes(key)||isOwner())).map(([key,name])=>`<button data-action="settings-tab" data-tab="${key}" class="${tab===key?'active':''}">${name}</button>`).join('');
+  let content=$('#settings-content');if(['verified','admin-roles','admin-settings'].includes(tab)){const fresh=content.cloneNode(false);content.replaceWith(fresh);content=fresh;}
   const a=state.advanced|| {
   };
   const header=(title,desc,button='')=>`<div class="section-heading"><h3>${title}</h3>${button}</div><p>${desc}</p>`;
   const add=(kind,label)=>`<button class="outline-btn" data-action="add-advanced" data-kind="${kind}">+ ${label}</button>`;
   const items=(kind,detail)=>`<div class="settings-list">${normalizeList(a[kind]).map(item=>`<div class="settings-item"><div><strong>${esc(item.name||item.title||item.email||item.id)}</strong><small>${esc(detail(item))}</small></div><div>${kind==='automations'?`<button data-action="toggle-automation" data-id="${esc(item.id)}">${item.enabled===false?'사용':'일시 중지'}</button><button data-action="automation-runs" data-id="${esc(item.id)}">기록</button><button data-action="run-automation" data-id="${esc(item.id)}" ${item.enabled===false?'disabled title="직접 실행하려면 먼저 자동화를 사용 상태로 바꾸세요"':''}>한 번 실행</button>`:''}${kind==='forms'?`<button data-action="fill-form" data-id="${esc(item.id)}">응답</button>`:''}${kind==='sites'?`<button data-action="site-link" data-id="${esc(item.id)}">링크</button>`:''}${kind!=='members'||isOwner()||!['owner','admin'].includes(item.role)?`<button data-action="edit-advanced" data-kind="${kind}" data-id="${esc(item.id)}">관리</button>`:''}</div></div>`).join('')||'<div class="empty">아직 항목이 없어요. 첫 번째 항목을 만들어 보세요.</div>'}</div>`;
-  if(tab==='verified'){await mountVerifiedPages(content);}
+  if(tab==='admin-roles'){await mountAdminConsole(content,{roleTab:true});}
+  else if(tab==='admin-settings'){await mountAdminConsole(content);}
+  else if(tab==='verified'){await mountVerifiedPages(content);}
   else if(tab==='scim'){await renderScimSettings(content);}
   else if(tab==='accounts'){await renderAccounts(content);}
   else if(tab==='members') {
@@ -2307,6 +2555,7 @@ async function doAction(target,grouped=false) {
   if(edits.includes(a)&&resourceLevel(state.page)<3)throw new Error('페이지 편집 권한이 없습니다.');
   if(['add-row','new-property'].includes(a)&&!(a==='add-row'?canCreateRow():resourceLevel(state.database)>=4))throw new Error('데이터베이스 편집 권한이 없습니다.');
   switch(a) {
+    case'admin-settings':await openAdminConsole();break;
     case'verified-pages':await openVerifiedPages();break;
     case'verified-clear':{const view=state.verifiedPages;if(verifiedPagesCurrent(view)&&!view.opening){view.form.reset();changeVerifiedPages(view);}break;}
     case'verified-refresh':case'verified-retry':await loadVerifiedPages(state.verifiedPages);break;
@@ -2681,8 +2930,8 @@ async function doAction(target,grouped=false) {
     }
   }
 }
-window.addEventListener('pagehide',()=>{clearVerifiedPages();clearScimPanel();});
-window.addEventListener('offline',()=>{if(state.verifiedPages)closeModal();});
+window.addEventListener('pagehide',()=>{clearVerifiedPages();clearAdminConsole();clearScimPanel();});
+window.addEventListener('offline',()=>{if(state.verifiedPages||state.adminConsole)closeModal();});
 document.addEventListener('click',event=> {
   if(state.nativeOutboxPause&&!event.target.closest?.('.native-recovery-dialog'))return;
   if(event.target.closest?.('.block-content a.rich-link')&&pageEditable()&&!event.metaKey&&!event.ctrlKey){event.preventDefault();return;}
@@ -2966,7 +3215,7 @@ window.addEventListener('beforeunload',event=> {
   }
 });
 function renderLogin(preserve=true) {
-  if(state.verifiedPages)closeModal();clearVerifiedPages();clearWikiMutation();clearWikiPage();clearInbox();clearScimPanel();stopBackup();
+  if(state.verifiedPages||state.adminConsole)closeModal();clearVerifiedPages();clearAdminConsole();clearWikiMutation();clearWikiPage();clearInbox();clearScimPanel();stopBackup();
   if(state.nativeRecoveryPaused)return;
   if(preserve)return suspendLoginInput().then(current=>{if(current)renderLogin(false);});
   closeDocument();closeMutations();state.offlineProfile=null;state.offline=false;
@@ -2985,7 +3234,7 @@ function renderLogin(preserve=true) {
   if(state.authRetentionError&&$('#login-error'))$('#login-error').textContent=state.authRetentionError;
 }
 async function boot() {
-  if(state.verifiedPages)closeModal();clearVerifiedPages();clearWikiMutation();clearWikiPage();clearInbox();clearScimPanel();clearSearch();
+  if(state.verifiedPages||state.adminConsole)closeModal();clearVerifiedPages();clearAdminConsole();clearWikiMutation();clearWikiPage();clearInbox();clearScimPanel();clearSearch();
   if(state.nativeRecoveryPaused)return;
   const generation=(state.bootGeneration||0)+1;state.bootGeneration=generation;
   const cachedIdentity=await window.FountainOffline?.getProfile().catch(()=>null);

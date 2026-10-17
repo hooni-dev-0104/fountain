@@ -2380,3 +2380,11 @@ svg {
  .verified-pages-filter-actions button{flex:1}
  .verified-pages-footer>div{flex:1}.verified-pages-footer button{flex:1}
 }
+
+/* Online administration uses the existing settings layout with touch-sized controls. */
+.admin-console{min-width:0}.admin-console-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}.admin-console-tabs [aria-pressed=true]{background:var(--green);color:white}.admin-console button,.admin-console input:not([type=checkbox]),.admin-console select,.admin-console textarea{min-height:44px}.admin-console fieldset{min-width:0;border:1px solid var(--line);border-radius:10px;padding:16px;margin:14px 0;display:grid;gap:12px}.admin-console .checkbox-label{display:flex;align-items:center;gap:10px;min-height:44px}.admin-console input[type=checkbox]{width:20px;height:20px;flex-shrink:0}.admin-console pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;max-width:100%;margin:10px 0}.admin-console .settings-item{min-width:0;gap:12px;flex-wrap:wrap}.admin-console .settings-item>div{min-width:0;overflow-wrap:anywhere}.admin-settings-modal .modal-body{min-width:0}.admin-console [role=alert]{color:#a63b34;overflow-wrap:anywhere}.admin-console [data-admin-refresh]{margin:8px 0}.admin-console .settings-item button{min-height:44px}.admin-console legend{font-weight:600;overflow-wrap:anywhere}@media(max-width:600px){.admin-console fieldset{padding:12px}.admin-console-tabs button{flex:1 1 40%}.admin-console .settings-item{align-items:flex-start}.admin-console .settings-item>div{width:100%}.admin-console input,.admin-console textarea,.admin-console select{width:100%;box-sizing:border-box}.admin-console input[type=checkbox]{width:20px}}
+
+.admin-settings-modal{display:flex;flex-direction:column;overflow:hidden}.admin-settings-modal .modal-head{flex-shrink:0}.admin-settings-modal .modal-body{overflow:auto;min-height:0}
+@media(max-width:600px){.admin-settings-modal .settings-layout{grid-template-columns:minmax(0,1fr);min-height:0}.admin-settings-modal .settings-tabs{min-width:0;max-width:100%}.admin-settings-modal .settings-content{min-width:0;padding:18px 14px;max-height:none;overflow:visible}.admin-settings-modal .settings-tabs button,.admin-settings-modal .modal-close{min-width:44px;min-height:44px}}
+
+@media(max-width:600px){.admin-settings-modal .settings-tabs button{flex-shrink:0}}

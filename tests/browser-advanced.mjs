@@ -65,8 +65,10 @@ try {
   await page.waitForFunction(() => document.querySelector('#save-status').textContent.includes('모든 변경'));
   assert.equal((await api('/pages/' + doc.id)).blocks.at(-1).text, 'LAN 저장');
   await page.locator('[data-action=page-menu]').click();
-  await page.locator('[data-action=verify-page]').click();
-  await page.waitForFunction(() => document.querySelector('#toast').textContent.includes('검증했습니다'));
+  await page.locator('.modal [data-action=verify-page]').click();
+  await page.locator('#verification-form [type=submit]').click();
+  await page.locator('.verification-modal').waitFor({state:'detached'});
+  await page.waitForFunction(() => document.querySelector('#page-verification-status').textContent.includes('검증됨'));
   assert.ok((await api('/pages/' + doc.id)).page.verification);
 
   await page.route('**/api/pages/' + doc.id, async route => {

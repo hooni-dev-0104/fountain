@@ -9,6 +9,7 @@ import {createStorage,CHUNK_SIZE} from './storage.ts';
 import {createOnboarding} from './onboarding.ts';
 import {createBackend} from './backend.ts';
 import {createDomain} from './domain.ts';
+import {createAdminContent} from './admin-content.ts';
 import {createAdvancedExtension} from './advanced.ts';
 import {createFiles} from './files.ts';
 import {createUploadGarbageFence} from './gc-fence.ts';
@@ -55,6 +56,8 @@ export function createApplication(config:Config):(request:Request)=>Promise<Resp
       if(jobResponse)return jobResponse;
       const backup=createBackup({provider:backupProvider,storage,authorize}),backupResponse=await backup.handle(current,path,context);
       if(backupResponse)return backupResponse;
+      const contentResponse=await createAdminContent({...connection,provider,authorize}).handle(current,path,context);
+      if(contentResponse)return contentResponse;
       const base={...connection,provider,authorize},files=createFiles({...base,storage,inlineSource,fenceGarbage:createUploadGarbageFence({...connection,authorize})});
       const events=createActivity({...base,...(config.serviceKey.startsWith('sb_secret_')?{realtime:()=>createRealtime({url:config.supabaseUrl,workspaceId:config.workspaceId,serverKey:config.serviceKey})}:{})});
       return createDomain({...base,extensions:[createAdvancedExtension({cloud:true,env})],ai:createAI({...base,env}),files:files.handle,events})(current,path,context);

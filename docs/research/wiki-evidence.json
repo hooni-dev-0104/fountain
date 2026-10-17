@@ -1,0 +1,277 @@
+{
+  "date": "2026-10-17",
+  "feature": "Wiki basic views and knowledge ownership; independent implementation",
+  "original": {
+    "official": "https://www.notion.com/help/wikis-and-verified-pages",
+    "clientVersion": "7.39.0",
+    "asarSHA256": "889137431e69a9e8795b88cb071d451f5592797dcfe4ca13499dcb23ddc8d8ac",
+    "rea": "notion-desktop.md",
+    "scope": "Selected shipped desktop/public JavaScript evidence and official behavior descriptions; no private wiki server reconstruction or live paid-account comparison"
+  },
+  "sourceSHA256": {
+    "static/app.js": "4bbc15b9032e6d3bdd1ed3c4a70282b2b2663bff06dc9824e1c4f858be94d6b9",
+    "static/style.css": "f2e39bab6bb7076e49627809ae6248582c04799fd805cdf8cbfc0519442975f5",
+    "fountain/wiki.py": "e9246760649f9c74a2650f3b24909bb0fdfbaee4b80f2acf6852f96021bf2b34",
+    "fountain/access.py": "bc406fd412f8c16a5313f3eae20df9f7f1fe03c33f24a25e02ce75dd2ad31d64",
+    "fountain/authorization.py": "7b49001af8ea593665433f2b25135f633176dc0546df010d3014eb80996d304b",
+    "supabase/functions/_shared/wiki.ts": "38a4ad408a20250405e1b27b8be45031d5f9ee8774b1347b93aa7bc5366de7e7",
+    "supabase/functions/_shared/access.ts": "aff8b439b9a281f867e96bf9f255e80ae030f906a99e5069b27f4fdc9a93c9ca",
+    "supabase/functions/_shared/authorization.ts": "c266b5061ae8c94c0564dd704cac2a8a03a4e778f92ff966ff3dfc6b7d2be90b",
+    "supabase/functions/_shared/page-headers.ts": "c167af83d26be209c592593bcc94aa89e8e6ce522b58e793c4e2e8a9c4407a9e",
+    "supabase/functions/_shared/store.ts": "7cf13d7149c2944f78f15099832e8281fdf494e1329e34aa359633caccdfc822",
+    "supabase/migrations/20261017054146_fountain_wiki_page_headers.sql": "30e4daf776ab89be25b9673c9be4c4ba7e4601a8568c3154021e243239511b61",
+    "tests/browser-wiki.mjs": "2d77bc9fffb00fdc6c87928f757e79e8f115654721abad13d1b6d3e97cf7fab6"
+  },
+  "main": {
+    "version": 18,
+    "files": 42,
+    "exactReadback": true,
+    "bundleSHA256": "e8f75a1c8974ae6a46e1e06c4e5aa43dba615c4274a5efb94e344023b3b451e1",
+    "originalWorkspaceAndSetupOriginsUnchanged": true,
+    "sourceHashes": {
+      "fountain-api/index.ts": "a0cdab7c410766064118e2e754dc30e4647c280d65fa02830d856613e3f33894",
+      "fountain-api/deployment.ts": "9433b0ee859250bb37835b4066b7511ee9acf1535ec962f80ca8e8182ba917a5",
+      "_shared/application.ts": "21648cbfef5d9a9e566c381459b5c3a3bb2fa006d722bb0e5728c35934e7c2fb",
+      "_shared/auth.ts": "d6057256f6944c8e45ec46e56e3cbba4576f24d2845aca20d51d7af89c29d978",
+      "_shared/vault.ts": "9adad6cfa58e0498ca284c8d26650bc7fcd7afd3261bc0405db7e45c3ed9100a",
+      "_shared/store.ts": "7cf13d7149c2944f78f15099832e8281fdf494e1329e34aa359633caccdfc822",
+      "_shared/access.ts": "aff8b439b9a281f867e96bf9f255e80ae030f906a99e5069b27f4fdc9a93c9ca",
+      "_shared/storage.ts": "c7b284d0cd7be79597fb7ae2c29f15bdd353ace7dbdac082eeff408208976dd2",
+      "_shared/onboarding.ts": "646588c79d737d6f65686cff01d3e60b9085cbb332607c8dc5567180c547f597",
+      "_shared/backend.ts": "9cb2c86f26bdcab840f9d215191dc4c956ac2ff7d3b91d5a39e7e9f79844736d",
+      "_shared/http.ts": "476ea9cee5938ce7a27b414149acb905323fd127aab8433ad98798fe7bb89303",
+      "_shared/domain.ts": "4c88e51a71446f08944e07eb959e7ccc1bba08b0a13e846affb171c25263ec3b",
+      "_shared/authorization.ts": "c266b5061ae8c94c0564dd704cac2a8a03a4e778f92ff966ff3dfc6b7d2be90b",
+      "_shared/wiki.ts": "38a4ad408a20250405e1b27b8be45031d5f9ee8774b1347b93aa7bc5366de7e7",
+      "_shared/crdt.ts": "428c6fd508b9244ae8e15caa2dee218380affa3ab3d27a4f0199809b12692487",
+      "_shared/core.ts": "d997619763bb95e2ab2edb38f7c1fa6725121c55bf70757b89316d841ab556b6",
+      "_shared/tasks.ts": "0a710e3ef824aa14b990ed57148f4a69948113b9378a175a148883d52f1e47f4",
+      "_shared/collaboration.ts": "d5484872723c7f81912e5a75b93432ea90c39303c7dec97836930ed5a1c7c27a",
+      "_shared/transaction.ts": "3a921b2471ee0a8bed764393baaaa412d8a90ef77a9c002f83b5a962e7e24a10",
+      "_shared/sync.ts": "03ba3975e4a46c53627f1782248735654d0d4dbb997d9ca50bcd46d135d4250a",
+      "_shared/search.ts": "554296b083ec6313a452dd5dad26e68171cdfe8c3fac697e2f582426f5b93708",
+      "_shared/advanced.ts": "a793610baf9e3f3ad68a9044c18b8483a21051edebc35edafa352eb00fd737bf",
+      "_shared/inbox.ts": "6152ce68625b1a0f4b64bc5e7dce66b75ae52732454ee5abbfe84ab9444f5163",
+      "_shared/scheduler.ts": "781ff2da50a8bdd623ce34f1dfb6974588c2127735c2ae64c5041f39ba14aad1",
+      "_shared/publishing.ts": "ce89ac8e1f3b2a8f35da64301f57c2b84839702b4f4ea4aa16b9dec206ba7068",
+      "_shared/scim.ts": "50ec923f7ff4fa99ea1e382bfdfa282a539c8e2785be8628a8d57daafcefbbef",
+      "_shared/files.ts": "ecc8a1ff91e30af51c854b0bbcfd5f4c79d5d382abc815f47984f66bc6e07b82",
+      "_shared/gc-fence.ts": "e2bf7ab3075fc5f42273c9c3265c25c5425fda431d188ab8e1a85706fb56e5d7",
+      "_shared/activity.ts": "638ebe8df5d3354bf0e5fd7de09580ee5528d5341e247c3ac075c86b01214b49",
+      "_shared/presence.ts": "fbb96b11f3ba6d55089264ffd2449ec1375ce8717b026c18c3507228d68526e7",
+      "_shared/events.ts": "d4fef9eef4a378cf7a3269db6ced20c0b21ba72bf9ee0f5536e15b23d6e0d940",
+      "_shared/realtime.ts": "e208e912ea641bbfb656045fb136553f341687c2bedb4d07be344bfae633b1ef",
+      "_shared/ai.ts": "373be5efd6f8e7ebbb7bb48af1630ce32d1e8a6916b94601adfabf2ecaf96c07",
+      "_shared/accounts.ts": "16f02ad2f92b610ac1ceaa38dce47b841132b41099100ac38274f3a5a6b5722e",
+      "_shared/grant-admin.ts": "81404437efd77e7ad1d36898cc9fbb1f3aa482d8fb493791916c54787ea599bb",
+      "_shared/scim-http.ts": "47e09c8868261ddb023d48cc7c0fe4422f0d9c14f8d52891d1d5d71e2b4f18bb",
+      "_shared/backup.ts": "bf0fa673ab73cd1fa6546d661175d0454cf0a3be8a2d533bc972502b27ab02e9",
+      "_shared/sqlite-backup.ts": "530d73639027d66a330fd1134df1e985b3f876146880fc8b068e7dccaa3b7a1b",
+      "_shared/backup-jobs.ts": "be37c60cfd765abed418fc5fbb1cc1db3ca9a2908b44e9ec5f21ad42bdd9d657",
+      "_shared/sqlite-backup-resumable.ts": "282f9b471f17f8f5488836a4c6af8924d100fb60df36769425c7c10c00f149a2",
+      "_shared/inline-attachments.ts": "06e1be1b44bb83e9b58fbc8584fb0694c5a17a34c074eb7b6546e02587cc268d",
+      "_shared/page-headers.ts": "c167af83d26be209c592593bcc94aa89e8e6ce522b58e793c4e2e8a9c4407a9e"
+    },
+    "anonymousHTTPSBoundaries": {
+      "checks": 9,
+      "passed": true,
+      "ready": false
+    }
+  },
+  "migration": {
+    "version": "20261017054146",
+    "name": "fountain_wiki_page_headers",
+    "sha256": "30e4daf776ab89be25b9673c9be4c4ba7e4601a8568c3154021e243239511b61",
+    "exactLiveBodyReadback": true,
+    "owner": "postgres",
+    "acl": "{postgres=X/postgres}",
+    "searchPath": "pg_catalog",
+    "anonAuthenticatedServiceDirectExecute": false,
+    "newPublicRPCOrGrants": false,
+    "previousLimitsRetained": true
+  },
+  "actualCloud": {
+    "project": "ehnovtfadpkwtubmwltl",
+    "scope": "fountain-qa-cloud-wiki-94d3f702b707631b",
+    "initialValidPages": 305,
+    "initialLogicalPageBytes": 91917634,
+    "authUsers": 2,
+    "initialConcurrentSessions": 3,
+    "qa71": {
+      "checks": 19,
+      "passed": true,
+      "source": "Before final ancestor/verification projection repair; header kernel/wiki/creation code same as final"
+    },
+    "qa72": {
+      "checks": 9,
+      "passed": true,
+      "source": "Final Access source, exact41file readback",
+      "scope": "Owner and inherited-access family generic GET/PATCH, verification then GET, hidden/guest/pagination, generated creator, wiki convert/undo, real logout"
+    },
+    "maximumQASnapshotBytes": 280090,
+    "import400": {
+      "status": 201,
+      "atomicDomainWrites": 800,
+      "extraCreatorSidecars": 0
+    },
+    "sqlPreservation": {
+      "actualSQL": true,
+      "initial": {
+        "page_body_bytes": 91917634,
+        "page_count": 305,
+        "protected_pages_hash": "78b1e5701a30d1c4f9c0004be0d23f8fbc3843b4368f13158979dcd7d26ef59a"
+      },
+      "final": {
+        "page_body_bytes": 92093379,
+        "page_count": 710,
+        "protected_pages_hash": "78b1e5701a30d1c4f9c0004be0d23f8fbc3843b4368f13158979dcd7d26ef59a"
+      },
+      "childAndInheritedLeafPreserved": true,
+      "harnessCorrection": "Final hash query now filters kind=page; same IDs also exist in wiki_page and collaboration entities. No application change."
+    },
+    "original": {
+      "entities": 153,
+      "meta": 6,
+      "businessSessionFingerprints": 6,
+      "fingerprintsUnchanged": true,
+      "identityMappings": 0
+    },
+    "cleanup": {
+      "protectedAuthUsersDeleted": 2,
+      "authSessions": 0,
+      "refreshTokens": 0,
+      "ownedRowsAcross29Tables": 0,
+      "storageObjects": 0,
+      "cronJobs": 0,
+      "retiredVersion": 74,
+      "oldNonceRoutes404": 9
+    }
+  },
+  "historicalQA": [
+    {
+      "version": 65,
+      "checks": 15,
+      "scope": "fountain-qa-cloud-wiki-c516f42a1251081d",
+      "source": "Initial wiki implementation",
+      "cleaned": true
+    },
+    {
+      "version": 68,
+      "checks": 6,
+      "scope": "fountain-qa-cloud-wiki-91fcffc86277caee",
+      "source": "Intermediate depth repair; superseded by final creator/header repair",
+      "cleaned": true
+    }
+  ],
+  "regressions": {
+    "pythonAllActualPostgres": {
+      "actualPostgresConfigured": true,
+      "tests": 545,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": true
+    },
+    "nodeScripts": {
+      "scripts": 59,
+      "allPassed": true,
+      "accessParitySeparate": 1651,
+      "unicodeVectors": 1530
+    },
+    "newHeaderKernel": 9,
+    "newWikiHeaderDomain": 15,
+    "newVerificationAncestorProjection": 8,
+    "wikiStaged": 82,
+    "wikiPythonTSParity": 28,
+    "creationCases": 10,
+    "localModelImport400Writes": 800,
+    "modelsAreNotActualCloud": true,
+    "trueTypeScriptCompiler": false,
+    "nodeFixtureCorrections": {
+      "files": 32,
+      "store": 27,
+      "reason": "Two old RPC models lacked SQL-computed virtual headers; selected-header fail-closed and forged persisted metadata tests now pass; production code unchanged"
+    }
+  },
+  "ui": {
+    "browserWiki": "passed actual Chrome whole suite",
+    "visualScore": 93,
+    "visualReference": "Existing Fountain sharing UI, not Notion pixel parity",
+    "desktopAnd390px": true,
+    "draftAndLateResponses": "Tabs preserve mounted editor; CAS/read-only recovery; account/native-pause late responses fenced",
+    "unchangedByBackendRepair": true,
+    "additionalChromeSuites": "Existing verification/advanced regression suites passed"
+  },
+  "installers": {
+    "sourceAppSHA256": "4bbc15b9032e6d3bdd1ed3c4a70282b2b2663bff06dc9824e1c4f858be94d6b9",
+    "sourceStyleSHA256": "f2e39bab6bb7076e49627809ae6248582c04799fd805cdf8cbfc0519442975f5",
+    "archives": [
+      {
+        "name": "Fountain-Android-debug.apk",
+        "bytes": 4710391,
+        "sha256": "cdb60a0fc3792467e7eab1063ffb2d15f78943d0f1f378094bd8cd1b3e35385c",
+        "zipCRC": true,
+        "currentUIAssets": 2
+      },
+      {
+        "name": "Fountain-Windows-x64.zip",
+        "bytes": 158651941,
+        "sha256": "1dee7565c86d024aef859c2a37f4f295b37e526201d8906239bd45e01839b217",
+        "zipCRC": true,
+        "currentUIAssets": 2
+      },
+      {
+        "name": "Fountain-iOS-Simulator-Release.zip",
+        "bytes": 3130208,
+        "sha256": "676530320f26bdb98207c675a28bb1cd901564e1e00c23133f8dcfea08bf908f",
+        "zipCRC": true,
+        "currentUIAssets": 2
+      },
+      {
+        "name": "Fountain-macOS-arm64.zip",
+        "bytes": 127614873,
+        "sha256": "a348e1b6be59c26e3fcffd6b860df1013975b45eb7f6a57ce6ee8109b28f9720",
+        "zipCRC": true,
+        "currentUIAssets": 2
+      }
+    ],
+    "privateValuesScanned": 15,
+    "privateMatches": 0,
+    "scopes": {
+      "macOS": "new packaged executable actual14 checks and two anonymous Supabase rounds",
+      "windows": "PE/archive/source checks, no Windows OS execution",
+      "ios": "Release simulator build/signature and install/anonymous entry launch, no authenticated native wiki journey",
+      "android": "offline Gradle build and lint/signature/assets checks, no new emulator launch"
+    },
+    "androidDEX": {
+      "count": 6,
+      "unchangedFromPriorVerifiedCore": true
+    }
+  },
+  "regressionHistory": {
+    "depthCreation": "Per-ancestor then whole-page-kind lookup failed depth100/75MiB; normal creator reuses immutable actor owner_id with two writes, rare trusted mismatch uses private sidecar",
+    "importCapacity": "Always-sidecar caused 400 import to exceed1000 changes; restored800 writes",
+    "genericVerifiedRead": "Actual QA71 HTTP546 WORKER_RESOURCE_LIMIT after verification with30large inherited parents; exact old Access model read31bodies/179paginated snapshots. Final actual QA72 owner/member GET200 with target1body. Model CPU/timing does not identify exact platform kill mechanism."
+  },
+  "limitations": [
+    "Notion whole-product inventory and all paid-plan parity remain incomplete",
+    "Custom wiki properties/layouts, drag organization and inline list editing remain",
+    "General database Verification/Owner property integration and background expiration delivery/email/push remain",
+    "No actual Windows OS or physical iOS/Android release signing/distribution or whole five-platform family journey",
+    "Latest native binaries were built and anonymous launch/smoke tested; new authenticated native wiki workflow not claimed",
+    "No unlimited workspace claim; existing16MiB response/64MiB aggregate/1000write/64round and64ACLdepth limits remain",
+    "No whole91.9MiB workspace snapshot success claim; header-specific routes and raw target operations were tested",
+    "Main18 updated; worker3 action projector remains title-only for page creation and maintenance3 does not open document Store. Background functions were not redeployed in this phase",
+    "Original owner link and free public web host remain unfinished",
+    "TypeScript compiler not installed or run"
+  ],
+  "secrets": {
+    "readOnlyGitHubOpenAlerts": 0,
+    "warningOriginalTextKnown": false,
+    "knownCurrentPrivateValuesMatch": 0,
+    "candidateArchivePrivateMatches": 0,
+    "valuesNeverPrinted": true
+  },
+  "goal": "active; no whole-goal completion claim",
+  "pushed": false
+}

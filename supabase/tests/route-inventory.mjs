@@ -52,6 +52,16 @@ if len(sys.argv)>2 and sys.argv[2]=='simulate-added-admin-method':
  guard=next(item for item in ast.walk(node) if isinstance(item,ast.Assign)
   and any(isinstance(target,ast.Name) and target.id=='allowed' for target in item.targets))
  guard.value.body.elts.append(ast.Constant(value='PUT'));ast.fix_missing_locations(node)
+if len(sys.argv)>2 and sys.argv[2]=='simulate-added-content-method':
+ node=functions['fountain/server.py:Application._dispatch']
+ content=next(item for item in node.body if isinstance(item,ast.If) and isinstance(item.test,ast.Compare)
+  and isinstance(item.test.left,ast.Name) and item.test.left.id=='path' and isinstance(item.test.comparators[0],ast.Set)
+  and '/api/admin/content' in ast.literal_eval(item.test.comparators[0]))
+ guard=next(item for item in ast.walk(content) if isinstance(item,ast.Call) and isinstance(item.func,ast.Name)
+  and item.func.id=='require' and len(item.args)>1 and isinstance(item.args[1],ast.Constant)
+  and item.args[1].value=='Unsupported content method' and isinstance(item.args[0],ast.Compare)
+  and isinstance(item.args[0].ops[0],ast.In) and isinstance(item.args[0].comparators[0],ast.Set))
+ guard.args[0].comparators[0].elts.append(ast.Constant(value='PUT'));ast.fix_missing_locations(node)
 def stable_ast(node):
  if isinstance(node,ast.AST):
   # Python 3.12 adds empty type_params to function/class AST nodes. Ignore only
@@ -74,13 +84,13 @@ def evaluate(node,env):
     if item.attr not in {'command','collections'}:raise ValueError()
    elif isinstance(item.value,ast.Name) and item.value.id=='re':
     if item.attr!='fullmatch':raise ValueError()
-   elif item.attr not in {'strip','split','rsplit','startswith'}:raise ValueError()
+   elif item.attr not in {'strip','split','rsplit','startswith','endswith'}:raise ValueError()
   if isinstance(item,ast.Call):
    regex=(isinstance(item.func,ast.Attribute) and isinstance(item.func.value,ast.Name) and item.func.value.id=='re'
     and item.func.attr=='fullmatch' and len(item.args)==2 and not item.keywords
     and isinstance(item.args[0],ast.Constant) and item.args[0].value in {r'/api/admin/roles/([^/]+)',r'/api/admin/assignments/([^/]+)'}
     and isinstance(item.args[1],ast.Name) and item.args[1].id=='path')
-   if not (regex or isinstance(item.func,ast.Name) and item.func.id=='len' or isinstance(item.func,ast.Attribute) and item.func.attr in {'strip','split','rsplit','startswith'}):raise ValueError()
+   if not (regex or isinstance(item.func,ast.Name) and item.func.id=='len' or isinstance(item.func,ast.Attribute) and item.func.attr in {'strip','split','rsplit','startswith','endswith'}):raise ValueError()
   if isinstance(item,(ast.Lambda,ast.NamedExpr,ast.ListComp,ast.SetComp,ast.DictComp,ast.GeneratorExp)):raise ValueError()
  return eval(compile(ast.Expression(node),'<route-predicate>','eval'),{'__builtins__':{'len':len}},env)
 def terminal(node,key):
@@ -126,7 +136,7 @@ def walk(nodes,env,key):
    try:
     if not evaluate(call.args[0],env):return [],[]
    except (ValueError,KeyError,NameError,AttributeError,TypeError,IndexError):pass
-  if key.endswith('handle_request') and isinstance(call.func,ast.Attribute) and call.func.attr in {'send_payload','send_bytes','send_download','stream_page'}:
+  if key.endswith('handle_request') and isinstance(call.func,ast.Attribute) and call.func.attr in {'send_payload','send_bytes','send_download','send_csv','stream_page'}:
    return [terminal(node,key)],[]
  if isinstance(node,ast.Return):
   if node.value is None or isinstance(node.value,ast.Constant) and node.value.value is None:return [],[]
@@ -160,12 +170,18 @@ def membership_gate(method,path):
  parts=path.strip('/').split('/')
  if len(parts)<2 or parts[:2] not in [['api','members'],['api','groups']]:return True
  return all(bool(evaluate(guard,{'parts':parts,'method':method})) for guard in membership_guards)
+http_method=next(node.value for node in ast.walk(functions['fountain/server.py:handler_for.Handler.handle_request'])
+ if isinstance(node,ast.Assign) and any(isinstance(target,ast.Name) and target.id=='method' for target in node.targets))
+def normalized_method(method):
+ class Receiver:pass
+ receiver=Receiver();receiver.command=method
+ return evaluate(http_method,{'self':receiver})
 def probe(key,method,path):
  class Receiver:pass
  receiver=Receiver();receiver.command=method;receiver.collections=set(collections)
  # Handler maps HEAD to GET; other entry points receive the normalized method.
- actual=method if key.endswith('handle_request') else 'GET' if method=='HEAD' else method
- if not membership_gate('GET' if method=='HEAD' else method,path):return []
+ actual=method if key.endswith('handle_request') else normalized_method(method)
+ if not membership_gate(normalized_method(method),path):return []
  result,_=walk(functions[key].body,{'method':actual,'path':path,'self':receiver,'re':re},key)
  unique={json.dumps(item,sort_keys=True):item for item in result}
  return sorted(unique.values(),key=lambda item:item['line'])
@@ -189,7 +205,14 @@ admin_paths=[{'path':path,'method':method,'evidence':probe('fountain/server.py:A
   '/api/admin/assignments','/api/admin/assignments/','/api/admin/assignments/sample-member/','/api/admin/assignments/sample-member/extra',
   '/api/admin/unknown','/api/admin/roles//sample-role','/api//admin/roles','//api/admin/roles']
  for method in ['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']]
-membership_paths=[{'path':path,'method':method,'role':role,'acceptedBySyntaxGuard':membership_gate('GET' if method=='HEAD' else method,path),
+content_paths=[{'path':path,'method':method,'evidence':probe('fountain/server.py:Application._dispatch',method,path)}
+ for path in ['/api/admin/content','/api/admin/content/access','/api/admin/content/export','/api/admin/content/permissions','/api/admin/content/options','/api/admin/content/unpublish',
+  '/api/admin/content/','/api/admin/content/extra','/api/admin/content/access/','/api/admin/content/access/extra',
+  '/api/admin/content/export/','/api/admin/content/export/extra','/api/admin/content/permissions/','/api/admin/content/permissions/extra',
+  '/api/admin/content/options/','/api/admin/content/options/extra','/api/admin/content/unpublish/','/api/admin/content/unpublish/extra',
+  '/api/admin/content/unknown','/api/admin/content//access','/api//admin/content','//api/admin/content']
+ for method in ['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']]
+membership_paths=[{'path':path,'method':method,'role':role,'acceptedBySyntaxGuard':membership_gate(normalized_method(method),path),
  'evidence':probe('fountain/advanced.py:Advanced.dispatch',method,path)}
  for collection in ['members','groups']
  for path in ['/api/'+collection,'/api/'+collection+'/', '/api/'+collection+'/sample-id','/api/'+collection+'/sample-id/',
@@ -200,14 +223,14 @@ def terminals(nodes,key):
  for node in nodes:
   if isinstance(node,(ast.FunctionDef,ast.ClassDef)):continue
   if isinstance(node,ast.Return) and node.value is not None and not(isinstance(node.value,ast.Constant) and node.value.value is None):yield terminal(node,key)
-  if key.endswith('handle_request') and isinstance(node,ast.Expr) and isinstance(node.value,ast.Call) and isinstance(node.value.func,ast.Attribute) and node.value.func.attr in {'send_payload','send_bytes','send_download','stream_page'}:yield terminal(node,key)
+  if key.endswith('handle_request') and isinstance(node,ast.Expr) and isinstance(node.value,ast.Call) and isinstance(node.value.func,ast.Attribute) and node.value.func.attr in {'send_payload','send_bytes','send_download','send_csv','stream_page'}:yield terminal(node,key)
   for field in ['body','orelse','finalbody']:yield from terminals(getattr(node,field,[]),key)
   for handler in getattr(node,'handlers',[]):yield from terminals(handler.body,key)
 all_terminals=[]
 for key,node in functions.items():
  if key.startswith('fountain/authorization.py:'):continue
  all_terminals.extend(terminals(node.body,key))
-print(json.dumps({'sources':sources,'collections':collections,'routes':routes,'matrix':matrix,'verificationAliases':verification_aliases,'verifiedPagesPaths':verified_pages_paths,'adminPaths':admin_paths,'membershipPaths':membership_paths,'terminals':all_terminals},ensure_ascii=False))
+print(json.dumps({'sources':sources,'collections':collections,'routes':routes,'matrix':matrix,'verificationAliases':verification_aliases,'verifiedPagesPaths':verified_pages_paths,'adminPaths':admin_paths,'contentPaths':content_paths,'membershipPaths':membership_paths,'terminals':all_terminals},ensure_ascii=False))
 `;
 const result=spawnSync(process.env.FOUNTAIN_PYTHON||'python3',['-c',parser,root],{input:JSON.stringify(inventory),encoding:'utf8',maxBuffer:16*1024*1024});
 assert.equal(result.status,0,result.stderr);
@@ -285,6 +308,21 @@ for(const row of parsed.adminPaths){
  assert.equal(recognized,adminMethods.get(row.path)?.includes(row.method)??false,'Admin exact path/method mismatch: '+row.method+' '+row.path);
  assert.equal(row.evidence.some(entry=>!nonRoutes.has(site(entry))),recognized,'Outer admin delegation must not count a rejected inner route.');
 }
+const contentMethods=new Map([
+ ['/api/admin/content',['GET','HEAD']],['/api/admin/content/access',['GET','HEAD']],
+ ['/api/admin/content/export',['GET','HEAD']],['/api/admin/content/permissions',['GET','HEAD','POST']],
+ ['/api/admin/content/options',['GET','HEAD']],['/api/admin/content/unpublish',['POST']]
+]);
+for(const row of parsed.contentPaths){
+ const recognized=row.evidence.some(entry=>!nonRoutes.has(site(entry)));
+ assert.equal(recognized,contentMethods.get(row.path)?.includes(row.method)??false,'Admin content exact path/method mismatch: '+row.method+' '+row.path);
+}
+const changedContent=spawnSync(process.env.FOUNTAIN_PYTHON||'python3',['-c',parser,root,'simulate-added-content-method'],{input:JSON.stringify(inventory),encoding:'utf8',maxBuffer:16*1024*1024});
+assert.equal(changedContent.status,0,changedContent.stderr);
+const addedContent=JSON.parse(changedContent.stdout);
+assert.notDeepEqual(addedContent.sources,inventory.sourceFingerprints,'An added content method must change the real inline routing AST fingerprint.');
+assert(addedContent.matrix.some(row=>row.source==='fountain/server.py:Application._dispatch'&&row.probe==='/api/admin/content'&&row.method==='PUT'&&row.evidence.some(entry=>entry.statement==='return 200, service.search(query)')),'Content method audit must evaluate the actual inline read guard; an outer admin branch alone is insufficient.');
+assert(!parsed.matrix.some(row=>row.source==='fountain/server.py:Application._dispatch'&&row.probe==='/api/admin/content'&&row.method==='PUT'&&row.evidence.length),'Unsupported content PUT must not count as an implemented route.');
 for(const row of parsed.membershipPaths){
  const segments=row.path.replace(/^\/+|\/+$/g,'').split('/');
  const expected=segments.length===2?['GET','HEAD','POST'].includes(row.method):segments.length===3&&['GET','HEAD','PATCH','DELETE'].includes(row.method);
@@ -318,4 +356,4 @@ for(const route of inventory.routes.filter(route=>route.cloud.status==='pending'
 const health=await candidate(new Request('https://fixture.invalid/functions/v1/fountain-api/health'));
 assert.equal((await health.json()).ready,false);
 assert(!inventory.routes.some(route=>route.path==='/health'),'New health surface is not legacy route coverage.');
-console.log(JSON.stringify({ok:true,routes:inventory.routes.length,sourceFunctions:Object.keys(parsed.sources).length,methodMatrixChecks:parsed.matrix.length,delegatedWikiMethodChecks:2,delegatedDatabaseVerificationMethodChecks:2,delegatedAdminMethodChecks:2,databaseVerificationAliasChecks:parsed.verificationAliases.length,verifiedPagesExactPathChecks:parsed.verifiedPagesPaths.length,adminExactPathChecks:parsed.adminPaths.length,membershipAllRoleSyntaxChecks:parsed.membershipPaths.length,pendingBoundaryChecks:pendingChecks,cloudProductionParityVerified:0,parser:'Python AST including delegated wiki, DB verification and admin method guards; membership syntax checked before Advanced dispatch for every base role; server never imported; no database access'}));
+console.log(JSON.stringify({ok:true,routes:inventory.routes.length,sourceFunctions:Object.keys(parsed.sources).length,methodMatrixChecks:parsed.matrix.length,delegatedWikiMethodChecks:2,delegatedDatabaseVerificationMethodChecks:2,delegatedAdminMethodChecks:2,inlineContentMethodChecks:2,databaseVerificationAliasChecks:parsed.verificationAliases.length,verifiedPagesExactPathChecks:parsed.verifiedPagesPaths.length,adminExactPathChecks:parsed.adminPaths.length,adminContentExactPathChecks:parsed.contentPaths.length,membershipAllRoleSyntaxChecks:parsed.membershipPaths.length,pendingBoundaryChecks:pendingChecks,cloudProductionParityVerified:0,parser:'Python AST including delegated wiki, DB verification and admin guards plus actual inline content routes; membership syntax checked before Advanced dispatch for every base role; server never imported; no database access'}));

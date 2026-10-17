@@ -22,7 +22,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse, quote
 
-from .core import APIError, Store, Workspace, require, AUDIT_ACTOR, CURRENT_ACCESS
+from .core import APIError, Store, Workspace, require, AUDIT_ACTOR, CURRENT_ACCESS, CONTENT_ORIGIN
 from .access import Access
 from .authorization import Authorization
 from .search import advanced_search
@@ -39,6 +39,14 @@ class Download:
     data: bytes | Path
     cleanup_dir: str | None = None
     attachment_id: str | None = None
+
+
+@dataclass
+class CSVDownload:
+    filename: str
+    iterator: object
+    session_binding: str | None = None
+    content_revision: int | None = None
 
 
 @dataclass
@@ -146,6 +154,7 @@ class Application:
             with self.store.transaction() if claiming else nullcontext():
                 context = self._request_context(principal, session_cookie)
                 access = context['access']
+                access.principal['_content_session_binding'] = context['session_binding']
                 authority = Authorization(access)
                 inbox_route = (path == '/api/inbox' and method == 'GET'
                     or len(parts) == 3 and parts[:2] == ['api', 'inbox'] and method == 'PATCH')
@@ -156,12 +165,13 @@ class Application:
                 authority.prepare(method, path, body)
                 token = AUDIT_ACTOR.set(access.member_id)
                 access_token = CURRENT_ACCESS.set(access)
+                origin_token = CONTENT_ORIGIN.set('import' if path == '/api/import' else 'public_form' if path.startswith('/forms/') else 'system' if path.startswith('/scim/') else 'human')
                 try:
                     status, payload = self._dispatch(method, path, body, query, access)
                     if method in {'POST', 'PATCH', 'PUT', 'DELETE'} and (path.startswith('/api/members') or path.startswith('/scim/v2/Users') or path.startswith('/api/accounts')):
                         require(not self.auth.accounts_required or self.auth._owners(), 'Cannot remove the last active owner account', 409)
                     if method in {'POST', 'PATCH', 'PUT', 'DELETE'} and (
-                            path.endswith('/permissions') or path.startswith(('/api/members', '/api/groups', '/api/teamspaces', '/api/accounts', '/scim/v2/'))
+                            path.endswith('/permissions') and not path.startswith('/api/admin/content') or path.startswith(('/api/members', '/api/groups', '/api/teamspaces', '/api/accounts', '/scim/v2/'))
                             or method == 'PATCH' and path.startswith('/api/pages/') and not path.endswith('/wiki-owner')):
                         self.store.set_meta('access_revision', self.store.meta('access_revision', 0) + 1)
                     payload = authority.project(path, payload)
@@ -171,6 +181,7 @@ class Application:
                             data_revision=self.store.meta('_entity_revision', 0))
                     return status, payload
                 finally:
+                    CONTENT_ORIGIN.reset(origin_token)
                     AUDIT_ACTOR.reset(token)
                     CURRENT_ACCESS.reset(access_token)
 
@@ -235,6 +246,20 @@ class Application:
     def _dispatch(self, method, path, body, query, access):
         w, s = self.workspace, self.store
         parts = path.strip("/").split("/")
+        if path in {'/api/admin/content', '/api/admin/content/access', '/api/admin/content/export', '/api/admin/content/permissions', '/api/admin/content/unpublish', '/api/admin/content/options'}:
+            from .admin_content import AdminContent
+            service = AdminContent(s, access)
+            if path in {'/api/admin/content', '/api/admin/content/access', '/api/admin/content/export', '/api/admin/content/options'} or path == '/api/admin/content/permissions' and method in {'GET','HEAD'}:
+                require(method in {'GET','HEAD'}, 'Unsupported content method', 405)
+                if path.endswith('/access'): return 200, service.access(query)
+                if path.endswith('/permissions'): return 200, service.permissions(query)
+                if path.endswith('/options'): return 200, service.options(query)
+                if path.endswith('/export'):
+                    return 200, CSVDownload('fountain-admin-content.csv', service.csv(query), access.principal.get('_content_session_binding'), service.state['revision'])
+                return 200, service.search(query)
+            require(method == 'POST', 'Unsupported content method', 405)
+            require(not query, 'Content mutations do not accept query parameters')
+            return 200, service.change(body, unpublish=path.endswith('/unpublish'))
         if parts[:2] == ['api', 'admin']:
             from .admin_roles import AdminAuthority
             payload = AdminAuthority(s, access).route(method, path, body, query)
@@ -521,6 +546,45 @@ def handler_for(application):
             self.end_headers()
             if self.command != "HEAD": self.wfile.write(data)
 
+        def send_csv(self, download):
+            cookie = self.headers.get('Cookie', '')
+            def authorize():
+                with application.store.transaction():
+                    context = application._request_context(_INTERNAL_PRINCIPAL, cookie)
+                    require(context['session_binding'] == download.session_binding, 'Login changed during export', 401)
+                    from .admin_roles import AdminAuthority
+                    authority = AdminAuthority(application.store, context['access'])
+                    authority.require_action('content.search.read')
+                    authority.require_action('content.search.export')
+                    settings = application.store.get('settings','workspace') or {}
+                    require(settings.get('disable_export') is not True, 'Workspace export is disabled', 403)
+                    from .content_index import ContentIndex
+                    require(ContentIndex(application.store).state()['revision'] == download.content_revision, 'Content changed during export', 409)
+            authorize()
+            self.protocol_version = 'HTTP/1.1'
+            self.send_response(200)
+            self.send_header('Content-Type','text/csv; charset=utf-8')
+            self.send_header('Content-Disposition', "attachment; filename=fountain-admin-content.csv")
+            self.send_header('Cache-Control','no-store')
+            self.send_header('X-Content-Type-Options','nosniff')
+            self.send_header('Connection','close')
+            self.send_header('Transfer-Encoding','chunked')
+            self.close_connection = True
+            self.end_headers()
+            try:
+                if self.command != 'HEAD':
+                    for piece in download.iterator:
+                        authorize()
+                        self.wfile.write(f'{len(piece):x}\r\n'.encode('ascii') + piece + b'\r\n')
+                    with application.store.transaction():
+                        authorize()
+                        self.wfile.write(b'0\r\n\r\n')
+            except Exception:
+                # Closing a stream after a failed recheck never appends JSON.
+                self.close_connection = True
+            finally:
+                download.iterator.close()
+
         def send_download(self, download):
             try:
                 chunked = isinstance(download, AttachmentDownload)
@@ -713,7 +777,13 @@ def handler_for(application):
                         try:
                             raw = self.rfile.read(length)
                             require(len(raw) == length, "Incomplete request")
-                            body = json.loads(raw, parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON")))
+                            def object_pairs(pairs):
+                                result = {}
+                                for key, value in pairs:
+                                    if path.startswith('/api/admin/content') and key in result: raise ValueError('Duplicate content field')
+                                    result[key] = value
+                                return result
+                            body = json.loads(raw, object_pairs_hook=object_pairs, parse_constant=lambda value: (_ for _ in ()).throw(ValueError("Nonfinite JSON")))
                         except (ValueError, UnicodeDecodeError): raise APIError(400, "Invalid JSON")
                         require(isinstance(body, dict), "JSON body must be an object")
                 method = "GET" if self.command == "HEAD" else self.command
@@ -751,9 +821,15 @@ def handler_for(application):
                     if self.command == 'GET' and len(parts) == 4 and parts[:2] == ['api', 'pages'] and parts[3] == 'events':
                         self.stream_page(parts[2], cookie)
                         return
-                    status, payload = application.dispatch(method, path, body, parse_qs(url.query, keep_blank_values=True), principal=principal,
+                    try:
+                        parsed_query = parse_qs(url.query, keep_blank_values=True, errors='strict' if path.startswith('/api/admin/content') else 'replace')
+                    except UnicodeError:
+                        raise APIError(400, 'Invalid content query encoding') from None
+                    status, payload = application.dispatch(method, path, body, parsed_query, principal=principal,
                         session_cookie=cookie if not is_scim and path != '/api/health' else _INTERNAL_PRINCIPAL)
-                    if isinstance(payload, (Download, AttachmentDownload)):
+                    if isinstance(payload, CSVDownload):
+                        self.send_csv(payload)
+                    elif isinstance(payload, (Download, AttachmentDownload)):
                         self.send_download(payload)
                     elif path.startswith(("/sites/", "/forms/")) and isinstance(payload, dict) and "_html" in payload:
                         self.send_bytes(status, payload["_html"].encode(), "text/html; charset=utf-8")

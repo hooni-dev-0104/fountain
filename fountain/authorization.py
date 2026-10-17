@@ -172,6 +172,9 @@ class Authorization:
             require(method in {'GET', 'PUT', 'DELETE'}, 'Unsupported presence method', 405)
             a.require_resource('page', parts[2], 1)
             return
+        if len(parts) == 4 and parts[:2] == ['api', 'pages'] and parts[3] == 'verify' and method in {'POST', 'DELETE'}:
+            a.require_resource('page', parts[2], 3)
+            return  # Preserve unknown fields for strict verification validation.
         if parts[:2] == ['api', 'pages'] and len(parts) >= 3:
             needed = 1 if not writing else 3
             if method == 'DELETE' or parts[-1] == 'permissions': needed = 4 if writing else 1
@@ -368,4 +371,8 @@ class Authorization:
             result.setdefault('owner_id', 'local')
         if path == '/api/pages' and 'id' in result:
             result['access_level'] = a.level('page', result)
+        pages = [] if path == '/api/workspace' else [*result.get('pages', []), *result.get('results', []), result.get('page')]
+        if path.startswith('/api/pages') and 'id' in result and 'title' in result: pages.append(result)
+        for page in pages:
+            if isinstance(page, dict) and 'verification' in page: page['verification'] = a.project_verification(page)
         return result

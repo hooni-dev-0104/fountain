@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import html
 import json
+import math
 import os
 import re
 import time
@@ -13,6 +14,7 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 from .core import APIError, AUDIT_ACTOR, CURRENT_ACCESS
+from .access import Access
 
 
 class AdvancedError(APIError):
@@ -82,6 +84,45 @@ class Advanced:
 
     def settings(self):
         return self.store.get('settings', 'workspace') or {}
+
+    def verify_page(self, method, identity, body):
+        require(isinstance(body, dict) and set(body) <= ({'owner', 'owners', 'expires_at', 'revision'} if method == 'POST' else {'revision'}), '잘못된 검증 필드입니다')
+        safe_integer = lambda value: type(value) in (int, float) and 0 <= value <= 9007199254740991 and value == math.floor(value)
+        if 'revision' in body: require(safe_integer(body['revision']), '올바른 페이지 revision이 필요합니다')
+        owners, expiry = [], body.get('expires_at')
+        if method == 'POST':
+            require(not ('owner' in body and 'owners' in body), '검증 담당자 형식을 하나만 지정해주세요')
+            values = body['owners'] if 'owners' in body else [body.get('owner', AUDIT_ACTOR.get())]
+            require(isinstance(values, list) and all(Access.verification_id(value) for value in values), '검증 담당자 ID 목록이 필요합니다')
+            owners = list(dict.fromkeys(values))
+            require(1 <= len(owners) <= 1000, '검증 담당자는 1명 이상 1000명 이하입니다')
+            if expiry is not None:
+                valid = isinstance(expiry, str) and len(expiry) <= 100 and re.fullmatch(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})', expiry)
+                try:
+                    parsed = datetime.fromisoformat(expiry) if valid else None
+                    utc = parsed.astimezone(timezone.utc) if parsed else None
+                    valid = (valid and 1970 <= utc.year <= 9998 and parsed.timestamp() > time.time()
+                             and (expiry.endswith('Z') or int(expiry[-5:-3]) < 24 and int(expiry[-2:]) < 60))
+                except (TypeError, ValueError, OverflowError): valid = False
+                require(valid, '검증 만료일은 시간대가 있는 미래 시각이어야 합니다')
+        page = self.item('page', identity)
+        access = CURRENT_ACCESS.get() or Access(self.store, self.store.get('member', AUDIT_ACTOR.get()))
+        access.require_resource('page', identity, 3)
+        revision = page.get('revision', 0)
+        require(safe_integer(revision) and revision < 9007199254740991, '페이지 검증 상태를 다시 확인해주세요', 409)
+        if 'revision' in body: require(body['revision'] == revision, '페이지 검증 상태를 다시 확인해주세요', 409)
+        if method == 'POST':
+            require(all(access.verification_member(owner, page) for owner in owners), '검증 담당자가 없습니다', 404)
+            hidden = [owner for owner in Access.verification_owners(page)
+                      if access.verification_member(owner, page, visible=False) and not access.verification_member(owner, page)]
+            owners = list(dict.fromkeys([*owners, *hidden]))
+            require(len(owners) <= 1000, '페이지 검증 상태를 다시 확인해주세요', 409)
+            page['verification'] = {'owners': owners, 'owner': owners[0], 'verified_by': AUDIT_ACTOR.get(), 'verified_at': now(), 'expires_at': expiry}
+        else: page.pop('verification', None)
+        page['revision'] = int(revision) + 1
+        self.store.put('page', page)
+        self.store.audit('page.verification.updated', {'page_id': page['id']})
+        return page
 
     def overview(self):
         return {**{kind: self.store.list(kind[:-1]) for kind in self.collections},
@@ -491,25 +532,8 @@ class Advanced:
             runs.sort(key=lambda record: record.get('started_at', ''), reverse=True)
             return 200, {'runs': [{key: value for key, value in record.items() if key != 'result'} for record in runs[:200]]}
         if len(parts) == 4 and parts[:2] == ['api', 'pages'] and parts[3] == 'verify':
-            page = self.item('page', parts[2])
-            if method == 'POST':
-                owner = body.get('owner', 'local')
-                require(self.store.get('member', owner), '검증 담당자가 없습니다', 404)
-                expiry = body.get('expires_at')
-                if expiry:
-                    try:
-                        parsed = datetime.fromisoformat(expiry)
-                        require(parsed.tzinfo is not None and parsed.timestamp() > time.time(), '검증 만료일은 시간대가 있는 미래 시각이어야 합니다')
-                    except (TypeError, ValueError) as error:
-                        raise AdvancedError('검증 만료일 형식이 잘못되었습니다') from error
-                page['verification'] = {'owner': owner, 'verified_by': AUDIT_ACTOR.get(), 'verified_at': now(), 'expires_at': expiry}
-            elif method == 'DELETE':
-                page.pop('verification', None)
-            else:
-                return None
-            self.store.put('page', page)
-            self.store.audit('page.verification.updated', {'page_id': page['id']})
-            return 200, page
+            if method not in {'POST', 'DELETE'}: return None
+            return 200, self.verify_page(method, parts[2], body)
         if len(parts) >= 2 and parts[0] == 'api' and parts[1] in self.collections:
             kind = parts[1]
             identity = parts[2] if len(parts) > 2 else None

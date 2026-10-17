@@ -156,9 +156,38 @@ export class Access {
     return policy !== null && (level === 4 || get(policy, 'mode', 'all') !== 'assigned' || get(policy, 'allow_create', false) === true);
   }
   visible_teamspaces(): Entity[] { return this.store.list('teamspace').filter(item => this.can('teamspace', item)); }
+  static verification_id(value:unknown):value is string{return valid_id(value)&&!/[\u0000-\u001f\u007f\ud800-\udfff]/u.test(value);}
+  static verification_owners(page:Entity):string[]{
+    const value=get(page,'verification');if(!is_object(value))return[];
+    const owners=get(value,'owners',[get(value,'owner')]);return Array.isArray(owners)?[...new Set<string>(owners.filter(Access.verification_id))]:[];
+  }
+  verification_member(identity:unknown,page:Entity,visible=true):boolean{
+    if(!Access.verification_id(identity))return false;const member=this.store.get('member',identity);
+    return !!(member&&get(member,'active',true)===true&&ROLES.has(get(member,'role'))&&(!visible||this.regular||identity===this.member_id)&&new Access(this.store,member).can('page',page));
+  }
+  static verification_date(value:unknown):value is string{
+    if(typeof value!=='string'||value.length>100)return false;
+    const match=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}:\d{2})$/.exec(value);if(!match)return false;
+    const [,y,m,d,h,min,s,,offset]=match,year=Number(y),month=Number(m),day=Number(d),hour=Number(h),minute=Number(min),second=Number(s),date=new Date(0);
+    date.setUTCFullYear(year,month-1,day);date.setUTCHours(hour,minute,second,0);
+    if(month<1||month>12||day<1||date.getUTCFullYear()!==year||date.getUTCMonth()+1!==month||date.getUTCDate()!==day||hour>=24||minute>=60||second>=60)return false;
+    let delta=0;if(offset!=='Z'){const hours=Number(offset.slice(1,3)),minutes=Number(offset.slice(4));if(hours>=24||minutes>=60)return false;delta=(hours*60+minutes)*60000*(offset[0]==='-'?-1:1);}
+    const utcYear=new Date(date.getTime()-delta).getUTCFullYear();return utcYear>=1970&&utcYear<=9998;
+  }
+  project_verification(page:Entity):Entity|null{
+    const value=get(page,'verification'),neutral={owners:[],owner:null,verified_by:null,verified_at:null,expires_at:null};if(!is_object(value))return neutral;
+    const raw=has(value,'owners')?value.owners:[get(value,'owner')];
+    if(!Array.isArray(raw)||!raw.length||!raw.every(Access.verification_id)||new Set(raw).size>1000||!Access.verification_date(value.verified_at)||(get(value,'expires_at')!==null&&!Access.verification_date(value.expires_at)))return neutral;
+    this.store.list('member'); // Bound cloud selection rounds before per-member ACL evaluation.
+    const eligible=[...new Set<string>(raw)].filter(id=>this.verification_member(id,page,false));if(!eligible.length)return neutral;
+    const owners=eligible.filter(id=>this.regular||id===this.member_id);
+    return{owners,owner:owners[0]??null,verified_by:this.verification_member(value.verified_by,page)?value.verified_by:null,verified_at:value.verified_at,expires_at:get(value,'expires_at')};
+  }
+
   filter_workspace(snapshot: Entity): Entity {
     const result = clone(snapshot);
     for (const [key, kind] of [['pages', 'page'], ['databases', 'database'], ['teamspaces', 'teamspace']]) result[key] = get(result, key, []).filter((entity: Entity) => this.can(kind, entity));
+    for(const page of result.pages)if(has(page,'verification'))page.verification=this.project_verification(page);
     const pages = new Set(result.pages.map((page: Entity) => page.id)), teamspaces = new Set(result.teamspaces.map((teamspace: Entity) => teamspace.id));
     for (const entity of [...result.pages, ...result.databases]) {
       if (truth(get(entity, 'parent_id')) && !pages.has(entity.parent_id)) entity.parent_id = null;

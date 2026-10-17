@@ -146,6 +146,9 @@ export class Authorization {
       a.require_resource('page', parts[2], 1);
       return;
     }
+    if(parts.length===4&&parts[0]==='api'&&parts[1]==='pages'&&last==='verify'&&['POST','DELETE'].includes(method)){
+      a.require_resource('page',parts[2],3);return; // Keep unknown fields for strict verification validation.
+    }
     if (parts[0] === 'api' && parts[1] === 'pages' && parts.length >= 3) {
       let needed = writing ? 3 : 1;
       if (method === 'DELETE' || last === 'permissions') needed = writing ? 4 : 1;
@@ -330,6 +333,9 @@ export class Authorization {
       if (!has(result, 'owner_id')) result.owner_id = 'local';
     }
     if (path === '/api/pages' && has(result, 'id')) result.access_level = a.level('page', result);
+    const pages=path==='/api/workspace'?[]:[...get(result,'pages',[]),...get(result,'results',[]),get(result,'page')];
+    if(path.startsWith('/api/pages')&&has(result,'id')&&has(result,'title'))pages.push(result);
+    for(const page of pages)if(is_object(page)&&has(page,'verification'))page.verification=a.project_verification(page);
     return result;
   }
 }

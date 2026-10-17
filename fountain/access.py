@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import copy
+import re
+from datetime import datetime, timezone
 
 from .core import require
 
@@ -175,11 +177,56 @@ class Access:
     def visible_teamspaces(self):
         return [teamspace for teamspace in self.store.list("teamspace") if self.can("teamspace", teamspace)]
 
+    @staticmethod
+    def verification_id(value):
+        return (isinstance(value, str) and 0 < len(value) <= 160
+                and not any(ord(char) < 32 or ord(char) == 127 or 0xD800 <= ord(char) <= 0xDFFF for char in value))
+
+    @staticmethod
+    def verification_owners(page):
+        value = page.get('verification')
+        if not isinstance(value, dict): return []
+        owners = value.get('owners', [value.get('owner')])
+        if not isinstance(owners, list): return []
+        return list(dict.fromkeys(identity for identity in owners if Access.verification_id(identity)))
+
+    def verification_member(self, identity, page, visible=True):
+        if not self.verification_id(identity): return False
+        member = self.store.get('member', identity)
+        return bool(member and member.get('active', True) is True and member.get('role') in ROLES
+                    and (not visible or self.regular or identity == self.member_id)
+                    and Access(self.store, member).can('page', page))
+
+    @staticmethod
+    def verification_date(value):
+        if not isinstance(value, str) or len(value) > 100 or not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?(?:Z|[+-][0-9]{2}:[0-9]{2})', value): return False
+        try:
+            parsed = datetime.fromisoformat(value).astimezone(timezone.utc)
+            return 1970 <= parsed.year <= 9998 and (value.endswith('Z') or int(value[-5:-3]) < 24 and int(value[-2:]) < 60)
+        except (ValueError, OverflowError): return False
+
+    def project_verification(self, page):
+        value = page.get('verification')
+        neutral = {'owners': [], 'owner': None, 'verified_by': None, 'verified_at': None, 'expires_at': None}
+        if not isinstance(value, dict): return neutral
+        raw = value['owners'] if 'owners' in value else [value.get('owner')]
+        if (not isinstance(raw, list) or not raw or not all(self.verification_id(identity) for identity in raw)
+                or len(set(raw)) > 1000 or not self.verification_date(value.get('verified_at'))
+                or value.get('expires_at') is not None and not self.verification_date(value['expires_at'])): return neutral
+        eligible = [identity for identity in dict.fromkeys(raw) if self.verification_member(identity, page, visible=False)]
+        if not eligible: return neutral
+        owners = [identity for identity in eligible if self.regular or identity == self.member_id]
+        return {'owners': owners, 'owner': owners[0] if owners else None,
+                'verified_by': value.get('verified_by') if self.verification_member(value.get('verified_by'), page) else None,
+                'verified_at': value['verified_at'], 'expires_at': value.get('expires_at')}
+
     def filter_workspace(self, snapshot):
         result = copy.deepcopy(snapshot)
         for key, kind in (("pages", "page"), ("databases", "database"), ("teamspaces", "teamspace")):
             result[key] = [entity for entity in result.get(key, []) if self.can(kind, entity)]
         page_ids = {page["id"] for page in result["pages"]}
+        for page in result['pages']:
+            if 'verification' in page: page['verification'] = self.project_verification(page)
         teamspace_ids = {teamspace["id"] for teamspace in result["teamspaces"]}
         for entity in result["pages"] + result["databases"]:
             if entity.get("parent_id") and entity["parent_id"] not in page_ids:

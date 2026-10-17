@@ -51,6 +51,33 @@ export class Advanced {
   private now():string{return this.options.clock?new Date(this.options.clock()).toISOString().replace(/\.(\d{3})Z$/,'.$1000+00:00'):this.store.requestTime??new Date().toISOString().replace(/\.(\d{3})Z$/,'.$1000+00:00');}
   private audit(action:string,details:Entity){return this.store.audit(action,details,this.actor);}
   settings():Entity{return this.store.get('settings','workspace')||{};}
+  verify_page(method:string,identity:string,body:Entity):Entity{
+    check(is_object(body)&&Object.keys(body).every(key=>(method==='POST'?['owner','owners','expires_at','revision']:['revision']).includes(key)),'잘못된 검증 필드입니다');
+    const integer=(value:unknown)=>Number.isSafeInteger(value)&&Number(value)>=0;
+    if(has(body,'revision'))check(integer(body.revision),'올바른 페이지 revision이 필요합니다');
+    let owners:string[]=[];const expiry=get(body,'expires_at');
+    if(method==='POST'){
+      check(!(has(body,'owner')&&has(body,'owners')),'검증 담당자 형식을 하나만 지정해주세요');
+      const values=get(body,'owners',[get(body,'owner',this.actor)]);check(Array.isArray(values)&&values.every(Access.verification_id),'검증 담당자 ID 목록이 필요합니다');
+      owners=[...new Set<string>(values)];check(owners.length>=1&&owners.length<=1000,'검증 담당자는 1명 이상 1000명 이하입니다');
+      if(expiry!==null){
+        let valid=false;
+        if(typeof expiry==='string'&&expiry.length<=100&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(expiry))try{valid=scheduleDatetime(expiry,'expires_at')>BigInt(Math.floor((this.options.clock??Date.now)()))*1000n;}catch{}
+        check(valid,'검증 만료일은 시간대가 있는 미래 시각이어야 합니다');
+      }
+    }
+    const page=this.item('page',identity),access=this.access??new Access(this.store,this.store.get('member',this.actor));access.require_resource('page',identity,3);
+    const revision=get(page,'revision',0);check(integer(revision)&&revision<Number.MAX_SAFE_INTEGER,'페이지 검증 상태를 다시 확인해주세요',409);
+    if(has(body,'revision'))check(body.revision===revision,'페이지 검증 상태를 다시 확인해주세요',409);
+    if(method==='POST'){
+      this.store.list('member'); // One private kind selection, not one retry per assignee.
+      check(owners.every(owner=>access.verification_member(owner,page)),'검증 담당자가 없습니다',404);
+      const hidden=Access.verification_owners(page).filter(owner=>access.verification_member(owner,page,false)&&!access.verification_member(owner,page));
+      owners=[...new Set([...owners,...hidden])];check(owners.length<=1000,'페이지 검증 상태를 다시 확인해주세요',409);
+      page.verification={owners,owner:owners[0],verified_by:this.actor,verified_at:this.now(),expires_at:expiry};
+    }else delete page.verification;
+    page.revision=revision+1;this.store.put('page',page);this.audit('page.verification.updated',{page_id:page.id});return page;
+  }
   overview():Entity{return {...Object.fromEntries([...this.collections].map(kind=>[kind,this.store.list(kind.slice(0,-1))])),audit:this.store.list('audit').slice(-100),settings:this.settings(),features:this.capabilities().features};}
   local_ai():boolean{if(this.options.cloud!==false)return false;try{const url=new URL(this.env.FOUNTAIN_AI_URL||'');return url.protocol==='http:'&&['localhost','127.0.0.1','[::1]'].includes(url.hostname);}catch{return false;}}
   capabilities():Entity{return {mode:this.options.cloud!==false||truth(this.store.meta('auth_accounts_required',false))?'member-accounts':this.env.FOUNTAIN_ACCESS_TOKEN?'trusted-family-shared':'local-single-user',features:FEATURE_ROWS.map(row=>Object.fromEntries(['id','name','plan','status','detail'].map((key,index)=>[key,row[index]]))),ai_configured:!!((this.env.FOUNTAIN_AI_PROVIDER||'compatible-http')==='compatible-http'&&this.env.FOUNTAIN_AI_MODEL&&(this.options.cloud===false||this.env.FOUNTAIN_AI_URL)&&(this.env.FOUNTAIN_AI_KEY||this.local_ai())),scim_configured:!!this.env.FOUNTAIN_SCIM_TOKEN,search_advanced:true,source:'https://www.notion.com/pricing'};}
@@ -158,7 +185,7 @@ export class Advanced {
     const parts=path.replace(/^\/+|\/+$/g,'').split('/');
     if(parts.length===4&&parts[0]==='api'&&parts[1]==='automations'&&parts[3]==='runs'&&method==='GET'){this.item('automations',parts[2]);return result({runs:this.store.list('automation_run').filter(record=>record.automation_id===parts[2]).sort((a,b)=>String(b.started_at||'').localeCompare(String(a.started_at||''))).slice(0,200).map(({result,...record})=>record)});}
     if(parts.length===4&&parts[0]==='api'&&parts[1]==='pages'&&parts[3]==='verify'){
-      const page=this.item('page',parts[2]);if(method==='POST'){const owner=get(body,'owner','local');check(this.store.get('member',owner),'검증 담당자가 없습니다',404);const expiry=get(body,'expires_at');if(truth(expiry)){try{const parsed=scheduleDatetime(expiry,'expires_at');check(parsed>BigInt(Math.floor((this.options.clock??Date.now)()))*1000n,'검증 만료일은 시간대가 있는 미래 시각이어야 합니다');}catch(error){if(error instanceof AdvancedError)throw error;throw new AdvancedError('검증 만료일 형식이 잘못되었습니다');}}page.verification={owner,verified_by:this.actor,verified_at:this.now(),expires_at:expiry};}else if(method==='DELETE')delete page.verification;else return null;this.store.put('page',page);this.audit('page.verification.updated',{page_id:page.id});return result(page);
+      if(!['POST','DELETE'].includes(method))return null;return result(this.verify_page(method,parts[2],body));
     }
     if(parts.length>=2&&parts[0]==='api'&&this.collections.has(parts[1])){
       const kind=parts[1],identity=parts.length>2?parts[2]:null;if(parts.length===4&&method==='POST'){if(kind==='forms'&&parts[3]==='submit')return result(this.submit_form(identity,body),201);if(kind==='automations'&&parts[3]==='run')return result(this.run_automation(identity,body));return null;}

@@ -3,6 +3,7 @@
  * Deployed SQL is checked structurally here; real PostgreSQL evidence is separate.
  */
 import assert from 'node:assert/strict';
+import {PAGE_HEADER_META_KEY,PAGE_HEADER_FIELDS,projectPageHeader} from '../functions/_shared/page-headers.ts';
 import {readFileSync} from 'node:fs';
 import {CloudStore,MissingSelection,StoreError,canonicalJSON,createStoreProvider,mergeSelection,normalizeSelection} from '../functions/_shared/store.ts';
 import {Access} from '../functions/_shared/access.ts';
@@ -39,7 +40,7 @@ class MemoryProvider {
     const all=Array.from(this.records.values()).filter(record=>selected.kinds.includes(record.kind)||(Object.hasOwn(selected.ids,record.kind)&&selected.ids[record.kind].includes(record.id))).sort((a,b)=>a.kind.localeCompare(b.kind)||a.createdAt.localeCompare(b.createdAt)||a.id.localeCompare(b.id));
     const index=request.cursor?.index||0,rows=clone(all.slice(index,index+selected.pageSize));
     for(const row of rows)if(row.kind==='attachment')delete row.data.data;
-    return {workspaceId:request.context.workspaceId,memberId:request.context.memberId,revision:this.revision,accessRevision:this.metadata.get('access_revision')||0,principal,entities:rows,meta:selected.metaKeys.map(key=>({key,present:this.metadata.has(key),value:this.metadata.has(key)?clone(this.metadata.get(key)):null})),nextCursor:index+rows.length<all.length?{index:index+rows.length,scope,revision:this.revision}:null};
+    return {workspaceId:request.context.workspaceId,memberId:request.context.memberId,revision:this.revision,accessRevision:this.metadata.get('access_revision')||0,principal,entities:rows,meta:selected.metaKeys.map(key=>key===PAGE_HEADER_META_KEY?{key,present:true,value:Array.from(this.records.values()).filter(record=>record.kind==='page').map(record=>projectPageHeader(record.data)).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0)}:{key,present:this.metadata.has(key),value:this.metadata.has(key)?clone(this.metadata.get(key)):null}),nextCursor:index+rows.length<all.length?{index:index+rows.length,scope,revision:this.revision}:null};
   }
   async commit(request){
     this.requests.push(clone(request));if(this.beforeCommit)await this.beforeCommit();
@@ -91,8 +92,22 @@ await test('permission projection uses pinned data and fails closed until expand
  const partial=await CloudStore.open(provider,context,selected,options);assert.throws(()=>new Access(partial,partial.principal),MissingSelection);
  selected=mergeSelection(selected,{kinds:['group','member','page','teamspace']});const full=await CloudStore.open(provider,context,selected,options);
  const access=new Access(full,full.principal);assert.equal(access.level('page',full.get('page','__proto__')),3);
- const projected=new Authorization(access).project('/api/workspace',{pages:full.list('page'),databases:[],teamspaces:full.list('teamspace'),members:full.list('member')});
+ const snapshot=store=>({pages:store.list('page'),databases:[],teamspaces:store.list('teamspace'),members:store.list('member')});
+ assert.throws(()=>new Authorization(access).project('/api/workspace',snapshot(full)),error=>error instanceof MissingSelection&&canonicalJSON(error.selection)===canonicalJSON({metaKeys:[PAGE_HEADER_META_KEY]}));
+ assert.equal(access.store,full);assert.equal(provider.revision,7);
+ selected=mergeSelection(selected,{metaKeys:[PAGE_HEADER_META_KEY]});const expanded=await CloudStore.open(provider,context,selected,options);
+ const projected=new Authorization(new Access(expanded,expanded.principal)).project('/api/workspace',snapshot(expanded));
  assert.equal(projected.pages.find(page=>page.id==='__proto__').access_level,3);assert.equal(provider.revision,7);
+});
+await test('virtual page headers are computed, body-free and ignore forged persisted metadata',async()=>{
+ const provider=new MemoryProvider();provider.seed('page',{id:'header-target',title:'Actual title',icon:null,blocks:[{text:'PRIVATE BODY'}],cover:'PRIVATE COVER',unknown:'PRIVATE UNKNOWN'});
+ const forged=[{id:'forged-page',blocks:[{text:'FORGED BODY'}]}];provider.metadata.set(PAGE_HEADER_META_KEY,clone(forged));
+ const records=clone(provider.records),store=await CloudStore.open(provider,context,{metaKeys:[PAGE_HEADER_META_KEY]},options),headers=store.page_headers();
+ const target=headers.find(page=>page.id==='header-target');assert(target);assert.equal(target.title,'Actual title');assert.equal(target.icon,null);assert.equal(Object.hasOwn(target,'verification'),false);
+ assert(headers.every(page=>Object.keys(page).every(field=>PAGE_HEADER_FIELDS.includes(field))));assert.equal(headers.some(page=>page.id==='forged-page'),false);
+ const request=provider.snapshotRequests[0],response=await provider.snapshot(request);assert.equal(response.meta.find(value=>value.key===PAGE_HEADER_META_KEY).present,true);
+ assert.throws(()=>store.get('page','header-target'),MissingSelection);target.title='mutated copy';assert.equal(store.page_headers().find(page=>page.id==='header-target').title,'Actual title');
+ assert.deepEqual(provider.records,records);assert.deepEqual(provider.metadata.get(PAGE_HEADER_META_KEY),forged);assert.equal(provider.revision,7);assert.equal(provider.requests.length,0);
 });
 await test('changed revision between pages never returns a mixed store',async()=>{
  const provider=new MemoryProvider(),base=provider.snapshot.bind(provider);let calls=0;

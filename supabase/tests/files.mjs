@@ -1,5 +1,6 @@
 // Actual loopback HTTP and production domain code; MemoryProvider is a SQL contract MODEL, not PostgreSQL evidence.
 import assert from 'node:assert/strict';
+import {PAGE_HEADER_META_KEY,projectPageHeader} from '../functions/_shared/page-headers.ts';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
 import {createHash,randomBytes} from 'node:crypto';
@@ -40,7 +41,7 @@ class MemoryProvider {
     const all=Array.from(this.records.values()).filter(record=>selected.kinds.includes(record.kind)||(Object.hasOwn(selected.ids,record.kind)&&selected.ids[record.kind].includes(record.id))).sort((a,b)=>a.kind.localeCompare(b.kind)||a.createdAt.localeCompare(b.createdAt)||a.id.localeCompare(b.id));
     const index=request.cursor?.index||0,rows=clone(all.slice(index,index+selected.pageSize));
     for(const row of rows)if(row.kind==='attachment')delete row.data.data;
-    return {workspaceId:request.context.workspaceId,memberId:request.context.memberId,revision:this.revision,accessRevision:this.metadata.get('access_revision')||0,principal,entities:rows,meta:selected.metaKeys.map(key=>({key,present:this.metadata.has(key),value:this.metadata.has(key)?clone(this.metadata.get(key)):null})),nextCursor:index+rows.length<all.length?{index:index+rows.length,scope,revision:this.revision}:null};
+    return {workspaceId:request.context.workspaceId,memberId:request.context.memberId,revision:this.revision,accessRevision:this.metadata.get('access_revision')||0,principal,entities:rows,meta:selected.metaKeys.map(key=>key===PAGE_HEADER_META_KEY?{key,present:true,value:Array.from(this.records.values()).filter(record=>record.kind==='page').map(record=>projectPageHeader(record.data)).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0)}:{key,present:this.metadata.has(key),value:this.metadata.has(key)?clone(this.metadata.get(key)):null}),nextCursor:index+rows.length<all.length?{index:index+rows.length,scope,revision:this.revision}:null};
   }
   async commit(request){
     this.requests.push(clone(request));if(this.beforeCommit)await this.beforeCommit();
@@ -133,6 +134,8 @@ test('inline ranges, suffixes, HEAD and If-Range use full-source preflight and e
 test('inline stream rechecks shared ACL after the private byte read and stops on same-size source replacement',async t=>{
  for(const when of ['between-pieces','during-private-read']){
   const f=await legacyFixture(t,Buffer.alloc(150000,0x61));f.raw('page','page').owner_id='nobody';f.raw('page','page').blocks=[{id:'file',attachment_id:'legacy-inline'}];f.provider.revision++;f.setActor(second);
+  // SQL computes current headers and ignores a forged persisted reserved key.
+  f.provider.metadata.set(PAGE_HEADER_META_KEY,[{id:'forged',blocks:[{text:'must not be returned'}]}]);
   const response=await f.files.download(f.auth(),'legacy-inline',req('/api/attachments/legacy-inline/download')),reader=response.body.getReader();
   if(when==='between-pieces'){assert.equal((await reader.read()).value.length,65536);f.raw('page','page').permissions.members.bob='none';f.provider.revision++;}
   else f.inlineIO.afterRead=input=>{if(input.length){f.raw('page','page').permissions.members.bob='none';f.provider.revision++;}};
@@ -248,6 +251,7 @@ test('revoked shared attachment streams stop before further public bytes, foreig
  const f=await fixture(t),bytes=randomBytes(150_000),item=await upload(f,bytes);await f.files.complete(f.auth(),item.id);
  f.raw('page','page').blocks=[{id:'file-block',attachment_id:item.id}];f.provider.revision++;
  f.setActor(second);const initial=f.auth();await rejected(f.files.remove(initial,item.id),403);
+ f.provider.metadata.set(PAGE_HEADER_META_KEY,[{id:'forged',blocks:[{text:'must not be returned'}]}]);
  const response=await f.files.download(initial,item.id,req('/api/attachments/'+item.id+'/download')),reader=response.body.getReader();const first=await reader.read();assert.equal(first.value.length,65536);
  f.raw('page','page').permissions.members.bob='none';f.raw('page','page').owner_id='nobody';f.provider.revision++;
  await rejected(reader.read(),404);await rejected(f.files.metadata(initial,item.id),404);assert(f.raw('attachment',item.id));

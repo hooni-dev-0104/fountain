@@ -21,6 +21,7 @@ from typing import Any
 
 AUDIT_ACTOR = ContextVar("fountain_actor", default="local")
 CURRENT_ACCESS = ContextVar("fountain_access", default=None)
+CONTENT_ORIGIN = ContextVar("fountain_content_origin", default="human")
 
 def now():
     return datetime.now(timezone.utc).isoformat()
@@ -80,6 +81,8 @@ class Store:
                 PRIMARY KEY(attachment_id,offset));
         """)
         self.db.commit()
+        from .content_index import ContentIndex
+        ContentIndex(self).initialize()
 
     @contextmanager
     def transaction(self):
@@ -127,7 +130,8 @@ class Store:
         data = copy.deepcopy(data)
         entity_id = data.get("id") or uid()
         text(entity_id, "id", 160, False)
-        with self.transaction() if kind == "member" else self.lock:
+        from .content_index import ContentIndex, INVALIDATES
+        with self.transaction() if kind in INVALIDATES else self.lock:
             previous = self.get(kind, entity_id)
             data.update(id=entity_id, created_at=(previous or {}).get("created_at", now()), updated_at=now())
             self.db.execute("INSERT OR REPLACE INTO entities VALUES (?,?,?,?,?)", (
@@ -136,16 +140,21 @@ class Store:
                 from .admin_roles import invalidate_member
                 invalidate_member(self, entity_id)
             self._advance_revision()
+            ContentIndex(self).changed(kind, entity_id, previous=previous)
             self.commit()
         return data
 
     def delete(self, kind, entity_id):
-        with self.transaction() if kind == "member" else self.lock:
+        from .content_index import ContentIndex, INVALIDATES
+        with self.transaction() if kind in INVALIDATES else self.lock:
+            previous = self.get(kind, entity_id) if kind in ('site','form') else None
             cursor = self.db.execute("DELETE FROM entities WHERE kind=? AND id=?", (kind, entity_id))
             if kind == "member" and cursor.rowcount:
                 from .admin_roles import invalidate_member
                 invalidate_member(self, entity_id)
-            if cursor.rowcount: self._advance_revision()
+            if cursor.rowcount:
+                self._advance_revision()
+                ContentIndex(self).changed(kind, entity_id, previous=previous)
             self.commit()
 
     def meta(self, key, default=None):
@@ -154,9 +163,12 @@ class Store:
             return json.loads(row[0]) if row else default
 
     def set_meta(self, key, value):
-        with self.lock:
+        with self.transaction():
             self.db.execute("INSERT OR REPLACE INTO meta VALUES (?,?)", (key, json.dumps(value, ensure_ascii=False)))
             if key != '_entity_revision': self._advance_revision()
+            if key in ('workspace_id', 'settings', 'sharing_settings', 'access_revision'):
+                from .content_index import ContentIndex
+                ContentIndex(self).touch()
             self.commit()
         return value
 

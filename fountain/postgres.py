@@ -11,7 +11,7 @@ import json
 import threading
 from contextlib import contextmanager
 
-from .core import APIError, AUDIT_ACTOR, _admin_membership_changed, now, require, text, uid
+from .core import APIError, AUDIT_ACTOR, CONTENT_ORIGIN, _admin_membership_changed, now, require, text, uid
 
 
 class PostgresStore:
@@ -157,6 +157,20 @@ class PostgresStore:
                                  (self.workspace_id, kind), fetch="all")
             return [copy.deepcopy(row[0]) for row in rows]
 
+    @contextmanager
+    def _content_actor(self):
+        # Context is built from a live server principal, never entity fields.
+        # Setting a transaction-local GUC is harmless before index provisioning.
+        from .content_index import trusted_actor
+        actor = trusted_actor(self)
+        previous = self._execute("SELECT current_setting('fountain.content_actor',true)", fetch="one")[0]
+        value = json.dumps({'workspace_id': self.workspace_id, 'member_id': actor, 'cause': CONTENT_ORIGIN.get()}) if actor else ''
+        self._execute("SELECT set_config('fountain.content_actor',%s,true)", (value,))
+        try:
+            yield
+        finally:
+            self._execute("SELECT set_config('fountain.content_actor',%s,true)", (previous or '',))
+
     def put(self, kind, data):
         require(isinstance(data, dict), "Entity must be an object")
         value = copy.deepcopy(data)
@@ -165,10 +179,11 @@ class PostgresStore:
         with self.transaction():
             previous = self.get(kind, entity_id)
             value.update(id=entity_id, created_at=(previous or {}).get("created_at", now()), updated_at=now())
-            self._execute(
-                "INSERT INTO fountain_private.entities(workspace_id,kind,id,data,created_at,updated_at) VALUES (%s,%s,%s,%s,%s,%s) "
-                "ON CONFLICT(workspace_id,kind,id) DO UPDATE SET data=EXCLUDED.data,updated_at=EXCLUDED.updated_at",
-                (self.workspace_id, kind, entity_id, self._json(value), value["created_at"], value["updated_at"]))
+            with self._content_actor():
+                self._execute(
+                    "INSERT INTO fountain_private.entities(workspace_id,kind,id,data,created_at,updated_at) VALUES (%s,%s,%s,%s,%s,%s) "
+                    "ON CONFLICT(workspace_id,kind,id) DO UPDATE SET data=EXCLUDED.data,updated_at=EXCLUDED.updated_at",
+                    (self.workspace_id, kind, entity_id, self._json(value), value["created_at"], value["updated_at"]))
             if kind == "member" and _admin_membership_changed(previous, value):
                 from .admin_roles import invalidate_member
                 invalidate_member(self, entity_id)
@@ -177,8 +192,9 @@ class PostgresStore:
 
     def delete(self, kind, entity_id):
         with self.transaction():
-            removed = self._execute("DELETE FROM fountain_private.entities WHERE workspace_id=%s AND kind=%s AND id=%s",
-                                    (self.workspace_id, kind, entity_id))
+            with self._content_actor():
+                removed = self._execute("DELETE FROM fountain_private.entities WHERE workspace_id=%s AND kind=%s AND id=%s",
+                                        (self.workspace_id, kind, entity_id))
             if kind == "member" and removed:
                 from .admin_roles import invalidate_member
                 invalidate_member(self, entity_id)

@@ -15,7 +15,7 @@ import urllib.request
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from .core import APIError, AUDIT_ACTOR, CURRENT_ACCESS
+from .core import APIError, AUDIT_ACTOR, CURRENT_ACCESS, CONTENT_ORIGIN
 from .access import Access
 from .inbox import Inbox
 
@@ -242,6 +242,13 @@ class Advanced:
         return not condition or answers.get(condition['field']) == condition.get('equals')
 
     def submit_form(self, identity, body):
+        origin_token = CONTENT_ORIGIN.set('public_form')
+        try:
+            return self._submit_form(identity, body)
+        finally:
+            CONTENT_ORIGIN.reset(origin_token)
+
+    def _submit_form(self, identity, body):
         require(not self.settings().get('disable_public_sharing'), '공개 공유가 비활성화되었습니다', 403)
         form = self.item('forms', identity)
         require(form.get('published', False), '양식이 게시되지 않았습니다', 404)
@@ -306,9 +313,11 @@ class Advanced:
         access = Access(self.store, member)
         access.require_resource('database', automation['database_id'], 4)
         actor_token, access_token = AUDIT_ACTOR.set(author), CURRENT_ACCESS.set(access)
+        origin_token = CONTENT_ORIGIN.set('automation')
         try:
             return self.run_automation(identity, body)
         finally:
+            CONTENT_ORIGIN.reset(origin_token)
             AUDIT_ACTOR.reset(actor_token)
             CURRENT_ACCESS.reset(access_token)
 

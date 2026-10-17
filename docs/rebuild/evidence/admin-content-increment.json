@@ -1,0 +1,14 @@
+{
+  "scope": "single workspace content administration; independent implementation, partial original feature contract",
+  "source": "../../research/admin-content-evidence.json",
+  "implemented": true,
+  "wholeFeatureOrProductParityVerified": false,
+  "actualCloudAuthVerified": true,
+  "productionDeployed": true,
+  "sqlProvisioningApplied": true,
+  "main": 22,
+  "files": 48,
+  "migrations": 34,
+  "cleaned": true,
+  "retired": 91
+}

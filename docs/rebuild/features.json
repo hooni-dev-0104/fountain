@@ -294,12 +294,12 @@
       "evidence/original-boundaries.md"
     ],
     "acceptance": [
-      "Complete and verify: 실제 이벤트 감사·집계, 소유자의 개인별 사용자 정의 관리자 역할·복수 지정·철회와 감사/분석/멤버/그룹 구성원 액션; ADMIN_ROLES.md 참조",
-      "Resolve: 외부 SIEM/DLP, 조직 분석·다중 작업공간·준비된 전체 관리 역할, 전체 관리자 콘텐츠 검색과 원본 유료 정책 비교"
+      "Complete and verify: 실제 이벤트 감사·집계, 소유자의 개인별 사용자 정의 관리자 역할·복수 지정·철회와 감사/분석/멤버/그룹/콘텐츠 10개 액션; ADMIN_ROLES.md·ADMIN_CONTENT.md 참조",
+      "Resolve: 외부 SIEM/DLP, 조직 분석·다중 작업공간·준비된 전체 관리 역할, 관리자 휴지통 복원·영구 삭제·보존 연계와 원본 유료 정책 비교"
     ],
     "verification": [],
     "limitations": [
-      "외부 SIEM/DLP, 조직 분석·다중 작업공간·준비된 전체 관리 역할, 전체 관리자 콘텐츠 검색과 원본 유료 정책 비교"
+      "외부 SIEM/DLP, 조직 분석·다중 작업공간·준비된 전체 관리 역할, 관리자 휴지통 복원·영구 삭제·보존 연계와 원본 유료 정책 비교"
     ],
     "implementation_inventory": "../FEATURES.md"
   },
@@ -548,7 +548,7 @@
     "name": "관리자 콘텐츠 검색·세분화 역할",
     "priority": "P1",
     "weight": 3,
-    "status": "discovered",
+    "status": "implemented",
     "original_evidence": [
       "evidence/original-boundaries.md",
       "evidence/admin-governance-original.md"
@@ -560,10 +560,17 @@
       "휴지통·별도 보존 상태를 검색하고 원래 권한을 확인한 뒤 원래 위치 또는 개인 페이지로 복원하거나 영구 삭제한다. 보존/법적 보류 정책과 충돌하지 않음을 검증한다.",
       "FEATURE-admin-roles의 누적 역할·개별 배정·작업공간 범위·철회를 적용한다. 실제 행위자와 변경을 감사 기록으로 남긴다. 감사/CAS/철회 시점 정책은 독립 구현 요구이며 원본 내부 동작을 관찰했다는 뜻이 아니다."
     ],
-    "verification": [],
+    "verification": [
+      {
+        "command": "SQL959 ACL/1536 Unicode/100MiB corpus; Node68+service34; actualSupabase HTTP8/Chrome8+syncbackup/v2snapshotcancel; main22exact48/migrations34; cleanup91",
+        "passed": true,
+        "evidence": "evidence/admin-content-increment.json"
+      }
+    ],
     "limitations": [
-      "일반 ACL 검색과 검증 페이지 목록은 존재하나 관리자 전용 전체 본문 검색·공유 메타데이터/CSV·제한 페이지 관리·위임 역할 전체 계약의 구현/실제 클라우드/원본 비교 증거는 없다.",
-      "원본 검색 일치 규칙·전체 추가 필터·정렬·페이지 나눔·DB 행 포함 방식·위임 CSV/권한 변경의 세부 액션 목록은 유료 원본에서 미관찰이다. 생성자·마지막 편집자를 owner_id나 수정 시각만으로 추정하지 않는다."
+      "한 워크스페이스의 관리자 검색·공유/작성 메타데이터·CSV·권한 철회·게시 해제를 실제 Supabase Auth/Edge와 Chrome에서 검사하고 main22에 배포했다. 새 설치물 4종은 빌드·자산 검사만 마쳤고 해당 네이티브 인증 여정은 미검증이다.",
+      "관리자 휴지통 복원·영구 삭제·별도 보존 자료·법적 보류 연계, 조직의 여러 워크스페이스, 유료 원본 전체 비교는 남아 있다.",
+      "원본 검색 일치 규칙·DB 행 포함 방식·전체 위임 액션은 유료 원본에서 미관찰이며 독립 구현이다. 큰 CSV의 재개형 처리, 브라우저 대체 저장32MiB/네이티브8MiB 한계도 남아 있다."
     ]
   },
   {
@@ -660,7 +667,7 @@
       }
     ],
     "limitations": [
-      "현재 한 작업공간의 명시적 사용자 정의 6개 관리 액션·개인 복수 지정만 구현·검사했다. 조직 단위 범위·준비된 전체 역할·미구현 콘텐츠 검색/법적 보류/인증/과금 액션과 원본 유료 전체 비교는 남아 있다."
+      "한 작업공간의 명시적 사용자 정의 역할 10개 액션을 실제 main22와 Chrome에서 검사했다. 조직 범위·준비된 전체 역할·법적 보류/인증/과금 액션·원본 유료 전체 비교는 남아 있다."
     ],
     "original_source_ids": [
       "enterprise-roles"

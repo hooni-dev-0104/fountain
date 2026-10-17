@@ -1,0 +1,421 @@
+{
+  "recorded_at": "2026-10-17T11:09:15.406434+00:00",
+  "source_commit": "d9f9aafa01e732192f6e4a7fa805dfc685299d88",
+  "scope": "Single-workspace explicit administrator content actions; partial original feature contract, independently implemented",
+  "implemented": true,
+  "whole_feature_verified": false,
+  "whole_goal_complete": false,
+  "release": {
+    "main": 22,
+    "files": 48,
+    "migrations": 34,
+    "all_shared_sources_match_actual_qa89": true,
+    "original_entry_config_preserved": true,
+    "worker": 4,
+    "maintenance": 4,
+    "human_owner_linked": false
+  },
+  "validation": {
+    "python_postgres": {
+      "actualPostgresConfigured": true,
+      "tests": 672,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": true,
+      "seconds": 289.796,
+      "final_source_monolithic_run": true,
+      "command": "Private FOUNTAIN_TEST_POSTGRES_DSN configured; python -m unittest discover -s tests"
+    },
+    "node": {
+      "scripts": 68,
+      "all_passed": true,
+      "content_service_tests": 34,
+      "static_type_compiler_executed": false,
+      "command": "FOUNTAIN_PYTHON=<Python3.12> node supabase/tests/*.mjs (individual scripts)"
+    },
+    "sql": {
+      "acl_oracle_cases": 959,
+      "unicode_oracle_cases": 1536,
+      "scalar_cases": 37,
+      "combined_component_groups": 8,
+      "fixtures_rolled_back": 3040,
+      "large": {
+        "evidence": {
+          "pages": 51,
+          "chunks": 29835,
+          "body_chars": 106954701,
+          "chunks_sha256": "00ed2b0963bbd9c2c3ac7a54cd56ade526403ca317b850fab2f2865e1107ff4a",
+          "source_sha256": "aaa95f5a6b64c350bb5bc1b92125c2d731dcd095ac145cf925e55ae6d36c8632",
+          "elapsed_seconds": 67.201486,
+          "reads_unchanged": true,
+          "source_json_bytes": 107179287,
+          "fixture_compressible": true,
+          "database_bytes_before": 20215475,
+          "origin_scim_system_tests": true,
+          "original_source_unchanged": true
+        },
+        "schema_absent": true,
+        "auth_users": 0,
+        "qa_entities": 0,
+        "database_bytes_after": 22206131
+      },
+      "component_auth_stub_explicit": true,
+      "component_not_live_auth_proof": true,
+      "actual_service_role_wrapper_reaches_live_auth_denial": true,
+      "anon_authenticated_inner_commit_execute": false
+    },
+    "actual_http": {
+      "passed": true,
+      "verification_groups": [
+        {
+          "version": 84,
+          "checks": [
+            "two_real_Auth_users_three_sessions_owner_ten_actions_old_six_action_role_has_no_new_capability",
+            "real_private_ID_Unicode_complete_body_AND_phrase_tail_search_no_source_snapshots_no_ordinary_ACL_expansion_read_only_boundary",
+            "real_page_database_row_trash_date_location_access_pagination_options_cursor_scope_and_strict_query_protocol",
+            "real_manage_capability_typed_group_picker_review_CAS_inherited_member_revoke_implicit_owner_protection_and_direct_group_removal",
+            "real_publish_capability_unpublishes_all_page_sites_and_database_forms",
+            "real_create_and_edit_provenance_uses_verified_human_actor_ignores_body_origin_spoof"
+          ],
+          "scope": "six non-CSV actual Auth/DB groups, preserved evidence"
+        },
+        {
+          "version": 88,
+          "checks": [
+            "actual_framed_complete_EOF_and_limit1_limit100_decoded_bytes_equal_current_raw_CSV",
+            "actual_owner_role_and_export_policy_revocations_emit_error403or409_and_normal_EOF_before_deadline_without_complete"
+          ],
+          "scope": "framed successful byte-equivalence and actual role/policy ERROR plus normal EOF"
+        }
+      ],
+      "same_version_all_groups": false,
+      "qa_entry_after_88": "ASCII escape diagnostic headers only; all shipping shared source bytes unchanged",
+      "content_metadata_requests_observed": 79,
+      "maximum_content_rpc_response_bytes": 11054,
+      "raw_page_row_database_bodies_in_metadata_snapshots": 0,
+      "telemetry_scope": "Captured at response headers; not a complete end-of-stream request counter"
+    },
+    "actual_framed_csv": {
+      "qa_version": 88,
+      "passed": true,
+      "success": {
+        "raw": {
+          "bytes": 16453,
+          "sha256": "8c422a52a5b4e88ad7ba167668846de697a921734c82a946279168cb760a7185"
+        },
+        "limit1": {
+          "status": 200,
+          "protocol": 1,
+          "limit": 1,
+          "mode": null,
+          "firstCSVHeaderDelivered": true,
+          "terminal": "complete",
+          "terminalStatus": null,
+          "completeBytes": 16453,
+          "decodedBytes": 16453,
+          "wireBytes": 22026,
+          "frames": 3,
+          "sha256": "8c422a52a5b4e88ad7ba167668846de697a921734c82a946279168cb760a7185",
+          "normalEOFObserved": true,
+          "clientSignalAborted": false,
+          "terminalSeconds": 7.5,
+          "totalSeconds": 7.5
+        },
+        "limit100": {
+          "status": 200,
+          "protocol": 1,
+          "limit": 100,
+          "mode": null,
+          "firstCSVHeaderDelivered": true,
+          "terminal": "complete",
+          "terminalStatus": null,
+          "completeBytes": 16453,
+          "decodedBytes": 16453,
+          "wireBytes": 22026,
+          "frames": 3,
+          "sha256": "8c422a52a5b4e88ad7ba167668846de697a921734c82a946279168cb760a7185",
+          "normalEOFObserved": true,
+          "clientSignalAborted": false,
+          "terminalSeconds": 4.3,
+          "totalSeconds": 4.3
+        },
+        "allByteEqual": true
+      },
+      "role_revocation": {
+        "status": 200,
+        "protocol": 1,
+        "limit": 1,
+        "mode": "revoke",
+        "firstCSVHeaderDelivered": true,
+        "terminal": "error",
+        "terminalStatus": 403,
+        "completeBytes": null,
+        "decodedBytes": 376,
+        "wireBytes": 560,
+        "frames": 2,
+        "sha256": "167ee55470ab636f448d93129f29a7cddbb9fc4ba7ae456bffde0ab38abb514d",
+        "normalEOFObserved": true,
+        "clientSignalAborted": false,
+        "terminalSeconds": 3.6,
+        "totalSeconds": 3.6,
+        "actualOwnerMutationVerified": true,
+        "noComplete": true
+      },
+      "export_policy_revocation": {
+        "status": 200,
+        "protocol": 1,
+        "limit": 1,
+        "mode": "disable-export",
+        "firstCSVHeaderDelivered": true,
+        "terminal": "error",
+        "terminalStatus": 403,
+        "completeBytes": null,
+        "decodedBytes": 376,
+        "wireBytes": 560,
+        "frames": 2,
+        "sha256": "167ee55470ab636f448d93129f29a7cddbb9fc4ba7ae456bffde0ab38abb514d",
+        "normalEOFObserved": true,
+        "clientSignalAborted": false,
+        "terminalSeconds": 2,
+        "totalSeconds": 2,
+        "actualOwnerMutationVerified": true,
+        "noComplete": true
+      },
+      "raw_gateway_error_termination_known_gap": true,
+      "raw_error_not_counted_as_success": true
+    },
+    "actual_chrome": {
+      "actualChrome": true,
+      "actualSupabaseAuth": true,
+      "actualPostgres": true,
+      "qaVersion": 89,
+      "checks": [
+        "existing_actual_Auth_sessions_injected_HttpOnly_Secure_scoped_workspace_no_new_login_or_account",
+        "actual_owner_body_tail_phrase_casefold_Unicode_slash_ID_metadata_and_permissions_config_UI",
+        "actual_Auth_Edge_DB_framed_CSV_browser_download_all_viewers_formula_safe",
+        "actual_delegated_read_only_private_search_does_not_expand_ordinary_ACL_or_show_management_export",
+        "actual_cloud_access_metadata_dialog_and_390px_no_horizontal_overflow_44px_targets",
+        "actual_cloud_private_admin_metadata_disposed_on_browser_offline",
+        "actual_spare_owner2_logout_clears_private_view_and_session_is_unauthenticated",
+        "actual_new_admin_content_reads_use_bounded_RPC_no_raw_body_snapshots_or_domain_writes"
+      ],
+      "cleanup": {
+        "owner2Logout": true,
+        "baselineRolesRestored": true,
+        "ownerSessionStillAuthenticated": true,
+        "memberSessionStillAuthenticated": true,
+        "ownerAndMemberSessionsRetained": true,
+        "sharedConfigWritten": false
+      },
+      "csvDownload": {
+        "bytes": 3352,
+        "sha256": "fd9866ff29ff3844a8e4952ad1236fbd8a5a638567dfd1de34e0ff456131ca18",
+        "actualBrowserDownload": true,
+        "blobFallback": true,
+        "protocol": "framed_complete_and_EOF"
+      },
+      "errorCount": 0,
+      "passed": true,
+      "limitations": [
+        "Temporary HTTPS presentation proxy; not external public hosting.",
+        "Existing opaque Auth cookies injected HttpOnly+Secure into isolated contexts; no new password login or Auth account.",
+        "Small actual QA fixture; not a large-workspace browser boot proof.",
+        "No native, physical mobile, or Windows authenticated journey.",
+        "CSV telemetry headers cover calls made before response headers; late CSV calls are not a complete end-of-stream RPC counter. Actual framed browser download verifies explicit completion and EOF independently."
+      ]
+    },
+    "client_protocol": {
+      "valid_decoder_cases": 7,
+      "rejected_decoder_cases": 32,
+      "exact_line_boundary_bytes": 100000,
+      "same_source_browser_full_flow_passed_before_final_narrow_boundary_fix": true,
+      "final_boundary_rechecked_independently": true,
+      "file_blob_error_cases": 14,
+      "native_bridge_missing_protocol_header_mock_verified": true,
+      "actual_os_picker_and_native_save_not_tested": true
+    },
+    "backup": {
+      "actual_edge_synchronous_sqlite_bytes": 1134592,
+      "sha256": "4d1fa37743f02b75159d3cf9da6b37d6ead1a2262ffe55f889aba9158bc703da",
+      "trusted_restore_history_rows": 11,
+      "history_columns": 10,
+      "actual_creator": "local",
+      "actual_editor": "alice",
+      "history_generation_preserved": true,
+      "v2_snapshot_sql": {
+        "actualReadOnlySupabaseSQL": true,
+        "formatV2": true,
+        "building": true,
+        "outputBytes": 0,
+        "fourTableLayout": true,
+        "declaredHistoryRows": 11,
+        "actualHistoryRows": 11,
+        "immutableHistoryExactlyMatchesPrivateSource": true,
+        "outputRows": 0,
+        "fullArtifactBuildVerified": false,
+        "checkedAt": "2026-10-17T10:36:29.619334+00:00"
+      },
+      "cancelled_source_output_parts_reserved_zero": true,
+      "full_v2_storage_artifact_build_rerun": false
+    },
+    "native": {
+      "directory": ".data/installables-admin-content-framed-20261017",
+      "artifacts": [
+        {
+          "name": "Fountain-macOS-arm64.zip",
+          "bytes": 127642014,
+          "sha256": "694c116754bc1cef4d5518ac633c0412e3bf25403451c87198078aa58b2b937f",
+          "zipCRC": true,
+          "testBundlesAbsent": true,
+          "archivedASARMatchesVerifiedSource": true,
+          "archivedASARSHA256": "9e0b2c4f772c1d7518a291fe33a1d1eb2a0b0693073ff88546b8878a19f9d429",
+          "publicAssetCount": 15,
+          "publicAssetHashesSHA256": "0b23821df97246843de3703275f19180ffa1af4031a326fb353872b83c860f1a"
+        },
+        {
+          "name": "Fountain-Windows-x64.zip",
+          "bytes": 158683592,
+          "sha256": "1fda618ebeeb01dbed15ffbf395dcea66b2939dcc0b797e197f6082be570864a",
+          "zipCRC": true,
+          "testBundlesAbsent": true,
+          "archivedASARMatchesVerifiedSource": true,
+          "archivedASARSHA256": "9e0b2c4f772c1d7518a291fe33a1d1eb2a0b0693073ff88546b8878a19f9d429",
+          "publicAssetCount": 15,
+          "publicAssetHashesSHA256": "0b23821df97246843de3703275f19180ffa1af4031a326fb353872b83c860f1a"
+        },
+        {
+          "name": "Fountain-iOS-Simulator-Release.zip",
+          "bytes": 3157370,
+          "sha256": "3a43f68414edbae84e1e8d23ec3b167f0520c3c687afdb8ccff0e118cda99600",
+          "zipCRC": true,
+          "testBundlesAbsent": true,
+          "publicAssetCount": 21,
+          "publicAssetHashesSHA256": "d5af58e8d797e378160bb2dbfad3f96ad0f0468e33de247ca91cad56c64e7e33"
+        },
+        {
+          "name": "Fountain-Android-debug.apk",
+          "bytes": 4741587,
+          "sha256": "1ab0274a75eb9062006da6b6713fb90764bd2cfeb173f2185c67afd2bb612d46",
+          "zipCRC": true,
+          "testBundlesAbsent": true,
+          "publicAssetCount": 21,
+          "publicAssetHashesSHA256": "d5af58e8d797e378160bb2dbfad3f96ad0f0468e33de247ca91cad56c64e7e33"
+        }
+      ],
+      "desktop_assets_each": 15,
+      "mobile_assets_each": 21,
+      "source_web_assets": 14,
+      "asar_source_files": 8,
+      "android_dex_files": 6,
+      "installed_or_launched": false
+    },
+    "secrets": {
+      "archives": 4,
+      "archive_entries": 1530,
+      "private_values": 13,
+      "working_source_and_history_matches": 0,
+      "raw_values_printed": false
+    }
+  },
+  "cleanup": {
+    "protected_check": {
+      "status": 200,
+      "protectedMarkersVerified": true,
+      "present": 2,
+      "deleted": 0
+    },
+    "protected_sessions": {
+      "status": 200,
+      "protectedMarkersVerified": true,
+      "sessionsLoggedOut": 2,
+      "serverTokensPrinted": false
+    },
+    "protected_users": {
+      "status": 200,
+      "protectedMarkersVerified": true,
+      "present": 2,
+      "deleted": 2
+    },
+    "workspace_tables": 34,
+    "workspace_rows": 0,
+    "auth_users": 0,
+    "auth_sessions": 0,
+    "refresh_tokens": 0,
+    "storage_objects": 0,
+    "cron_jobs": 0,
+    "verifier_retired": 91,
+    "old_nonce_routes404": 4,
+    "original_entities": 153,
+    "original_meta": 6,
+    "original_mappings": 0,
+    "six_fingerprints_unchanged": true
+  },
+  "source_hashes": {
+    "fountain/content_index.py": "0ed768d1fe6619ff7ca5bb6399c887466ea39793b0422a73d46ed8f97834cd50",
+    "fountain/admin_content.py": "c51b47b17454d1a263ffa61b019c1233913b6e43c181b2a6ee1231c1b96a82ce",
+    "fountain/backup.py": "a0182e1fea8a03f1eed19791d509eb6ec51f286f6dfe0be321e7278d0ed44fa9",
+    "supabase/functions/_shared/admin-content.ts": "f935b9d6367876dee65d518388a78baf597ed94d0fb86ff0d1eef0fb3cf2b9a1",
+    "static/app.js": "ce46d89a59431ce6e7aef595ed3b2a9023da06dc44bd0f320a17603b3e123c9e",
+    "static/style.css": "3751397448db92a3d09ab5628a7ab34aedd95a90de2f808571795938b4b2fef2",
+    "static/sw.js": "c69aeec1569be052af953edfef0b7a59a6f3a5e23ffa443dd48264c315ab0e51"
+  },
+  "repair_migration": "supabase/migrations/20261017100103_fountain_content_store_commit_service_execute.sql",
+  "repair_reason": "The public store-commit wrapper is SECURITY INVOKER; preserve its original service-only EXECUTE call chain. Actual role regression and real sessions caught and verified the repair.",
+  "remaining": [
+    "Admin trash restore/permanent deletion, retained material and legal hold integration",
+    "Organization and multiple workspaces, prepared role families and original paid-tier comparison",
+    "Authenticated journeys and physical/Windows execution for all five platforms; release signing/distribution",
+    "Native save bridge8MiB and browser fallback32MiB limits; very large CSV needs resumable export work",
+    "Full v2 resumable Storage artifact generation not rerun in this increment (snapshot/cancel verified)",
+    "Public free web hosting fee information pending; no Vercel project/deployment created",
+    "Static TypeScript compiler not installed or executed; existing dependency approval pending",
+    "Actual human owner/family account linkage and external AI/IdP/connectors remain user/provider setup"
+  ],
+  "raw_proof_files": [
+    {
+      "path": ".data/admin-content/python-postgres-proof.json",
+      "sha256": "470b4bd569fc6904085fe6af43a25c5e5c273e85bf377576360fe7e5651d676b"
+    },
+    {
+      "path": ".data/admin-content/node-regressions-proof.json",
+      "sha256": "37b01b652f693013e13b9a3552c3f895dbda110304800d0f57bce136dbb3b12c"
+    },
+    {
+      "path": ".data/admin-content-rpc/proof.json",
+      "sha256": "44ceae85db3285ed22e7fa2e5374efc8bb280c70e7c48c23af3a2aa4810b0e38"
+    },
+    {
+      "path": ".data/admin-content-backup/component-proof.json",
+      "sha256": "d57c1227e380ddc2f0df2158bf50252af781409fd2ac02700178bc01cd60a9b9"
+    },
+    {
+      "path": ".data/admin-content-cloud/http-six-groups84-proof.json",
+      "sha256": "cb455d3db100fc660f1d8e6816f32ba36dfc4a697bce4a78d37461fc4d2b39a5"
+    },
+    {
+      "path": ".data/admin-content-cloud/csv-framed-http-proof.json",
+      "sha256": "c1834bf0c21208f8a415e7d2ab50394c66961618723e889e5fd135419222db5e"
+    },
+    {
+      "path": ".data/admin-content-cloud/workspace89-confirmation-proof.json",
+      "sha256": "1ec35ca6963e764d564ea75856dcec77dc54aee944a20fe2bebbcec537e74b04"
+    },
+    {
+      "path": ".data/admin-content-ui/cloud/actual-cloud-browser-proof.json",
+      "sha256": "7712af3deae8c41ba8eaf2b88cd0521dc7a1212f7a21e75c88051b3ae9bdd9f4"
+    },
+    {
+      "path": ".data/admin-content-ui/framed-evidence.json",
+      "sha256": "747ad29a45715ece1d8a84e63b30b977bdc094fa1739dc443604a97e9b2a0b39"
+    },
+    {
+      "path": ".data/admin-content-framed-builds/build-evidence.json",
+      "sha256": "ff6bbf25477ebfe81c00f51fb3a5ef51d282561afaf731bbec34f5aae43c5ae1"
+    },
+    {
+      "path": ".data/admin-content-framed-builds/release-secret-proof.json",
+      "sha256": "c54c7090730cbcaf9a612e367f9933a31586c823909874fb18a416ae4a31af8b"
+    }
+  ]
+}

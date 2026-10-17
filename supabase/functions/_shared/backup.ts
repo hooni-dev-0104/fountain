@@ -12,8 +12,8 @@ import type {StoreContext} from './store.ts';
 import {storeContext} from './transaction.ts';
 import {IncrementalSHA256,CHUNK_SIZE,MAX_FILE_SIZE} from './storage.ts';
 import type {ChunkManifest} from './storage.ts';
-import {SQLiteBackupWriter,SQLiteBackupError} from './sqlite-backup.ts';
-import type {BackupEntity,BackupMeta,BackupChunk,SQLiteBackupSource} from './sqlite-backup.ts';
+import {SQLiteBackupWriter,SQLiteBackupError,validateBackupProvenance} from './sqlite-backup.ts';
+import type {BackupEntity,BackupMeta,BackupChunk,BackupProvenance,SQLiteBackupSource} from './sqlite-backup.ts';
 
 const READ=65536,PAGE_LIMIT=8*1024*1024,ROW_LIMIT=16*1024*1024,HASH=/^[a-f0-9]{64}$/;
 const PRIVATE=new Set(['session','clipboard','upload','presence','attachment_chunk','cloud_chunk','upload_gc','upload_migration']);
@@ -34,7 +34,7 @@ function id(value:unknown,max=160):asserts value is string{check(typeof value===
 function safe(error:unknown):BackupError{if(error instanceof BackupError)return error;if(error instanceof APIError||error instanceof AuthError)return new BackupError([401,403,409,413].includes(error.status)?error.status:503);if(error instanceof SQLiteBackupError&&/limit|exceeds/.test(error.message))return new BackupError(413);return new BackupError();}
 async function sha(bytes:Uint8Array):Promise<string>{return [...new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))].map(byte=>byte.toString(16).padStart(2,'0')).join('');}
 export type BackupAuthority={context:StoreContext;revision:number};
-export type BackupPage=BackupAuthority&{items:unknown[];nextCursor:unknown|null};
+export type BackupPage=BackupAuthority&{contentRevision?:number;items:unknown[];nextCursor:unknown|null};
 export interface BackupProvider{
   gate(context:StoreContext,signal?:AbortSignal):Promise<BackupAuthority>;
   exportPage(context:StoreContext,expectedRevision?:number,cursor?:unknown,signal?:AbortSignal):Promise<BackupPage>;
@@ -64,8 +64,8 @@ export function createDenoTemporaryStore(runtime:Runtime=(globalThis as any).Den
   }};
 }
 function cursor(value:unknown):void{
-  exact(value,['phase','kind','id','offset','part','scope']);check(integer(value.phase)&&value.phase<=2&&typeof value.kind==='string'&&value.kind.length<=64&&integer(value.offset)&&value.offset<=MAX_FILE_SIZE&&integer(value.part)&&value.part<=128&&typeof value.scope==='string'&&HASH.test(value.scope));id(value.id);
-  check(value.phase===0?/^[a-z][a-z0-9_]{0,63}$/.test(value.kind)&&value.offset===0:value.kind===''&&(value.phase===1?value.offset===0:value.part===0));
+  check(is_object(value));exact(value,Object.hasOwn(value,'contentRevision')?['phase','kind','id','offset','part','scope','contentRevision']:['phase','kind','id','offset','part','scope']);if(Object.hasOwn(value,'contentRevision'))check(integer(value.contentRevision));check(integer(value.phase)&&value.phase<=3&&typeof value.kind==='string'&&value.kind.length<=64&&integer(value.offset)&&value.offset<=MAX_FILE_SIZE&&integer(value.part)&&value.part<=128&&typeof value.scope==='string'&&HASH.test(value.scope));id(value.id);
+  check((value.phase===0||value.phase===3)?/^[a-z][a-z0-9_]{0,63}$/.test(value.kind)&&value.offset===0:value.kind===''&&(value.phase===1?value.offset===0:value.part===0));
 }
 function authority(value:unknown,expected:StoreContext):asserts value is BackupAuthority{exact(value,['context','revision']);check(integer(value.revision)&&canonicalJSON(validateContext(value.context))===canonicalJSON(expected));}
 
@@ -87,7 +87,7 @@ export function createBackupProvider(config:{supabaseUrl:string;serviceKey:strin
   }
   return {
     async gate(context,signal){context=validateContext(context);const value=await rpc('authorize',{p_context:context},signal);authority(value,context);return value;},
-    async exportPage(context,expectedRevision,c,signal){context=validateContext(context);check(expectedRevision===undefined||integer(expectedRevision));if(c!==undefined&&c!==null)cursor(c);const value=await rpc('export',{p_context:context,p_expected_revision:expectedRevision??null,p_cursor:c??null},signal);exact(value,['context','revision','items','nextCursor']);authority({context:value.context,revision:value.revision},context);check(Array.isArray(value.items)&&value.items.length<=256);if(value.nextCursor!==null)cursor(value.nextCursor);return value;},
+    async exportPage(context,expectedRevision,c,signal){context=validateContext(context);check(expectedRevision===undefined||integer(expectedRevision));if(c!==undefined&&c!==null)cursor(c);const value=await rpc('export',{p_context:context,p_expected_revision:expectedRevision??null,p_cursor:c??null},signal);exact(value,Object.hasOwn(value,'contentRevision')?['context','revision','contentRevision','items','nextCursor']:['context','revision','items','nextCursor']);if(Object.hasOwn(value,'contentRevision'))check(integer(value.contentRevision));authority({context:value.context,revision:value.revision},context);check(Array.isArray(value.items)&&value.items.length<=256);if(value.nextCursor!==null)cursor(value.nextCursor);return value;},
   };
 }
 function decodeBase64(value:unknown,size:number,maximum=CHUNK_SIZE):Uint8Array{
@@ -95,13 +95,14 @@ function decodeBase64(value:unknown,size:number,maximum=CHUNK_SIZE):Uint8Array{
   const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';for(let i=0;i<end;i++)check(alphabet.includes(value[i]));for(let i=end;i<value.length;i++)check(value[i]==='=');if(padding)check(alphabet.indexOf(value[end-1])%(padding===2?16:4)===0);
   let raw:string;try{raw=atob(value);}catch{throw new BackupError();}check(raw.length===size);const bytes=new Uint8Array(size);for(let i=0;i<size;i++)bytes[i]=raw.charCodeAt(i);return bytes;
 }
-type Collected={entities:BackupEntity[];meta:BackupMeta[];chunks:Map<string,Uint8Array>;revision:number};
+type Collected={entities:BackupEntity[];meta:BackupMeta[];chunks:Map<string,Uint8Array>;provenance?:BackupProvenance[];revision:number};
 async function collect(provider:BackupProvider,context:StoreContext,gate:()=>Promise<void>,maximum:number,signal:AbortSignal):Promise<Collected>{
-  const entities:BackupEntity[]=[],meta:BackupMeta[]=[],chunks=new Map<string,Uint8Array>(),seen=new Set<string>(),cursors=new Set<string>();let revision:number|undefined,c:unknown=undefined,size=0,assembly:{header:Entity;parts:string[];bytes:number;next:number}|null=null,previous:string|null=null;
+  const entities:BackupEntity[]=[],meta:BackupMeta[]=[],chunks=new Map<string,Uint8Array>(),seen=new Set<string>(),cursors=new Set<string>();let revision:number|undefined,contentRevision:number|undefined,provenance:BackupProvenance[]|undefined,c:unknown=undefined,size=0,assembly:{header:Entity;parts:string[];bytes:number;next:number}|null=null,previous:string|null=null;
   for(let pages=0;pages<4096;pages++){
-    await gate();const page=await provider.exportPage(context,revision,c,signal);exact(page,['context','revision','items','nextCursor']);authority({context:page.context,revision:page.revision},context);check(revision===undefined||page.revision===revision,409);revision=page.revision;check(Array.isArray(page.items)&&page.items.length<=256&&enc.encode(JSON.stringify(page)).length<=PAGE_LIMIT,413);
+    await gate();const page=await provider.exportPage(context,revision,c,signal);exact(page,Object.hasOwn(page,'contentRevision')?['context','revision','contentRevision','items','nextCursor']:['context','revision','items','nextCursor']);if(Object.hasOwn(page,'contentRevision')){check(integer(page.contentRevision));check(contentRevision===undefined||contentRevision===page.contentRevision,409);contentRevision=page.contentRevision;provenance??=[];}else check(contentRevision===undefined,409);authority({context:page.context,revision:page.revision},context);check(revision===undefined||page.revision===revision,409);revision=page.revision;check(Array.isArray(page.items)&&page.items.length<=256&&enc.encode(JSON.stringify(page)).length<=PAGE_LIMIT,413);
     for(const item of page.items){
       check(is_object(item));size+=enc.encode(JSON.stringify(item)).length;check(size<=maximum,413);
+      if(item.type==='provenance'){check(assembly===null&&provenance!==undefined);exact(item,['type','value']);validateBackupProvenance(item.value);const key=canonicalJSON(['provenance',item.value.kind,item.value.id]);check(!seen.has(key));seen.add(key);provenance.push(clone(item.value));continue;}
       if(item.type==='chunk'){
         check(assembly===null);exact(item,['type','attachmentId','offset','size','base64']);id(item.attachmentId);check(integer(item.offset)&&item.offset<MAX_FILE_SIZE&&item.offset%CHUNK_SIZE===0&&integer(item.size)&&item.size>0&&item.size<=CHUNK_SIZE);const key=canonicalJSON([item.attachmentId,item.offset]);check(!chunks.has(key));chunks.set(key,decodeBase64(item.base64,item.size));continue;
       }
@@ -113,7 +114,7 @@ async function collect(provider:BackupProvider,context:StoreContext,gate:()=>Pro
       check(assembly!==null&&previous===key&&canonicalJSON(assembly.header)===canonicalJSON(header)&&item.part===assembly.next);assembly.parts.push(item.dataPart);assembly.bytes+=enc.encode(item.dataPart).length;assembly.next++;check(assembly.bytes<=ROW_LIMIT,413);
       if(assembly.next===item.parts){const data=assembly.parts.join('');let parsed:any;try{parsed=JSON.parse(data);}catch{throw new BackupError();}if(entity){check(is_object(parsed)&&parsed.id===item.id);if(!PRIVATE.has(item.kind))entities.push({kind:item.kind,id:item.id,data,created_at:item.createdAt,updated_at:item.updatedAt});}else if(!PRIVATE_META.has(item.key))meta.push({key:item.key,data});seen.add(key);assembly=null;}
     }
-    if(page.nextCursor===null){check(assembly===null);return {entities,meta,chunks,revision};}
+    if(page.nextCursor===null){check(assembly===null);return {entities,meta,chunks,provenance,revision};}
     check(page.items.length>0);cursor(page.nextCursor);const next=canonicalJSON(page.nextCursor);check(!cursors.has(next));cursors.add(next);c=clone(page.nextCursor);
   }
   throw new BackupError(413);
@@ -162,9 +163,10 @@ async function portable(snapshot:Collected,storage:{readChunk(item:ChunkManifest
     }
     if(!Array.isArray(file.cloud_chunks)&&['storage_id','source_fingerprint'].some(key=>Object.hasOwn(original,key)))row.data=patchJSON(row.data as string,['cloud_chunks','storage_id','source_fingerprint']);
   }
+  for(const item of snapshot.provenance??[])minimum+=enc.encode(JSON.stringify(item)).length;
   for(const item of meta)minimum+=enc.encode(item.data as string).length;check(minimum<=maximum,413);
   rows.sort((a,b)=>compare(a.kind,b.kind)||compare(a.id,b.id));meta.sort((a,b)=>compare(a.key,b.key));chunks.sort((a,b)=>compare(a.attachment_id,b.attachment_id)||a.offset-b.offset);
-  return {entities:()=>rows,meta:()=>meta,chunks:()=>chunks};
+  return {entities:()=>rows,meta:()=>meta,chunks:()=>chunks,...(snapshot.provenance?{provenance:()=>snapshot.provenance!.toSorted((a,b)=>compare(a.kind,b.kind)||compare(a.id,b.id))}:{})};
 }
 function range(value:string|null,size:number):{start:number;end:number;partial:boolean}{
   if(!value||value.split('=',1)[0].toLowerCase()!=='bytes')return {start:0,end:size,partial:false};const parts=/^bytes=(\d*)-(\d*)$/.exec(value);if(!parts||!parts[1]&&!parts[2]||!size||parts[1].length>20||parts[2].length>20)throw new BackupError(416);

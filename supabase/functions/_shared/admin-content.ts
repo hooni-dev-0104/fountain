@@ -2,7 +2,7 @@
 import {Access,APIError,casefold,is_object,truth,valid_id} from './access.ts';
 import type {Entity} from './access.ts';
 import type {AuthContext} from './auth.ts';
-import {AdminAuthority} from './admin-roles.ts';
+import {AdminAuthority,generationKey} from './admin-roles.ts';
 import {canonicalJSON} from './store.ts';
 import type {StoreProvider} from './store.ts';
 import {createTransactions,storeContext} from './transaction.ts';
@@ -83,7 +83,9 @@ export function createAdminContent(config:Config){
   const signal=controller.signal,original=canonicalJSON(storeContext(initial));
   const active=async()=>{check(!signal.aborted,503);const current=await config.authorize();check(current.expiresAt>Date.now()&&current.profile.workspaceId===config.workspaceId&&current.profile.authSessionActive===true&&current.profile.member.active===true&&canonicalJSON(storeContext(current))===original,401);return current;};
   const execute=createTransactions({provider:config.provider,authorize:active});
-  async function pin():Promise<Pin>{try{await active();const result=await execute(initial,store=>{const authority=new AdminAuthority(store,new Access(store,store.principal));authority.require_action('content.search.read');authority.require_action(required);if(required==='content.search.export')check(!truth(store.get('settings','workspace')?.disable_export),403);return authority.actions();});check(!signal.aborted,503);return {revision:result.revision,actions:result.value};}catch(error){if(error instanceof AdminContentError)throw error;const status=(error as any)?.status;throw new AdminContentError([400,401,403,404,409,413].includes(status)?status:503);}}
+  // Prime bounded capability metadata; each pin still obtains fresh Auth and CAS.
+  const pinSelection={kinds:['admin_role'],ids:{member:[initial.profile.member.id],admin_assignment:[initial.profile.member.id],settings:['workspace']},metaKeys:[generationKey(initial.profile.member.id)]};
+  async function pin():Promise<Pin>{try{const result=await execute(initial,store=>{const authority=new AdminAuthority(store,new Access(store,store.principal));authority.require_action('content.search.read');authority.require_action(required);if(required==='content.search.export')check(!truth(store.get('settings','workspace')?.disable_export),403);return authority.actions();},pinSelection);check(!signal.aborted,503);return {revision:result.revision,actions:result.value};}catch(error){if(error instanceof AdminContentError)throw error;const status=(error as any)?.status;throw new AdminContentError([400,401,403,404,409,413].includes(status)?status:503);}}
   async function rpc(name:string,args:Entity,mutationCall=false):Promise<Entity>{
    check(!signal.aborted,503);const deadline=new AbortController(),timer=setTimeout(()=>deadline.abort(),timeout),joined=AbortSignal.any([signal,deadline.signal]);let reader:ReadableStreamDefaultReader<Uint8Array>|undefined,response:Response|undefined;
    let failAbort:((reason:unknown)=>void)|undefined;const aborted=new Promise<never>((_,reject)=>{failAbort=reject;});const onAbort=()=>{void reader?.cancel().catch(()=>{});failAbort?.(new AdminContentError(503,false,mutationCall));};joined.addEventListener('abort',onAbort,{once:true});if(joined.aborted)onAbort();
@@ -128,7 +130,7 @@ export function createAdminContent(config:Config){
    if(method==='HEAD')return new Response(null,{headers:csvHeaders});
    const quote=(value:unknown)=>'"\''+String(value??'').replaceAll('"','""')+'"';
    async function* pieces():AsyncGenerator<string>{
-    yield ADMIN_CONTENT_CSV_COLUMNS.map(quote).join(',')+'\r\n';let current=first,lastSearchSignature=parsed.cursor?.signature??null;
+    let current=first,lastSearchSignature=parsed.cursor?.signature??null;
     for(;;){
      for(const item of current.value.items){
       const values=[item.kind,item.id,item.title,item.status,item.location?.kind,item.location?.id,item.location?.title,item.creator?.id,item.creator?.name,item.creator?.cause,item.created_at,item.last_editor?.id,item.last_editor?.name,item.last_editor?.cause,item.edited_at,item.audience,item.access_summary.implicit_owner_id,item.access_summary.internal_count,item.access_summary.external_count,true,item.publication.state,item.publication.site_count,item.publication.form_count];
@@ -140,7 +142,7 @@ export function createAdminContent(config:Config){
      if(current.value.next_cursor===null)break;const nextCursor=decodeContentCursor(current.value.next_cursor)!;check(nextCursor.signature!==lastSearchSignature,503);lastSearchSignature=nextCursor.signature;current=await searchPage(nextCursor);lastPin=current.pin;check(current.value.content_revision===revision,409);
     }
    }
-   async function* bytes():AsyncGenerator<Uint8Array>{let buffer=new Uint8Array(65536),used=0;for await(const piece of pieces()){const data=enc.encode(piece);let offset=0;while(offset<data.length){let length=Math.min(buffer.length-used,data.length-offset);while(length>0&&offset+length<data.length&&(data[offset+length]&0xc0)===0x80)length--;if(length===0){const current=await pin();check(current.revision===lastPin.revision,409);yield buffer.slice(0,used);buffer=new Uint8Array(65536);used=0;continue;}buffer.set(data.subarray(offset,offset+length),used);used+=length;offset+=length;if(used===buffer.length){const current=await pin();check(current.revision===lastPin.revision,409);yield buffer;buffer=new Uint8Array(65536);used=0;}}}if(used){const current=await pin();check(current.revision===lastPin.revision,409);yield buffer.slice(0,used);}const final=await pin();check(final.revision===lastPin.revision,409);}
+   async function* bytes():AsyncGenerator<Uint8Array>{const headerPin=await pin();check(headerPin.revision===lastPin.revision,409);yield enc.encode(ADMIN_CONTENT_CSV_COLUMNS.map(quote).join(',')+'\r\n');let buffer=new Uint8Array(65536),used=0;for await(const piece of pieces()){const data=enc.encode(piece);let offset=0;while(offset<data.length){let length=Math.min(buffer.length-used,data.length-offset);while(length>0&&offset+length<data.length&&(data[offset+length]&0xc0)===0x80)length--;if(length===0){const current=await pin();check(current.revision===lastPin.revision,409);yield buffer.slice(0,used);buffer=new Uint8Array(65536);used=0;continue;}buffer.set(data.subarray(offset,offset+length),used);used+=length;offset+=length;if(used===buffer.length){const current=await pin();check(current.revision===lastPin.revision,409);yield buffer;buffer=new Uint8Array(65536);used=0;}}}if(used){const current=await pin();check(current.revision===lastPin.revision,409);yield buffer.slice(0,used);}const final=await pin();check(final.revision===lastPin.revision,409);}
    const generator=bytes();streaming=true;const cleanup=()=>request.signal.removeEventListener('abort',abort);
    return new Response(new ReadableStream<Uint8Array>({async pull(target){try{const next=await generator.next();if(next.done){cleanup();target.close();}else target.enqueue(next.value);}catch(error){controller.abort();cleanup();target.error(error instanceof AdminContentError?error:new AdminContentError());}},async cancel(){controller.abort();cleanup();await generator.return(undefined);}}, {highWaterMark:0}),{headers:csvHeaders});
   }catch(error){if(error instanceof AdminContentError)throw error;const status=(error as any)?.status;throw new AdminContentError([400,401,403,404,405,409,413].includes(status)?status:503);}

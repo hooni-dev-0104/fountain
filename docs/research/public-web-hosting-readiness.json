@@ -1,0 +1,144 @@
+{
+  "checkedAt": "2026-10-17T08:06:06.377393+00:00",
+  "state": "prepared; fee information pending, not deployed",
+  "sourceCommit": "51c56cc513e9fd7656104c49a802b55ae8fa57a0",
+  "target": {
+    "teamId": "team_ZtzXXpuCkVLHkJ4c7RUR2FZr",
+    "teamSlug": "hoonis-projects-1ccfd37e",
+    "currentFountainProjectCount": 0,
+    "projectCreated": false,
+    "deploymentCreated": false,
+    "billingPlanReturnedByMCP": false,
+    "billingUI": "Login redirect",
+    "billingURL": "https://vercel.com/hoonis-projects-1ccfd37e/~/settings/billing",
+    "feeInformationRequested": true
+  },
+  "artifact": {
+    "preparedOnly": true,
+    "teamId": "team_ZtzXXpuCkVLHkJ4c7RUR2FZr",
+    "teamSlug": "hoonis-projects-1ccfd37e",
+    "planVerified": false,
+    "existingFountainProjects": 0,
+    "newDependencies": false,
+    "sourceHEAD": "51c56cc513e9fd7656104c49a802b55ae8fa57a0",
+    "files": [
+      {
+        "path": "api/public-relay.mjs",
+        "bytes": 7467,
+        "sha256": "24c159872548ea5f2fbf7657b732aee19da7841737eef813f31e8dd841f82247"
+      },
+      {
+        "path": "app.js",
+        "bytes": 365671,
+        "sha256": "da0aa3b05cd653fdf7ea94bdadf037d8f380723bdf86ab6afbe541b32d795bf4"
+      },
+      {
+        "path": "backup.js",
+        "bytes": 12747,
+        "sha256": "c0548d859efdc96005f0fcc0abf9778ee1078e788722547116a9cd198d9f6f0a"
+      },
+      {
+        "path": "collaboration.js",
+        "bytes": 63168,
+        "sha256": "4eeef2608ed14933590b6fd7ec05240461ee35678663840f998ff84ba1a6781c"
+      },
+      {
+        "path": "index.html",
+        "bytes": 1436,
+        "sha256": "c0c53caa8524fd050de617e7fea7b2863d8773dc2eb33ed2c75084f2ca735b15"
+      },
+      {
+        "path": "mutations.js",
+        "bytes": 75329,
+        "sha256": "34b8fc10b06f59ef407cd642e1ae77ee636f0ad3c802c044966201340cdf9077"
+      },
+      {
+        "path": "offline.js",
+        "bytes": 74510,
+        "sha256": "6d539ab8b2e3d45bc6720b8b28f849021d729de8b9f663934c88b794019f2a59"
+      },
+      {
+        "path": "presence.js",
+        "bytes": 10649,
+        "sha256": "d96cdcf62db278b104d30964ec3f93c42a8cfea5175af3c792438abc74986189"
+      },
+      {
+        "path": "public.js",
+        "bytes": 1495,
+        "sha256": "2d3a139d0c21d8dec8e518ebad474035c20b851936aaba7a82140d4e56c13bc9"
+      },
+      {
+        "path": "recovery-import.js",
+        "bytes": 24861,
+        "sha256": "cdef00846362e1591cfc9de1ecd186c06e5abbf1f19be0f25c55d259d20a275d"
+      },
+      {
+        "path": "style.css",
+        "bytes": 71094,
+        "sha256": "f528289aa74c49de050a4f3eef0669378f6e00f0617a9eb76dd00ebe85bc9c98"
+      },
+      {
+        "path": "sw.js",
+        "bytes": 11894,
+        "sha256": "ccd5aaef017b606969c7c08f16926cb82d1da9120941975b95368d675418f223"
+      },
+      {
+        "path": "transport.js",
+        "bytes": 3865,
+        "sha256": "26ca11327a012ceab71260dce8ee4eecbfa558528588a42fac39d831d14be12f"
+      },
+      {
+        "path": "uploads.js",
+        "bytes": 25305,
+        "sha256": "d1aa2da0439c8e21597dc41953c0582ac9341d694299d9486fe4991e725bb513"
+      },
+      {
+        "path": "vercel.json",
+        "bytes": 1787,
+        "sha256": "4226db6180495e069d6050b055e49d1e88dbb73fb64d18944e692550701e0856"
+      },
+      {
+        "path": "version-diff.js",
+        "bytes": 10820,
+        "sha256": "bb17e720430a7657de62639ebe484c90ca3a4e9f0caab9b77258caa2034699a2"
+      }
+    ],
+    "supportsCancellation": true,
+    "deploymentCreated": false,
+    "publicHostname": null
+  },
+  "validation": {
+    "webHostTests": 10,
+    "passed": true,
+    "independentSourceReview": "APPROVE after cancellation configuration repair",
+    "knownPrivateValuesMatched": 0,
+    "newDependencies": false,
+    "VercelCLIInstalled": false,
+    "schemaSupportsCancellation": "boolean defaultfalse confirmed officialschema",
+    "actualVercelRouterValidated": false
+  },
+  "runtime": {
+    "SupabaseMain": 20,
+    "migrations": 28,
+    "worker": 4,
+    "maintenance": 4,
+    "verifierRetired": 80,
+    "backendRedeployed": false,
+    "originalPreviewChanged": false
+  },
+  "primarySources": [
+    "https://vercel.com/docs/functions/functions-api-reference#enable-cancellation",
+    "https://vercel.com/docs/functions/runtimes/node-js",
+    "https://vercel.com/docs/plans/hobby",
+    "https://openapi.vercel.sh/vercel.json"
+  ],
+  "remaining": [
+    "Confirm account-specific free plan before project creation/deployment",
+    "Use only reviewed16fileartifact and assigned exact project/canonicalhostname",
+    "Validate deployed Origin/SecureCookie/privatecache/Range206/4MiBupload/SSEreconnect",
+    "Set exact Supabase webOrigins/publicWebOrigin without changing workspace/setup/data",
+    "Complete actual owner/family onboarding and five-platform whole journey"
+  ],
+  "goal": "active; fee information blocks only external hosting step",
+  "pushed": false
+}

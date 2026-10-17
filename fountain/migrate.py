@@ -14,7 +14,8 @@ from pathlib import Path
 import sqlite3
 import uuid
 
-from .backup import BackupError, CHUNK_SIZE, _inspect, _strict_json
+from .backup import (BackupError, CHUNK_SIZE, PROVENANCE_COLUMNS, _inspect, _strict_json,
+                     _provenance_digest, _provenance_provisioned)
 from .core import APIError
 from .file_chunks import FileChunkStorage, ROOT_KEY
 from .postgres import PostgresStore
@@ -143,6 +144,41 @@ def _copy_attachments(source, target):
     return files, chunks, total
 
 
+def _restore_provenance(source, target, provisioned):
+    exists = source.execute("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='content_provenance'").fetchone()
+    if exists is None:
+        return None
+    columns = ','.join(PROVENANCE_COLUMNS)
+    expected = _provenance_digest(source.execute('SELECT '+columns+' FROM content_provenance ORDER BY kind,id'))
+    _require(provisioned, 'Target content provenance schema is not provisioned')
+    for row in source.execute('SELECT '+columns+' FROM content_provenance ORDER BY kind,id'):
+        kind, identity, generation = row[:3]
+        changed = target._execute('UPDATE fountain_private.content_search_documents SET generation=%s '
+                                 'WHERE workspace_id=%s AND kind=%s AND id=%s',
+                                 (generation, target.workspace_id, kind, identity))
+        _require(changed == 1, 'Restored content provenance has no matching index resource')
+        target._execute('INSERT INTO fountain_private.content_provenance(workspace_id,'+columns+') VALUES ('
+                        +','.join('%s' for _ in range(11))+') ON CONFLICT(workspace_id,kind,id) DO UPDATE SET '
+                        +','.join(name+'=EXCLUDED.'+name for name in PROVENANCE_COLUMNS[2:]),
+                        (target.workspace_id, *row))
+    def restored_rows():
+        # Merge two ordered cursors without buffering the complete history or
+        # issuing one verification round-trip per restored resource. Legacy
+        # resources without recorded attribution keep their rebuilt unknowns.
+        rows = iter(_target_rows(target, 'SELECT '+columns+' FROM fountain_private.content_provenance '
+                    'WHERE workspace_id=%s ORDER BY kind COLLATE "C",id COLLATE "C"'))
+        current = next(rows, None)
+        for key in source.execute('SELECT kind,id FROM content_provenance ORDER BY kind,id'):
+            while current is not None and tuple(current[:2]) < key:
+                current = next(rows, None)
+            _require(current is not None and tuple(current[:2]) == key, 'Restored content provenance is missing')
+            yield current
+            current = next(rows, None)
+    actual = _provenance_digest(restored_rows())
+    _require(actual == expected, 'Target content provenance checksum verification failed')
+    return expected
+
+
 def migrate_sqlite(source_path, targetStore):
     """Move one namespace into an empty file-backed PostgresStore atomically.
 
@@ -165,6 +201,11 @@ def migrate_sqlite(source_path, targetStore):
                 expected_metadata = _digest(source.execute("SELECT key,data FROM meta ORDER BY key"))
                 with targetStore.transaction():
                     file_metadata = _empty_target(targetStore)
+                    history_provisioned = _provenance_provisioned(targetStore)
+                    if history_provisioned:
+                        for table in ('content_search_documents', 'content_provenance'):
+                            _require(targetStore._execute('SELECT 1 FROM fountain_private.'+table+' WHERE workspace_id=%s LIMIT 1',
+                                     (namespace,), fetch='one') is None, 'Target content history must be empty')
                     for kind, identity, data, created, updated in source.execute("SELECT kind,id,data,created_at,updated_at FROM entities ORDER BY kind,id"):
                         targetStore._execute("INSERT INTO fountain_private.entities(workspace_id,kind,id,data,created_at,updated_at) VALUES (%s,%s,%s,%s::jsonb,%s,%s)",
                                              (namespace, kind, identity, data, created, updated))
@@ -173,6 +214,7 @@ def migrate_sqlite(source_path, targetStore):
                             targetStore._execute("INSERT INTO fountain_private.meta(workspace_id,key,data) VALUES (%s,%s,%s::jsonb)", (namespace, key, encoded))
                     files, chunks, byte_count = _copy_attachments(source, targetStore)
                     _require(chunks == expected_chunks, "Target attachment count verification failed")
+                    history = _restore_provenance(source, targetStore, history_provisioned)
                     # Reset the transport counter after all internal manifest writes;
                     # no later operation in this transaction modifies persisted data.
                     if "_entity_revision" in metadata:
@@ -192,6 +234,8 @@ def migrate_sqlite(source_path, targetStore):
                     _require(manifests == chunks and current_file_metadata == file_metadata, "Target filesystem references or root binding changed")
                 return {"workspace_id": namespace, "entities": counts, "entity_count": expected_entities[0], "metadata_count": expected_metadata[0],
                         "entity_sha256": expected_entities[1], "metadata_sha256": expected_metadata[1], "attachments": files, "chunks": chunks, "bytes": byte_count,
+                        "content_provenance_count": history[0] if history is not None else 0,
+                        "content_provenance_sha256": history[1] if history is not None else None,
                         "entity_revision": _strict_json(metadata["_entity_revision"]) if "_entity_revision" in metadata else None}
             finally:
                 source.rollback()

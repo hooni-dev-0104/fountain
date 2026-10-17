@@ -13,6 +13,7 @@ import uuid
 from fountain.access import Access
 from fountain.attachments import CHUNK_SIZE, FileStorage
 from fountain.auth import Auth, SESSION_COOKIE
+from fountain.backup import PROVENANCE_COLUMNS, _provenance_digest, _provenance_provisioned
 from fountain.core import APIError, Store
 from fountain.crdt import seed_state
 from fountain.migrate import MigrationError, migrate_sqlite
@@ -92,6 +93,10 @@ class MigrationIntegrationTests(unittest.TestCase):
                 with store.transaction():
                     for table in ("identity_mapping", "attachment_chunks", "entities", "meta"):
                         store._execute(f"DELETE FROM fountain_private.{table} WHERE workspace_id=%s", (store.workspace_id,))
+                    if _provenance_provisioned(store):
+                        for table in ('content_search_chunks', 'content_provenance',
+                                      'content_search_documents', 'content_search_state'):
+                            store._execute('DELETE FROM fountain_private.'+table+' WHERE workspace_id=%s', (store.workspace_id,))
         finally:
             for store in self.stores:
                 store.close()
@@ -272,6 +277,53 @@ class MigrationIntegrationTests(unittest.TestCase):
         with self.assertRaises(MigrationError):
             migrate_sqlite(self.source_path, self.target)
         self.assertTrue(self.target_is_empty())
+
+    def history_fixture(self):
+        with self.source.transaction():
+            self.source.db.execute("UPDATE content_provenance SET creator_id='deleted-author',creator_cause='human',"
+                                   "editor_id='disabled',editor_cause='automation',edited_at='2026-10-17T04:00:00Z',"
+                                   "manager_id='deleted-manager',manager_at='2026-10-17T05:00:00+09:00'")
+        return self.source.db.execute('SELECT '+','.join(PROVENANCE_COLUMNS)+' FROM content_provenance ORDER BY kind,id').fetchall()
+
+    def test_trusted_history_and_generation_survive_atomic_postgres_migration(self):
+        with self.target.transaction():
+            if not _provenance_provisioned(self.target):
+                self.skipTest('Content provenance migration is not provisioned')
+        expected = self.history_fixture()
+        result = migrate_sqlite(self.source_path, self.target)
+        columns = ','.join(PROVENANCE_COLUMNS)
+        with self.target.transaction():
+            actual = self.target._execute('SELECT '+columns+' FROM fountain_private.content_provenance WHERE workspace_id=%s '
+                                          'ORDER BY kind COLLATE "C",id COLLATE "C"', (self.namespace,), fetch='all')
+            mismatch = self.target._execute('SELECT count(*) FROM fountain_private.content_provenance p '
+                       'JOIN fountain_private.content_search_documents d USING(workspace_id,kind,id) '
+                       'WHERE p.workspace_id=%s AND p.generation<>d.generation', (self.namespace,), fetch='one')[0]
+        self.assertEqual(actual, expected)
+        self.assertEqual(mismatch, 0)
+        self.assertEqual((result['content_provenance_count'], result['content_provenance_sha256']), _provenance_digest(expected))
+
+    def test_unprovisioned_history_and_failed_history_verification_roll_back_target(self):
+        self.history_fixture()
+        before = self.source_fingerprint()
+        with patch('fountain.migrate._provenance_provisioned', return_value=False):
+            with self.assertRaisesRegex(MigrationError, 'not provisioned'):
+                migrate_sqlite(self.source_path, self.target)
+        self.assertTrue(self.target_is_empty())
+        self.assertEqual(self.source_fingerprint(), before)
+        with self.target.transaction():
+            if not _provenance_provisioned(self.target):
+                return
+        calls = 0
+        def mismatching(rows):
+            nonlocal calls
+            calls += 1
+            count, digest = _provenance_digest(rows)
+            return count, 'f'*64 if calls == 2 else digest
+        with patch('fountain.migrate._provenance_digest', side_effect=mismatching):
+            with self.assertRaisesRegex(MigrationError, 'checksum'):
+                migrate_sqlite(self.source_path, self.target)
+        self.assertTrue(self.target_is_empty())
+        self.assertEqual(self.source_fingerprint(), before)
 
 
 if __name__ == "__main__":

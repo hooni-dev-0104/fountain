@@ -14,7 +14,7 @@ export type NormalizedSelection = {kinds: string[]; ids: Record<string, string[]
 export type SnapshotRecord = {kind: string; id: string; data: Entity; createdAt: string; updatedAt: string};
 export type SnapshotPage = {workspaceId: string; memberId: string; revision: number; accessRevision: number; principal: Entity; entities: SnapshotRecord[]; meta: Array<{key: string; value: any; present: boolean}>; nextCursor: unknown | null};
 export type ContentOrigin = {member_id:string;cause:'human'|'automation'|'import'|'public_form'};
-export type Change = {op: 'put'; kind: string; id: string; data: Entity; previousCreatedAt: string | null; origin?:ContentOrigin} | {op: 'delete'; kind: string; id: string} | {op: 'meta'; key: string; value: any};
+export type Change = {op: 'put'; kind: string; id: string; data: Entity; previousCreatedAt: string | null; origin?:ContentOrigin} | {op: 'delete'; kind: string; id: string} | {op: 'meta'; key: string; value: any} | {op:'activity_view';kind:'page';id:string;commandId:string};
 type DataContext = Readonly<{workspaceId:string;memberId:string}>;
 type KernelSnapshot<C> = {context:C;selection:NormalizedSelection;cursor?:unknown;expectedRevision?:number};
 type KernelCommit<C> = {context:C;expectedRevision:number;transactionId:string;digest:string;canonical:string;changes:Change[]};
@@ -357,6 +357,16 @@ class StagingKernel<C extends DataContext> implements StoreReader {
   }
   audit(action:string, details:Entity, user:string=this.context.memberId):Entity {
     return this.put('audit',{action,details,user});
+  }
+  /** A trusted route stages an explicit open with its authorized source snapshot.
+   * The database resolves generation/digest after the same fresh Auth/CAS fence.
+   */
+  record_activity_view(kindName:'page',identity:string,commandId?:string):void {
+    this.writable();validateContext(this.context);check(kindName==='page'&&valid_id(identity));
+    check(this.get('page',identity)!==null,'ACTIVITY_SOURCE_CHANGED',409);
+    const command=commandId??crypto.randomUUID().replaceAll('-','');
+    check(typeof command==='string'&&/^[a-f0-9]{32}$/.test(command),'INVALID_STORE_INPUT');
+    this.stage({op:'activity_view',kind:'page',id:identity,commandId:command});
   }
   transaction<T>(action: (store: this) => T): T {
     this.writable(); const entities=clone(this.entities), metadata=clone(this.metadata), generatedIds=clone(this.generatedIds), count=this.changes.length, revision=this.currentRevision;

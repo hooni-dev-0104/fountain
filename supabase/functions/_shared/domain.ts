@@ -108,7 +108,7 @@ function coreRoute(r:DomainRequest):DomainResult|null{
 export {coreRoute};
 /** The caller owns the staged transaction. Sync operations use this same route
  * authorization and projection rather than invoking an unguarded primitive. */
-function dispatchStagedBody(s:CloudStore,method:string,path:string,input:Entity,query:URLSearchParams,extensions:DomainExtension[]):DomainResult {
+function dispatchStagedBody(s:CloudStore,method:string,path:string,input:Entity,query:URLSearchParams,extensions:DomainExtension[],captureReads:boolean):DomainResult {
   const body=clone(input),access=new Access(s,s.principal),authority=new Authorization(access,{ownerAccounts:'cloud-commit'}),workspace=new Workspace(s,{access});
   authority.prepare(method,path,body);
   const r={method,path,parts:path.replace(/^\/+|\/+$/g,'').split('/'),body,query,store:s,access,authority,workspace};
@@ -119,12 +119,19 @@ function dispatchStagedBody(s:CloudStore,method:string,path:string,input:Entity,
   const writing=['POST','PATCH','PUT','DELETE'].includes(method);
   if(writing&&(path.endsWith('/permissions')||path.startsWith('/api/members')||path.startsWith('/api/groups')||path.startsWith('/api/teamspaces')||path.startsWith('/api/accounts')||path.startsWith('/scim/v2/')||method==='PATCH'&&path.startsWith('/api/pages/')&&!path.endsWith('/wiki-owner')))s.set_meta('access_revision',s.meta('access_revision',0)+1);
   const payload=authority.project(path,routed.payload),canonical=method==='GET'&&(path==='/api/workspace'||/^\/api\/databases\/[^/]+$/.test(path));
+  if(captureReads&&method==='GET'&&r.parts[0]==='api'&&r.parts[1]==='pages'){
+    if(r.parts.length===3)s.record_activity_view('page',r.parts[2]);
+    else if(r.parts.length===4&&r.parts[3]==='collaboration'&&query.has('open_command')){
+      require(query.size===1&&query.getAll('open_command').length===1&&/^[a-f0-9]{32}$/.test(query.get('open_command')!),'Invalid document open command');
+      s.record_activity_view('page',r.parts[2],query.get('open_command')!);
+    }
+  }
   if(is_object(payload)&&(canonical||path.endsWith('/collaboration')||path.endsWith('/operations')))Object.assign(payload,{workspace_id:s.context.workspaceId,current_member_id:access.member_id,session_binding:s.context.cacheBinding,access_revision:s.meta('access_revision',0),data_revision:s.meta('_entity_revision',0)});
   return {status:routed.status,payload};
 }
-export function dispatchStaged(s:CloudStore,method:string,path:string,input:Entity,query=new URLSearchParams(),extensions:DomainExtension[]=[]):DomainResult {
+export function dispatchStaged(s:CloudStore,method:string,path:string,input:Entity,query=new URLSearchParams(),extensions:DomainExtension[]=[],captureReads=true):DomainResult {
   const cause=path==='/api/import'?'import':/^\/api\/forms\/[^/]+\/submit$/.test(path)?'public_form':'human';
-  return s.with_content_actor({member_id:s.context.memberId,cause},()=>dispatchStagedBody(s,method,path,input,query,extensions));
+  return s.with_content_actor({member_id:s.context.memberId,cause},()=>dispatchStagedBody(s,method,path,input,query,extensions,captureReads));
 }
 export function createDomain(config:Config){
   const execute=createTransactions(config);
@@ -137,7 +144,7 @@ export function createDomain(config:Config){
     const original=['POST','PUT','PATCH','DELETE'].includes(method)?await readJSON(request):{};
     if(method==='POST'&&path==='/api/sync')return jsonResponse(await createSync({...config,dispatch:(s,verb,target,body)=>dispatchStaged(s,verb,target,body,new URLSearchParams(),config.extensions)})(original,context));
     if(method==='POST'&&path==='/api/ai'&&config.ai)return jsonResponse(await config.ai(original,context));
-    const result=await execute(context,s=>dispatchStaged(s,method,path,original,query,config.extensions));
+    const result=await execute(context,s=>dispatchStaged(s,method,path,original,query,config.extensions,request.method!=='HEAD'));
     if(method==='GET'&&/^\/(sites|forms)\/[^/]+$/.test(path)&&typeof result.value.payload?._html==='string')return new Response(result.value.payload._html,{status:result.value.status,headers:{'Content-Type':'text/html; charset=utf-8','X-Fountain-Format':'html','Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'same-origin','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"}});
     return jsonResponse(result.value.payload,result.value.status);
   };

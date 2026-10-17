@@ -7,7 +7,7 @@ import {createBackend} from '../functions/_shared/backend.ts';
 import {createDomain} from '../functions/_shared/domain.ts';
 import {createAdvancedExtension} from '../functions/_shared/advanced.ts';
 import {generationKey, GENERATION_PREFIX} from '../functions/_shared/admin-roles.ts';
-import {StoreError} from '../functions/_shared/store.ts';
+import {StoreError,canonicalJSON} from '../functions/_shared/store.ts';
 
 const stamp = '2026-10-17T08:00:00.000000+00:00';
 const origin = 'https://fountain.example';
@@ -24,6 +24,7 @@ class MemoryProviderRPC {
   records = new Map();
   meta = new Map([['access_revision', 0]]);
   receipts = new Map();
+  activityViews = new Map();
   revision = 0;
   beforeCommit = null;
   stats = {snapshots: [], commits: [], conflicts: 0, successfulCommits: 0};
@@ -33,7 +34,7 @@ class MemoryProviderRPC {
     this.records.set(key(kind, data.id), {kind, id: data.id, data, createdAt: data.created_at, updatedAt: data.updated_at});
   }
   get(kind, id) { return copy(this.records.get(key(kind, id))?.data ?? null); }
-  state() { return copy({records: [...this.records], meta: [...this.meta], revision: this.revision}); }
+  state() { return copy({records: [...this.records], meta: [...this.meta], activityViews: [...this.activityViews], revision: this.revision}); }
   resetStats() { this.stats = {snapshots: [], commits: [], conflicts: 0, successfulCommits: 0}; }
   concurrent(change) {
     change(this);
@@ -64,16 +65,23 @@ class MemoryProviderRPC {
       throw new StoreError(409, 'REVISION_CONFLICT', 'RPC model changed before commit');
     }
     // Validate before applying anything, so a rejected model commit is atomic.
-    const records = copy(this.records), metadata = copy(this.meta);
+    const records = copy(this.records), metadata = copy(this.meta), activityViews=copy(this.activityViews);
     for (const change of request.changes) {
       if (change.op === 'put') {
         const previous = records.get(key(change.kind, change.id));
         assert.equal(previous?.createdAt ?? null, change.previousCreatedAt);
         records.set(key(change.kind, change.id), {kind: change.kind, id: change.id, data: copy(change.data), createdAt: change.data.created_at, updatedAt: change.data.updated_at});
       } else if (change.op === 'delete') records.delete(key(change.kind, change.id));
-      else metadata.set(change.key, copy(change.value));
+      else if(change.op==='activity_view'){
+        assert.deepEqual(Object.keys(change).sort(),['commandId','id','kind','op']);
+        assert.equal(change.kind,'page');assert.match(change.commandId,/^[a-f0-9]{32}$/);
+        const source=records.get(key(change.kind,change.id));assert(source);
+        const fact={memberId:request.context.memberId,kind:change.kind,id:change.id,source:canonicalJSON(source.data)};
+        if(activityViews.has(change.commandId))assert.deepEqual(activityViews.get(change.commandId),fact);
+        else activityViews.set(change.commandId,fact);
+      }else{assert.equal(change.op,'meta');metadata.set(change.key,copy(change.value));}
     }
-    this.records = records; this.meta = metadata; this.revision += request.changes.length;
+    this.records = records; this.meta = metadata; this.activityViews=activityViews; this.revision += request.changes.length;
     this.stats.successfulCommits++;
     this.receipts.set(request.transactionId, {digest: request.digest, revision: this.revision});
     return {revision: this.revision};

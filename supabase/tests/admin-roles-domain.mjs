@@ -16,7 +16,9 @@ const generation = '1'.repeat(32);
 const copy = structuredClone;
 const key = (kind, id) => JSON.stringify([kind, id]);
 const hash = value => createHash('sha256').update(value).digest('hex');
-const actions = ['audit.read', 'analytics.read', 'members.read', 'members.manage', 'groups.read', 'groups.membership.manage'];
+const legacyActions = ['audit.read', 'analytics.read', 'members.read', 'members.manage', 'groups.read', 'groups.membership.manage'];
+const contentActions = ['content.search.read', 'content.search.export', 'content.permissions.manage', 'content.publish.manage'];
+const actions = [...legacyActions, ...contentActions];
 
 class MemoryProviderRPC {
   records = new Map();
@@ -173,6 +175,18 @@ test('exact admin HTTP routes, owner CAS role CRUD, assignment CAS and access re
   assert.equal(f.provider.meta.get('access_revision'), 6);
   assert.deepEqual((await f.call('bob', 'GET', '/api/admin/self')).body.actions, []);
   assert.equal(f.provider.get('admin_role', id), null);
+});
+
+test('existing six-action role does not inherit newly introduced content capabilities', async () => {
+  const f = fixture();
+  f.provider.put('admin_role', {id: 'legacy', name: 'Legacy six actions', description: '', version: 1, nonce: '2'.repeat(32), actions: legacyActions});
+  f.assign('bob', ['legacy']);
+  const before = f.provider.get('admin_role', 'legacy');
+  const delegated = await f.call('bob', 'GET', '/api/admin/self');
+  assert.equal(delegated.status, 200);
+  assert.deepEqual(delegated.body, {actions: legacyActions, can_manage_roles: false});
+  for (const action of contentActions) assert(!delegated.body.actions.includes(action));
+  assert.deepEqual(f.provider.get('admin_role', 'legacy'), before);
 });
 
 test('delegated actions authorize only exact audit/analytics/membership routes and preserve ordinary private ACLs', async () => {

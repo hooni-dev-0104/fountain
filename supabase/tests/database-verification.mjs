@@ -6,7 +6,10 @@ import {dispatchStaged} from '../functions/_shared/domain.ts';
 import {createAdvancedExtension} from '../functions/_shared/advanced.ts';
 const time='2026-10-17T00:00:00.000000+00:00';
 class Store{
- requestTime=time;context={memberId:'local'};records=new Map();metadata=new Map();sequence=0;
+ requestTime=time;context={memberId:'local'};records=new Map();metadata=new Map();sequence=0;contentActor=null;
+ // Synchronous scope model for dispatchStaged only. Actual CloudStore actor
+ // validation/provenance is tested separately; this does not prove SQL behavior.
+ with_content_actor(origin,action){const previous=this.contentActor;this.contentActor=clone(origin);try{const value=action();assert(!(value&&typeof value.then==='function'),'Fixture actor callback must be synchronous');return value;}finally{this.contentActor=previous;}}
  get(kind,id){return clone(this.records.get(kind)?.get(id)??null);}
  list(kind){return [...(this.records.get(kind)?.values()??[])].map(clone);}
  meta(key,fallback=null){return clone(this.metadata.get(key)??fallback);}
@@ -16,6 +19,14 @@ class Store{
  delete(kind,id){this.records.get(kind)?.delete(id);}
  audit(action,details,user=this.context.memberId){return this.put('audit',{action,details,user});}
  transaction(action){const old=clone([this.records,this.metadata,this.sequence]);try{return action();}catch(error){[this.records,this.metadata,this.sequence]=old;throw error;}}
+}
+
+// The test double restores nested scopes on both success and failure.
+{
+ const store=new Store(),outer={member_id:'local',cause:'human'},inner={member_id:'alice',cause:'automation'};
+ assert.throws(()=>store.with_content_actor(outer,()=>{assert.deepEqual(store.contentActor,outer);store.with_content_actor(inner,()=>assert.deepEqual(store.contentActor,inner));assert.deepEqual(store.contentActor,outer);throw Error('fixture actor rollback');}),/fixture actor rollback/);
+ assert.equal(store.contentActor,null);
+ console.log('PASS synchronous in-memory actor scope restoration; no SQL provenance claim');
 }
 
 function fixture(){const store=new Store();store.context={memberId:'local',workspaceId:'typed-fixture',cacheBinding:'fixture'};Object.defineProperty(store,'principal',{get(){return store.get('member',store.context.memberId);}});for(const [id,role]of [['local','owner'],['alice','member'],['bob','member'],['guest','guest'],['inactive','member']])store.put('member',{id,name:id,role,active:id!=='inactive'});store.put('teamspace',{id:'general',visibility:'open',owner_id:'local'});store.put('settings',{id:'workspace'});

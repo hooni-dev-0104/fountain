@@ -132,6 +132,10 @@ window.addEventListener('fountain-native-outbox-resume',event=>{
       if(!current())return;state.nativeOutboxPause=null;document.querySelector('.native-outbox-blocked')?.remove();for(const item of paused.dom)if(item.node.isConnected)item.node.inert=item.inert;
       if(paused.focus?.isConnected&&!state.composition&&!document.activeElement?.closest?.('.native-recovery-dialog')){paused.focus.focus?.({preventScroll:true});if(paused.selection&&state.channel===paused.channel)restoreTextPosition(paused.selection);}
       paused.channel?.resumeNetwork?.(paused.owner+':'+paused.token);
+      const channel=state.channel,profile=paused.profile,binding=profile?.session?.cache_binding;
+      if(state.loaded&&state.route==='page'&&channel&&channel===paused.channel&&!channel.closed&&state.page?.id===paused.id&&channel.pageId===paused.id&&typeof profile?.id==='string'&&profile.id&&typeof binding==='string'&&binding&&state.offlineProfile?.id===profile.id&&channel.profile?.id===profile.id&&state.session?.cache_binding===binding&&['synced','pending','offline','error','waiting'].includes(channel.status)&&!(channel.status==='synced'&&channel.durable===false)){
+        documentStatus({status:channel.status,pending:channel.pending.size,durable:channel.durable!==false});
+      }
       if(state.loaded&&!state.nativeRecoveryPaused){if((paused.titleScheduled||detail.reconciled)&&state.titlePending&&!state.titleSaving)state.titleTimer=setTimeout(()=>saveTitle().catch(error=>toast(error.message)),450);if(paused.saveScheduled&&state.channel&&!state.composition)scheduleSave();if(detail.reconciled)ensurePresence();}
     }catch(error){if(current())nativeOutboxBlockedNotice();throw error;}finally{if(state.nativeOutboxResuming===resuming)state.nativeOutboxResuming=null;}
   };

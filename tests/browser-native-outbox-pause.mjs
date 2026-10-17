@@ -24,6 +24,34 @@ try{
     window.resumeModel=async({token='token',reconciled=false,preservedInput=false,profile,snapshot,blocked=false,terminal=false}={})=>{const waits=[];dispatchEvent(new CustomEvent('fountain-native-outbox-resume',{detail:{owner:'owner',token,origin:FountainTransport.origin,generation:1,scopeEpoch:1,committed:!blocked,blocked,terminal,reconciled,preservedInput,summary:{counts:{quarantine:0}},readCurrent:async()=>{window.modelCurrentReads=(window.modelCurrentReads||0)+1;return{profile:profile||state.offlineProfile,snapshot};},waitUntil:value=>waits.push(value)}}));await Promise.all(waits);};
   });await installBarrier(page);
   const initial=await page.evaluate(()=>({text:document.querySelector('.block-content').textContent,profile:structuredClone(state.offlineProfile),snapshot:structuredClone(state.channel.base)}));
+  // Production callbacks can report a completed status while the native DOM
+  // pause suppresses painting. Resume must repaint this same live channel.
+  const statusPaint=await page.evaluate(async()=>{
+    const channel=state.channel;channel.setStatus('error');const before=document.querySelector('#save-status').textContent;
+    await pauseModel('status-paint');channel.setStatus('synced');const during=document.querySelector('#save-status').textContent;
+    await resumeModel({token:'obsolete-status-paint'});const stale=document.querySelector('#save-status').textContent;
+    await resumeModel({token:'status-paint'});
+    return{beforeError:before==='동기화 확인 필요',duringError:during==='동기화 확인 필요',staleError:stale==='동기화 확인 필요',channelSynced:channel.status==='synced',pending:channel.pending.size,durable:channel.durable!==false,afterSaved:document.querySelector('#save-status').textContent==='모든 변경 사항 저장됨'};
+  });
+  assert.deepEqual(statusPaint,{beforeError:true,duringError:true,staleError:true,channelSynced:true,pending:0,durable:true,afterSaved:true});
+  const statusPriorities=await page.evaluate(async()=>{
+    const channel=state.channel,saved={durable:channel.durable,local:state.localPageOnly,memory:state.authRecoveryMemory,session:state.session},results={};
+    try{
+      for(const [name,status]of [['error','error'],['offline','offline'],['local','waiting'],['pending','pending'],['memory','synced'],['unknown','unknown-status'],['unconfirmed','synced'],['binding','synced'],['channel','synced']]){
+        channel.setStatus('error');await pauseModel('priority-'+name);
+        state.localPageOnly=name==='local';channel.durable=name!=='error'&&name!=='unconfirmed';
+        if(name==='pending')channel.pending.set('status-fixture',{id:'status-fixture'});
+        if(name==='memory')state.authRecoveryMemory=new Map([['status-fixture',{profile:structuredClone(state.offlineProfile),lastEdits:{}}]]);
+        if(name==='binding')state.session={...saved.session,cache_binding:'different-status-fixture'};
+        channel.setStatus(status);if(name==='channel')state.channel=Object.create(channel);
+        await resumeModel({token:'priority-'+name});results[name]=document.querySelector('#save-status').textContent;
+        if(name==='memory')results.memoryPreserved=state.authRecoveryMemory.size===1;
+        state.channel=channel;state.session=saved.session;state.authRecoveryMemory=saved.memory;state.localPageOnly=saved.local;channel.durable=saved.durable;channel.pending.delete('status-fixture');
+      }
+      return results;
+    }finally{state.channel=channel;state.session=saved.session;state.authRecoveryMemory=saved.memory;state.localPageOnly=saved.local;channel.durable=saved.durable;channel.pending.delete('status-fixture');channel.setStatus('synced');}
+  });
+  assert.deepEqual(statusPriorities,{error:'동기화 확인 필요',offline:'오프라인 · 기기에 저장됨',local:'기기에 저장됨 · 새 페이지 동기화 대기',pending:'변경 사항 동기화 중…',memory:'보관된 입력 복구 확인 필요',memoryPreserved:true,unknown:'동기화 확인 필요',unconfirmed:'동기화 확인 필요',binding:'동기화 확인 필요',channel:'동기화 확인 필요'});
   // An unresolved initiating persistence promise cannot make pause or resume await itself.
   await page.evaluate(()=>{state.channel.persistence=new Promise(resolve=>window.releaseInitiatingPersistence=resolve);document.querySelector('.block-content').textContent='아직 저장하지 않은 입력 😀';document.querySelector('.block-content').focus();});
   const ack=await page.evaluate(()=>pauseModel());assert.deepEqual(ack,[{owner:'owner',token:'token'}]);assert.equal(await page.evaluate(()=>state.channel.networkPaused),true);assert.equal(await page.evaluate(()=>document.querySelector('#main').inert),true);assert.equal(await page.locator('.block-content').textContent(),'아직 저장하지 않은 입력 😀');

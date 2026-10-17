@@ -1,0 +1,10 @@
+{
+  "date": "2026-10-17",
+  "scope": "Basic wiki increment, not whole-product verification",
+  "actualHTTPChecks": [
+    19,
+    9
+  ],
+  "details": "../../research/wiki-evidence.json",
+  "limitationsPreserved": true
+}

@@ -238,11 +238,11 @@
     ],
     "acceptance": [
       "Complete and verify: 여러 담당자·만료일/무기한·갱신/해제 화면, 검증/만료 상태, 현재 권한·문서 revision 검사; [안내](PAGE_VERIFICATION.md)",
-      "Resolve: 만료 알림, 위키·DB 검증 속성"
+      "Resolve: 배경 만료 전달·이메일/푸시, 전체 위키·DB 검증 속성"
     ],
     "verification": [],
     "limitations": [
-      "만료 알림, 위키·DB 검증 속성"
+      "배경 만료 전달·이메일/푸시, 위키 사용자 지정 보기·DB 검증 속성"
     ],
     "implementation_inventory": "../FEATURES.md"
   },
@@ -462,16 +462,22 @@
     "name": "위키 전환·해제와 기본 보기",
     "priority": "P1",
     "weight": 3,
-    "status": "discovered",
+    "status": "implemented",
     "original_evidence": [
       "evidence/original-boundaries.md"
     ],
     "acceptance": [
       "Home, All pages, Pages I own과 현재 권한·소유자·검증 동작을 제공한다"
     ],
-    "verification": [],
+    "verification": [
+      {
+        "command": "ActualSupabaseQA71/72 + Python/Node/Chrome wiki regressions",
+        "evidence": "evidence/wiki-increment.json",
+        "passed": true
+      }
+    ],
     "limitations": [
-      "구현·실제 연결·원본 비교 증거가 아직 전체 요구를 충족하지 않는다."
+      "추가 사용자 지정 속성·레이아웃·끌기 분류·목록 내 편집, 유료 원본 전체 비교와 실제 다섯 플랫폼 계정 여정이 남아 있다."
     ]
   },
   {

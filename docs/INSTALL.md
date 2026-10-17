@@ -1,12 +1,12 @@
 # 설치 앱 사용하기
 
-2026-10-17 검증 알림함 개선을 반영해 현재 작업폴더에 만든 파일이다. 앱 바이너리는 Git에 넣지 않으며, 실행 코드·공개 자산·압축파일 해시는 [검증 기록](research/inbox-evidence.json)에 남겼다.
+2026-10-17 기본 위키와 검증 담당자 개선을 반영해 현재 작업폴더에 만든 파일이다. 앱 바이너리는 Git에 넣지 않으며, 실행 코드·공개 자산·압축파일 해시는 [검증 기록](research/wiki-evidence.json)에 남겼다.
 
-생성 위치: `.data/installables-inbox-20261017/`
+생성 위치: `.data/installables-wiki-20261017/`
 
 | 파일 | 사용 방법과 범위 |
 | --- | --- |
-| `Fountain-macOS-arm64.zip` | Apple Silicon Mac용이다. 압축을 풀고 `Fountain.app`을 실행한다. 새 패키지의 편집·재시작 14개와 Supabase 익명 연결·재시작을 확인했다. 이전 보안 5개 검증의 실행 코드는 그대로이며 이번 검증은 알림함의 네이티브 로그인 여정을 포함하지 않는다. 공인 서명·공증·자동 업데이트 배포본은 아니다. |
+| `Fountain-macOS-arm64.zip` | Apple Silicon Mac용이다. 압축을 풀고 `Fountain.app`을 실행한다. 새 패키지의 편집·재시작 14개와 Supabase 익명 연결·재시작을 확인했다. 이전 보안 5개 검증의 실행 코드는 그대로이며 이번 검증은 위키의 네이티브 로그인 여정을 포함하지 않는다. 공인 서명·공증·자동 업데이트 배포본은 아니다. |
 | `Fountain-Windows-x64.zip` | 압축을 푼 폴더 전체를 유지하고 `Fountain.exe`를 실행한다. x64 PE·실행 소스·공개 자산·ZIP CRC를 확인했다. 실제 Windows 실행은 아직 검증하지 않았다. |
 | `Fountain-Android-debug.apk` | Android 기기의 디버그 설치용 APK다. 기본 저장 활성화 021과 같은 네이티브 실행 코드에 새 화면을 넣었다. 새 APK의 서명·오프라인 빌드·lint를 확인했다. 이번 APK를 에뮬레이터에서 새로 실행하지는 않았으며 이전 실행 결과와 구분한다. 앱 스토어용 릴리스 서명은 아니다. |
 | `Fountain-iOS-Simulator-Release.zip` | Xcode 시뮬레이터용 Release 앱이다. 테스트 번들을 제외했으며 실제 전용 시뮬레이터에서 인증 진입 화면까지 실행했다. 실제 iPhone에 설치하는 IPA는 아니다. |

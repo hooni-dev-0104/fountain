@@ -2230,3 +2230,37 @@ svg {
   .page-verification-status button{min-height:44px;font-size:14px}
   .verification-owners{max-height:200px}
 }
+
+.inbox-modal{max-width:700px}
+.inbox-modal .inbox-intro{color:#696b60}
+.inbox-toolbar,.inbox-toolbar nav,.inbox-item-actions,.inbox-footer{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.inbox-toolbar{justify-content:space-between;margin-bottom:14px}
+.inbox-toolbar .selected{background:#eef4e6;border-color:#cddbbc;color:#405c37}
+#inbox-status,.inbox-footer{font-size:12px;color:#696b60}
+#inbox-error:not(:empty){color:#87402f;background:#fcf1e8;border:1px solid #e5c9b9;border-radius:5px;padding:10px;font-size:12px;line-height:1.7;margin-top:12px}
+.inbox-list{display:grid;gap:10px;margin-top:16px}
+.inbox-item{border:1px solid var(--line);border-radius:7px;padding:12px;min-width:0}
+.inbox-item.unread{background:#f5f8f0;border-color:#dce5cf}
+.inbox-page{display:flex;width:100%;gap:10px;text-align:left;align-items:flex-start;min-width:0;padding:3px 0}
+.inbox-page>span:nth-child(2){min-width:0;flex:1;overflow-wrap:anywhere}
+.inbox-page strong{font-size:14px;font-weight:600}
+.inbox-page small{display:block;color:#696b60;font-size:12px;margin-top:5px}
+.inbox-unread-dot{width:7px;height:7px;flex-shrink:0;border-radius:50%;background:#5c764a;margin-top:7px}
+.inbox-item-actions{justify-content:flex-end;margin-top:9px}
+.inbox-item-actions button{font-size:12px}
+.inbox-empty{padding:35px 10px;text-align:center;color:#696b60;font-size:13px}
+.inbox-footer{justify-content:space-between;margin-top:16px}
+@media(max-width:600px){
+  #sidebar [data-action="inbox"]{min-height:44px;font-size:14px}
+  .inbox-modal{display:flex;flex-direction:column;overflow:hidden;max-height:95vh;max-height:calc(100dvh - 20px)}
+  .inbox-modal .modal-head{flex-shrink:0}
+  .inbox-modal .modal-body{min-height:0;overflow:auto}
+  .inbox-modal .modal-body p,.inbox-modal button,.inbox-page small,#inbox-status,#inbox-error,.inbox-empty,.inbox-footer{font-size:14px}
+  .inbox-modal button{min-height:44px}
+  .inbox-modal .modal-close{min-width:44px}
+  .inbox-toolbar{align-items:stretch}
+  .inbox-toolbar nav{flex:1}
+  .inbox-toolbar nav button{flex:1;white-space:nowrap}
+  .inbox-item{padding:12px}
+  .inbox-item-actions{gap:12px}
+}

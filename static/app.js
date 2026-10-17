@@ -710,7 +710,7 @@ function renderSidebar() {
   const favorite=pages.filter(p=>p.favorite);
   const roots=pages.filter(p=>!p.parent_id);
   const pageItem=(p,depth=0)=>`<div class="nav-item page-nav ${state.page?.id===p.id&&state.route==='page'?'active':''}" style="padding-left:${10+depth*13}px"><button data-action="page" data-id="${esc(p.id)}" class="nav-item" style="padding:0;min-height:23px"><span class="page-icon">${esc(p.icon||'📄')}</span><span class="label">${esc(p.title||'제목 없음')}</span></button><button class="page-menu" aria-label="하위 페이지 추가" data-action="add-page" data-parent="${esc(p.id)}">+</button></div>${pages.filter(q=>q.parent_id===p.id).map(q=>pageItem(q,Math.min(depth+1,4))).join('')}`;
-  $('#sidebar').innerHTML=`<div class="brand"><span class="brand-mark">f</span>fountain<span style="font-family:sans-serif;font-size:9px;letter-spacing:1px;color:#a5a497;margin-left:2px;font-weight:400">WORKSPACE</span></div><button class="workspace-switch" data-action="settings"><span class="workspace-avatar">F</span><span class="workspace-name">${esc(w.settings?.name||'Fountain 스튜디오')}<small>함께 만드는 작은 가능성</small></span>${icon('down')}</button><nav><button class="nav-item" data-action="search">${icon('search')}<span class="label">검색</span><span class="shortcut">⌘ K</span></button><button class="nav-item ${state.route==='home'?'active':''}" data-action="home">${icon('home')}<span class="label">홈</span></button><button class="nav-item" data-action="activity">${icon('inbox')}<span class="label">업데이트</span></button><button class="nav-item" data-action="ai">${icon('spark')}<span class="label">Fountain AI</span><span class="badge">AI</span></button></nav><div class="sidebar-pages"><div class="section-label">즐겨찾기<span>${icon('star')}</span></div>${favorite.length?favorite.map(p=>pageItem(p)).join(''):'<div class="small muted" style="padding:5px 12px;font-size:10px">자주 찾는 페이지를 모아보세요</div>'}<div class="section-label">팀스페이스<button data-action="new-teamspace" aria-label="팀스페이스 추가">+</button></div>${(w.teamspaces||[{id:'general',name:'Fountain 팀'}]).map(t=>`<button class="nav-item" data-action="teamspace" data-id="${esc(t.id)}"><span class="team-icon">${esc((t.name||'팀')[0])}</span><span class="label">${esc(t.name||'Fountain 팀')}</span>${icon('down')}</button>`).join('')}${(w.databases||[]).filter(d=>!state.offline||state.cachedDatabases?.has(d.id)).map(d=>`<button class="nav-item ${state.route==='database'&&state.database?.id===d.id?'active':''}" data-action="database" data-id="${esc(d.id)}" style="padding-left:20px"><span class="page-icon">${esc(d.icon||'▤')}</span><span class="label">${esc(d.name||d.title||'프로젝트')}</span></button>`).join('')}<div class="section-label">페이지<button data-action="add-page" aria-label="새 페이지">+</button></div>${roots.map(p=>pageItem(p)).join('')}<button class="nav-item muted" data-action="add-page">${icon('plus')}<span class="label">새 페이지</span></button><button class="nav-item muted" data-action="new-database">${icon('table')}<span class="label">새 데이터베이스</span></button></div><div class="sidebar-bottom">${state.offline?'<button class="nav-item" data-action="logout">로그아웃</button>':''}<button class="nav-item sync-status-button" data-action="sync-queue"><span aria-hidden="true">↻</span><span class="label" data-sync-label>기기 저장과 동기화</span></button><button class="nav-item" data-action="settings">${icon('settings')}<span class="label">설정 및 멤버</span></button><button class="nav-item" data-action="trash">${icon('trash')}<span class="label">휴지통</span></button><div class="invite-card"><strong>좋은 생각은, 함께 자라니까요.</strong>팀원을 초대하고 한곳에서 시작하세요.<br><button data-action="invite">멤버 초대하기 ↗</button></div></div>`;
+  $('#sidebar').innerHTML=`<div class="brand"><span class="brand-mark">f</span>fountain<span style="font-family:sans-serif;font-size:9px;letter-spacing:1px;color:#a5a497;margin-left:2px;font-weight:400">WORKSPACE</span></div><button class="workspace-switch" data-action="settings"><span class="workspace-avatar">F</span><span class="workspace-name">${esc(w.settings?.name||'Fountain 스튜디오')}<small>함께 만드는 작은 가능성</small></span>${icon('down')}</button><nav><button class="nav-item" data-action="search">${icon('search')}<span class="label">검색</span><span class="shortcut">⌘ K</span></button><button class="nav-item ${state.route==='home'?'active':''}" data-action="home">${icon('home')}<span class="label">홈</span></button><button class="nav-item" data-action="inbox">${icon('inbox')}<span class="label">알림함</span></button><button class="nav-item" data-action="activity">${icon('clock')}<span class="label">업데이트</span></button><button class="nav-item" data-action="ai">${icon('spark')}<span class="label">Fountain AI</span><span class="badge">AI</span></button></nav><div class="sidebar-pages"><div class="section-label">즐겨찾기<span>${icon('star')}</span></div>${favorite.length?favorite.map(p=>pageItem(p)).join(''):'<div class="small muted" style="padding:5px 12px;font-size:10px">자주 찾는 페이지를 모아보세요</div>'}<div class="section-label">팀스페이스<button data-action="new-teamspace" aria-label="팀스페이스 추가">+</button></div>${(w.teamspaces||[{id:'general',name:'Fountain 팀'}]).map(t=>`<button class="nav-item" data-action="teamspace" data-id="${esc(t.id)}"><span class="team-icon">${esc((t.name||'팀')[0])}</span><span class="label">${esc(t.name||'Fountain 팀')}</span>${icon('down')}</button>`).join('')}${(w.databases||[]).filter(d=>!state.offline||state.cachedDatabases?.has(d.id)).map(d=>`<button class="nav-item ${state.route==='database'&&state.database?.id===d.id?'active':''}" data-action="database" data-id="${esc(d.id)}" style="padding-left:20px"><span class="page-icon">${esc(d.icon||'▤')}</span><span class="label">${esc(d.name||d.title||'프로젝트')}</span></button>`).join('')}<div class="section-label">페이지<button data-action="add-page" aria-label="새 페이지">+</button></div>${roots.map(p=>pageItem(p)).join('')}<button class="nav-item muted" data-action="add-page">${icon('plus')}<span class="label">새 페이지</span></button><button class="nav-item muted" data-action="new-database">${icon('table')}<span class="label">새 데이터베이스</span></button></div><div class="sidebar-bottom">${state.offline?'<button class="nav-item" data-action="logout">로그아웃</button>':''}<button class="nav-item sync-status-button" data-action="sync-queue"><span aria-hidden="true">↻</span><span class="label" data-sync-label>기기 저장과 동기화</span></button><button class="nav-item" data-action="settings">${icon('settings')}<span class="label">설정 및 멤버</span></button><button class="nav-item" data-action="trash">${icon('trash')}<span class="label">휴지통</span></button><div class="invite-card"><strong>좋은 생각은, 함께 자라니까요.</strong>팀원을 초대하고 한곳에서 시작하세요.<br><button data-action="invite">멤버 초대하기 ↗</button></div></div>`;
   pruneAdministrativeControls();renderSyncIndicators();
 }
 function renderTopbar(title='홈',emoji='') {
@@ -1398,7 +1398,7 @@ async function reloadDatabase() {
 }
 function openModal(title,content,cls='') {
   clearSearch();searchNavigation++;
-  clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;state.verificationView=null;closeSlash();
+  clearInbox();clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;state.verificationView=null;closeSlash();
   $('#overlay-root').innerHTML=`<div class="modal-backdrop"><section class="modal ${cls}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="modal-head"><h2>${esc(title)}</h2><button class="modal-close" data-action="close-modal" aria-label="닫기">×</button></header><div class="modal-body">${content}</div></section></div>`;
   if(state.route==='page'&&resourceLevel(state.page)<4)$$('[data-action="delete-page"],[data-action="move-page"]',$('.modal')).forEach(el=>el.remove());
   if(state.route==='page'&&resourceLevel(state.page)<3){for(const action of ['lock-page','delete-page','verify-page','move-page','change-block-type','move-block','delete-block','restore-version'])$$(`[data-action="${action}"]`,$('.modal')).forEach(el=>el.remove());}
@@ -1408,8 +1408,65 @@ function openModal(title,content,cls='') {
 }
 function closeModal() {
   clearSearch();searchNavigation++;
-  clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;state.verificationView=null;$('#overlay-root').innerHTML='';
+  clearInbox();clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;state.verificationView=null;$('#overlay-root').innerHTML='';
   closeSlash();
+}
+function clearInbox(){const view=state.inboxView;state.inboxView=null;if(view){view.closed=true;view.request?.abort();view.items=[];if(view.modal?.isConnected)view.modal.closest('.modal-backdrop')?.remove();}}
+function inboxScopeCurrent(view) {
+  const scope=view?.scope;
+  return !!scope&&!view.closed&&state.inboxView===view&&view.modal?.isConnected&&$('.inbox-modal')===view.modal&&!state.nativeRecoveryPaused&&!state.nativeOutboxPause&&state.session?.cache_binding===scope.binding&&state.session?.member?.id===scope.member&&state.session?.member?.role===scope.role&&state.offlineProfile?.id===scope.profile&&state.workspace?.workspace_id===scope.workspace&&state.bootGeneration===scope.boot&&FountainTransport.scopeEpoch===scope.epoch&&FountainTransport.origin===scope.origin;
+}
+function inboxOnline(){return !state.offline&&navigator.onLine;}
+function renderInbox(view) {
+  if(!inboxScopeCurrent(view))return;
+  const disabled=view.loading||view.busy||!inboxOnline(),labels={all:'전체',unread:'읽지 않음',archived:'보관함'};
+  $('.modal-body',view.modal).innerHTML=`<p class="inbox-intro">내가 담당하는 페이지의 검증이 만료되면 표시됩니다. 읽음·보관 상태는 같은 계정의 다른 기기에서도 이어집니다.</p><div class="inbox-toolbar"><nav aria-label="알림 필터">${Object.entries(labels).map(([filter,label])=>`<button class="outline-btn ${view.filter===filter?'selected':''}" data-action="inbox-filter" data-filter="${filter}" aria-pressed="${view.filter===filter}" ${disabled?'disabled':''}>${label}</button>`).join('')}</nav><button class="outline-btn" data-action="inbox-refresh" ${view.loading||view.busy?'disabled':''}>새로고침</button></div><div id="inbox-status" role="status" aria-live="polite">${!inboxOnline()?'알림함은 인터넷 연결 후 사용할 수 있습니다.':view.loading?'알림을 확인하는 중…':`읽지 않은 알림 ${view.unread}개`}</div><div id="inbox-error" role="alert">${esc(view.error||'')}</div><div class="inbox-list">${view.items.map(item=>`<article class="inbox-item ${item.read?'':'unread'}"><button class="inbox-page" data-action="inbox-open" data-id="${item.id}" ${disabled?'disabled':''}><span aria-hidden="true">${esc(item.icon||'📄')}</span><span><strong>${esc(item.title||'제목 없음')}</strong><small>페이지 검증 만료 · ${esc(verificationDate(item.expires_at))}</small></span>${!item.read?'<span class="inbox-unread-dot" aria-label="읽지 않음"></span>':''}</button><div class="inbox-item-actions"><button class="text-btn" data-action="inbox-read" data-id="${item.id}" ${disabled?'disabled':''}>${item.read?'읽지 않음으로 표시':'읽음으로 표시'}</button><button class="text-btn" data-action="inbox-archive" data-id="${item.id}" ${disabled?'disabled':''}>${item.archived?'보관 해제':'보관'}</button></div></article>`).join('')||(!view.loading?'<div class="inbox-empty">이곳에 표시할 알림이 없습니다.</div>':'')}</div><div class="inbox-footer"><span>${view.total}개 중 ${view.items.length}개 표시</span>${view.hasMore?`<button class="outline-btn" data-action="inbox-more" ${disabled?'disabled':''}>더 보기</button>`:''}</div>`;
+  view.modal.setAttribute('aria-busy',String(!!(view.loading||view.busy)));
+}
+function validInboxItem(item) {
+  return !!item&&/^[a-f0-9]{64}$/.test(item.id)&&item.type==='verification.expired'&&typeof item.page_id==='string'&&item.page_id.length>0&&typeof item.title==='string'&&(item.icon==null||typeof item.icon==='string')&&verificationTimestamp(item.verified_at)&&verificationTimestamp(item.expires_at)&&typeof item.read==='boolean'&&typeof item.archived==='boolean';
+}
+async function loadInbox(view,more=false) {
+  if(!inboxScopeCurrent(view)||view.loading||view.busy)return;
+  if(!inboxOnline()){view.error='인터넷에 연결한 뒤 새로고침해 주세요.';renderInbox(view);return;}
+  view.loading=true;view.error=null;view.request=new AbortController();renderInbox(view);
+  const offset=more?view.items.length:0,filter=view.filter;
+  try{
+    if(!inboxScopeCurrent(view)||!inboxOnline())return;
+    const result=await api('/inbox?filter='+filter+'&limit=50&offset='+offset,undefined,'GET',{signal:view.request.signal,current:()=>inboxScopeCurrent(view)&&inboxOnline()});
+    if(!inboxScopeCurrent(view)||filter!==view.filter||!inboxOnline())return;
+    if(!Array.isArray(result.items)||result.items.length>50||!result.items.every(validInboxItem)||!Number.isSafeInteger(result.unread_count)||result.unread_count<0||!Number.isSafeInteger(result.total)||result.total<0||typeof result.has_more!=='boolean'||result.offset!==offset||result.limit!==50)throw new Error('알림 응답을 확인하지 못했습니다. 다시 시도해 주세요.');
+    const items=more?[...view.items,...result.items]:result.items;
+    if(new Set(items.map(item=>item.id)).size!==items.length)throw new Error('알림 목록이 변경되었습니다. 새로고침해 주세요.');
+    view.items=items;view.unread=result.unread_count;view.total=result.total;view.hasMore=result.has_more;
+  }catch(error){if(!inboxScopeCurrent(view))return;if([401,403,404].includes(error.status)){view.items=[];view.total=0;view.hasMore=false;}view.error=error.message;}
+  finally{if(inboxScopeCurrent(view)){view.loading=false;view.request=null;renderInbox(view);}}
+}
+async function openInbox() {
+  const scope={binding:state.session?.cache_binding,member:state.session?.member?.id,role:state.session?.member?.role,profile:state.offlineProfile?.id,workspace:state.workspace?.workspace_id,boot:state.bootGeneration,epoch:FountainTransport.scopeEpoch,origin:FountainTransport.origin};
+  if(!scope.member)throw new Error('로그인한 뒤 알림함을 확인해 주세요.');
+  openModal('알림함','<div class="loading">알림을 확인하는 중…</div>','inbox-modal');
+  const view={scope,modal:$('.inbox-modal'),filter:'all',items:[],unread:0,total:0,hasMore:false,loading:false,busy:false,error:null,closed:false};state.inboxView=view;
+  view.modal.onkeydown=event=>{if(event.key!=='Tab')return;const controls=$$('button',view.modal).filter(button=>!button.disabled&&button.getClientRects().length),first=controls[0],last=controls.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}};
+  renderInbox(view);await loadInbox(view);
+}
+async function inboxAction(action,id) {
+  const view=state.inboxView;if(!inboxScopeCurrent(view)||view.loading||view.busy)return;
+  const item=view.items.find(item=>item.id===id);if(!item)return;
+  if(!inboxOnline()){view.error='읽음·보관 변경은 인터넷 연결 후 사용할 수 있습니다.';renderInbox(view);return;}
+  const patch=action==='inbox-archive'?{archived:!item.archived}:{read:action==='inbox-open'?true:!item.read};
+  view.busy=true;view.error=null;view.request=new AbortController();renderInbox(view);
+  let refresh=false;
+  try{
+    if(!inboxScopeCurrent(view)||!inboxOnline())return;
+    const result=await api('/inbox/'+id,patch,'PATCH',{signal:view.request.signal,current:()=>inboxScopeCurrent(view)&&inboxOnline()});
+    if(!inboxScopeCurrent(view)||!inboxOnline())return;
+    if(!validInboxItem(result)||result.id!==item.id||result.page_id!==item.page_id)throw new Error('변경된 알림을 확인하지 못했습니다. 새로고침해 주세요.');
+    if(action==='inbox-open'){closeModal();await navigate('page',item.page_id);return;}
+    refresh=true;
+  }catch(error){if(!inboxScopeCurrent(view))return;if([401,403,404].includes(error.status)){view.items=[];view.total=0;view.hasMore=false;refresh=error.status!==401;}view.error=error.status===404?'알림이 갱신되었거나 접근 권한이 변경되었습니다. 목록을 다시 확인해 주세요.':error.status===403?'알림을 확인할 권한이 없습니다. 목록을 다시 확인해 주세요.':error.message;}
+  finally{if(inboxScopeCurrent(view)){view.busy=false;view.request=null;renderInbox(view);}}
+  if(refresh&&inboxScopeCurrent(view)){const error=view.error;await loadInbox(view);if(error&&inboxScopeCurrent(view)){view.error=error;renderInbox(view);}}
 }
 function stopBackup(){const manager=state.backupManager;state.backupManager=null;if(manager)void manager.close();}
 function backupScope(){return {profileId:state.offlineProfile?.id,binding:state.session?.cache_binding,workspaceId:state.workspace?.workspace_id||state.session?.workspace_id||state.offlineProfile?.workspaceId,memberId:state.session?.member?.id,transportEpoch:FountainTransport.scopeEpoch,boot:state.bootGeneration,channel:state.channel,epoch:state.channel?.base?.epoch,route:state.route};}
@@ -1977,6 +2034,11 @@ async function doAction(target,grouped=false) {
   if(edits.includes(a)&&resourceLevel(state.page)<3)throw new Error('페이지 편집 권한이 없습니다.');
   if(['add-row','new-property'].includes(a)&&!(a==='add-row'?canCreateRow():resourceLevel(state.database)>=4))throw new Error('데이터베이스 편집 권한이 없습니다.');
   switch(a) {
+    case'inbox':await openInbox();break;
+    case'inbox-filter':{const view=state.inboxView,filter=target.dataset.filter;if(inboxScopeCurrent(view)&&!view.busy&&!view.loading&&['all','unread','archived'].includes(filter)){view.filter=filter;view.items=[];view.hasMore=false;await loadInbox(view);}break;}
+    case'inbox-refresh':await loadInbox(state.inboxView);break;
+    case'inbox-more':if(state.inboxView?.hasMore)await loadInbox(state.inboxView,true);break;
+    case'inbox-open':case'inbox-read':case'inbox-archive':await inboxAction(a,id);break;
     case'sync-queue':await openMutationQueue();break;
     case'native-recovery':if(!nativeRecoveryAvailable())throw new Error('이 앱에서는 보관 내용 복구를 사용할 수 없습니다.');await FountainNativeRecovery.open();break;
     case'reload-after-native-recovery':location.reload();break;
@@ -2613,7 +2675,7 @@ window.addEventListener('beforeunload',event=> {
   }
 });
 function renderLogin(preserve=true) {
-  clearScimPanel();stopBackup();
+  clearInbox();clearScimPanel();stopBackup();
   if(state.nativeRecoveryPaused)return;
   if(preserve)return suspendLoginInput().then(current=>{if(current)renderLogin(false);});
   closeDocument();closeMutations();state.offlineProfile=null;state.offline=false;
@@ -2632,7 +2694,7 @@ function renderLogin(preserve=true) {
   if(state.authRetentionError&&$('#login-error'))$('#login-error').textContent=state.authRetentionError;
 }
 async function boot() {
-  clearScimPanel();clearSearch();
+  clearInbox();clearScimPanel();clearSearch();
   if(state.nativeRecoveryPaused)return;
   const generation=(state.bootGeneration||0)+1;state.bootGeneration=generation;
   const cachedIdentity=await window.FountainOffline?.getProfile().catch(()=>null);

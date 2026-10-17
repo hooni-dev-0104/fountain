@@ -11,8 +11,14 @@ export const VAULT_COLUMNS={"retention_records":["id","data","created_at","updat
 export type VaultTable=keyof typeof VAULT_COLUMNS;
 export type BackupVaultRow=Record<string,string|number|null>;
 export const VAULT_DEFINITIONS={"retention_records":"CREATE TABLE retention_records (id TEXT NOT NULL PRIMARY KEY,data TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)","retention_entities":"CREATE TABLE retention_entities (record_id TEXT NOT NULL,kind TEXT NOT NULL,id TEXT NOT NULL,data TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,generation TEXT,ownership TEXT NOT NULL,PRIMARY KEY(record_id,kind,id))","retention_provenance":"CREATE TABLE retention_provenance (record_id TEXT NOT NULL,kind TEXT NOT NULL,id TEXT NOT NULL,generation TEXT NOT NULL,creator_id TEXT,creator_cause TEXT NOT NULL,editor_id TEXT,edited_at TEXT,editor_cause TEXT NOT NULL,manager_id TEXT,manager_at TEXT,PRIMARY KEY(record_id,kind,id))","retention_attachment_refs":"CREATE TABLE retention_attachment_refs (record_id TEXT NOT NULL,attachment_id TEXT NOT NULL,storage_kind TEXT NOT NULL,physical_id TEXT NOT NULL,offset INTEGER NOT NULL,size INTEGER NOT NULL,sha256 TEXT NOT NULL,PRIMARY KEY(record_id,attachment_id,storage_kind,physical_id,offset))","retention_identity_reservations":"CREATE TABLE retention_identity_reservations (kind TEXT NOT NULL,id TEXT NOT NULL,record_id TEXT NOT NULL,generation TEXT NOT NULL,PRIMARY KEY(kind,id))","retention_links":"CREATE TABLE retention_links (record_id TEXT NOT NULL,kind TEXT NOT NULL,id TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(record_id,kind,id))"} as const;
+export const ACTIVITY_COLUMNS={"activity_ledgers":["id","started_at","origin","capture_scope"],"activity_memberships":["id","ledger_id","member_id","opened_at","closed_at","close_reason"],"activity_accounts":["id","membership_id","auth_kind","opened_at","closed_at","close_reason"],"activity_events":["ledger_id","sequence","event_id","command_id","command_ordinal","actor_member_id","membership_id","account_id","origin","action","resource_kind","resource_id","resource_generation","occurred_at","source_encoding","source_bytes","source_sha256"]} as const;
+export const ACTIVITY_DEFINITIONS={"activity_ledgers":"CREATE TABLE activity_ledgers (id TEXT NOT NULL PRIMARY KEY,started_at TEXT NOT NULL,origin TEXT NOT NULL,capture_scope TEXT NOT NULL)","activity_memberships":"CREATE TABLE activity_memberships (id TEXT NOT NULL PRIMARY KEY,ledger_id TEXT NOT NULL,member_id TEXT NOT NULL,opened_at TEXT NOT NULL,closed_at TEXT,close_reason TEXT,FOREIGN KEY(ledger_id) REFERENCES activity_ledgers(id))","activity_accounts":"CREATE TABLE activity_accounts (id TEXT NOT NULL PRIMARY KEY,membership_id TEXT NOT NULL,auth_kind TEXT NOT NULL,opened_at TEXT NOT NULL,closed_at TEXT,close_reason TEXT,FOREIGN KEY(membership_id) REFERENCES activity_memberships(id))","activity_events":"CREATE TABLE activity_events (ledger_id TEXT NOT NULL,sequence INTEGER NOT NULL,event_id TEXT NOT NULL,command_id TEXT NOT NULL,command_ordinal INTEGER NOT NULL,actor_member_id TEXT,membership_id TEXT,account_id TEXT,origin TEXT NOT NULL,action TEXT NOT NULL,resource_kind TEXT NOT NULL,resource_id TEXT NOT NULL,resource_generation TEXT NOT NULL,occurred_at TEXT NOT NULL,source_encoding TEXT NOT NULL,source_bytes INTEGER NOT NULL,source_sha256 TEXT NOT NULL,PRIMARY KEY(ledger_id,sequence),UNIQUE(event_id),UNIQUE(ledger_id,command_id,command_ordinal),FOREIGN KEY(ledger_id) REFERENCES activity_ledgers(id),FOREIGN KEY(membership_id) REFERENCES activity_memberships(id),FOREIGN KEY(account_id) REFERENCES activity_accounts(id))"} as const;
+export type ActivityTable=keyof typeof ACTIVITY_COLUMNS;
+export type BackupActivityRow=Record<string,string|number|null>;
+export const ACTIVITY_KEYS:Record<ActivityTable,string[]>={activity_ledgers:["id"],activity_memberships:["id"],activity_accounts:["id"],activity_events:["ledger_id","sequence"]};
+export type SQLiteSchemaRoot=[string,number,number,...number[]];
 export const SQLITE_DEFINITIONS={
-  ...VAULT_DEFINITIONS,
+  ...VAULT_DEFINITIONS,...ACTIVITY_DEFINITIONS,
   entities:'CREATE TABLE entities (kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(kind,id))',
   meta:'CREATE TABLE meta (key TEXT PRIMARY KEY, data TEXT NOT NULL)',
   attachment_chunks:'CREATE TABLE attachment_chunks (attachment_id TEXT NOT NULL, offset INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(attachment_id,offset))',
@@ -38,8 +44,8 @@ export function validateBackupProvenance(value:unknown):asserts value is BackupP
   const date=(item:unknown)=>{if(item===null)return true;if(typeof item!=='string')return false;const m=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|([+-])(\d{2}):(\d{2}))$/.exec(item);if(!m)return false;const [y,mo,d,h,mi,se]=m.slice(1,7).map(Number),v=new Date(0);v.setUTCFullYear(y,mo-1,d);v.setUTCHours(h,mi,se,0);if(y<1||mo<1||mo>12||d<1||v.getUTCFullYear()!==y||v.getUTCMonth()+1!==mo||v.getUTCDate()!==d||h>23||mi>59||se>59||Number(m[10]??0)>23||Number(m[11]??0)>59)return false;const offset=(Number(m[10]??0)*60+Number(m[11]??0))*60000*(m[9]==='-'?-1:1);const year=new Date(v.getTime()-offset).getUTCFullYear();return year>=1&&year<=9999;};
   check(date(row.edited_at)&&date(row.manager_at)&&(row.editor_id!==null||row.edited_at===null)&&((row.manager_id===null)===(row.manager_at===null)));
 }
-export type SQLiteBackupSource={entities:Rows<BackupEntity>;meta:Rows<BackupMeta>;chunks:Rows<BackupChunk>;provenance?:Rows<BackupProvenance>;vault?:Record<VaultTable,Rows<BackupVaultRow>>};
-export type SQLiteBackupSummary={pageSize:number;pages:number;byteLength:number;sourceSHA256:string;counts:{entities:number;meta:number;attachment_chunks:number;content_provenance?:number;retention_records?:number;retention_entities?:number;retention_provenance?:number;retention_attachment_refs?:number;retention_identity_reservations?:number;retention_links?:number};entityKinds:Record<string,number>};
+export type SQLiteBackupSource={entities:Rows<BackupEntity>;meta:Rows<BackupMeta>;chunks:Rows<BackupChunk>;provenance?:Rows<BackupProvenance>;vault?:Record<VaultTable,Rows<BackupVaultRow>>;activity?:Record<ActivityTable,Rows<BackupActivityRow>>};
+export type SQLiteBackupSummary={pageSize:number;pages:number;byteLength:number;sourceSHA256:string;counts:{entities:number;meta:number;attachment_chunks:number;content_provenance?:number;retention_records?:number;retention_entities?:number;retention_provenance?:number;retention_attachment_refs?:number;retention_identity_reservations?:number;retention_links?:number;activity_ledgers?:number;activity_memberships?:number;activity_accounts?:number;activity_events?:number};entityKinds:Record<string,number>};
 export type SQLiteBackupSink={write(bytes:Uint8Array):void|Promise<void>;close?(summary:SQLiteBackupSummary):void|Promise<void>;abort?(error:SQLiteBackupError):void|Promise<void>};
 export type SQLiteBackupOptions={pageSize?:4096|65536;maxPlanBytes?:number};
 export class SQLiteBackupError extends Error{constructor(message:string){super(message);this.name='SQLiteBackupError';}}
@@ -89,8 +95,8 @@ function jsonText(value:unknown):string{
   let result:string;try{result=JSON.stringify(value,(_,item)=>{check(typeof item!=='undefined'&&typeof item!=='function'&&typeof item!=='symbol'&&typeof item!=='bigint'&&(typeof item!=='number'||Number.isFinite(item)),'Invalid JSON in portable backup');return item;});}catch{throw new SQLiteBackupError('Invalid JSON in portable backup');}validText(result);return result;
 }
 type Manifest={size:number;sha256:string;offset:number;hash:IncrementalSHA256};
-type NormalizedRow={key:Key;record:RecordSource;attachment?:Manifest;kind?:string};
-type NormalizedSnapshot={manifests:Map<string,Manifest>;kinds:Record<string,number>;resources:Set<string>;live:Set<string>;liveAttachments:Map<string,string>;vault:VaultValidationState};
+type NormalizedRow={key:Key;record:RecordSource;attachment?:Manifest;kind?:string;uniqueKeys?:Key[]};
+type NormalizedSnapshot={manifests:Map<string,Manifest>;kinds:Record<string,number>;resources:Set<string>;live:Set<string>;liveAttachments:Map<string,string>;vault:VaultValidationState;activity:ActivityValidationState};
 async function* entities(source:SQLiteBackupSource,state:NormalizedSnapshot):AsyncGenerator<NormalizedRow>{
   for await(const row of source.entities()){
     check(row&&typeof row==='object'&&Object.keys(row).length===5&&['kind','id','data','created_at','updated_at'].every(key=>Object.hasOwn(row,key)));validText(row.kind);if(SQLITE_PRIVATE_KINDS.has(row.kind)||row.kind==='attachment_chunk')continue;
@@ -121,7 +127,7 @@ async function* provenance(source:SQLiteBackupSource,state:NormalizedSnapshot):A
 function typedAttachmentIds(kind:string,value:any,files:string[]):string[]{const ids=new Set<string>(),add=(item:any)=>{if(item===null||item===undefined)return;check(typeof item==='string'&&Array.from(item).length>0&&Array.from(item).length<=160&&!item.includes('\0'));ids.add(item);};if(['page','version'].includes(kind)&&Array.isArray(value.blocks)){for(const block of value.blocks)if(block&&typeof block==='object'&&!Array.isArray(block))add(block.attachment_id);}else if(kind==='collaboration'){const state=value.state;if(state&&typeof state==='object'&&!Array.isArray(state)){for(const document of [state,state.history?.baseline])if(document&&document.blocks&&typeof document.blocks==='object'&&!Array.isArray(document.blocks))for(const block of Object.values(document.blocks) as any[])if(block&&typeof block==='object')add(block.fields?.attachment_id?.value);const ops=state.history?.ops;if(ops&&typeof ops==='object'&&!Array.isArray(ops))for(const operation of Object.values(ops) as any[])if(operation&&operation.type==='block.set'&&operation.field==='attachment_id')add(operation.value);}}else if(kind==='row'){for(const key of files)for(const item of value.properties?.[key]??[])add(typeof item==='string'?item:item?.id);}return [...ids];}
 function attachmentFingerprint(kind:string,value:any,created:string,updated:string):string{const keys=Object.keys(value).filter(key=>kind!=='attachment'||!['cloud_chunks','storage_id'].includes(key)).sort();const hash=new IncrementalSHA256();hash.update(new TextEncoder().encode(JSON.stringify([created,updated,keys.map(key=>[key,value[key]])])));return hash.hex();}
 type VaultValidationState={records:Map<string,{root:string;generation:string;header:unknown;counts:Record<string,number>}>;counts:Map<string,Record<string,number>>;entities:Map<string,{generation:string|null;ownership:string;kind:string;id:string;parent:string|null;database:string|null;row:string|null;files:string[];attachments:string[]}>;reservations:Map<string,{record:string;generation:string}>;history:Map<string,string>;pins:Map<string,{size:number;sha256:string}>;roots:Map<string,{generation:string|null;archived:boolean;header:unknown}>;links:Array<{record:string;removed:string[]}>;refs:Array<{record:string;attachment:string;storage:string;physical:string;offset:number;size:number;sha256:string}>;fileManifests:Set<string>;cloudManifests:Set<string>;recordManifests:Map<string,{size:number;sha256:string}>};
-function newSnapshot():NormalizedSnapshot{return {manifests:new Map(),kinds:{},resources:new Set(),live:new Set(),liveAttachments:new Map(),vault:{records:new Map(),counts:new Map(),entities:new Map(),reservations:new Map(),history:new Map(),pins:new Map(),roots:new Map(),links:[],refs:[],fileManifests:new Set(),cloudManifests:new Set(),recordManifests:new Map()}};}
+function newSnapshot():NormalizedSnapshot{return {manifests:new Map(),kinds:{},resources:new Set(),live:new Set(),liveAttachments:new Map(),vault:{records:new Map(),counts:new Map(),entities:new Map(),reservations:new Map(),history:new Map(),pins:new Map(),roots:new Map(),links:[],refs:[],fileManifests:new Set(),cloudManifests:new Set(),recordManifests:new Map()},activity:newActivityValidation()};}
 function rememberVault(table:VaultTable,row:BackupVaultRow,state:NormalizedSnapshot){
  const v=state.vault,record=String(table==='retention_records'?row.id:row.record_id),countKey=({retention_entities:'entities',retention_provenance:'provenance',retention_attachment_refs:'refs',retention_identity_reservations:'reservations',retention_links:'links'} as Partial<Record<VaultTable,string>>)[table];
  if(table==='retention_records'){const data=privateJSON(row.data as string);check(!v.records.has(record));v.records.set(record,{root:data.root_id,generation:data.generation,header:data.header,counts:data.counts});return;}
@@ -201,12 +207,49 @@ async function* vaultRows(table:VaultTable,source:SQLiteBackupSource,state:Norma
   }
 }
 
+export function activityTime(value:unknown):bigint{
+  check(typeof value==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|\+00:00)$/.test(value)&&backupDate(value),'Invalid activity UTC time');
+  const fraction=(/\.(\d{1,6})/.exec(value)?.[1]??'').padEnd(6,'0');return BigInt(Date.parse(value))*1000n+BigInt(fraction.slice(3)||0);
+}
+export function validateBackupActivityRow(table:ActivityTable,value:unknown):asserts value is BackupActivityRow{
+ check(value!==null&&typeof value==='object'&&!Array.isArray(value));const row=value as BackupActivityRow,columns=ACTIVITY_COLUMNS[table];check(Object.keys(row).length===columns.length&&columns.every(k=>Object.hasOwn(row,k)),'Invalid activity columns');
+ const nullable=new Set(['actor_member_id','membership_id','account_id','closed_at','close_reason']),numeric=new Set(['sequence','command_ordinal','source_bytes']);
+ for(const [key,item]of Object.entries(row)){if(item===null){check(nullable.has(key));continue;}if(numeric.has(key)){check(Number.isSafeInteger(item)&&Number(item)>=(key==='sequence'?1:0));continue;}validText(item);}
+ const uuid=(v:unknown)=>typeof v==='string'&&/^[a-f0-9]{32}$/.test(v),id=(v:unknown)=>typeof v==='string'&&Array.from(v).length>0&&Array.from(v).length<=160&&!/^[\u0009-\u000D\u001C-\u0020\u0085\u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000]+$/u.test(v);
+ for(const key of ['id','ledger_id','membership_id','account_id','event_id','command_id','resource_generation'])if(Object.hasOwn(row,key)&&row[key]!==null)check(uuid(row[key]),'Invalid activity UUID');
+ for(const key of ['member_id','actor_member_id','resource_id'])if(Object.hasOwn(row,key)&&row[key]!==null)check(id(row[key]),'Invalid activity identity');
+ for(const key of ['started_at','opened_at','closed_at','occurred_at'])if(Object.hasOwn(row,key)&&row[key]!==null)activityTime(row[key]);
+ if(table==='activity_ledgers')check(['installation','restore'].includes(String(row.origin))&&row.capture_scope==='canonical-server-v1');
+ else if(table==='activity_memberships'||table==='activity_accounts'){
+  check((row.closed_at===null)===(row.close_reason===null));if(row.closed_at!==null)check(activityTime(row.closed_at)>=activityTime(row.opened_at));
+  const reasons=table==='activity_memberships'?['inactive','deleted','restore']:['credential_removed','identity_changed','membership_closed','restore'];check(row.close_reason===null||reasons.includes(String(row.close_reason)));if(table==='activity_accounts')check(['password','supabase'].includes(String(row.auth_kind)));
+ }else check(['human','automation','import','public_form','system','unknown'].includes(String(row.origin))&&['created','edited','viewed','managed','deleted'].includes(String(row.action))&&['page','database','row'].includes(String(row.resource_kind))&&row.source_encoding==='fountain-cjson-v1'&&typeof row.source_sha256==='string'&&/^[a-f0-9]{64}$/.test(row.source_sha256)&&(row.actor_member_id===null?(row.membership_id===null&&row.account_id===null):row.membership_id!==null),'Invalid activity event');
+}
+type ActivityValidationState={ledgers:Map<string,BackupActivityRow>;members:Map<string,BackupActivityRow>;accounts:Map<string,BackupActivityRow>;sequences:Map<string,number>;eventIds:Set<string>;commands:Set<string>};
+function newActivityValidation():ActivityValidationState{return {ledgers:new Map(),members:new Map(),accounts:new Map(),sequences:new Map(),eventIds:new Set(),commands:new Set()};}
+export function validateActivityRelations(table:ActivityTable,row:BackupActivityRow,ledger:BackupActivityRow|undefined,membership:BackupActivityRow|undefined,account:BackupActivityRow|undefined):void{
+ const within=(at:unknown,e:BackupActivityRow)=>activityTime(at)>=activityTime(e.opened_at)&&(e.closed_at===null||activityTime(at)<=activityTime(e.closed_at));
+ if(table==='activity_ledgers')return;
+ if(table==='activity_memberships')check(ledger&&activityTime(row.opened_at)>=activityTime(ledger.started_at),'Orphan activity membership');
+ else if(table==='activity_accounts')check(membership&&activityTime(row.opened_at)>=activityTime(membership.opened_at)&&(membership.closed_at===null||row.closed_at!==null&&activityTime(row.closed_at)<=activityTime(membership.closed_at)),'Orphan or invalid activity account');
+ else {check(ledger&&activityTime(row.occurred_at)>=activityTime(ledger.started_at),'Orphan activity event');if(row.membership_id!==null)check(membership&&membership.ledger_id===row.ledger_id&&membership.member_id===row.actor_member_id&&within(row.occurred_at,membership),'Activity membership mismatch');if(row.account_id!==null)check(account&&account.membership_id===row.membership_id&&within(row.occurred_at,account),'Activity account mismatch');}
+}
+function rememberActivity(table:ActivityTable,row:BackupActivityRow,state:ActivityValidationState):void{
+ validateActivityRelations(table,row,state.ledgers.get(String(row.ledger_id)),state.members.get(String(row.membership_id)),state.accounts.get(String(row.account_id)));
+ if(table==='activity_ledgers'){check(!state.ledgers.has(String(row.id)));state.ledgers.set(String(row.id),{...row});}
+ else if(table==='activity_memberships'){check(!state.members.has(String(row.id)));state.members.set(String(row.id),{...row});}
+ else if(table==='activity_accounts'){check(!state.accounts.has(String(row.id)));state.accounts.set(String(row.id),{...row});}
+ else {const ledger=String(row.ledger_id),command=JSON.stringify([ledger,row.command_id,row.command_ordinal]);check(row.sequence===(state.sequences.get(ledger)??0)+1&&!state.eventIds.has(String(row.event_id))&&!state.commands.has(command),'Activity sequence or identity collision');state.sequences.set(ledger,Number(row.sequence));state.eventIds.add(String(row.event_id));state.commands.add(command);}
+}
+async function* activityRows(table:ActivityTable,source:SQLiteBackupSource,state:NormalizedSnapshot):AsyncGenerator<NormalizedRow>{
+ for await(const row of source.activity?.[table]()??[]){validateBackupActivityRow(table,row);rememberActivity(table,row,state.activity);yield {key:ACTIVITY_KEYS[table].map(k=>row[k] as string|number),record:record(ACTIVITY_COLUMNS[table].map(k=>row[k])),...(table==='activity_events'?{uniqueKeys:[[row.event_id as string],[row.ledger_id as string,row.command_id as string,row.command_ordinal as number]]}:{})};}
+}
 type RowPlan={rowid:number;size:number;local:number;overflow:Overflow|null;cellSize:number};
 type Leaf={page:number;start:number;end:number;maxRowid:number};
 type TableNode={page:number;children:TableTree[];maxRowid:number};
 type TableTree=Leaf|TableNode;
 type IndexNode={page:number;entries:Uint8Array[];children:IndexNode[]};
-type TablePlan={rows:RowPlan[];leaves:Leaf[];parents:TableNode[];root:number;keys:Uint8Array[];index:IndexNode};
+type TablePlan={rows:RowPlan[];leaves:Leaf[];parents:TableNode[];root:number;keys:Uint8Array[];index:IndexNode;extraIndices?:IndexNode[]};
 class Allocator{
   next=2;readonly lockPage:number;readonly size:number;
   constructor(size:number){this.size=size;this.lockPage=Math.floor(0x40000000/size)+1;}
@@ -245,6 +288,27 @@ function headerPage(size:number,pages:number,roots:Array<[string,number,number]>
   // Offset 96 stays zero: this generator is not a SQLite library version.
   return output;
 }
+export type SQLiteSchemaPlan={cells:Uint8Array[];rightmost?:number;leaves:Array<{page:number;bytes:Uint8Array}>};
+/** sqlite_schema itself is a rowid B-tree. Fourteen tables and two extra
+ * UNIQUE indexes no longer fit page1 at4KiB; keep real schema overflow leaves. */
+export function planSQLiteSchema(size:number,roots:SQLiteSchemaRoot[],reserve:()=>number):SQLiteSchemaPlan{
+ const rows:Array<{rowid:number;cell:Uint8Array}>=[];let rowid=0;
+ for(const [name,tableRoot,...indices]of roots){
+  const values=[['table',name,name,tableRoot,SQLITE_DEFINITIONS[name as keyof typeof SQLITE_DEFINITIONS]],...indices.map((root,i)=>['index','sqlite_autoindex_'+name+'_'+(i+1),name,root,null])];
+  for(const row of values){const data=smallRecord(record(row as Value[]));rows.push({rowid:++rowid,cell:join([varint(data.length),varint(rowid),data])});}
+ }
+ const used=(values:Array<{cell:Uint8Array}>,offset=0)=>offset+8+values.reduce((n,row)=>n+row.cell.length+2,0);
+ if(used(rows,100)<=size)return {cells:rows.map(row=>row.cell),leaves:[]};
+ const groups:Array<Array<{rowid:number;cell:Uint8Array}>>=[];let group:typeof rows=[];
+ for(const row of rows){check(used([row])<=size,'SQLite schema row exceeds its page');if(used([...group,row])>size){groups.push(group);group=[];}group.push(row);}if(group.length)groups.push(group);
+ const leaves=groups.map(values=>({page:reserve(),bytes:page(13,size,values.map(row=>row.cell))}));
+ const cells=groups.slice(0,-1).map((values,i)=>{const pointer=new Uint8Array(4);put32(pointer,0,leaves[i].page);return join([pointer,varint(values.at(-1)!.rowid)]);});
+ check(112+cells.reduce((n,cell)=>n+cell.length+2,0)<=size,'SQLite schema root exceeds its bounded layout');return {cells,rightmost:leaves.at(-1)!.page,leaves};
+}
+export function sqliteSchemaHeader(size:number,pages:number,plan:SQLiteSchemaPlan):Uint8Array{
+ const output=page(plan.rightmost===undefined?13:5,size,plan.cells,plan.rightmost,100),view=new DataView(output.buffer);output.set(encoder.encode('SQLite format 3\u0000'));view.setUint16(16,size===65536?1:size);output[18]=output[19]=1;output[21]=64;output[22]=output[23]=32;view.setUint32(24,1);view.setUint32(28,pages);view.setUint32(40,1);view.setUint32(44,4);view.setUint32(56,1);view.setUint32(92,1);return output;
+}
+
 async function hashRecord(row:NormalizedRow,rowid:number,hash:IncrementalSHA256):Promise<void>{
   hash.update(varint(row.record.size));hash.update(varint(rowid));for await(const bytes of recordBytes(row.record,row.attachment?bytes=>row.attachment!.hash.update(bytes):undefined))hash.update(bytes);
 }
@@ -258,23 +322,27 @@ export class SQLiteBackupWriter{
       const allocate=new Allocator(this.pageSize),firstHash=new IncrementalSHA256(),firstState:NormalizedSnapshot=newSnapshot(),plans:TablePlan[]=[];let planBytes=0;
       const vaultNames=Object.keys(VAULT_COLUMNS) as VaultTable[];
       if(source.vault)check(vaultNames.every(name=>typeof source.vault![name]==='function'),'Incomplete retention vault source');
-      const names=source.vault?['entities','meta','content_provenance',...vaultNames,'attachment_chunks']:source.provenance?['entities','meta','attachment_chunks','content_provenance']:['entities','meta','attachment_chunks'];
-      const readers=source.vault?[entities,metadata,provenance,...vaultNames.map(name=>(s:SQLiteBackupSource,v:NormalizedSnapshot)=>vaultRows(name,s,v)),chunks]:source.provenance?[entities,metadata,chunks,provenance]:[entities,metadata,chunks];
+      const activityNames=Object.keys(ACTIVITY_COLUMNS) as ActivityTable[];if(source.activity)check(Object.keys(source.activity).length===4&&activityNames.every(name=>typeof source.activity![name]==='function'),'Incomplete activity source');
+      const includesVault=!!source.vault||!!source.activity;
+      const names=includesVault?['entities','meta','content_provenance',...vaultNames,'attachment_chunks']:source.provenance?['entities','meta','attachment_chunks','content_provenance']:['entities','meta','attachment_chunks'];
+      const readers=includesVault?[entities,metadata,provenance,...vaultNames.map(name=>(s:SQLiteBackupSource,v:NormalizedSnapshot)=>vaultRows(name,s,v)),chunks]:source.provenance?[entities,metadata,chunks,provenance]:[entities,metadata,chunks];if(source.activity){names.push(...activityNames);readers.push(...activityNames.map(name=>(s:SQLiteBackupSource,v:NormalizedSnapshot)=>activityRows(name,s,v)));}
       for(let table=0;table<readers.length;table++){
-        firstHash.update(Uint8Array.of(table));const rows:RowPlan[]=[],leaves:Leaf[]=[],keys:Uint8Array[]=[];let previous:Key|null=null,start=0,used=8;
+        firstHash.update(Uint8Array.of(table));const unique:Array<Array<{key:Key;bytes:Uint8Array}>>=names[table]==='activity_events'?[[],[]]:[];const rows:RowPlan[]=[],leaves:Leaf[]=[],keys:Uint8Array[]=[];let previous:Key|null=null,start=0,used=8;
         for await(const row of readers[table](source,firstState)){
           check(previous===null||compareKey(previous,row.key)<0,'Portable rows must have unique sorted primary keys');previous=row.key;const rowid=rows.length+1,local=localPayload(row.record.size,this.pageSize),overflowBytes=row.record.size-local,overflowCount=Math.ceil(overflowBytes/(this.pageSize-4)),cellSize=varint(row.record.size).length+varint(rowid).length+local+(overflowCount?4:0);
           if(used+cellSize+2>this.pageSize){check(rows.length>start);leaves.push({page:allocate.reserve(),start,end:rows.length,maxRowid:rows.length});start=rows.length;used=8;}
           const overflow=overflowCount?{first:allocate.reserve(overflowCount),count:overflowCount}:null;rows.push({rowid,size:row.record.size,local,overflow,cellSize});used+=cellSize+2;
           const key=smallRecord(record([...row.key,rowid]));check(localPayload(key.length,this.pageSize,true)===key.length,'Index key exceeds portable schema bounds');keys.push(key);planBytes+=192+key.length;check(planBytes<=this.maxPlanBytes,'SQLite backup plan exceeds the bounded memory limit');
+          if(row.uniqueKeys){check(row.uniqueKeys.length===unique.length);row.uniqueKeys.forEach((value,i)=>{const bytes=smallRecord(record([...value,rowid]));check(localPayload(bytes.length,this.pageSize,true)===bytes.length);unique[i].push({key:value,bytes});planBytes+=192+bytes.length;check(planBytes<=this.maxPlanBytes,'SQLite backup plan exceeds the bounded memory limit');});}
           await hashRecord(row,rowid,firstHash);
         }
-        leaves.push({page:allocate.reserve(),start,end:rows.length,maxRowid:rows.length});const tree=tableParents(leaves,allocate),index=indexTree(keys,allocate);plans.push({rows,leaves,parents:tree.parents,root:tree.root,keys,index});
+        leaves.push({page:allocate.reserve(),start,end:rows.length,maxRowid:rows.length});const tree=tableParents(leaves,allocate),index=indexTree(keys,allocate);const extraIndices=unique.map(values=>{values.sort((a,b)=>compareKey(a.key,b.key));for(let i=1;i<values.length;i++)check(compareKey(values[i-1].key,values[i].key)<0,'Duplicate activity unique key');return indexTree(values.map(row=>row.bytes),allocate);});plans.push({rows,leaves,parents:tree.parents,root:tree.root,keys,index,...(extraIndices.length?{extraIndices}:{})});
       }
       if(source.vault)verifyVault(firstState);
-      const pages=allocate.next-1,summary:SQLiteBackupSummary={pageSize:this.pageSize,pages,byteLength:pages*this.pageSize,sourceSHA256:firstHash.hex(),counts:{entities:plans[0].rows.length,meta:plans[1].rows.length,attachment_chunks:plans[source.vault?9:2].rows.length,...(source.vault?{content_provenance:plans[2].rows.length,...Object.fromEntries(vaultNames.map((name,i)=>[name,plans[3+i].rows.length]))}:source.provenance?{content_provenance:plans[3].rows.length}:{})},entityKinds:firstState.kinds};
+      const schema=source.activity?planSQLiteSchema(this.pageSize,names.map((name,i)=>[name,plans[i].root,plans[i].index.page,...plans[i].extraIndices?.map(index=>index.page)??[]]),()=>allocate.reserve()):null;
+      const pages=allocate.next-1,summary:SQLiteBackupSummary={pageSize:this.pageSize,pages,byteLength:pages*this.pageSize,sourceSHA256:firstHash.hex(),counts:{entities:plans[0].rows.length,meta:plans[1].rows.length,attachment_chunks:plans[includesVault?9:2].rows.length,...(includesVault?{content_provenance:plans[2].rows.length,...Object.fromEntries(vaultNames.map((name,i)=>[name,plans[3+i].rows.length]))}:source.provenance?{content_provenance:plans[3].rows.length}:{})},entityKinds:firstState.kinds};if(source.activity)for(const [i,name]of activityNames.entries())summary.counts[name]=plans[10+i].rows.length;
       let emitted=1;const write=async(number:number,bytes:Uint8Array)=>{if(emitted===allocate.lockPage&&number===emitted+1){await sink.write(new Uint8Array(this.pageSize));emitted++;}check(number===emitted&&bytes.length===this.pageSize,'SQLite page plan changed');await sink.write(bytes);emitted++;};
-      await write(1,headerPage(this.pageSize,pages,names.map((name,index)=>[name,plans[index].root,plans[index].index.page])));
+      await write(1,schema?sqliteSchemaHeader(this.pageSize,pages,schema):headerPage(this.pageSize,pages,names.map((name,index)=>[name,plans[index].root,plans[index].index.page])));
       const secondHash=new IncrementalSHA256(),secondState:NormalizedSnapshot=newSnapshot();
       for(let table=0;table<readers.length;table++){
         const plan=plans[table];secondHash.update(Uint8Array.of(table));let index=0,leafIndex=0,cells:Uint8Array[]=[],previous:Key|null=null;
@@ -292,8 +360,9 @@ export class SQLiteBackupWriter{
         }
         check(index===plan.rows.length,'Snapshot rows disappeared');if(!plan.rows.length){const leaf=plan.leaves[0];await write(leaf.page,page(13,this.pageSize,[]));}
         for(const node of plan.parents){const childCells=node.children.slice(0,-1).map(child=>{const pointer=new Uint8Array(4);put32(pointer,0,child.page);return join([pointer,varint(child.maxRowid)]);});await write(node.page,page(5,this.pageSize,childCells,node.children.at(-1)!.page));}
-        const outputIndex=async(node:IndexNode):Promise<void>=>{for(const child of node.children)await outputIndex(child);const encoded=node.entries.map((entry,i)=>{const content=join([varint(entry.length),entry]);if(!node.children.length)return content;const pointer=new Uint8Array(4);put32(pointer,0,node.children[i].page);return join([pointer,content]);});await write(node.page,page(node.children.length?2:10,this.pageSize,encoded,node.children.at(-1)?.page));};await outputIndex(plan.index);
+        const outputIndex=async(node:IndexNode):Promise<void>=>{for(const child of node.children)await outputIndex(child);const encoded=node.entries.map((entry,i)=>{const content=join([varint(entry.length),entry]);if(!node.children.length)return content;const pointer=new Uint8Array(4);put32(pointer,0,node.children[i].page);return join([pointer,content]);});await write(node.page,page(node.children.length?2:10,this.pageSize,encoded,node.children.at(-1)?.page));};await outputIndex(plan.index);for(const index of plan.extraIndices??[])await outputIndex(index);
       }
+      if(schema)for(const leaf of schema.leaves)await write(leaf.page,leaf.bytes);
       if(source.vault)verifyVault(secondState);
       check(emitted===pages+1&&secondHash.hex()===summary.sourceSHA256,'Snapshot content changed during export');await sink.close?.(summary);closed=true;return summary;
     }catch(error){const safe=error instanceof SQLiteBackupError?error:new SQLiteBackupError('Portable SQLite backup could not complete');if(!closed)try{await sink.abort?.(safe);}catch{}throw safe;}

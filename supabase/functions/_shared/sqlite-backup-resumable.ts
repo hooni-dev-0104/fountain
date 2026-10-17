@@ -9,11 +9,13 @@
  */
 import {IncrementalSHA256} from './storage.ts';
 import type {HashState} from './storage.ts';
-import {SQLITE_DEFINITIONS,SQLiteBackupError,validateBackupProvenance,PROVENANCE_COLUMNS,VAULT_COLUMNS,VAULT_KEYS,validateBackupVaultRow,backupDate} from './sqlite-backup.ts';
-import type {SQLiteBackupSummary,VaultTable} from './sqlite-backup.ts';
+import {SQLITE_DEFINITIONS,SQLiteBackupError,validateBackupProvenance,PROVENANCE_COLUMNS,VAULT_COLUMNS,VAULT_KEYS,validateBackupVaultRow,backupDate,ACTIVITY_COLUMNS,ACTIVITY_KEYS,validateBackupActivityRow,validateActivityRelations,planSQLiteSchema,sqliteSchemaHeader} from './sqlite-backup.ts';
+import type {SQLiteBackupSummary,VaultTable,ActivityTable,BackupActivityRow,SQLiteSchemaRoot} from './sqlite-backup.ts';
 import {canonicalJSON} from './store.ts';
 
-export type BackupTable='entities'|'meta'|'attachment_chunks'|'content_provenance'|VaultTable;
+export type BackupIndexTable='activity_events_event_id_index'|'activity_events_command_index';
+export type BackupTable='entities'|'meta'|'attachment_chunks'|'content_provenance'|VaultTable|ActivityTable|BackupIndexTable;
+export type ResumeActivityIndex={key:Array<string|number>;rowid:number};
 import type {BackupProvenance} from './sqlite-backup.ts';
 export type BackupReference={ref:string;size:number;type:'text'|'blob'};
 export type ResumeEntity={kind:string;id:string;data:BackupReference;created_at:string;updated_at:string;attachment?:{size:number;sha256:string}};
@@ -22,7 +24,7 @@ export type ResumeVault={values:Record<string,string|number|null|BackupReference
 export type ResumeChunk={attachment_id:string;offset:number;data:BackupReference};
 export interface ResumableBackupSource{
  snapshotId:string;
- describe(table:BackupTable,index:number):Promise<ResumeEntity|ResumeMeta|ResumeChunk|BackupProvenance|ResumeVault|null>;
+ describe(table:BackupTable,index:number):Promise<ResumeEntity|ResumeMeta|ResumeChunk|BackupProvenance|ResumeVault|ResumeActivityIndex|null>;
  read(ref:string,offset:number,length:number):Promise<Uint8Array>;
 }
 /** Reads include this step's staged writes; external CAS controls visibility.
@@ -42,7 +44,8 @@ export type ResumableBackupIO={source:ResumableBackupSource;plans:ResumableBacku
 export type BackupStepBudget={maxInputBytes?:number;maxOutputBytes?:number;maxOperations?:number};
 const TABLES:BackupTable[]=['entities','meta','attachment_chunks','content_provenance'];
 const V3_TABLES:BackupTable[]=['entities','meta','content_provenance',...Object.keys(VAULT_COLUMNS) as VaultTable[],'attachment_chunks'];
-const tableNames=(version:number)=>version===3?V3_TABLES:TABLES.slice(0,version===2?4:3);
+const V4_TABLES:BackupTable[]=[...V3_TABLES,...Object.keys(ACTIVITY_COLUMNS) as ActivityTable[]];
+const tableNames=(version:number)=>version===4?V4_TABLES:version===3?V3_TABLES:TABLES.slice(0,version===2?4:3);
 const SLICE=65536,CHUNK_SIZE=4*1024*1024,HASH=/^[a-f0-9]{64}$/;
 // SQLite's 32-bit page count and maximum 64KiB page size, not attachment quota.
 const HASH_LIMIT=0xffffffff*65536;
@@ -99,7 +102,7 @@ function page(type:number,size:number,cells:Uint8Array[],rightmost?:number,offse
   for(let i=0;i<cells.length;i++){end-=cells[i].length;check(end>=offset+header+cells.length*2,'SQLite B-tree page overflow');output.set(cells[i],end);view.setUint16(offset+header+i*2,end);}
   view.setUint16(offset+5,end===65536?0:end);if(rightmost!==undefined)view.setUint32(offset+8,rightmost);return output;
 }
-function headerPage(size:number,pages:number,roots:Array<[string,number,number]>):Uint8Array{
+function headerPage(size:number,pages:number,roots:SQLiteSchemaRoot[]):Uint8Array{
   const cells:Uint8Array[]=[];let rowid=0;
   for(const [name,tableRoot,indexRoot]of roots){for(const values of [['table',name,name,tableRoot,SQLITE_DEFINITIONS[name as keyof typeof SQLITE_DEFINITIONS]],['index','sqlite_autoindex_'+name+'_1',name,indexRoot,null]]){const data=smallRecord(record(values as Value[]));cells.push(join([varint(data.length),varint(++rowid),data]));}}
   const output=page(13,size,cells,undefined,100),view=new DataView(output.buffer);output.set(encoder.encode('SQLite format 3\u0000'));view.setUint16(16,size===65536?1:size);output[18]=output[19]=1;output[21]=64;output[22]=output[23]=32;view.setUint32(24,1);view.setUint32(28,pages);view.setUint32(40,1);view.setUint32(44,4);view.setUint32(56,1);view.setUint32(92,1);
@@ -111,21 +114,22 @@ type Part={literal:string;size:number;type:'bytes'}|BackupReference;
 type RowPlan={rowid:number;size:number;local:number;overflow:{first:number;count:number}|null;cellSize:number};
 type RefNode={page:number;maxRowid:number};
 type LeafPlan=RefNode&{start:number;end:number};
-type TablePlan={rows:number;leaves:number;parents:number;indices:number;root:number;indexRoot:number;maxKeySize:number;sourceCount:number};
+type TablePlan={rows:number;leaves:number;parents:number;indices:number;root:number;indexRoot:number;maxKeySize:number;sourceCount:number;unique?:Array<{root:number;indices:number;maxKeySize:number}>};
 type Manifest={size:number;sha256:string;offset:number;hash:HashState};
 type UTF8State={need:number;point:number;minimum:number};
 type RowWork={key:Key;parts:Part[];part:number;offset:number;utf8:UTF8State;plan:RowPlan;local:string;overflow:string;overflowIndex:number;manifestId?:string;manifest?:Manifest};
 type IndexFrame={count:number;depth:number;root:boolean;childCount:number;each:number;extra:number;next:number;entries:string[];children:number[]};
-type Phase='plan-rows'|'plan-parents'|'plan-index'|'check-manifests'|'header'|'emit-rows'|'emit-parents'|'emit-index'|'check-manifests2'|'verify'|'done';
+type Phase='plan-rows'|'plan-parents'|'plan-index'|'check-manifests'|'header'|'emit-rows'|'emit-parents'|'emit-index'|'check-manifests2'|'plan-unique'|'emit-unique'|'emit-schema'|'verify'|'done';
 export type ResumableBackupSummary=Omit<SQLiteBackupSummary,'entityKinds'>&{entityKindCount:number};
 export type SQLiteBackupCheckpoint={
- version:1|2|3;snapshotId:string;pageSize:4096|65536;sequence:number;phase:Phase;table:number;nextPage:number;outputPage:number;
+ version:1|2|3|4;snapshotId:string;pageSize:4096|65536;sequence:number;phase:Phase;table:number;nextPage:number;outputPage:number;
  sourceIndex:number;rowIndex:number;previous:Key|null;leafIndex:number;cells:string[];row:RowWork|null;
  tablePlan:TablePlan;leafStart:number;leafUsed:number;leafMax:number;
  parent:{level:number;count:number;cursor:number;groups:number;each:number;extra:number;group:number;children:RefNode[]}|null;
  index:{cursor:number;ordinal:number;frames:IndexFrame[]}|null;
- manifestCount:number;manifestIndex:number;roots:Array<[string,number,number]>;counts:number[];
+ manifestCount:number;manifestIndex:number;roots:SQLiteSchemaRoot[];counts:number[];
  sourceHash:HashState;secondHash:HashState;outputHash:HashState;verifyHash:HashState;verifyOffset:number;
+ unique?:{which:number;previous:Key|null}|null;uniqueEmit?:{which:number;index:number};activitySequence?:{ledger:string;sequence:number};schemaCount?:number;schemaIndex?:number;
  writes:Array<{page:number;data:string}>;kindCount:number;kind:{name:string;count:number}|null;summary:ResumableBackupSummary|null;sha256:string|null;
 };
 export type BackupStepResult={checkpoint:SQLiteBackupCheckpoint;completed:boolean;summary:ResumableBackupSummary|null;sha256:string|null;work:{inputBytes:number;outputBytes:number;operations:number}};
@@ -155,11 +159,11 @@ function queue(c:SQLiteBackupCheckpoint,number:number,bytes:Uint8Array){
  if(c.outputPage===lock&&number===lock+1){c.writes.push({page:lock,data:pack(new Uint8Array(c.pageSize))});c.outputPage++;}
  check(number===c.outputPage&&bytes.length===c.pageSize,'SQLite page plan changed');c.writes.push({page:number,data:pack(bytes)});c.outputPage++;
 }
-function initial(snapshotId:string,pageSize:4096|65536,includeHistory=false,includeVault=false):SQLiteBackupCheckpoint{
+function initial(snapshotId:string,pageSize:4096|65536,includeHistory=false,includeVault=false,includeActivity=false):SQLiteBackupCheckpoint{
  check(typeof snapshotId==='string'&&snapshotId.length>0&&snapshotId.length<=512&&[4096,65536].includes(pageSize));const hash=newHash().state();
- return {version:includeVault?3:includeHistory?2:1,snapshotId,pageSize,sequence:0,phase:'plan-rows',table:0,nextPage:2,outputPage:1,sourceIndex:0,rowIndex:0,previous:null,leafIndex:0,cells:[],row:null,tablePlan:emptyPlan(),leafStart:0,leafUsed:8,leafMax:0,parent:null,index:null,manifestCount:0,manifestIndex:0,roots:[],counts:[],sourceHash:add(hash,Uint8Array.of(0)),secondHash:hash,outputHash:hash,verifyHash:hash,verifyOffset:0,writes:[],kindCount:0,kind:null,summary:null,sha256:null};
+ return {version:includeActivity?4:includeVault?3:includeHistory?2:1,snapshotId,pageSize,sequence:0,phase:'plan-rows',table:0,nextPage:2,outputPage:1,sourceIndex:0,rowIndex:0,previous:null,leafIndex:0,cells:[],row:null,tablePlan:emptyPlan(),leafStart:0,leafUsed:8,leafMax:0,parent:null,index:null,manifestCount:0,manifestIndex:0,roots:[],counts:[],sourceHash:add(hash,Uint8Array.of(0)),secondHash:hash,outputHash:hash,verifyHash:hash,verifyOffset:0,writes:[],kindCount:0,kind:null,summary:null,sha256:null};
 }
-export function createSQLiteBackupCheckpoint(snapshotId:string,pageSize:4096|65536=4096,includeHistory=false,includeVault=false):SQLiteBackupCheckpoint{return initial(snapshotId,pageSize,includeHistory,includeVault);}
+export function createSQLiteBackupCheckpoint(snapshotId:string,pageSize:4096|65536=4096,includeHistory=false,includeVault=false,includeActivity=false):SQLiteBackupCheckpoint{return initial(snapshotId,pageSize,includeHistory,includeVault,includeActivity);}
 
 /** I/O side effects belong to the caller's private job revision. A returned
  * checkpoint is not accepted until the external lease/CAS/receipt commits it.
@@ -172,9 +176,9 @@ export async function stepSQLiteBackup(previous:SQLiteBackupCheckpoint,io:Resuma
  check(Number.isSafeInteger(maxInput)&&maxInput>=128&&maxInput<=262144&&Number.isSafeInteger(maxOutput)&&maxOutput>=previous.pageSize&&maxOutput<=262144&&Number.isSafeInteger(maxOperations)&&maxOperations>=32&&maxOperations<=4096,'Invalid SQLite step budget');
  // Checkpoints come only from private authenticated storage. Fail closed on
  // cross-snapshot/version use; source/plans/authority are not embedded here.
- check((previous.version===1||previous.version===2||previous.version===3)&&previous.snapshotId===io.source.snapshotId&&[4096,65536].includes(previous.pageSize)&&Number.isSafeInteger(previous.sequence)&&previous.sequence>=0,'Invalid private SQLite checkpoint');
+ check((previous.version===1||previous.version===2||previous.version===3||previous.version===4)&&previous.snapshotId===io.source.snapshotId&&[4096,65536].includes(previous.pageSize)&&Number.isSafeInteger(previous.sequence)&&previous.sequence>=0,'Invalid private SQLite checkpoint');
  check(Number.isInteger(previous.table)&&previous.table>=0&&previous.table<tableNames(previous.version).length&&Array.isArray(previous.roots)&&previous.roots.length<=tableNames(previous.version).length&&Array.isArray(previous.counts)&&previous.counts.length<=tableNames(previous.version).length,'Invalid private SQLite checkpoint layout');
- check(!['check-manifests','header','emit-rows','emit-parents','emit-index','check-manifests2','verify','done'].includes(previous.phase)||(previous.roots.length===tableNames(previous.version).length&&previous.counts.length===tableNames(previous.version).length),'Invalid private SQLite checkpoint layout');
+ check(!['check-manifests','header','emit-rows','emit-parents','emit-index','emit-unique','check-manifests2','emit-schema','verify','done'].includes(previous.phase)||(previous.roots.length===tableNames(previous.version).length&&previous.counts.length===tableNames(previous.version).length),'Invalid private SQLite checkpoint layout');
  const c=structuredClone(previous),allocate=new Allocator(c.pageSize);allocate.next=c.nextPage;
  const checksum=(key:string,value:unknown)=>sha(encoder.encode(key+'\u0000'+canonicalJSON(value)));
  const get=async(key:string):Promise<any>=>{
@@ -212,13 +216,28 @@ export async function stepSQLiteBackup(previous:SQLiteBackupCheckpoint,io:Resuma
     const key=manifestKey(a.id),old=await get(key);check(old===null||old.size===a.size&&old.sha256===a.sha256,'Retained attachment bytes conflict');if(old===null){await put(key,{size:a.size,sha256:a.sha256,offset:0,hash:newHash().state()});if(c.phase==='plan-rows'){await put('manifest-id/'+c.manifestCount,a.id);c.manifestCount++;}}}
    return {key:row.key,value:record(values)};
   }
+  if(table in ACTIVITY_COLUMNS){
+   const name=table as ActivityTable;check(row.values&&typeof row.values==='object'&&Array.isArray(row.key));validateBackupActivityRow(name,row.values);const value=row.values as BackupActivityRow;
+   const key=ACTIVITY_KEYS[name].map(k=>value[k] as string|number);check(canonicalJSON(key)===canonicalJSON(row.key),'Activity primary key mismatch');
+   const ledger=name==='activity_memberships'||name==='activity_events'?await get('activity-ledger/'+value.ledger_id):undefined,membership=name==='activity_accounts'||name==='activity_events'&&value.membership_id!==null?await get('activity-membership/'+value.membership_id):undefined,account=name==='activity_events'&&value.account_id!==null?await get('activity-account/'+value.account_id):undefined;
+   validateActivityRelations(name,value,ledger??undefined,membership??undefined,account??undefined);
+   if(c.phase==='plan-rows'){
+    if(name!=='activity_events'){const prefix=name==='activity_ledgers'?'activity-ledger/':name==='activity_memberships'?'activity-membership/':'activity-account/';check(await get(prefix+value.id)===null,'Duplicate activity episode');await put(prefix+value.id,value);}
+    else {check(await get('activity-event-id/'+value.event_id)===null&&await get('activity-command/'+value.ledger_id+'/'+value.command_id+'/'+value.command_ordinal)===null,'Duplicate activity event or command');const identity={ledger_id:value.ledger_id,sequence:value.sequence,event_id:value.event_id,command_id:value.command_id,command_ordinal:value.command_ordinal};await put('activity-event-row/'+(c.rowIndex+1),identity);await put('activity-event-id/'+value.event_id,c.rowIndex+1);await put('activity-command/'+value.ledger_id+'/'+value.command_id+'/'+value.command_ordinal,c.rowIndex+1);}
+   }
+   if(name==='activity_events'){
+    check(value.sequence===(c.activitySequence?.ledger===value.ledger_id?c.activitySequence.sequence:0)+1,'Activity sequence gap');c.activitySequence={ledger:String(value.ledger_id),sequence:Number(value.sequence)};
+    if(c.phase==='plan-rows'){c.tablePlan.unique??=[{root:0,indices:0,maxKeySize:1},{root:0,indices:0,maxKeySize:1}];const unique:[[string],[string,string,number]]=[[String(value.event_id)],[String(value.ledger_id),String(value.command_id),Number(value.command_ordinal)]];unique.forEach((key,i)=>{const bytes=smallRecord(record([...key,c.rowIndex+1]));c.tablePlan.unique![i].maxKeySize=Math.max(c.tablePlan.unique![i].maxKeySize,bytes.length+varint(bytes.length).length);});}
+   }
+   return {key,value:record(ACTIVITY_COLUMNS[name].map(k=>value[k]))};
+  }
   text(row.attachment_id);const manifest:Manifest|null=await get(manifestKey(row.attachment_id));if(!manifest)return 'skip';reference(row.data,'blob');check(Number.isSafeInteger(row.offset)&&row.offset===manifest.offset&&row.offset<manifest.size&&row.data.size===Math.min(CHUNK_SIZE,manifest.size-row.offset),'Attachment chunks changed or are noncontiguous');manifest.offset+=row.data.size;
   return {key:[row.attachment_id,row.offset],value:record([row.attachment_id,row.offset,row.data]),manifestId:row.attachment_id,manifest};
  }
  async function beginRow(planning:boolean):Promise<boolean>{
   const described=await describeRow();if(described==='skip')return true;
   if(described===null){
-   if(planning){if(c.table===0)await finishKind();await leaf();c.tablePlan.rows=c.rowIndex;c.tablePlan.sourceCount=c.sourceIndex;c.phase='plan-parents';c.parent={level:0,count:c.tablePlan.leaves,cursor:0,groups:0,each:0,extra:0,group:0,children:[]};}
+   if(planning){if(tableNames(c.version)[c.table]==='activity_events')c.tablePlan.unique??=[{root:0,indices:0,maxKeySize:1},{root:0,indices:0,maxKeySize:1}];if(c.table===0)await finishKind();await leaf();c.tablePlan.rows=c.rowIndex;c.tablePlan.sourceCount=c.sourceIndex;c.phase='plan-parents';c.parent={level:0,count:c.tablePlan.leaves,cursor:0,groups:0,each:0,extra:0,group:0,children:[]};}
    else {check(c.rowIndex===c.tablePlan.rows&&c.sourceIndex===c.tablePlan.sourceCount,'Snapshot rows disappeared');if(!c.rowIndex){const first=await get(tableKey('leaf',0));queue(c,first.page,page(13,c.pageSize,[]));}c.phase='emit-parents';c.leafIndex=0;}
    return true;
   }
@@ -279,22 +298,40 @@ export async function stepSQLiteBackup(previous:SQLiteBackupCheckpoint,io:Resuma
     }
     const number=reserve(),node={page:number,entries:frame.entries,children:frame.children};await put(tableKey('index',index.ordinal++),node);index.frames.pop();
     if(index.frames.length){index.frames.at(-1)!.children.push(number);continue;}
-    check(index.cursor===c.tablePlan.rows,'SQLite index cursor changed');c.tablePlan.indexRoot=number;c.tablePlan.indices=index.ordinal;await put('table/'+c.table,c.tablePlan);c.roots.push([tableNames(c.version)[c.table],c.tablePlan.root,number]);c.counts.push(c.tablePlan.rows);c.index=null;
+    check(index.cursor===c.tablePlan.rows,'SQLite index cursor changed');c.tablePlan.indexRoot=number;c.tablePlan.indices=index.ordinal;if(c.tablePlan.unique){c.unique={which:0,previous:null};const capacity=Math.floor((c.pageSize-12)/(c.tablePlan.unique[0].maxKeySize+6));check(capacity>=3);let height=0;while(c.tablePlan.rows>Math.pow(capacity+1,height+1)-1)height++;c.index={cursor:0,ordinal:0,frames:[indexFrame(c.tablePlan.rows,height,true,capacity)]};c.phase='plan-unique';continue;}await put('table/'+c.table,c.tablePlan);c.roots.push([tableNames(c.version)[c.table],c.tablePlan.root,number]);c.counts.push(c.tablePlan.rows);c.index=null;
     if(c.table<(tableNames(c.version).length-1)){c.table++;c.tablePlan=emptyPlan();c.sourceIndex=0;c.rowIndex=0;c.previous=null;c.leafStart=0;c.leafUsed=8;c.sourceHash=add(c.sourceHash,Uint8Array.of(c.table));c.phase='plan-rows';}else {c.phase='check-manifests';c.manifestIndex=0;}continue;
+   }
+   if(c.phase==='plan-unique'){
+    const unique=c.unique!,plan=c.tablePlan.unique![unique.which],index=c.index!,frame=index.frames.at(-1)!,capacity=Math.floor((c.pageSize-12)/(plan.maxKeySize+6)),alias:BackupIndexTable=unique.which===0?'activity_events_event_id_index':'activity_events_command_index';
+    const take=async()=>{operations++;const value:any=await io.source.describe(alias,index.cursor);check(value&&typeof value==='object'&&Object.keys(value).length===2&&Array.isArray(value.key)&&Number.isSafeInteger(value.rowid)&&value.rowid>=1&&value.rowid<=c.tablePlan.rows,'Invalid activity unique index descriptor');const actual=await get('activity-event-row/'+value.rowid);check(actual,'Missing activity primary row');const expected=unique.which===0?[actual.event_id]:[actual.ledger_id,actual.command_id,actual.command_ordinal];check(canonicalJSON(value.key)===canonicalJSON(expected)&&(unique.previous===null||compareKey(unique.previous,value.key)<0),'Activity unique index key mismatch');unique.previous=value.key;index.cursor++;return pack(smallRecord(record([...value.key,value.rowid])));};
+    if(!frame.depth&&frame.entries.length<frame.count){frame.entries.push(await take());continue;}
+    if(frame.depth&&frame.children.length<frame.childCount){if(frame.children.length>frame.entries.length){frame.entries.push(await take());continue;}const child=frame.next++;index.frames.push(indexFrame(frame.each+(child<frame.extra?1:0),frame.depth-1,false,capacity));continue;}
+    const number=reserve(),node={page:number,entries:frame.entries,children:frame.children};await put('unique-index/'+c.table+'/'+unique.which+'/'+index.ordinal++,node);index.frames.pop();if(index.frames.length){index.frames.at(-1)!.children.push(number);continue;}
+    operations++;check(index.cursor===c.tablePlan.rows&&await io.source.describe(alias,index.cursor)===null,'Activity unique index row count mismatch');plan.root=number;plan.indices=index.ordinal;
+    if(unique.which===0){unique.which=1;unique.previous=null;const next=c.tablePlan.unique![1],capacity=Math.floor((c.pageSize-12)/(next.maxKeySize+6));check(capacity>=3);let height=0;while(c.tablePlan.rows>Math.pow(capacity+1,height+1)-1)height++;c.index={cursor:0,ordinal:0,frames:[indexFrame(c.tablePlan.rows,height,true,capacity)]};continue;}
+    await put('table/'+c.table,c.tablePlan);c.roots.push([String(tableNames(c.version)[c.table]),c.tablePlan.root,c.tablePlan.indexRoot,...c.tablePlan.unique!.map(p=>p.root)]);c.counts.push(c.tablePlan.rows);c.index=null;c.unique=null;c.phase='check-manifests';c.manifestIndex=0;continue;
    }
    if(c.phase==='check-manifests'||c.phase==='check-manifests2'){
     if(c.manifestIndex<c.manifestCount){const id=await get('manifest-id/'+c.manifestIndex++),manifest:Manifest=await get(manifestKey(id));check(manifest&&manifest.offset===manifest.size&&hashFrom(manifest.hash).hex()===manifest.sha256,'Finalized attachment size or SHA-256 does not match its chunks');continue;}
-    if(c.phase==='check-manifests'){c.summary={pageSize:c.pageSize,pages:c.nextPage-1,byteLength:(c.nextPage-1)*c.pageSize,sourceSHA256:hashFrom(c.sourceHash).hex(),counts:{entities:c.counts[0],meta:c.counts[1],attachment_chunks:c.counts[c.version===3?9:2],...(c.version===3?{content_provenance:c.counts[2],...Object.fromEntries((Object.keys(VAULT_COLUMNS) as VaultTable[]).map((name,i)=>[name,c.counts[3+i]]))}:c.version===2?{content_provenance:c.counts[3]}:{})},entityKindCount:c.kindCount};c.phase='header';}
+    if(c.phase==='check-manifests'){if(c.version===4){const schema=planSQLiteSchema(c.pageSize,c.roots,()=>reserve());c.schemaCount=schema.leaves.length;c.schemaIndex=0;await put('schema-header',pack(sqliteSchemaHeader(c.pageSize,c.nextPage-1,schema)));for(const [i,leaf]of schema.leaves.entries())await put('schema/'+i,{page:leaf.page,data:pack(leaf.bytes)});}c.summary={pageSize:c.pageSize,pages:c.nextPage-1,byteLength:(c.nextPage-1)*c.pageSize,sourceSHA256:hashFrom(c.sourceHash).hex(),counts:{entities:c.counts[0],meta:c.counts[1],attachment_chunks:c.counts[c.version>=3?9:2],...(c.version>=3?{content_provenance:c.counts[2],...Object.fromEntries((Object.keys(VAULT_COLUMNS) as VaultTable[]).map((name,i)=>[name,c.counts[3+i]]))}:c.version===2?{content_provenance:c.counts[3]}:{})},entityKindCount:c.kindCount};if(c.version===4)for(const [i,name]of (Object.keys(ACTIVITY_COLUMNS) as ActivityTable[]).entries())c.summary.counts[name]=c.counts[10+i];c.phase='header';}
     // A separate accepted step must publish private artifact parts before readback.
-    else {check(c.outputPage===c.summary!.pages+1&&hashFrom(c.secondHash).hex()===c.summary!.sourceSHA256,'Snapshot content changed during export');c.phase='verify';break;}continue;
+    else {check(hashFrom(c.secondHash).hex()===c.summary!.sourceSHA256,'Snapshot content changed during export');if(c.version===4&&c.schemaCount){c.phase='emit-schema';continue;}check(c.outputPage===c.summary!.pages+1,'Snapshot output page mismatch');c.phase='verify';break;}continue;
    }
-   if(c.phase==='header'){queue(c,1,headerPage(c.pageSize,c.summary!.pages,c.roots));c.phase='emit-rows';c.table=0;c.sourceIndex=0;c.rowIndex=0;c.previous=null;c.leafIndex=0;c.cells=[];c.tablePlan=await get('table/0');c.secondHash=add(c.secondHash,Uint8Array.of(0));continue;}
+   if(c.phase==='header'){queue(c,1,c.version===4?unpack(await get('schema-header')):headerPage(c.pageSize,c.summary!.pages,c.roots as Array<[string,number,number]>));delete c.activitySequence;c.phase='emit-rows';c.table=0;c.sourceIndex=0;c.rowIndex=0;c.previous=null;c.leafIndex=0;c.cells=[];c.tablePlan=await get('table/0');c.secondHash=add(c.secondHash,Uint8Array.of(0));continue;}
    if(c.phase==='emit-parents'){
     if(c.leafIndex<c.tablePlan.parents){const node=await get(tableKey('parent',c.leafIndex++)),cells=node.children.slice(0,-1).map((child:RefNode)=>{const bytes=new Uint8Array(4);put32(bytes,0,child.page);return join([bytes,varint(child.maxRowid)]);});queue(c,node.page,page(5,c.pageSize,cells,node.children.at(-1).page));continue;}c.phase='emit-index';c.leafIndex=0;continue;
    }
    if(c.phase==='emit-index'){
     if(c.leafIndex<c.tablePlan.indices){const node=await get(tableKey('index',c.leafIndex++)),cells=node.entries.map((entry:string,i:number)=>{const bytes=unpack(entry),content=join([varint(bytes.length),bytes]);if(!node.children.length)return content;const pointer=new Uint8Array(4);put32(pointer,0,node.children[i]);return join([pointer,content]);});queue(c,node.page,page(node.children.length?2:10,c.pageSize,cells,node.children.at(-1)));continue;}
+    if(c.tablePlan.unique){c.uniqueEmit={which:0,index:0};c.phase='emit-unique';continue;}
     if(c.table<(tableNames(c.version).length-1)){c.table++;c.sourceIndex=0;c.rowIndex=0;c.previous=null;c.leafIndex=0;c.cells=[];c.tablePlan=await get('table/'+c.table);c.secondHash=add(c.secondHash,Uint8Array.of(c.table));c.phase='emit-rows';}else {c.phase='check-manifests2';c.manifestIndex=0;}continue;
+   }
+   if(c.phase==='emit-unique'){
+    const current=c.uniqueEmit!,plan=c.tablePlan.unique![current.which];if(current.index<plan.indices){const node=await get('unique-index/'+c.table+'/'+current.which+'/'+current.index++),cells=node.entries.map((entry:string,i:number)=>{const bytes=unpack(entry),content=join([varint(bytes.length),bytes]);if(!node.children.length)return content;const pointer=new Uint8Array(4);put32(pointer,0,node.children[i]);return join([pointer,content]);});queue(c,node.page,page(node.children.length?2:10,c.pageSize,cells,node.children.at(-1)));continue;}
+    if(current.which===0){current.which=1;current.index=0;continue;}delete c.uniqueEmit;c.phase='check-manifests2';c.manifestIndex=0;continue;
+   }
+   if(c.phase==='emit-schema'){
+    if((c.schemaIndex??0)<(c.schemaCount??0)){const value=await get('schema/'+c.schemaIndex!++);queue(c,value.page,unpack(value.data));continue;}check(c.outputPage===c.summary!.pages+1,'Snapshot schema output mismatch');c.phase='verify';break;
    }
    if(c.phase==='verify'){
     if(c.verifyOffset===c.summary!.byteLength){check(hashFrom(c.verifyHash).hex()===hashFrom(c.outputHash).hex(),'Private SQLite output changed');c.sha256=hashFrom(c.outputHash).hex();c.phase='done';continue;}

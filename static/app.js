@@ -65,7 +65,7 @@ window.addEventListener('fountain-native-outbox-pause',event=>{
   const paused={...detail,navigation,channel:state.channel,loaded:state.loaded,profile:state.offlineProfile,saveScheduled:!!state.saveTimer,titleScheduled:!!state.titleTimer,route:state.route,id:navigation?.id||(state.route==='page'?state.page?.id:state.database?.id),dom:[],input:null,forms:unsubmittedNativeForms(),resourceKind:navigation?.route==='database'?'database':state.route==='page'?'page':state.database?.id?'database':null,focus:document.activeElement,selection:state.route==='page'?selectedTextPosition():null};
   try{if(state.loaded)paused.input=authenticationInput(state.offlineProfile);}catch{ /* Keep the live DOM when it cannot yet be represented as a bounded draft. */ }
   if(previous?.channel)previous.channel.resumeNetwork?.(previous.owner+':'+previous.token);
-  state.nativeOutboxPause=paused;clearTimeout(state.saveTimer);clearTimeout(state.titleTimer);
+  state.nativeOutboxPause=paused;clearInbox();clearTimeout(state.saveTimer);clearTimeout(state.titleTimer);
   state.channel?.pauseNetwork?.(detail.owner+':'+detail.token);
   state.presenceManager?.pause({leave:false});
   for(const node of [$('#main'),$('#sidebar'),$('#topbar'),$('#overlay-root')].filter(Boolean)){paused.dom.push({node,inert:previous?.dom.find(item=>item.node===node)?.inert??node.inert});node.inert=true;}

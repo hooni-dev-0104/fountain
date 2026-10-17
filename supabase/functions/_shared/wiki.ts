@@ -18,6 +18,9 @@ export function ancestry(store:CoreStore,page:Entity):{valid:boolean;root:Entity
  return{valid:true,root:null};
 }
 export function stampCreated(store:CoreStore,page:Entity,actor:string):void{
+ // Owned parents can pass ACL without loading ancestors. Batch this private
+ // lookup so depth does not consume the cloud transaction selection budget.
+ if(get(page,'parent_id')!==null)store.list('page');
  if(ancestry(store,page).root){require(Access.verification_id(actor),'Wiki creator is unavailable',409);store.put('wiki_page',{id:page.id,page_id:page.id,owner_id:actor});}
 }
 export function guardMove(page:Entity,parent:unknown):void{require(!(page.is_wiki===true&&parent!==null),'Wiki roots must remain standalone',409);}

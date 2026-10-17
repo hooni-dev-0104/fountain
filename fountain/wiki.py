@@ -26,6 +26,9 @@ def ancestry(store, page):
     return True,None
 
 def stamp_created(store,page,actor):
+    # A deep owned parent can pass ACL immediately. Load its private ancestry in
+    # one kind selection rather than spending a cloud retry per ancestor.
+    if page.get('parent_id') is not None: store.list('page')
     _,root=ancestry(store,page)
     if root is not None:
         require(Access.verification_id(actor),'Wiki creator is unavailable',409)

@@ -70,9 +70,21 @@ class RetentionBackupV3Tests(unittest.TestCase):
                 c.execute('UPDATE retention_records SET data=? WHERE id=?',(json.dumps(value),identity))
         with self.assertRaises(BackupError):inspect_backup(backup)
     def test_empty_vault_preserves_legacy_four_table_schema(self):
-        self.store.put('page',{'id':'live','blocks':[]});path=self.root/'empty.db';create_backup(self.store.db,path)
+        # Build an actual pre-ledger source. New Store writes legitimately
+        # capture activity and therefore require V4 even with an empty vault.
+        from fountain.backup import DEFINITIONS, INDEX_DEFINITIONS
+        from fountain.retention_vault import VAULT_DEFINITIONS
+        legacy=self.root/'legacy-source.db';path=self.root/'empty.db'
+        with sqlite3.connect(legacy) as source:
+            for definition in (*DEFINITIONS.values(),INDEX_DEFINITIONS['content_provenance'],*VAULT_DEFINITIONS.values()):
+                source.execute(definition)
+            stamp='2020-01-01T00:00:00Z'
+            source.execute('INSERT INTO entities VALUES(?,?,?,?,?)',('page','live','{"id":"live","blocks":[]}',stamp,stamp))
+            source.execute('INSERT INTO content_provenance VALUES(?,?,?,?,?,?,?,?,?,?)',('page','live','1'*32,None,'unknown',None,None,'unknown',None,None))
+        create_backup(legacy,path)
         with sqlite3.connect(path) as c:
             self.assertEqual({r[0] for r in c.execute("SELECT name FROM sqlite_schema WHERE type='table'")},{'entities','meta','attachment_chunks','content_provenance'})
+            self.assertEqual(c.execute('SELECT data FROM entities').fetchone(),('{"id":"live","blocks":[]}',))
 
 
 import os
@@ -103,6 +115,9 @@ class RetentionBackupPostgresV3Tests(unittest.TestCase):
             for table in ('attachment_chunks','entities','meta','content_search_chunks','content_provenance','content_search_documents','content_search_state'):
                 self.query('DELETE FROM fountain_private.'+table+' WHERE workspace_id=%s',(self.s.workspace_id,))
     def test_pg_file_export_sqlite_and_fresh_filesystem_migrate_preserve_private_history(self):
+        # Preserve immutable source history; rollback this disposable source
+        # before testing a genuinely empty target under the same namespace.
+        self.s._connection.execute('BEGIN')
         self.s._files=FileChunkStorage(self.s,self.root/'old-files')
         self.s.set_meta('workspace_id',self.s.workspace_id);raw=b'\0private native file'+b'x'*65537
         self.s.chunk_write('file',0,raw);self.s.put('attachment',{'id':'file','name':'family.bin','size':len(raw),'storage':'chunks','sha256':hashlib.sha256(raw).hexdigest()})
@@ -118,7 +133,7 @@ class RetentionBackupPostgresV3Tests(unittest.TestCase):
             for record in reversed(records):local_v.restore_to_trash(record['id'],target_storage='blob')
             self.assertEqual(local.chunk_read_range('file',0,0,len(raw)),raw)
         finally:local.close()
-        self.clear_source();self.s._files.close();self.s._files=None;self.s._files=FileChunkStorage(self.s,self.root/'new-files')
+        self.s._connection.rollback();self.s._files.close();self.s._files=None;self.s._files=FileChunkStorage(self.s,self.root/'new-files')
         result=migrate_sqlite(path,self.s);self.assertEqual(result['retention_vault']['retention_records']['count'],2);self.assertEqual(self.snapshot(),before)
         self.assertEqual(self.s.list('attachment_chunk'),[]);self.assertEqual(self.s.chunk_read_range('file',0,0,len(raw)),raw)
         self.v.restore_to_trash(records[0]['id']);partial=self.root/'between-restores.db';create_postgres_backup(self.s,partial);inspect_backup(partial)
@@ -141,23 +156,29 @@ class RetentionBackupPostgresV3Tests(unittest.TestCase):
         self.assertEqual(self.s.chunk_read_range('blob',0,0,len(raw)),raw)
 
     def test_mixed_blob_and_file_offsets_keep_each_original_physical_pin(self):
+        # Preserve immutable source history; rollback this disposable source
+        # before testing a genuinely empty target under the same namespace.
+        self.s._connection.execute('BEGIN')
         self.s._files=FileChunkStorage(self.s,self.root/'mixed-old');self.s.set_meta('workspace_id',self.s.workspace_id)
         first=b'a'*(4*1024*1024);last=b'end';raw=first+last
         with self.s.transaction():self.query('INSERT INTO fountain_private.attachment_chunks(workspace_id,attachment_id,"offset",data) VALUES (%s,%s,0,%s)',(self.s.workspace_id,'mixed',first))
         self.s.chunk_write('mixed',len(first),last);self.s.put('attachment',{'id':'mixed','name':'mixed.bin','storage':'chunks','size':len(raw),'sha256':hashlib.sha256(raw).hexdigest()})
         self.s.put('page',{'id':'root','archived':True,'blocks':[{'attachment_id':'mixed'}]});record=self.v.archive_page('root')
         pins=self.query('SELECT storage_kind,"offset",size,sha256 FROM fountain_private.retention_attachment_refs WHERE workspace_id=%s ORDER BY "offset"',(self.s.workspace_id,),fetch='all');self.assertEqual([(r[0],r[1]) for r in pins],[('blob',0),('file',len(first))])
-        path=self.root/'mixed.db';create_postgres_backup(self.s,path);inspect_backup(path);self.clear_source();self.s._files.close();self.s._files=None;self.s._files=FileChunkStorage(self.s,self.root/'mixed-new')
+        path=self.root/'mixed.db';create_postgres_backup(self.s,path);inspect_backup(path);self.s._connection.rollback();self.s._files.close();self.s._files=None;self.s._files=FileChunkStorage(self.s,self.root/'mixed-new')
         migrate_sqlite(path,self.s);self.assertEqual(self.query('SELECT storage_kind,"offset",size,sha256 FROM fountain_private.retention_attachment_refs WHERE workspace_id=%s ORDER BY "offset"',(self.s.workspace_id,),fetch='all'),pins)
         self.assertEqual(self.s.chunk_list('mixed'),[(0,len(first),'blob'),(len(first),len(last),'blob')])
         second=self.root/'mixed-reexport.db';create_postgres_backup(self.s,second);inspect_backup(second);self.v.restore_to_trash(record['id']);self.assertEqual(self.s.chunk_read_range('mixed',0,0,len(first)),first);self.assertEqual(self.s.chunk_read_range('mixed',len(first),0,len(last)),last)
 
     def test_partial_shared_restore_migrate_rearchive_keeps_prior_record(self):
+        # Preserve immutable source history; rollback this disposable source
+        # before testing a genuinely empty target under the same namespace.
+        self.s._connection.execute('BEGIN')
         self.s._files=FileChunkStorage(self.s,self.root/'shared-old');self.s.set_meta('workspace_id',self.s.workspace_id);raw=b'shared retained transport'
         self.s.chunk_write('file',0,raw);self.s.put('attachment',{'id':'file','name':'shared.bin','size':len(raw),'storage':'chunks','sha256':hashlib.sha256(raw).hexdigest()})
         for name in ('a','b'):self.s.put('page',{'id':name,'archived':True,'blocks':[{'attachment_id':'file'}]})
         first,second=[self.v.archive_page(name) for name in ('a','b')];self.v.restore_to_trash(first['id'])
-        path=self.root/'partial-shared.db';create_postgres_backup(self.s,path);inspect_backup(path);self.clear_source();self.s._files.close();self.s._files=None;self.s._files=FileChunkStorage(self.s,self.root/'shared-new')
+        path=self.root/'partial-shared.db';create_postgres_backup(self.s,path);inspect_backup(path);self.s._connection.rollback();self.s._files.close();self.s._files=None;self.s._files=FileChunkStorage(self.s,self.root/'shared-new')
         migrate_sqlite(path,self.s);third=self.v.archive_page('a');self.assertEqual(len(self.v.records()),2)
         self.v.restore_to_trash(second['id']);self.v.restore_to_trash(third['id']);self.assertEqual(self.s.chunk_read_range('file',0,0,len(raw)),raw);self.assertEqual(self.v.records(),[])
 

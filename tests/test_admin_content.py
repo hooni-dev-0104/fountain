@@ -157,7 +157,9 @@ class AdminContentTests(unittest.TestCase):
     def test_backup_preserves_trusted_history_and_regenerates_private_search_state(self):
         import sqlite3
         from pathlib import Path
-        from fountain.backup import create_backup
+        from fountain.backup import create_backup, restore_backup
+        from fountain.activity import ACTIVITY_COLUMNS
+        from fountain.retention_vault import VAULT_COLUMNS
         with tempfile.TemporaryDirectory() as directory:
             source=Path(directory)/'source.db';target=Path(directory)/'backup.db'
             store=Store(source)
@@ -177,10 +179,15 @@ class AdminContentTests(unittest.TestCase):
             self.assertEqual(history[3],'author');self.assertEqual(history[5],'editor');self.assertEqual(history[8],'editor')
             create_backup(source,target)
             with sqlite3.connect(target) as connection:
-                self.assertEqual({row[0] for row in connection.execute("SELECT name FROM sqlite_schema WHERE type='table'")},{'entities','meta','attachment_chunks','content_provenance'})
+                self.assertEqual({row[0] for row in connection.execute("SELECT name FROM sqlite_schema WHERE type='table'")},
+                                 {'entities','meta','attachment_chunks','content_provenance'} | set(VAULT_COLUMNS) | set(ACTIVITY_COLUMNS))
                 self.assertEqual(connection.execute("SELECT * FROM content_provenance").fetchone(),history)
+                self.assertEqual(list(connection.execute('SELECT * FROM activity_events ORDER BY ledger_id,sequence')),
+                                 list(store.db.execute('SELECT * FROM activity_events ORDER BY ledger_id,sequence')))
             self.assertNotIn(original_secret.encode(),target.read_bytes())
-            restored=Store(target)
+            restored_path=Path(directory)/'restored.db'
+            restore_backup(target,restored_path)
+            restored=Store(restored_path)
             try:
                 self.assertEqual(restored.db.execute("SELECT * FROM content_provenance WHERE kind='page' AND id='known'").fetchone(),history)
                 document=ContentIndex(restored).documents()[0]

@@ -153,7 +153,9 @@ class PostgresBackupTests(unittest.TestCase):
                 thread.join(15)
         self.assertTrue(complete.is_set())
         if errors: raise errors[0]
-        target = Store(backup)
+        restored = self.root / (backup.stem + "-restored.db")
+        restore_backup(backup, restored)
+        target = Store(restored)
         try:
             self.assertEqual(target.get("page", "page")["title"], "가족 문서")
             self.assertEqual(target.meta("settings"), {"family": [1, True, None, "우리집"]})
@@ -234,7 +236,10 @@ class PostgresBackupTests(unittest.TestCase):
                 yield row
         with patch.object(module, "_rows", side_effect=rows):
             create_postgres_backup(self.store, self.root / "bounded.db")
-        self.assertIn(batches, ([128, 128, 1], [128, 128, 128, 1]))
+        with sqlite3.connect(self.root / 'bounded.db') as portable:
+            has_activity=portable.execute("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='activity_ledgers'").fetchone() is not None
+        activity_batches=[128]*4 if has_activity else []
+        self.assertIn(batches, ([128,128]+activity_batches+[1], [128,128,128]+activity_batches+[1]))
 
     def test_private_provenance_exports_without_active_members_or_cursor_secret(self):
         with self.store.transaction():
@@ -256,7 +261,9 @@ class PostgresBackupTests(unittest.TestCase):
         with sqlite3.connect(destination) as connection:
             self.assertEqual(connection.execute('SELECT '+columns+' FROM content_provenance').fetchall(), history)
         self.assertNotIn(secret.encode(), destination.read_bytes())
-        restored = Store(destination)
+        restored_path = self.root / "history-restored.db"
+        restore_backup(destination, restored_path)
+        restored = Store(restored_path)
         try:
             self.assertEqual(restored.db.execute('SELECT '+columns+' FROM content_provenance').fetchall(), history)
         finally:
@@ -327,7 +334,9 @@ class PostgresBackupTests(unittest.TestCase):
                                       "sha256": hashlib.sha256(first + tail).hexdigest()})
         backup = self.root / "mixed.db"
         self.assertEqual(create_postgres_backup(self.store, backup), {"attachment": 1})
-        target = Store(backup)
+        restored = self.root / (backup.stem + "-restored.db")
+        restore_backup(backup, restored)
+        target = Store(restored)
         try:
             rows = target.db.execute("SELECT data FROM attachment_chunks ORDER BY offset").fetchall()
             self.assertEqual([row[0] for row in rows], [first, tail])

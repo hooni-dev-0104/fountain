@@ -338,6 +338,19 @@ def _prune_chunks(connection):
             connection.execute('DELETE FROM attachment_chunks WHERE attachment_id=?', (identity,))
 
 
+def _activity_contract(tables):
+    names = {'activity_ledgers','activity_memberships','activity_accounts','activity_events',
+             'activity_runtime','activity_current_members','activity_current_accounts'}
+    if not tables & names:
+        return {}, {}, {}, None
+    try:
+        from .activity import (ACTIVITY_COLUMNS, ACTIVITY_RUNTIME_COLUMNS,
+                               ACTIVITY_TRIGGER_DEFINITIONS, inspect_portable_activity)
+    except ImportError as error:
+        raise BackupError('Activity backup support is not ready; source was preserved') from error
+    return ACTIVITY_COLUMNS, ACTIVITY_RUNTIME_COLUMNS, ACTIVITY_TRIGGER_DEFINITIONS, inspect_portable_activity
+
+
 def _inspect(connection, *, validate_attachments=True, complete_only=False):
     objects = connection.execute("SELECT type,name,tbl_name,sql FROM sqlite_schema").fetchall()
     tables = {name for kind, name, _, _ in objects if kind == "table"}
@@ -345,16 +358,23 @@ def _inspect(connection, *, validate_attachments=True, complete_only=False):
     vault = set(VAULT_COLUMNS)
     if tables & vault not in (set(), vault):
         raise BackupError("Source contains an incomplete retention vault schema")
-    ordinary = tables - derivative - vault
+    activity, runtime, activity_guards, inspect_activity = _activity_contract(tables)
+    if (tables & set(activity) not in (set(), set(activity))
+            or tables & set(runtime) not in (set(), set(runtime))
+            or tables & set(runtime) and not tables & set(activity)):
+        raise BackupError('Source contains an incomplete activity schema')
+    activity_tables = set(activity) | set(runtime)
+    guards = {**VAULT_TRIGGER_DEFINITIONS, **activity_guards}
+    ordinary = tables - derivative - vault - activity_tables
     if ordinary not in ({"entities", "meta"}, set(SCHEMA)) or tables & derivative not in (set(), {'content_provenance'}, derivative):
         raise BackupError("Source must contain exactly the Fountain tables")
     for kind, name, table, definition in objects:
-        implicit_index = (kind == "index" and table in set(SCHEMA) | derivative | vault
-                          and name == f"sqlite_autoindex_{table}_1" and definition is None)
-        known_guard = (kind == 'trigger' and name in VAULT_TRIGGER_DEFINITIONS
+        implicit_index = (kind == "index" and table in set(SCHEMA) | derivative | vault | activity_tables
+                          and name in ({f"sqlite_autoindex_{table}_1",f"sqlite_autoindex_{table}_2",f"sqlite_autoindex_{table}_3"} if table=="activity_events" else {f"sqlite_autoindex_{table}_1"}) and definition is None)
+        known_guard = (kind == 'trigger' and name in guards
                        and re.sub(r'\s+', '', definition or '').casefold()
-                       == re.sub(r'\s+', '', VAULT_TRIGGER_DEFINITIONS[name]).casefold())
-        if not (kind == "table" and name in set(SCHEMA) | derivative | vault) and not implicit_index and not known_guard:
+                       == re.sub(r'\s+', '', guards[name]).casefold())
+        if not (kind == "table" and name in set(SCHEMA) | derivative | vault | activity_tables) and not implicit_index and not known_guard:
             raise BackupError("Source contains unsupported database objects")
         if kind == "table" and (not definition or "VIRTUAL" in definition.upper()):
             raise BackupError("Virtual tables are not permitted")
@@ -393,6 +413,14 @@ def _inspect(connection, *, validate_attachments=True, complete_only=False):
             inspect_portable_vault(connection)
         except (ValueError, TypeError, KeyError) as error:
             raise BackupError("Source contains invalid private retention state") from error
+    if inspect_activity:
+        try:
+            inspect_activity(connection)
+        except Exception as error:
+            from .core import APIError
+            if not isinstance(error, (APIError, ValueError, TypeError, KeyError, sqlite3.Error)):
+                raise
+            raise BackupError('Source contains invalid private activity history') from error
     if validate_attachments:
         _inspect_chunks(connection, tables, complete_only)
     return counts
@@ -406,7 +434,7 @@ def inspect_backup(path):
         raise BackupError(f"Cannot read Fountain database: {error}") from error
 
 
-def _copy(source_path, destination_path):
+def _copy(source_path, destination_path, *, activate_activity=False):
     destination = Path(destination_path).expanduser().absolute()
     if destination.exists() or destination.is_symlink():
         raise BackupError("Destination already exists; choose a new filename")
@@ -428,13 +456,30 @@ def _copy(source_path, destination_path):
                 # Guards invoke connection-private authority functions. Only
                 # exact reviewed definitions passed _inspect; the portable copy
                 # carries data, never executable SQL or authority callbacks.
+                copied_tables = {r[0] for r in target.execute("SELECT name FROM sqlite_schema WHERE type='table'")}
+                activity, runtime, activity_guards, _ = _activity_contract(copied_tables)
+                guards = {**VAULT_TRIGGER_DEFINITIONS, **activity_guards}
                 for (name,) in target.execute("SELECT name FROM sqlite_schema WHERE type='trigger'").fetchall():
-                    if name not in VAULT_TRIGGER_DEFINITIONS:
-                        raise BackupError('Unsupported retention guard')
+                    if name not in guards:
+                        raise BackupError('Unsupported private mutation guard')
                     target.execute('DROP TRIGGER "' + name.replace('"', '""') + '"')
-                if target.execute("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='retention_records'").fetchone() is not None and target.execute('SELECT 1 FROM retention_records LIMIT 1').fetchone() is None:
+                for table in reversed(tuple(runtime)):
+                    target.execute('DROP TABLE IF EXISTS '+table)
+                activity_populated = bool(activity) and any(target.execute('SELECT 1 FROM '+table+' LIMIT 1').fetchone() is not None for table in activity)
+                if activity and not activity_populated:
+                    for table in reversed(tuple(activity)):
+                        target.execute('DROP TABLE IF EXISTS '+table)
+                if not activity_populated and target.execute("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='retention_records'").fetchone() is not None and target.execute('SELECT 1 FROM retention_records LIMIT 1').fetchone() is None:
                     for table in reversed(tuple(VAULT_COLUMNS)):
                         target.execute('DROP TABLE '+table)
+                if activity_populated:
+                    for table, definition in VAULT_DEFINITIONS.items():
+                        if table not in copied_tables:
+                            target.execute(definition)
+                    if 'content_provenance' not in copied_tables:
+                        target.execute(INDEX_DEFINITIONS['content_provenance'])
+                    if 'attachment_chunks' not in copied_tables:
+                        target.execute(DEFINITIONS['attachment_chunks'])
                 target.execute("PRAGMA secure_delete=ON")
                 # Trusted full snapshots preserve non-derivable attribution;
                 # rebuild only search data and regenerate cursor credentials.
@@ -447,6 +492,14 @@ def _copy(source_path, destination_path):
                 target.commit()
                 target.execute("VACUUM")
                 counts = _inspect(target, complete_only=True)
+                if activate_activity and activity_populated:
+                    try:
+                        from .activity import activate_restore_connection
+                    except ImportError as error:
+                        raise BackupError('Trusted activity restore activation is not ready; destination was not published') from error
+                    activate_restore_connection(target)
+                    target.commit()
+                    _inspect(target, complete_only=True)
                 target.execute("PRAGMA journal_mode=DELETE")
             with open(temporary, "rb") as file:
                 os.fsync(file.fileno())
@@ -467,7 +520,7 @@ def create_backup(source_path, destination_path):
 
 
 def restore_backup(source_path, destination_path):
-    return _copy(source_path, destination_path)
+    return _copy(source_path, destination_path, activate_activity=True)
 
 
 def main(argv=None):

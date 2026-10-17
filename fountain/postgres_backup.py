@@ -14,6 +14,7 @@ from .backup import (BackupError, CHUNK_SIZE, DEFINITIONS, PROVENANCE_COLUMNS,
 from .content_index import INDEX_DEFINITIONS
 from .retention_vault import VAULT_COLUMNS, VAULT_DEFINITIONS
 from .core import APIError
+from .activity import ACTIVITY_COLUMNS, ACTIVITY_DEFINITIONS
 
 
 def _rows(store, statement, *, batch_size=128):
@@ -45,6 +46,33 @@ def _file_chunks(store, target):
                 raise BackupError("Finalized attachment chunk is missing or truncated")
             target.execute("INSERT INTO attachment_chunks VALUES (?,?,?)", (identity, offset, data))
             expected += length
+
+
+def _activity(store, target):
+    # Only portable facts cross this boundary. Runtime account/membership
+    # pointers are live authority and must never enter a portable snapshot.
+    tables = tuple(ACTIVITY_COLUMNS)
+    present = store._execute('SELECT '+','.join(
+        "to_regclass('fountain_private."+table+"') IS NOT NULL" for table in tables), fetch='one')
+    if not any(present):
+        return
+    if not all(present):
+        raise BackupError('Activity schema is incomplete; source was preserved')
+    populated = store._execute('SELECT EXISTS ('+' UNION ALL '.join(
+        '(SELECT 1 FROM fountain_private.'+table+' WHERE workspace_id=%s LIMIT 1)'
+        for table in tables)+')', (store.workspace_id,)*len(tables), fetch='one')[0]
+    if not populated:
+        return
+    store._execute('SELECT fountain_private.activity_validate_workspace(%s)', (store.workspace_id,))
+    # The caller holds the same workspace writer lock as events, explicit
+    # views and one-way episode closures, for the entire data/byte copy.
+    for table, columns in ACTIVITY_COLUMNS.items():
+        target.execute(ACTIVITY_DEFINITIONS[table])
+        selected = ','.join('"'+name+'"' for name in columns)
+        order = 'ledger_id COLLATE "C",sequence' if table == 'activity_events' else 'id COLLATE "C"'
+        for row in _rows(store, 'SELECT '+selected+' FROM fountain_private.'+table+
+                         ' WHERE workspace_id=%s ORDER BY '+order):
+            target.execute('INSERT INTO '+table+' VALUES ('+','.join('?' for _ in row)+')', row)
 
 
 def _export(store, target):
@@ -82,6 +110,7 @@ def _export(store, target):
                 for row in _rows(store, 'SELECT '+columns+' FROM fountain_private.'+table+
                                  ' WHERE workspace_id=%s ORDER BY '+order,batch_size=1):
                     target.execute('INSERT INTO '+table+' VALUES ('+','.join('?' for _ in row)+')', row)
+        _activity(store, target)
         if store._files is not None:
             _file_chunks(store, target)
             target.commit()

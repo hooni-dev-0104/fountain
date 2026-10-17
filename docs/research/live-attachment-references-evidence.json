@@ -1,0 +1,254 @@
+{
+  "scope": "Ordinary attachment DELETE protects typed current and latent CRDT references; not automatic retention/legal holds or whole paid feature completion",
+  "wholeGoalComplete": false,
+  "oldBehavior": {
+    "pythonActualHTTP": "DELETE200 removed metadata/chunks; real history.cancel404",
+    "typescriptActualProductionModules": "Actual collaboration reducer, previous Files implementation and loopback Storage: physical deletion then undo projected missing attachment/download404",
+    "oldCloudHTTPReproduced": false
+  },
+  "sourceHashes": {
+    "supabase/functions/_shared/store.ts": "59f2e6d874f1c137442e2751a555899aa10d3c1d601e3ca00ceb527490f27b69",
+    "supabase/functions/_shared/files.ts": "e081ed2cf710563bb9625e33145207cf8b04d4ac5538e4ee73e77f49be9ef92c",
+    "supabase/tests/files.mjs": "da131888095b556316d6e0b62a083c5703134710d2742c117c89096595768b82",
+    "supabase/tests/attachment-references-provider.mjs": "342788cd9cf07de56ebc9659b678f6ba857c64920ee7647677aa6d9c80bb852c"
+  },
+  "migration": {
+    "local": "supabase/migrations/20261017132942_live_attachment_references.sql",
+    "remoteVersion": "20261017134430",
+    "remoteName": "live_attachment_references",
+    "functions": [
+      {
+        "schema": "fountain_cloud",
+        "proname": "store_attachment_references",
+        "body_sha256": "3b45b06c948817590c7cb2aee5cc53bdabf71055a1b319096e85079db24428ce",
+        "owner": "postgres",
+        "security_definer": true,
+        "anon_execute": false,
+        "authenticated_execute": false,
+        "service_execute": true,
+        "backend_execute": false
+      },
+      {
+        "schema": "fountain_private",
+        "proname": "attachment_referenced",
+        "body_sha256": "18ba24828b7a4f5cfac74e3e75d517d2c0592ddce1ff3eed9fb9a4f07620b2a0",
+        "owner": "postgres",
+        "security_definer": true,
+        "anon_execute": false,
+        "authenticated_execute": false,
+        "service_execute": false,
+        "backend_execute": true
+      },
+      {
+        "schema": "public",
+        "proname": "fountain_cloud_store_attachment_references",
+        "body_sha256": "c97abad1d572f6a5fa1a7d28846b43f77febaddfb6e2be4609e09cda8543954f",
+        "owner": "postgres",
+        "security_definer": false,
+        "anon_execute": false,
+        "authenticated_execute": false,
+        "service_execute": true,
+        "backend_execute": false
+      }
+    ],
+    "exactFunctionBodies": true,
+    "applied": true,
+    "migrationSHA256": "e6cf0a6b327d6f74939843642087c1cee1446965b9adfd988b38c30f9828d936"
+  },
+  "deployment": {
+    "main": 26,
+    "mainFiles": 48,
+    "qa": 100,
+    "qaFiles": 47,
+    "exactSharedFiles": 46,
+    "sourceReadbackExact": true,
+    "worker": 4,
+    "maintenance": 4,
+    "retiredVerifier": 102,
+    "migrations": 40,
+    "newDependencies": false,
+    "frontendChanged": false
+  },
+  "verification": {
+    "python": {
+      "actualPostgresConfigured": true,
+      "tests": 761,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": true
+    },
+    "pythonScalarActualPostgres": {
+      "actualPostgresScalarOnly": true,
+      "actualAuthClaim": false,
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": true,
+      "runtimeDDL": false,
+      "cleanup": "Only own random fixtures; outer transaction rollback",
+      "originalWorkspaceUsed": false
+    },
+    "node": {
+      "scripts": [
+        {
+          "script": "files.mjs",
+          "exitCode": 0,
+          "seconds": 2.334
+        },
+        {
+          "script": "attachment-references-provider.mjs",
+          "exitCode": 0,
+          "seconds": 0.081
+        },
+        {
+          "script": "store.mjs",
+          "exitCode": 0,
+          "seconds": 0.274
+        },
+        {
+          "script": "transaction.mjs",
+          "exitCode": 0,
+          "seconds": 0.071
+        },
+        {
+          "script": "storage.mjs",
+          "exitCode": 0,
+          "seconds": 0.275
+        },
+        {
+          "script": "gc-fence.mjs",
+          "exitCode": 0,
+          "seconds": 0.112
+        },
+        {
+          "script": "storage-gc-fences-contract.mjs",
+          "exitCode": 0,
+          "seconds": 0.045
+        },
+        {
+          "script": "maintenance-upload-contract.mjs",
+          "exitCode": 0,
+          "seconds": 0.034
+        },
+        {
+          "script": "collaboration-store.mjs",
+          "exitCode": 0,
+          "seconds": 0.077
+        },
+        {
+          "script": "collaboration-parity.mjs",
+          "exitCode": 0,
+          "seconds": 0.428
+        },
+        {
+          "script": "service-store.mjs",
+          "exitCode": 0,
+          "seconds": 0.087
+        },
+        {
+          "script": "backup-v3.mjs",
+          "exitCode": 0,
+          "seconds": 2.516
+        }
+      ],
+      "filesTests": 47,
+      "transportTests": 6,
+      "uncertainAckSameReceipt": true,
+      "finalAuthAfterPositiveScalar": true,
+      "CASReplayKeepsPinnedRevision": true,
+      "fallbackTypedShapeParity": true
+    },
+    "sql": {
+      "rollbackFiles": 3,
+      "syntheticAuthRowsWithUnmodifiedStoreContext": true,
+      "AuthStub": false,
+      "actualGoTrueLoginClaimForSQLRollback": false,
+      "fourMiBPageAndCRDTStayInDB": true,
+      "rolesAndNamespacesDenied": true,
+      "eightFreshAuthRevocations": true,
+      "UnicodeScalar160AndWhitespaceParity": true
+    },
+    "actualCloud": {
+      "realAuthUsersAndSessions": 2,
+      "primaryUploadBytes": 16384,
+      "raceUploadBytes": 4096,
+      "unrelatedBodiesBytes": {
+        "page": 262511,
+        "version": 262401,
+        "collaboration": 1757159
+      },
+      "latentOnlyReferenceDBBooleans": {
+        "currentNoAttachment": true,
+        "versionsNoAttachment": true,
+        "currentRegisterNotFile": true,
+        "baselineRegisterNotFile": true,
+        "privateScalarReferenced": true,
+        "objectHistoryOpExactFile": true
+      },
+      "deleteReferencedStatus": 409,
+      "undoStatus": 200,
+      "downloadSHA256EqualsUploadedBytes": true,
+      "actualOwnerWriteAfterScalarRevisionRaceStatus": 409,
+      "normalReferenceReleaseAllowsDelete": true,
+      "ownerDeleteRawPageVersionCRDTRowDatabaseBodiesSelected": 0,
+      "maximumScalarResponseBytes": 428,
+      "scalarResponseReadLimitBytes": 4096,
+      "memberPrivateDownloadStatus": 404,
+      "memberDeleteStatus": 403,
+      "setupChecks": [
+        "two_actual_fresh_Auth_accounts_and_sessions",
+        "actual_16KiB_and_4KiB_Storage_upload_verify_HEAD_and_real_member_private_404"
+      ],
+      "journeyChecks": [
+        "actual_history_cancel200_and_actual_Storage_download_byte_SHA_equal",
+        "actual_metadata_scalar_then_separate_real_owner_write_causes_revision409_without_delete",
+        "normal_history_epoch_release_allows_actual_attachment_DELETE_then_owned_GC"
+      ],
+      "namespaceDenial": "SQL RPC using actual fresh Auth/session metadata; not a second-workspace HTTP login"
+    },
+    "publicHTTP": {
+      "checks": 18,
+      "passed": true,
+      "canonicalAppSHA256": "4fbeffd63bdb19dfbcf857a6a18a92770cd89bebbb19e535b70ea00614452206",
+      "frozen8787AppSHA256": "82e8d9faa6219da972bfb902d5c20efe33f51d367884429a4983fe1347fe6d1f",
+      "assetsExact": true
+    }
+  },
+  "cleanup": {
+    "actualAuthAdminDeleteAfterProtectedMarkerCheck": 2,
+    "normalLogoutSessions": 2,
+    "allOwnedTablesEmpty": true,
+    "allPhysicalObjectsEmpty": true,
+    "after": {
+      "auth_users": 0,
+      "auth_sessions": 0,
+      "refresh_tokens": 0,
+      "storage_objects": 0,
+      "non_original_entities": 0,
+      "non_original_meta": 0,
+      "non_original_indexes": 0,
+      "identity_mappings": 0,
+      "cron_jobs": 0
+    },
+    "originalFingerprintsExact": true,
+    "originalEntityCount": 153,
+    "originalMetaCount": 6,
+    "verifierUnconditional404": true
+  },
+  "simplifications": [
+    "Python route replaces separate document and row loops with FileStorage.referenced",
+    "Actual cloud provider uses existing bounded RPC transport and returns only the scalar fact",
+    "Applied vault format/reference extraction remains unchanged"
+  ],
+  "remainingLimits": [
+    "Automatic policy, retained-content admin UI, legal holds, organization and persistent AI-chat lifecycle remain separate work",
+    "No new browser or native runtime journey in this server-only patch",
+    "No TypeScript static compiler available; no compiler dependency installed",
+    "Metadata-only source selection claim limited to actual owner DELETE path",
+    "Large-source SQL body tests are not a concurrent load benchmark",
+    "Application CAS assumes canonical source writes increment workspace entity revision; arbitrary privileged SQL bypass is outside the guarantee",
+    "Existing RLS default-deny informational diagnostic and pg_net public-schema warning remain"
+  ]
+}

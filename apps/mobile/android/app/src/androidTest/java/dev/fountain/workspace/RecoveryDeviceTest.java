@@ -22,7 +22,7 @@ import org.json.*;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-/** Fresh QA AVD only: actual WebView bridge, TLS, Android SQLite and DocumentsUI. */
+/** Historical disabled-foundation QA: requires explicit opt-in and a prior flag-false binary, not default-active coverage. */
 @RunWith(AndroidJUnit4.class)
 public class RecoveryDeviceTest {
     private MainActivity activity;
@@ -72,6 +72,7 @@ public class RecoveryDeviceTest {
     private void waitBridge()throws Exception {long until=SystemClock.elapsedRealtime()+20000;while(SystemClock.elapsedRealtime()<until&&!"true".equals(evaluate("!!(window.Capacitor&&Capacitor.nativePromise)")))Thread.sleep(100);}
 
     @Test public void privateFamilyLoginPersists()throws Exception {
+        org.junit.Assume.assumeTrue("Historical disabled-foundation fixture requires opt-in and a prior outbox-disabled binary", "1".equals(InstrumentationRegistry.getArguments().getString("legacyDisabledFoundationQA")));
         String origin=InstrumentationRegistry.getArguments().getString("qaFamilyOrigin");assertNotNull(origin);assertTrue(origin.startsWith("https://10.0.2.2:"));
         try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(MainActivity.class)){
             scenario.onActivity(value->activity=value);waitBridge();generation=call("configure",new JSONObject().put("origin",origin)).getLong("generation");
@@ -83,6 +84,7 @@ public class RecoveryDeviceTest {
 
     /** Run in a separate instrumentation invocation after force-stop. */
     @Test public void privateFamilyRestoresAndLogsOut()throws Exception {
+        org.junit.Assume.assumeTrue("Historical disabled-foundation fixture requires opt-in and a prior outbox-disabled binary", "1".equals(InstrumentationRegistry.getArguments().getString("legacyDisabledFoundationQA")));
         String origin=InstrumentationRegistry.getArguments().getString("qaFamilyOrigin");assertNotNull(origin);
         try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(MainActivity.class)){
             scenario.onActivity(value->activity=value);waitBridge();JSONObject config=call("getConfiguration",new JSONObject());assertEquals(origin,config.getString("origin"));generation=config.getLong("generation");
@@ -93,6 +95,7 @@ public class RecoveryDeviceTest {
     }
 
     @Test public void nativeReadOnlyRecoveryAndSystemSave()throws Exception {
+        org.junit.Assume.assumeTrue("Historical disabled-foundation fixture requires opt-in and a prior outbox-disabled binary", "1".equals(InstrumentationRegistry.getArguments().getString("legacyDisabledFoundationQA")));
         Context context=instrumentation.getTargetContext();String origin=InstrumentationRegistry.getArguments().getString("qaOrigin");
         assertNotNull("Explicit isolated QA HTTPS origin required",origin);assertTrue(origin.startsWith("https://10.0.2.2:"));
         File directory=new File(context.getNoBackupFilesDir(),"durable_outbox");assertFalse("Fresh QA app only",directory.exists());

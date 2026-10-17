@@ -6,8 +6,7 @@ import Security
 import Darwin
 import CryptoKit
 
-// Foundation only: activation requires the resource-proof/recovery/device gate.
-private let OUTBOX_ENABLED = false
+private let OUTBOX_ENABLED = true
 private var ACTIVE_OUTBOX_ENABLED: Bool {
     if OUTBOX_ENABLED { return true }
     #if DEBUG && targetEnvironment(simulator)
@@ -321,7 +320,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     private static var qaPreinstallAllocated = 0
     private static var qaOutboxCounters: [String: Int] = [:]
     private static func qaOutboxRecord(_ call: CAPPluginCall, _ event: String) {
-        guard ProcessInfo.processInfo.environment["FOUNTAIN_QA"] == "1", ProcessInfo.processInfo.environment["FOUNTAIN_OUTBOX_QA"] == "1",
+        guard ProcessInfo.processInfo.environment["FOUNTAIN_QA"] == "1", (ProcessInfo.processInfo.environment["FOUNTAIN_OUTBOX_QA"] == "1" || ProcessInfo.processInfo.environment["FOUNTAIN_DEFAULT_OUTBOX_QA"] == "1"),
               (ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] ?? "").hasPrefix("Fountain QA"),
               let method = call.methodName, ["outboxOpen", "outboxReconcile", "stageDelta", "commitDelta", "readPage"].contains(method) else { return }
         var label = method
@@ -1277,7 +1276,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         guard let backend = origin else { throw FountainFailure.invalid }
         #if DEBUG && targetEnvironment(simulator)
         let environment = ProcessInfo.processInfo.environment
-        if environment["FOUNTAIN_QA"] == "1", environment["FOUNTAIN_OUTBOX_QA"] == "1", (environment["SIMULATOR_DEVICE_NAME"] ?? "").hasPrefix("Fountain QA"), !qaSessionOptedIn { Self.qaPreinstallBlocked += 1; throw FountainFailure.network }
+        if environment["FOUNTAIN_QA"] == "1", (environment["FOUNTAIN_OUTBOX_QA"] == "1" || environment["FOUNTAIN_DEFAULT_OUTBOX_QA"] == "1"), (environment["SIMULATOR_DEVICE_NAME"] ?? "").hasPrefix("Fountain QA"), !qaSessionOptedIn { Self.qaPreinstallBlocked += 1; throw FountainFailure.network }
         #endif
         let url = try Self.requestURL(origin: backend, path: path)
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: timeout)
@@ -1294,7 +1293,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         let sync = ACTIVE_OUTBOX_ENABLED && !recoveryMode ? try outbox?.admitSync(path: path, method: method, body: body, sessionRef: outboxReference(cookie)) : nil
         admitted?(tag, sync, http)
         #if DEBUG && targetEnvironment(simulator)
-        if environment["FOUNTAIN_QA"] == "1", environment["FOUNTAIN_OUTBOX_QA"] == "1", (environment["SIMULATOR_DEVICE_NAME"] ?? "").hasPrefix("Fountain QA"), !qaSessionOptedIn { Self.qaPreinstallAllocated += 1 }
+        if environment["FOUNTAIN_QA"] == "1", (environment["FOUNTAIN_OUTBOX_QA"] == "1" || environment["FOUNTAIN_DEFAULT_OUTBOX_QA"] == "1"), (environment["SIMULATOR_DEVICE_NAME"] ?? "").hasPrefix("Fountain QA"), !qaSessionOptedIn { Self.qaPreinstallAllocated += 1 }
         #endif
         let sink = try file.map { try FileHandle(forWritingTo: $0) }
         let transfer = FountainTransfer(streamed: file != nil, sink: sink, done: done)

@@ -590,10 +590,11 @@ final class FountainNativeTests: XCTestCase {
         let view = try await webView(); XCTAssertEqual(view.url?.host, "localhost")
         var configuration: [String: Any] = [:]
         for _ in 0..<100 {
-            if let value = try? await script("if (!globalThis.Capacitor?.isPluginAvailable('FountainNative')) return null; const bridge=Capacitor.registerPlugin('FountainNative'); const c=await bridge.getConfiguration(); let code='';try{await bridge.outboxOpen({generation:c.generation});}catch(e){code=e.code;}return {outbox:c.outboxEnabled,recovery:c.recoveryEnabled,code};"), let result = value as? [String: Any] { configuration = result; break }
+            if let value = try? await script("if (!globalThis.Capacitor?.isPluginAvailable('FountainNative')) return null; const bridge=Capacitor.registerPlugin('FountainNative'); const c=await bridge.getConfiguration();return {outbox:c.outboxEnabled,outboxVersion:c.outboxVersion,recovery:c.recoveryEnabled,recoveryVersion:c.recoveryVersion};"), let result = value as? [String: Any] { configuration = result; break }
             try await Task.sleep(nanoseconds: 100_000_000)
         }
-        XCTAssertEqual(configuration["outbox"] as? Bool, false); XCTAssertEqual(configuration["recovery"] as? Bool, true); XCTAssertEqual(configuration["code"] as? String, "OUTBOX_DISABLED")
+        XCTAssertEqual(configuration["outbox"] as? Bool, true); XCTAssertEqual(configuration["outboxVersion"] as? Int, 1)
+        XCTAssertEqual(configuration["recovery"] as? Bool, true); XCTAssertEqual(configuration["recoveryVersion"] as? Int, 1)
         let marker = "Fountain-QA-private-canary", privateFile = try temporary("private-canary.txt")
         try Data(marker.utf8).write(to: privateFile)
         for prefix in ["/_capacitor_file_", "/%5Fcapacitor%5Ffile%5F", "/%255Fcapacitor%255Ffile%255F", "/_capacitor_http_interceptor_"] {
@@ -680,7 +681,7 @@ final class FountainNativeTests: XCTestCase {
     }
     @MainActor private func evictOwnedCloudIndexedDB(workspace: String, expected: String, evidence: inout [String: Any]) async throws {
         let environment = ProcessInfo.processInfo.environment
-        guard environment["FOUNTAIN_QA"] == "1", environment["FOUNTAIN_OUTBOX_QA"] == "1", (environment["SIMULATOR_DEVICE_NAME"] ?? "").hasPrefix("Fountain QA") else { throw NSError(domain: "FountainQAIndexedDB", code: 3) }
+        guard environment["FOUNTAIN_QA"] == "1", (environment["FOUNTAIN_OUTBOX_QA"] == "1" || environment["FOUNTAIN_DEFAULT_OUTBOX_QA"] == "1"), (environment["SIMULATOR_DEVICE_NAME"] ?? "").hasPrefix("Fountain QA") else { throw NSError(domain: "FountainQAIndexedDB", code: 3) }
         // WKWebView.url can already be the bundled navigation while its JS
         // main frame is still about:blank. Wait for the actual owned document.
         var original: [String: Any]?
@@ -786,7 +787,10 @@ final class FountainNativeTests: XCTestCase {
         }
     }
     @MainActor func testActualActiveCloudOutboxLifecyclePhase() async throws {
-        try XCTSkipUnless(ProcessInfo.processInfo.environment["FOUNTAIN_OUTBOX_QA"] == "1", "Opt-in DEBUG native outbox lifecycle phase required")
+        let activationOverride = ProcessInfo.processInfo.environment["FOUNTAIN_OUTBOX_QA"] == "1"
+        let verifyDefault = ProcessInfo.processInfo.environment["FOUNTAIN_DEFAULT_OUTBOX_QA"] == "1"
+        try XCTSkipUnless(activationOverride || verifyDefault, "Explicit native outbox lifecycle phase required")
+        if verifyDefault { XCTAssertFalse(activationOverride, "Default capability must not use the QA activation override") }
         let manager = FileManager.default, documents = try manager.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
         let inputURL = documents.appendingPathComponent("fountain-cloud-outbox-input.json"), resultURL = documents.appendingPathComponent("fountain-cloud-outbox-result.json")
         try XCTSkipUnless(manager.fileExists(atPath: inputURL.path), "Private outbox lifecycle input required")
@@ -804,7 +808,7 @@ final class FountainNativeTests: XCTestCase {
               let phase = input["phase"], ["login-edit", "queue-offline", "restart-read", "evict-read", "logout"].contains(phase), input["pageId"] == "qa-native-shared",
               let expected = input["expectedText"], let edited = input["editedText"], expected.utf8.count <= 4096, edited.utf8.count <= 4096 else { throw NSError(domain: "FountainOutboxQAInput", code: 2) }
         let offlineBoot = ["restart-read", "evict-read"].contains(phase)
-        var evidence: [String: Any] = ["completed": false, "phase": phase, "processID": Int(ProcessInfo.processInfo.processIdentifier), "outboxEnabled": true,
+        var evidence: [String: Any] = ["completed": false, "phase": phase, "processID": Int(ProcessInfo.processInfo.processIdentifier), "qaActivationOverrideUsed": activationOverride,
                                        "preinstallAllocated": FountainNative.qaLaunchNetworkEvidence()["allocated"] ?? -1]
         var stage = "install"
         FountainCloudQAProtocol.install(nonce); FountainCloudQAProtocol.setOffline(offlineBoot); try FountainNative.setQAProtocolClass(FountainCloudQAProtocol.self)
@@ -841,6 +845,8 @@ final class FountainNativeTests: XCTestCase {
             try await waitCloud("return state.loaded===true&&state.session?.workspace_id===workspace&&FountainNativeStorage?.ready===true;", arguments: ["workspace": workspace], attempts: 12)
             let privacy = try await script("const c=await Capacitor.registerPlugin('FountainNative').getConfiguration();return c.outboxEnabled===true&&document.cookie==='';") as? Bool
             guard privacy == true else { throw NSError(domain: "FountainOutboxQA", code: 12) }
+            evidence["outboxEnabled"] = true
+            if verifyDefault { evidence["defaultEnabledWithoutOverride"] = true }
             stage = "open-owned-page"
             try await waitCloud("if(state.nativeOutboxPause||state.nativeOutboxResuming||state.nativeRecoveryPreparing||state.nativeRecoveryPaused||!state.loaded||!FountainNativeStorage.ready)return false;const b=document.querySelector('[data-action=page][data-id=qa-native-shared]');if(!b||b.disabled||b.closest('[inert]'))return false;b.click();return true;")
             evidence["pageClickMatched"] = true
@@ -1018,6 +1024,8 @@ final class FountainNativeTests: XCTestCase {
         try encoded(evidence).write(to: output, options: [.atomic, .completeFileProtection]); try manager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: output.path)
     }
     @MainActor func testActualCloudBundledUILoginEditReloadAndLogout() async throws {
+        // Historical fixture: opt-in also requires a prior outbox-disabled binary.
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["FOUNTAIN_LEGACY_DISABLED_QA"] == "1", "Historical disabled-foundation QA is not default-active coverage")
         let manager = FileManager.default, documents = try manager.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
         let inputURL = documents.appendingPathComponent("fountain-cloud-client-input.json"), resultURL = documents.appendingPathComponent("fountain-cloud-client-result.json")
         try XCTSkipUnless(manager.fileExists(atPath: inputURL.path), "Opt-in private native cloud client input required")
@@ -1237,6 +1245,8 @@ final class FountainNativeTests: XCTestCase {
     }
 
     @MainActor func testActualSupabaseOwnerSessionAndPrivatePage() async throws {
+        // Historical fixture: opt-in also requires a prior outbox-disabled binary.
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["FOUNTAIN_LEGACY_DISABLED_QA"] == "1", "Historical disabled-foundation QA is not default-active coverage")
         let manager = FileManager.default
         let cache = try manager.url(for: .cachesDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
         let inputURL = cache.appendingPathComponent("fountain-cloud-native-qa.json")

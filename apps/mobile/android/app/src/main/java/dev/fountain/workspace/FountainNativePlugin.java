@@ -59,7 +59,7 @@ public class FountainNativePlugin extends Plugin {
         synchronized (lock) { sessionBinding.clear(); invalidateRecovery(); authGeneration++; cancelAll(null, "STALE_SESSION"); }
     };
     private CookieVault vault;
-    private static final boolean OUTBOX_ENABLED = false; // Enable only after SDK/device and recovery-UI verification.
+    private static final boolean OUTBOX_ENABLED = true;
     private boolean outboxEnabled() {
         return OUTBOX_ENABLED || (getContext().getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
             && "1".equals(System.getProperty("dev.fountain.outbox.qa"));

@@ -154,7 +154,8 @@ public class CloudOutboxDeviceTest {
         Context context=instrumentation.getTargetContext();JSONObject input=consume(context);diagnosticPage=input.getString("pageId");String phase=input.getString("phase"),workspace=input.getString("workspaceId"),page=input.getString("pageId"),expected=input.getString("expectedText"),edited=input.getString("editedText");
         assertTrue(Build.HARDWARE.contains("ranchu")||Build.HARDWARE.contains("goldfish"));boolean offline=phase.equals("restart-read")||phase.equals("evict-read");Gate gate=new Gate(input.getString("nonce"),offline);input.remove("nonce");
         JSONObject evidence=new JSONObject().put("passed",false).put("phase",phase).put("pid",android.os.Process.myPid()).put("workspaceSHA256",OutboxPolicy.hash(workspace)).put("pageSHA256",OutboxPolicy.hash(page)).put("textSHA256",OutboxPolicy.hash(phase.equals("login-edit")||phase.equals("queue-offline")?edited:expected)).put("actualPrivateHTTPS",true).put("directProductionEndpoint",false).put("bootstrapUsed",false);
-        Throwable failure=null;assertNull("Fresh process private QA opt-in only",System.getProperty("dev.fountain.outbox.qa"));System.setProperty("dev.fountain.outbox.qa","1");
+        boolean verifyDefault="1".equals(InstrumentationRegistry.getArguments().getString("fountainDefaultOutboxQA"));
+        Throwable failure=null;assertNull("Fresh process has no activation override",System.getProperty("dev.fountain.outbox.qa"));if(!verifyDefault)System.setProperty("dev.fountain.outbox.qa","1");evidence.put("qaActivationOverrideUsed",!verifyDefault);
         try{
             if(phase.equals("logout"))evidence.put("beforeBootNative",nativeState(context,workspace,page,expected)).put("beforeBootCredentials",privateCredentialState(context));
             if(phase.equals("evict-read")){JSONObject before=nativeState(context,workspace,page,expected);evidence.put("evictedIDBDirectories",evictOnlyIDB(context));JSONObject after=nativeState(context,workspace,page,expected);assertEquals(before.toString(),after.toString());evidence.put("nativeUnchangedByIDBEviction",true);}
@@ -163,7 +164,9 @@ public class CloudOutboxDeviceTest {
               try {
                 scenario.onActivity(value->activity=value);until("globalThis.FountainTransport&&globalThis.Capacitor?.nativePromise","Real bundled native transport appeared",30000);installDiagnostics();installMethodDiagnostics();
                 if("true".equals(evaluate("!!document.querySelector('#native-configuration-form')"))){evaluate("(()=>{const f=document.querySelector('#native-configuration-form');f.elements.origin.value="+JSONObject.quote(ORIGIN)+";f.requestSubmit();return true;})()");}
-                until("FountainTransport.outboxEnabled===true","Actual debug-only native capability enabled",30000);
+                until("FountainTransport.outboxEnabled===true","Actual native durable storage capability enabled",30000);
+                JSONObject capability=promise("const c=await Capacitor.registerPlugin('FountainNative').getConfiguration();return {enabled:c.outboxEnabled,version:c.outboxVersion};");assertTrue(capability.getBoolean("enabled"));assertEquals(1,capability.getInt("version"));evidence.put("outboxEnabled",true);
+                if(verifyDefault){assertNull("Default capability does not use a QA property",System.getProperty("dev.fountain.outbox.qa"));evidence.put("defaultEnabledWithoutOverride",true);}
                 if(!offline)loginIfNeeded(input);
                 input.remove("email");input.remove("password");
                 until("globalThis.FountainNativeStorage?.ready===true&&state.loaded===true&&state.session?.authenticated===true&&document.querySelector('#sidebar [data-action=page]')","Native canonical/receipt barrier completed before application",90000);

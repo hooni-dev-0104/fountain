@@ -19,7 +19,7 @@ import org.json.*;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-/** Dedicated QA AVD only: actual native HTTPS cloud login, private page read and logout. */
+/** Historical flag-false cloud login/read/logout QA: explicit opt-in plus a prior disabled binary, not default-active coverage. */
 @RunWith(AndroidJUnit4.class)
 public class CloudSessionDeviceTest {
     private MainActivity activity;
@@ -54,6 +54,7 @@ public class CloudSessionDeviceTest {
         return new JSONObject(new String(android.util.Base64.decode(response.getString("bodyBase64"),android.util.Base64.NO_WRAP),StandardCharsets.UTF_8));
     }
     @Test public void actualSupabaseOwnerLoginAndPrivatePage()throws Exception {
+        org.junit.Assume.assumeTrue("Historical disabled-foundation fixture requires opt-in and a prior outbox-disabled binary", "1".equals(InstrumentationRegistry.getArguments().getString("legacyDisabledFoundationQA")));
         Context context=instrumentation.getTargetContext();File input=new File(context.getFilesDir(),"fountain-cloud-native-qa.json");
         org.junit.Assume.assumeTrue("Opt-in private disposable cloud input required",input.isFile());
         JSONObject config;

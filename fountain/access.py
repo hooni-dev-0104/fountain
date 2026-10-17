@@ -105,7 +105,7 @@ class Access:
         parent_id = entity.get("parent_id")
         inherit = permissions is None or permissions.get("inherit", False) is True
         if parent_id and inherit:
-            parent = self.store.get("page", parent_id)
+            parent = self._page_reader().get("page", parent_id)
             # A missing/cyclic parent cannot fall back to a permissive workspace.
             return self._level("page", parent, trail)
         return self._workspace_level(entity) if default == "workspace" else 0
@@ -155,6 +155,15 @@ class Access:
     def can(self, kind, entity, needed=1):
         return self.level(kind, entity) >= needed
 
+    def _page_reader(self):
+        # Keep full resources/mutations on the raw store. Only page ancestors
+        # need metadata; one request-local reader is shared with assignee ACLs.
+        if getattr(self,'_page_reader_source',None) is not self.store:
+            from .wiki import page_header_reader
+            self._page_reader_source=self.store
+            self._page_reader_cached=page_header_reader(self.store)
+        return self._page_reader_cached
+
     def require_resource(self, kind, entity_id, needed=1):
         require(isinstance(entity_id, str) and 0 < len(entity_id) <= 160, "Invalid resource ID")
         entity = self.store.get(kind, entity_id)
@@ -195,7 +204,7 @@ class Access:
         member = self.store.get('member', identity)
         return bool(member and member.get('active', True) is True and member.get('role') in ROLES
                     and (not visible or self.regular or identity == self.member_id)
-                    and Access(self.store, member).can('page', page))
+                    and Access(self._page_reader(), member).can('page', page))
 
     @staticmethod
     def verification_date(value):

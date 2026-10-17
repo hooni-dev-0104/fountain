@@ -1,6 +1,7 @@
 /** Pure permission evaluation over one caller-pinned workspace snapshot.
  * Port of fountain/access.py. Never perform network reads inside this adapter.
  */
+import {pageHeaderReader} from './page-headers.ts';
 export type Entity = Record<string, any>;
 export interface StoreReader {
   get(kind: string, id: unknown): Entity | null;
@@ -50,6 +51,8 @@ export class Access {
   owner: boolean;
   regular: boolean;
   groups: Set<string>;
+  private pageReaderSource?: StoreReader;
+  private pageReaderCached?: StoreReader;
   constructor(store: StoreReader, principal: unknown) {
     this.store = store;
     this.principal = is_object(principal) ? principal : {};
@@ -108,7 +111,7 @@ export class Access {
       fallback = value;
     }
     const parent = get(entity, 'parent_id');
-    if (truth(parent) && (permissions === null || get(permissions, 'inherit', false) === true)) return this._level('page', this.store.get('page', parent), trail);
+    if (truth(parent) && (permissions === null || get(permissions, 'inherit', false) === true)) return this._level('page', this.pageReader().get('page', parent), trail);
     return fallback === 'workspace' ? this._workspace_level(entity) : 0;
   }
   _row_level(row: Entity, trail: Set<string>): number {
@@ -141,6 +144,12 @@ export class Access {
     return policy;
   }
   can(kind: string, entity: unknown, needed = 1): boolean { return this.level(kind, entity) >= needed; }
+  private pageReader(): StoreReader {
+    // Current resources stay on the raw store; only page ancestor/assignee ACL
+    // lookups share this request-local, staging-generation-aware header index.
+    if(this.pageReaderSource!==this.store||!this.pageReaderCached){this.pageReaderSource=this.store;this.pageReaderCached=pageHeaderReader(this.store);}
+    return this.pageReaderCached;
+  }
   require_resource(kind: string, entity_id: unknown, needed = 1): Entity {
     require(valid_id(entity_id), 'Invalid resource ID');
     const entity = this.store.get(kind, entity_id), level = this.level(kind, entity);
@@ -163,7 +172,7 @@ export class Access {
   }
   verification_member(identity:unknown,page:Entity,visible=true):boolean{
     if(!Access.verification_id(identity))return false;const member=this.store.get('member',identity);
-    return !!(member&&get(member,'active',true)===true&&ROLES.has(get(member,'role'))&&(!visible||this.regular||identity===this.member_id)&&new Access(this.store,member).can('page',page));
+    return !!(member&&get(member,'active',true)===true&&ROLES.has(get(member,'role'))&&(!visible||this.regular||identity===this.member_id)&&new Access(this.pageReader(),member).can('page',page));
   }
   static verification_date(value:unknown):value is string{
     if(typeof value!=='string'||value.length>100)return false;

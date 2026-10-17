@@ -116,6 +116,12 @@
     }
     function apiURL(value){configured();return new URL(path(value),configuration.origin).href;}
     function request(value,options={}) {return exchange(value,options,false);}
+    function anonymousSession(value){
+      const fields=['authenticated','required','enabled','mode','member','identity','cache_binding','workspace_id','expires_at','setup_supported','public_web_origin'];
+      if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).some(key=>!fields.includes(key))||value.authenticated!==false||typeof value.required!=='boolean'||['member','identity','cache_binding','expires_at'].some(key=>value[key]!=null)||value.mode!==undefined&&!['accounts','family','local'].includes(value.mode)||['enabled','setup_supported'].some(key=>value[key]!==undefined&&typeof value[key]!=='boolean')||value.workspace_id!=null&&(typeof value.workspace_id!=='string'||value.workspace_id.length>1000))return null;
+      if(value.public_web_origin!=null)try{if(primaryFrontend(value.public_web_origin)!==value.public_web_origin)return null;}catch{return null;}
+      return Object.fromEntries(fields.filter(key=>Object.hasOwn(value,key)).map(key=>[key,value[key]]));
+    }
     function exchange(value,options={},internal=false) {
       path(value);configured();const method=String(options.method||'GET').toUpperCase();if(!methods.has(method))invalid();
       if(options.redirect&&options.redirect!=='error')invalid();
@@ -124,7 +130,7 @@
       if(method==='GET'&&options.body!=null)invalid();
       const transition=value==='/api/session'&&['POST','DELETE'].includes(method);
       if(transition){authGeneration++;cancelCalls();announceScope('authentication');}
-      const expected=scope(),priorAuth=authTail;
+      const expected=scope(),expectedEpoch=publicScopeEpoch,priorAuth=authTail;
       const perform=async body=>{
         if(!current(expected)||options.signal?.aborted)throw abortError();
         const result=await invoke('request',{path:value,method,headers,bodyBase64:base64(body),timeoutMs},expected,options.signal,timeoutMs);
@@ -144,13 +150,21 @@
       // may itself issue authenticated canonical GETs through the same serialization queue.
       const result=wire();if(transition)authTail=result.then(()=>{},()=>{});
       return result.then(async response=>{
-        if(!internal&&root.FountainNativeStorage&&!root.FountainNativeRecovery?.active&&(value==='/api/session'||configuration.outboxEnabled&&response.ok&&(value==='/api/workspace'||/^\/api\/pages\/[^/?]+\/(collaboration|operations)$/.test(value)||/^\/api\/databases\/[^/?]+$/.test(value)))){
+        // A rejected binding is an authoritative negative HTTP result, never a
+        // reason to read a cache that this logout has already revoked.
+        const bindingConflict=value==='/api/session'&&method==='DELETE'&&response.status===409;
+        if(!internal&&!bindingConflict&&root.FountainNativeStorage&&!root.FountainNativeRecovery?.active&&(value==='/api/session'||configuration.outboxEnabled&&response.ok&&(value==='/api/workspace'||/^\/api\/pages\/[^/?]+\/(collaboration|operations)$/.test(value)||/^\/api\/databases\/[^/?]+$/.test(value)))){
+          let anonymous=null;if(value==='/api/session'&&['GET','DELETE'].includes(method)&&response.status===200)try{anonymous=anonymousSession(await response.clone().json());}catch{/* Invalid session bodies cannot bypass the storage error. */}
           try{await root.FountainNativeStorage.refreshAuth();}
           catch(error){
             if(!current(expected))throw abortError();
-            if(value!=='/api/session'||error?.code!=='OUTBOX_ACCESS_REQUIRED')throw error;
+            if(anonymous&&publicScopeEpoch===expectedEpoch&&error?.code==='OUTBOX_IDENTITY_REQUIRED'&&root.FountainNativeStorage.ready===false&&['unknown','blocked'].includes(root.FountainNativeStorage.identityState)){
+              // Deliver the real anonymous response first. No verified grant or
+              // cache readiness is manufactured; the UI finishes only this scope.
+              setTimeout(()=>{if(current(expected)&&publicScopeEpoch===expectedEpoch&&!options.signal?.aborted&&root.FountainNativeStorage?.ready===false&&['unknown','blocked'].includes(root.FountainNativeStorage.identityState))root.dispatchEvent(new CustomEvent('fountain-native-anonymous-session',{detail:{origin:expected.origin,generation:expected.generation,scopeEpoch:expectedEpoch,session:anonymous}}));},0);
+            }else if(value!=='/api/session'||error?.code!=='OUTBOX_ACCESS_REQUIRED')throw error;
             // Resource recovery blocks cached business data, never the actual session response.
-            root.dispatchEvent(new CustomEvent('fountain-native-error',{detail:{message:'미전송 내용을 보관했습니다. 기기 저장을 다시 사용하기 전에 접근 권한을 확인해 주세요.'}}));
+            else root.dispatchEvent(new CustomEvent('fountain-native-error',{detail:{message:'미전송 내용을 보관했습니다. 기기 저장을 다시 사용하기 전에 접근 권한을 확인해 주세요.'}}));
           }
           if(!current(expected))throw abortError();
         }

@@ -62,9 +62,21 @@ storageFixture.context.FountainNativeStorage={refreshAuth:async()=>{throw Object
 for(const method of ['GET','POST','DELETE']){const restored=await S.request('/api/session',{method,...(method==='POST'?{body:'{}'}:{})});assert.equal(restored.status,200,'resource recovery never replaces the actual session response');}
 assert.equal(recoveryNotices.length,3);assert.ok(recoveryNotices.every(message=>!message.includes('private')));
 assert.equal((await S.request('/api/probe')).status,200,'resource gate does not poison native HTTP');
+const anonymousEvents=[];storageFixture.events.addEventListener('fountain-native-anonymous-session',event=>anonymousEvents.push(event.detail));
+const anonymous={authenticated:false,required:true,mode:'accounts',member:null,identity:null,cache_binding:null,expires_at:null,workspace_id:null};
+const identityFailure=()=>{throw Object.assign(new Error('No current private identity'),{code:'OUTBOX_IDENTITY_REQUIRED',status:503});};
+storageFixture.context.FountainNativeStorage={ready:false,identityState:'unknown',refreshAuth:async()=>identityFailure()};
+storageFixture.setHandler(async args=>response(anonymous,200,args.generation));
+for(const method of ['GET','DELETE']){const count=anonymousEvents.length;assert.equal((await (await S.request('/api/session',{method})).json()).authenticated,false);await until(()=>anonymousEvents.length===count+1);}
+assert.equal(storageFixture.context.FountainNativeStorage.ready,false,'anonymous delivery never grants cache readiness');
+await assert.rejects(S.request('/api/session',{method:'POST',body:'{}'}),error=>error.code==='OUTBOX_IDENTITY_REQUIRED');
+for(const body of [{...anonymous,authenticated:true},{...anonymous,cache_binding:'not-anonymous'},{...anonymous,member:{id:'unexpected'}},{...anonymous,unknown:'field'}]){storageFixture.setHandler(async args=>response(body,200,args.generation));await assert.rejects(S.request('/api/session'),error=>error.code==='OUTBOX_IDENTITY_REQUIRED');}
+storageFixture.setHandler(async args=>response(anonymous,200,args.generation));storageFixture.context.FountainNativeStorage={ready:false,identityState:'unknown',refreshAuth:async()=>{throw Object.assign(new Error('Storage unavailable'),{code:'OUTBOX_STORAGE',status:503});}};await assert.rejects(S.request('/api/session'),error=>error.code==='OUTBOX_STORAGE');
+let conflictingReads=0;storageFixture.context.FountainNativeStorage={refreshAuth:async()=>{conflictingReads++;throw Error('A conflict must not read the revoked cache');}};storageFixture.setHandler(async args=>response({error:'Changed',code:'SESSION_CHANGED'},409,args.generation));assert.equal((await S.request('/api/session',{method:'DELETE',body:'{}'})).status,409);assert.equal(conflictingReads,0);
+let rejectOldAnonymous;storageFixture.context.FountainNativeStorage={ready:false,identityState:'unknown',refreshAuth:()=>new Promise((_,reject)=>rejectOldAnonymous=reject)};storageFixture.setHandler(async args=>response(anonymous,200,args.generation));const priorAnonymousCount=anonymousEvents.length,oldAnonymous=S.request('/api/session').then(()=>false,error=>error.name);await until(()=>!!rejectOldAnonymous);await S.configure({origin:'https://next-family.example'});rejectOldAnonymous(Object.assign(Error('Old identity'),{code:'OUTBOX_IDENTITY_REQUIRED'}));assert.equal(await oldAnonymous,'AbortError');await sleep(5);assert.equal(anonymousEvents.length,priorAnonymousCount,'stale anonymous response cannot reset a new server scope');
 storageFixture.setHandler(async()=>{throw Object.assign(new Error('private canonical issue'),{code:'OUTBOX_ACCESS_REQUIRED'});});
 await assert.rejects(S.request('/api/workspace'),error=>error.code==='OUTBOX_ACCESS_REQUIRED'&&error.status===503&&!error.message.includes('private'));
-storageFixture.setHandler(async()=>response({ok:true}));
+storageFixture.setHandler(async args=>response({ok:true},200,args.generation));
 storageFixture.context.FountainNativeStorage={refreshAuth:async()=>{throw Object.assign(new Error('storage fault'),{status:503});}};
 await assert.rejects(S.request('/api/session'),error=>error.status===503);
 for(const accessFailure of [false,true]){

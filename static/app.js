@@ -78,6 +78,18 @@ function clearNativeLogoutView(){
   state.bootGeneration=(state.bootGeneration||0)+1;closeDocument();closeMutations();closeModal();state.page=null;state.blocks=[];state.database=null;state.rows=[];state.loaded=false;state.offlineProfile=null;
   $('#main').innerHTML='<div class="loading">로그아웃을 마무리하고 있습니다…</div>';$('#sidebar').replaceChildren();$('#topbar').replaceChildren();
 }
+window.addEventListener('fountain-native-anonymous-session',event=>{
+  const detail=event.detail;if(!FountainTransport.native||!FountainTransport.outboxEnabled||detail?.origin!==FountainTransport.origin||detail.generation!==FountainTransport.generation||detail.scopeEpoch!==FountainTransport.scopeEpoch||detail.session?.authenticated!==false||FountainNativeStorage?.ready!==false||!['unknown','blocked'].includes(FountainNativeStorage.identityState))return;
+  if(!state.loaded&&!state.nativeOutboxPause&&state.session?.authenticated===false&&$('#login-form')){
+    state.session={...state.session,...detail.session,mode:detail.session.mode||state.session.mode,authenticated:false,member:null,identity:null,cache_binding:null};return;
+  }
+  const paused=state.nativeOutboxPause,profile=state.offlineProfile||paused?.profile;let input=paused?.input;
+  try{input=authenticationInput(profile)||input;}catch{/* The paused RAM input remains available. */}
+  const forms=unsubmittedNativeForms();if(profile&&(input||forms.length))rememberNativeInput(profile,{...(input||{}),...(forms.length?{formInput:forms}:{})});
+  const mode=detail.session.mode||state.session?.mode||'accounts';clearNativeLogoutView();state.session={...detail.session,mode,authenticated:false,member:null,identity:null,cache_binding:null};state.nativeOutboxPause=null;
+  for(const node of [$('#main'),$('#sidebar'),$('#topbar'),$('#overlay-root')].filter(Boolean))node.inert=false;
+  document.querySelector('.native-outbox-blocked')?.remove();renderLogin(false);
+});
 window.addEventListener('fountain-native-outbox-resume',event=>{
   const detail=event.detail,paused=state.nativeOutboxPause;if(!paused||state.nativeOutboxResuming||detail.owner!==paused.owner||detail.token!==paused.token)return;
   const current=()=>state.nativeOutboxPause===paused&&FountainTransport.origin===paused.origin&&FountainTransport.generation===paused.generation&&FountainTransport.scopeEpoch===paused.scopeEpoch;

@@ -5,6 +5,7 @@
  */
 import {APIError, clone, get, has, is_object, truth, valid_id} from './access.ts';
 import type {Entity, StoreReader} from './access.ts';
+import {PAGE_HEADER_META_KEY, projectPageHeader, validatePageHeaders} from './page-headers.ts';
 
 export type StoreContext = Readonly<{workspaceId: string; memberId: string; userId: string; authSessionId: string; sessionHash: string; cacheBinding: string}>;
 export type Selection = {kinds?: string[]; ids?: Record<string, string[]>; metaKeys?: string[]; pageSize?: number};
@@ -165,6 +166,7 @@ class StagingKernel<C extends DataContext> implements StoreReader {
   private generatedIds = new Map<string,Set<string>>();
   private baseRevision: number;
   private currentRevision: number;
+  private headerGeneration = 0;
   private changes: Change[] = [];
   private transactionDepth = 0;
   private phase: 'ready'|'pending'|'uncertain'|'committed'|'aborted' = 'ready';
@@ -242,12 +244,24 @@ class StagingKernel<C extends DataContext> implements StoreReader {
     this.readable(); metaKey(key);
     if (key === '_entity_revision') return this.currentRevision;
     if (!['workspace_id','access_revision'].includes(key) && !this.selection.metaKeys.includes(key)) throw new MissingSelection({metaKeys:[key]});
+    if (key === PAGE_HEADER_META_KEY) {
+      // Always derive from the pinned virtual snapshot and CURRENT staging log.
+      // Rollback truncates that log, including an alternate branch at the same revision.
+      const pages = new Map(validatePageHeaders(this.metadata.get(key)).map(page=>[page.id,page]));
+      for (const change of this.changes) {
+        if (change.op === 'put' && change.kind === 'page') pages.set(change.id,projectPageHeader(change.data));
+        else if (change.op === 'delete' && change.kind === 'page') pages.delete(change.id);
+      }
+      return Array.from(pages.values()).sort((a,b)=>compare(a.id,b.id)).map(clone);
+    }
     return this.metadata.has(key) ? clone(this.metadata.get(key)) : clone(fallback);
   }
+  get page_header_generation(): number { this.readable(); return this.headerGeneration; }
+  page_headers(): Entity[] { return this.meta(PAGE_HEADER_META_KEY); }
   private stage(change: Change): void {
     check(this.changes.length < MAX_CHANGES && this.currentRevision < Number.MAX_SAFE_INTEGER,'STORAGE_LIMIT',413);
     const next = [...this.changes,change]; json({context:this.context,expectedRevision:this.baseRevision,changes:next});
-    this.changes.push(clone(change)); this.currentRevision++;
+    this.changes.push(clone(change)); this.currentRevision++; this.headerGeneration++;
   }
   /** Reserve an ID before related entities are staged, without widening a
    * snapshot for a newly generated value on every handler replay. The database
@@ -282,7 +296,7 @@ class StagingKernel<C extends DataContext> implements StoreReader {
     this.stage({op:'delete',kind:kindName,id:identity}); this.entities.get(kindName)!.delete(identity);
   }
   set_meta(key: string, value: any): any {
-    this.writable(); metaKey(key); check(!['_entity_revision','_backup_storage_reserved'].includes(key) && (key !== 'workspace_id' || value === this.context.workspaceId),'SELECTION_FORBIDDEN');
+    this.writable(); metaKey(key); check(!['_entity_revision','_backup_storage_reserved',PAGE_HEADER_META_KEY].includes(key) && (key !== 'workspace_id' || value === this.context.workspaceId),'SELECTION_FORBIDDEN');
     json(value); this.meta(key); this.stage({op:'meta',key,value:clone(value)});this.metadata.set(key,clone(value));return clone(value);
   }
   audit(action:string, details:Entity, user:string=this.context.memberId):Entity {
@@ -299,7 +313,7 @@ class StagingKernel<C extends DataContext> implements StoreReader {
       }
       return result;
     }
-    catch (error) { this.entities=entities;this.metadata=metadata;this.generatedIds=generatedIds;this.changes.length=count;this.currentRevision=revision;throw error; }
+    catch (error) { this.entities=entities;this.metadata=metadata;this.generatedIds=generatedIds;this.changes.length=count;this.currentRevision=revision;this.headerGeneration++;throw error; }
     finally { this.transactionDepth--; }
   }
   async commit(): Promise<{revision:number}> {

@@ -337,6 +337,14 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         for (key, value) in FountainOutbox.qaStorageEvidence() { evidence[key] = value }
         return evidence
     }
+    // Device-test SQL inspection must obey the same serialization as native
+    // writes; it is trusted XCTest code and is never a Capacitor method.
+    static func withQAOutboxOwnership<T>(_ operation: () throws -> T) throws -> T {
+        guard ProcessInfo.processInfo.environment["FOUNTAIN_QA"] == "1",
+              (ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] ?? "").hasPrefix("Fountain QA") else { throw FountainFailure.invalid }
+        ownership.lock(); defer { ownership.unlock() }
+        return try operation()
+    }
     static func setQAProtocolClass(_ value: URLProtocol.Type?) throws {
         guard ProcessInfo.processInfo.environment["FOUNTAIN_QA"] == "1",
               ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] == "Fountain QA" else { throw FountainFailure.invalid }

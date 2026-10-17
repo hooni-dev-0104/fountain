@@ -214,18 +214,20 @@ final class FountainNativeTests: XCTestCase {
     private func handles(_ result: [String: Any]) -> [String] { (result["items"] as! [[String: Any]]).map { $0["handle"] as! String } }
 
     private func sql(_ file: URL, _ statement: String, _ values: [String] = [], readOnly: Bool = false) throws -> [[String]] {
-        var db: OpaquePointer?; XCTAssertEqual(sqlite3_open_v2(file.path, &db, (readOnly ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE) | SQLITE_OPEN_FULLMUTEX, nil), SQLITE_OK); defer { sqlite3_close_v2(db) }
-        sqlite3_busy_timeout(db, 1000)
-        var query: OpaquePointer?; XCTAssertEqual(sqlite3_prepare_v2(db, statement, -1, &query, nil), SQLITE_OK); defer { sqlite3_finalize(query) }
-        for (index, value) in values.enumerated() { sqlite3_bind_text(query, Int32(index + 1), value, -1, transient) }
-        var result: [[String]] = []
-        while true {
-            let status = sqlite3_step(query)
-            if status == SQLITE_DONE { break }
-            guard status == SQLITE_ROW else { throw FountainOutboxError.storage }
-            result.append((0..<sqlite3_column_count(query)).map { sqlite3_column_text(query, $0).map { String(cString: $0) } ?? "" })
+        return try FountainNative.withQAOutboxOwnership {
+            var db: OpaquePointer?; XCTAssertEqual(sqlite3_open_v2(file.path, &db, (readOnly ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE) | SQLITE_OPEN_FULLMUTEX, nil), SQLITE_OK); defer { sqlite3_close_v2(db) }
+            sqlite3_busy_timeout(db, 1000)
+            var query: OpaquePointer?; XCTAssertEqual(sqlite3_prepare_v2(db, statement, -1, &query, nil), SQLITE_OK); defer { sqlite3_finalize(query) }
+            for (index, value) in values.enumerated() { sqlite3_bind_text(query, Int32(index + 1), value, -1, transient) }
+            var result: [[String]] = []
+            while true {
+                let status = sqlite3_step(query)
+                if status == SQLITE_DONE { break }
+                guard status == SQLITE_ROW else { throw FountainOutboxError.storage }
+                result.append((0..<sqlite3_column_count(query)).map { sqlite3_column_text(query, $0).map { String(cString: $0) } ?? "" })
+            }
+            return result
         }
-        return result
     }
     private func retainedBytes(_ file: URL) throws -> [[String]] {
         try sql(file, "SELECT 'record',bucket,key,profile_id,hex(value) FROM records UNION ALL SELECT 'recovery',bucket,key,profile_id,hex(value) FROM recovery UNION ALL SELECT 'staging',tx_id,CAST(part AS TEXT),lease,hex(data) FROM staging UNION ALL SELECT 'receipt',tx_id,digest,CAST(head AS TEXT),'' FROM tx_receipts ORDER BY 1,2,3,4,5")
@@ -741,43 +743,47 @@ final class FountainNativeTests: XCTestCase {
               after["integrityOK"] as? Bool == true else { throw NSError(domain: "FountainQAIndexedDB", code: 7) }
     }
     private func activeOutboxSourceDigest() throws -> String {
-        let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
-        let file = support.appendingPathComponent("FountainOutbox").appendingPathComponent(FountainOutbox.hash(Data("https://ehnovtfadpkwtubmwltl.supabase.co".utf8)) + ".sqlite")
-        // Use SQLite for every read, including exact BLOB bytes. A raw file
-        // descriptor close could interfere with another SQLite VFS connection.
-        let tables: [(String, String)] = [("control", "id,value"), ("records", "bucket,key,profile_id,resource_key,value"), ("recovery", "tx_id,position,bucket,key,profile_id,value"), ("staging", "tx_id,part,lease,base_head,data"), ("tx_receipts", "tx_id,digest,head"), ("tombstones", "scope,kind,profile_id")]
-        var source: [String: [[String]]] = [:]
-        for (table, columns) in tables {
-            let projection = columns.split(separator: ",").map { "quote(" + $0 + ")" }.joined(separator: ",")
-            source[table] = try sql(file, "SELECT rowid," + projection + " FROM " + table + " ORDER BY rowid", readOnly: true)
+        return try FountainNative.withQAOutboxOwnership {
+            let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+            let file = support.appendingPathComponent("FountainOutbox").appendingPathComponent(FountainOutbox.hash(Data("https://ehnovtfadpkwtubmwltl.supabase.co".utf8)) + ".sqlite")
+            // Use SQLite for every read, including exact BLOB bytes. A raw file
+            // descriptor close could interfere with another SQLite VFS connection.
+            let tables: [(String, String)] = [("control", "id,value"), ("records", "bucket,key,profile_id,resource_key,value"), ("recovery", "tx_id,position,bucket,key,profile_id,value"), ("staging", "tx_id,part,lease,base_head,data"), ("tx_receipts", "tx_id,digest,head"), ("tombstones", "scope,kind,profile_id")]
+            var source: [String: [[String]]] = [:]
+            for (table, columns) in tables {
+                let projection = columns.split(separator: ",").map { "quote(" + $0 + ")" }.joined(separator: ",")
+                source[table] = try sql(file, "SELECT rowid," + projection + " FROM " + table + " ORDER BY rowid", readOnly: true)
+            }
+            let bytes = try encoded(source)
+            guard bytes.count <= 128 * 1024 * 1024 else { throw NSError(domain: "FountainQAIndexedDB", code: 9) }
+            return FountainOutbox.hash(bytes)
         }
-        let bytes = try encoded(source)
-        guard bytes.count <= 128 * 1024 * 1024 else { throw NSError(domain: "FountainQAIndexedDB", code: 9) }
-        return FountainOutbox.hash(bytes)
     }
     private func activeOutboxEvidence(workspace: String, page: String, canonical: String, pending: String) throws -> [String: Any] {
-        let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
-        let file = support.appendingPathComponent("FountainOutbox").appendingPathComponent(FountainOutbox.hash(Data("https://ehnovtfadpkwtubmwltl.supabase.co".utf8)) + ".sqlite")
-        guard FileManager.default.fileExists(atPath: file.path), let identityText = try sql(file, "SELECT CAST(value AS TEXT) FROM control WHERE id='identity'", readOnly: true).first?.first,
-              let identity = try JSONSerialization.jsonObject(with: Data(identityText.utf8)) as? [String: Any], let profile = identity["profileId"] as? String else { return ["actualSQLite": false] }
-        let parts = profile.components(separatedBy: "|")
-        guard parts.count == 4, parts[0] == "https://ehnovtfadpkwtubmwltl.supabase.co", parts[1].removingPercentEncoding == workspace else { return ["actualSQLite": true, "scopeMatches": false] }
-        let resource = profile + "|" + FountainOutbox.encodeURIComponent(page)
-        let snapshotRows = try sql(file, "SELECT CAST(value AS TEXT) FROM records WHERE bucket='snapshots' AND key=? AND profile_id=?", [try json(resource), profile], readOnly: true)
-        let snapshot = snapshotRows.first?.first.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }?["snapshot"] as? [String: Any]
-        let canonicalMatches = (snapshot?["blocks"] as? [[String: Any]] ?? []).contains { $0["text"] as? String == canonical }
-        var pendingMatches = false
-        let inputs = try sql(file, "SELECT bucket,CAST(value AS TEXT) FROM records WHERE profile_id=? AND resource_key=? AND bucket IN ('operations','drafts','mutations')", [profile, resource], readOnly: true)
-        for row in inputs {
-            guard let value = try JSONSerialization.jsonObject(with: Data(row[1].utf8)) as? [String: Any] else { throw FountainOutboxError.storage }
-            if (value["operation"] as? [String: Any])?["text"] as? String == pending { pendingMatches = true }
-            if let draft = value["draft"] as? [String: Any], (draft["blocks"] as? [[String: Any]] ?? []).contains(where: { $0["text"] as? String == pending }) { pendingMatches = true }
+        return try FountainNative.withQAOutboxOwnership {
+            let support = try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false)
+            let file = support.appendingPathComponent("FountainOutbox").appendingPathComponent(FountainOutbox.hash(Data("https://ehnovtfadpkwtubmwltl.supabase.co".utf8)) + ".sqlite")
+            guard FileManager.default.fileExists(atPath: file.path), let identityText = try sql(file, "SELECT CAST(value AS TEXT) FROM control WHERE id='identity'", readOnly: true).first?.first,
+                  let identity = try JSONSerialization.jsonObject(with: Data(identityText.utf8)) as? [String: Any], let profile = identity["profileId"] as? String else { return ["actualSQLite": false] }
+            let parts = profile.components(separatedBy: "|")
+            guard parts.count == 4, parts[0] == "https://ehnovtfadpkwtubmwltl.supabase.co", parts[1].removingPercentEncoding == workspace else { return ["actualSQLite": true, "scopeMatches": false] }
+            let resource = profile + "|" + FountainOutbox.encodeURIComponent(page)
+            let snapshotRows = try sql(file, "SELECT CAST(value AS TEXT) FROM records WHERE bucket='snapshots' AND key=? AND profile_id=?", [try json(resource), profile], readOnly: true)
+            let snapshot = snapshotRows.first?.first.flatMap { try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any] }?["snapshot"] as? [String: Any]
+            let canonicalMatches = (snapshot?["blocks"] as? [[String: Any]] ?? []).contains { $0["text"] as? String == canonical }
+            var pendingMatches = false
+            let inputs = try sql(file, "SELECT bucket,CAST(value AS TEXT) FROM records WHERE profile_id=? AND resource_key=? AND bucket IN ('operations','drafts','mutations')", [profile, resource], readOnly: true)
+            for row in inputs {
+                guard let value = try JSONSerialization.jsonObject(with: Data(row[1].utf8)) as? [String: Any] else { throw FountainOutboxError.storage }
+                if (value["operation"] as? [String: Any])?["text"] as? String == pending { pendingMatches = true }
+                if let draft = value["draft"] as? [String: Any], (draft["blocks"] as? [[String: Any]] ?? []).contains(where: { $0["text"] as? String == pending }) { pendingMatches = true }
+            }
+            let head = Int(try sql(file, "SELECT CAST(value AS TEXT) FROM control WHERE id='head'", readOnly: true).first?.first ?? "-1") ?? -1
+            let receipts = Int(try sql(file, "SELECT count(*) FROM control WHERE substr(id,1,13)='receiptOwner:' AND CAST(value AS TEXT)=?", [try json(profile)], readOnly: true)[0][0]) ?? 0
+            return ["actualSQLite": true, "scopeMatches": true, "grantVerified": identity["state"] as? String == "verified", "head": head,
+                    "canonicalMatches": canonicalMatches, "pendingMatches": pendingMatches, "pendingOperations": inputs.filter { $0[0] == "operations" }.count,
+                    "deltaReceipts": receipts, "integrityOK": try sql(file, "PRAGMA integrity_check", readOnly: true).first?.first == "ok"]
         }
-        let head = Int(try sql(file, "SELECT CAST(value AS TEXT) FROM control WHERE id='head'", readOnly: true).first?.first ?? "-1") ?? -1
-        let receipts = Int(try sql(file, "SELECT count(*) FROM control WHERE substr(id,1,13)='receiptOwner:' AND CAST(value AS TEXT)=?", [try json(profile)], readOnly: true)[0][0]) ?? 0
-        return ["actualSQLite": true, "scopeMatches": true, "grantVerified": identity["state"] as? String == "verified", "head": head,
-                "canonicalMatches": canonicalMatches, "pendingMatches": pendingMatches, "pendingOperations": inputs.filter { $0[0] == "operations" }.count,
-                "deltaReceipts": receipts, "integrityOK": try sql(file, "PRAGMA integrity_check", readOnly: true).first?.first == "ok"]
     }
     @MainActor func testActualActiveCloudOutboxLifecyclePhase() async throws {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["FOUNTAIN_OUTBOX_QA"] == "1", "Opt-in DEBUG native outbox lifecycle phase required")
@@ -836,7 +842,9 @@ final class FountainNativeTests: XCTestCase {
             let privacy = try await script("const c=await Capacitor.registerPlugin('FountainNative').getConfiguration();return c.outboxEnabled===true&&document.cookie==='';") as? Bool
             guard privacy == true else { throw NSError(domain: "FountainOutboxQA", code: 12) }
             stage = "open-owned-page"
-            evidence["pageClickMatched"] = try await script("const b=document.querySelector('[data-action=page][data-id=qa-native-shared]');b?.click();return !!b;")
+            try await waitCloud("if(state.nativeOutboxPause||state.nativeOutboxResuming||state.nativeRecoveryPreparing||state.nativeRecoveryPaused||!state.loaded||!FountainNativeStorage.ready)return false;const b=document.querySelector('[data-action=page][data-id=qa-native-shared]');if(!b||b.disabled||b.closest('[inert]'))return false;b.click();return true;")
+            evidence["pageClickMatched"] = true
+            evidence["pageInteractionGuardPassed"] = true
             try await waitCloud("return state.page?.id==='qa-native-shared'&&[...document.querySelectorAll('.block-content')].some(e=>e.innerText===text);", arguments: ["text": expected])
             let before = try activeOutboxEvidence(workspace: workspace, page: "qa-native-shared", canonical: expected, pending: expected)
             evidence["before"] = before

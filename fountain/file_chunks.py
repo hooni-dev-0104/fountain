@@ -163,10 +163,33 @@ class FileChunkStorage:
 
     def _manifest(self, identity, offset):
         key = self._key(identity, offset)
-        value = self.store.get("attachment_chunk", key)
-        if value is not None:
+        if not self._retention_provisioned():
+            value = self.store.get("attachment_chunk", key)
+            if value is not None: self._validate_manifest(value, identity, offset, key)
+            return value
+        values = self.store._execute(
+            "SELECT data,NULL::text FROM fountain_private.entities WHERE workspace_id=%s "
+            "AND kind='attachment_chunk' AND id=%s UNION ALL "
+            "SELECT jsonb_build_object('id',%s::text,'attachment_id',attachment_id,'offset',\"offset\","
+            "'size',size,'sha256',sha256),physical_id FROM fountain_private.retention_attachment_refs "
+            "WHERE workspace_id=%s AND storage_kind='file' AND attachment_id=%s AND \"offset\"=%s",
+            (self.store.workspace_id, key, key, self.store.workspace_id, identity, offset), fetch="all")
+        selected = None
+        for value, physical in values:
             self._validate_manifest(value, identity, offset, key)
-        return value
+            require(physical is None or physical == value['sha256'], "Invalid retained attachment file pin", 409)
+            require(selected is None or (selected['size'], selected['sha256']) == (value['size'], value['sha256']),
+                    "Retained attachment file manifests conflict", 409)
+            if selected is None: selected = value
+        return selected
+
+    def _retention_provisioned(self):
+        # Never cache absence: a separate process may install the schema and
+        # archive content before this long-lived collector runs again.
+        if not getattr(self, '_retention_present', False):
+            self._retention_present = self.store._execute(
+                "SELECT to_regclass('fountain_private.retention_attachment_refs') IS NOT NULL", fetch="one")[0]
+        return self._retention_present
 
     @staticmethod
     def _validate_manifest(value, identity, offset, key):
@@ -215,7 +238,7 @@ class FileChunkStorage:
                 expected = min(length, max(0, value["size"] - start))
                 result = bytearray()
                 while len(result) < expected:
-                    part = os.read(descriptor, expected - len(result))
+                    part = os.read(descriptor, min(65536, expected - len(result)))
                     require(bool(part), "Attachment chunk was truncated while reading", 409)
                     result.extend(part)
                 return bytes(result)
@@ -295,15 +318,27 @@ class FileChunkStorage:
             values = self.store._execute("SELECT id,data FROM fountain_private.entities WHERE workspace_id=%s "
                                         "AND kind='attachment_chunk' AND data->>'attachment_id'=%s",
                                         (self.store.workspace_id, identity), fetch="all")
-            result = []
+            result = {}
             for key, value in values:
                 require(isinstance(value, dict) and type(value.get("offset")) is int
                         and value["offset"] >= 0 and value["offset"] % CHUNK_SIZE == 0,
                         "Invalid attachment chunk manifest", 409)
                 self._validate_manifest(value, identity, value["offset"], self._key(identity, value["offset"]))
                 require(key == value["id"], "Invalid attachment chunk manifest identity", 409)
-                result.append((value["offset"], value["size"], "blob"))
-            return sorted(result)
+                result[value["offset"]] = (value["size"], value["sha256"])
+            if self._retention_provisioned():
+                pins = self.store._execute(
+                    'SELECT DISTINCT "offset",size,sha256,physical_id FROM fountain_private.retention_attachment_refs '
+                    "WHERE workspace_id=%s AND storage_kind='file' AND attachment_id=%s",
+                    (self.store.workspace_id, identity), fetch="all")
+                for offset, size, digest, physical in pins:
+                    key = self._key(identity, offset)
+                    self._validate_manifest({'id': key, 'attachment_id': identity, 'offset': offset,
+                                             'size': size, 'sha256': digest}, identity, offset, key)
+                    require(physical == digest and (offset not in result or result[offset] == (size, digest)),
+                            "Retained attachment file manifests conflict", 409)
+                    result[offset] = (size, digest)
+            return [(offset, size, "blob") for offset, (size, _) in sorted(result.items())]
 
     def delete(self, identity):
         self._key(identity, 0)
@@ -368,6 +403,17 @@ class FileChunkStorage:
                 "WHERE workspace_id=%s AND kind='attachment_chunk' AND data->>'sha256'=ANY(%s)",
                 (self.store.workspace_id, [item[1] for item in candidates]), fetch="all") if candidates else []
             retained = {item[0] for item in references}
+            if candidates and self._retention_provisioned():
+                pins = self.store._execute(
+                    "SELECT DISTINCT physical_id,sha256,size,\"offset\" FROM fountain_private.retention_attachment_refs "
+                    "WHERE workspace_id=%s AND storage_kind='file' AND (physical_id=ANY(%s) OR sha256=ANY(%s))",
+                    (self.store.workspace_id, [item[1] for item in candidates], [item[1] for item in candidates]), fetch="all")
+                for physical, digest, size, offset in pins:
+                    require(isinstance(physical, str) and _HEX.fullmatch(physical) and physical == digest
+                            and type(size) is int and 0 < size <= CHUNK_SIZE
+                            and type(offset) is int and offset >= 0 and offset % CHUNK_SIZE == 0,
+                            "Invalid retained attachment file pin", 409)
+                    retained.add(physical)
             try:
                 for prefix, name in candidates:
                     if name in retained: continue

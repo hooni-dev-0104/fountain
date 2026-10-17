@@ -56,6 +56,88 @@ class FileChunkTests(unittest.TestCase):
         old = time.time() - 90000
         os.utime(path, (old, old))
 
+    def retained_file(self, *, shared=False, archive_shared=True):
+        from fountain.retention_vault import RetentionVault
+        vault = RetentionVault(self.store)
+        with self.store.transaction():
+            if not self.store._execute("SELECT to_regclass('fountain_private.retention_records') IS NOT NULL", fetch="one")[0]:
+                self.skipTest("Retention migration must be externally provisioned")
+        data = b"private retained file" * 10000
+        self.store.chunk_write("retained-file", 0, data)
+        self.store.put("attachment", {"id": "retained-file", "storage": "chunks", "size": len(data),
+                                      "sha256": hashlib.sha256(data).hexdigest()})
+        for identity in (("a", "b") if shared else ("a",)):
+            self.store.put("page", {"id": identity, "title": identity,
+                                    "archived": identity == "a" or archive_shared,
+                                    "deleted_at": "2026-10-01T00:00:00.000000Z",
+                                    "blocks": [{"id": "file-block", "attachment_id": "retained-file"}]})
+        records = []
+        # Release only this test's records before the existing namespace cleanup.
+        def release():
+            for record in reversed(vault.records()): vault.restore_to_trash(record["id"])
+        self.addCleanup(release)
+        for identity in (("a", "b") if shared and archive_shared else ("a",)): records.append(vault.archive_page(identity))
+        return vault, records, data
+
+    def test_retained_file_is_private_but_readable_for_backup_and_pinned_in_gc(self):
+        vault, records, data = self.retained_file()
+        self.assertIsNone(self.store.get("attachment", "retained-file"))
+        self.assertEqual(self.store.list("attachment_chunk"), [])
+        self.assertEqual(self.store.chunk_info("retained-file", 0), (len(data), "blob"))
+        self.assertEqual(self.store.chunk_list("retained-file"), [(0, len(data), "blob")])
+        self.assertEqual(self.store.chunk_read_range("retained-file", 0, 17, 100), data[17:117])
+        digest = hashlib.sha256()
+        self.store.chunk_hash_into("retained-file", 0, len(data), digest)
+        self.assertEqual(digest.digest(), hashlib.sha256(data).digest())
+        self.age(self.blob(data))
+        self.assertEqual(self.store.file_garbage_collect()["removed"], 0)
+        with self.assertRaises(APIError) as caught: self.store.chunk_delete("retained-file")
+        self.assertEqual(caught.exception.status, 409)
+        with patch.object(self.store._files, "_manifest", wraps=self.store._files._manifest) as manifests:
+            vault.restore_to_trash(records[0]["id"])
+            self.assertEqual(manifests.call_count, 1, "One file chunk requires one manifest lookup")
+        self.assertTrue(self.store.get("page", "a")["archived"])
+        self.assertEqual(self.store.chunk_read_range("retained-file", 0, 0, len(data)), data)
+        self.assertEqual(vault.records(), [])
+
+    def test_retained_file_shared_episodes_keep_remaining_record_pinned(self):
+        vault, records, data = self.retained_file(shared=True)
+        self.age(self.blob(data))
+        vault.restore_to_trash(records[0]["id"])
+        self.assertTrue(vault.attachment_pinned("retained-file"))
+        self.assertEqual(self.store.chunk_list("retained-file"), [(0, len(data), "blob")])
+        self.assertEqual(self.store.file_garbage_collect()["removed"], 0)
+        self.assertEqual(self.store.chunk_read_range("retained-file", 0, 0, len(data)), data)
+        vault.restore_to_trash(records[1]["id"])
+        self.assertFalse(vault.attachment_pinned("retained-file"))
+        self.assertEqual(self.store.chunk_read_range("retained-file", 0, 0, len(data)), data)
+
+    def test_retained_file_corruption_never_falls_back_or_releases_record(self):
+        vault, records, data = self.retained_file()
+        blob = self.blob(data)
+        blob.write_bytes(b"!" * len(data))
+        try:
+            with self.assertRaises(APIError) as caught: vault.restore_to_trash(records[0]["id"])
+            self.assertEqual(caught.exception.status, 409)
+            self.assertIsNone(self.store.get("page", "a"))
+            self.assertTrue(vault.attachment_pinned("retained-file"))
+            self.assertEqual(len(vault.records()), 1)
+        finally: blob.write_bytes(data)
+
+    def test_single_shared_file_restore_releases_last_pin_without_duplicate_transports(self):
+        from fountain.postgres_backup import create_postgres_backup
+        from fountain.backup import inspect_backup
+        vault, records, data = self.retained_file(shared=True, archive_shared=False)
+        self.assertFalse(self.store.get("page", "b")["archived"])
+        self.assertEqual(len(self.store.list("attachment_chunk")), 1)
+        vault.restore_to_trash(records[0]["id"])
+        self.assertFalse(vault.attachment_pinned("retained-file"))
+        self.assertEqual(self.store.chunk_list("retained-file"), [(0, len(data), "blob")])
+        self.assertEqual(self.store.chunk_read_range("retained-file", 0, 0, len(data)), data)
+        destination = Path(self.temp.name) / "after-last-pin.db"
+        create_postgres_backup(self.store, destination)
+        inspect_backup(destination)
+
     def test_immutable_manifest_dedup_bounded_range_and_permissions(self):
         data = b"sample chunk" * 5000
         self.store.chunk_write("first", 0, data)

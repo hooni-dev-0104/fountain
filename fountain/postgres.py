@@ -76,8 +76,10 @@ class PostgresStore:
                 if fetch == "one": return cursor.fetchone()
                 if fetch == "all": return cursor.fetchall()
                 return cursor.rowcount
-        except self._driver.Error:
+        except self._driver.Error as error:
             # Driver messages can contain SQL values or connection credentials.
+            if getattr(error, 'sqlstate', None) in ('PT400','PT403','PT404','PT409','PT413'):
+                raise APIError(int(error.sqlstate[2:]), "PostgreSQL operation rejected by storage constraints") from None
             raise APIError(503, "PostgreSQL persistence operation failed") from None
 
     @contextmanager
@@ -169,7 +171,11 @@ class PostgresStore:
         try:
             yield
         finally:
-            self._execute("SELECT set_config('fountain.content_actor',%s,true)", (previous or '',))
+            # A rejected storage write leaves PostgreSQL INERROR until the
+            # enclosing transaction/savepoint rolls back. A restoration query
+            # here would mask the original constraint status with 25P02.
+            if not self._connection.closed and self._connection.info.transaction_status != self._driver.pq.TransactionStatus.INERROR:
+                self._execute("SELECT set_config('fountain.content_actor',%s,true)", (previous or '',))
 
     def put(self, kind, data):
         require(isinstance(data, dict), "Entity must be an object")
@@ -262,6 +268,9 @@ class PostgresStore:
         require(type(offset) is int and offset >= 0 and isinstance(data, (bytes, bytearray))
                 and len(data) <= 4 * 1024 * 1024, "Invalid attachment chunk")
         with self.transaction():
+            from .retention_vault import RetentionVault
+            require(not RetentionVault(self).attachment_pinned(identity),
+                    "Retained attachment bytes are pinned", 409)
             if self._files is not None:
                 return self._files.write(identity, offset, bytes(data))
             self._execute('INSERT INTO fountain_private.attachment_chunks(workspace_id,attachment_id,"offset",data) '
@@ -273,12 +282,39 @@ class PostgresStore:
                                  'WHERE workspace_id=%s AND attachment_id=%s ORDER BY "offset"',
                                  (self.workspace_id, identity), fetch="all")
             merged = [(offset, length, "blob") for offset, length in rows]
-            if self._files is not None: merged.extend(self._files.list(identity))
+            if self._files is not None:
+                blobs={offset:length for offset,length in rows}
+                for offset,length,kind in self._files.list(identity):
+                    if offset not in blobs:
+                        merged.append((offset,length,kind));continue
+                    # A restored attachment can have a verified portable BLOB
+                    # while another retained record still pins its native file.
+                    # Ordinary ambiguous dual storage remains a conflict.
+                    from .retention_vault import RetentionVault
+                    require(RetentionVault(self).attachment_pinned(identity,storage_kind='file',offset=offset),
+                            "Attachment has conflicting chunk references",409)
+                    pins=self._execute('SELECT DISTINCT size,sha256 FROM fountain_private.retention_attachment_refs '
+                        'WHERE workspace_id=%s AND attachment_id=%s AND storage_kind=\'file\' AND "offset"=%s',
+                        (self.workspace_id,identity,offset),fetch='all')
+                    require(len(pins)==1 and blobs[offset]==length==pins[0][0],
+                            "Retained attachment transport lengths conflict",409)
+                    digest=hashlib.sha256()
+                    for start in range(0,length,65536):
+                        piece=self._execute('SELECT substring(data FROM %s FOR %s) FROM fountain_private.attachment_chunks '
+                            'WHERE workspace_id=%s AND attachment_id=%s AND "offset"=%s',
+                            (start+1,min(65536,length-start),self.workspace_id,identity,offset),fetch='one')
+                        require(piece is not None and len(piece[0])==min(65536,length-start),
+                                "Retained attachment transport is incomplete",409)
+                        digest.update(bytes(piece[0]))
+                    require(digest.hexdigest()==pins[0][1],"Retained attachment transport checksums conflict",409)
             require(len({row[0] for row in merged}) == len(merged), "Attachment has conflicting chunk references", 409)
             return sorted(merged, key=lambda row: row[0])
 
     def chunk_delete(self, identity):
         with self.transaction():
+            from .retention_vault import RetentionVault
+            require(not RetentionVault(self).attachment_pinned(identity),
+                    "Retained attachment bytes are pinned", 409)
             removed = self._files.delete(identity) if self._files is not None else 0
             return removed + self._execute("DELETE FROM fountain_private.attachment_chunks WHERE workspace_id=%s AND attachment_id=%s",
                                            (self.workspace_id, identity))

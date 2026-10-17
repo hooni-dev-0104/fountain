@@ -52,7 +52,7 @@ function denied(status,action,store){const before=store?clone([store.records,sto
  for(const id of ['local','guest','inactive','absent'])denied(400,()=>mutate(s,'PUT','/api/admin/assignments/'+id,{role_ids:['audit']}),s);
 }
 {
- const s=new Store(),added=['content.search.read','content.search.export','content.permissions.manage','content.publish.manage'];
+ const s=new Store(),added=['content.search.read','content.search.export','content.permissions.manage','content.publish.manage','content.restore.manage'];
  for(const actor of ['alice','admin','bob','guest'])assert(!authority(s,actor).actions().some(action=>added.includes(action)));
  assert(added.every(action=>authority(s,'local').allows(action)));
  for(const action of added.slice(1))denied(400,()=>mutate(s,'POST','/api/admin/roles',{name:'Invalid grant',actions:[action]}),s);

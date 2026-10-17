@@ -3,7 +3,7 @@
   "purpose": "Current Python HTTP route inventory with bounded Supabase foundation/model coverage; live production parity requires separate deployment evidence.",
   "sourceFingerprints": {
     "fountain/server.py:Application.dispatch": "399606067f2c3d4b77b31f21f76d975baa91e9dc034d3df48e23d15a284f63be",
-    "fountain/server.py:Application._dispatch": "271d3a96ba74e5f17c039e4c62dd59dc9a94188e90e9e512f25c24effab3a351",
+    "fountain/server.py:Application._dispatch": "edf26c6cd45ea20cd3e1f9c4253a85f1e1d9b6d9531272f2599bf8fce8fd3744",
     "fountain/server.py:handler_for.Handler.handle_request": "ab67f52a4296b7f334f31d14fc671e4c603360fea6d70257dd1b9d067af3c66b",
     "fountain/advanced.py:Advanced.dispatch": "5007047308a5681b84e7dc434ae14409c4767ed402eee7c84a308e8f4c17c206",
     "fountain/wiki.py:Wiki.route": "0b900b57d742a8f2694b337b4d62106f3675bc2e24c871f35c267f4bd51cbeae",
@@ -51,7 +51,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 837,
+            "line": 839,
             "statement": "self.send_payload(200, auth.session_info(cookie))"
           }
         ]
@@ -86,7 +86,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 837,
+            "line": 839,
             "statement": "self.send_payload(200, auth.session_info(cookie))"
           }
         ]
@@ -121,7 +121,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 842,
+            "line": 844,
             "statement": "self.send_payload(200, auth.session_info('fountain_session=' + token))"
           }
         ]
@@ -156,7 +156,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 847,
+            "line": 849,
             "statement": "self.send_payload(200, {'authenticated': not auth.enabled, 'required': auth.enabled})"
           }
         ]
@@ -191,7 +191,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 832,
+            "line": 834,
             "statement": "self.send_payload(200, application.auth.renew_local(body, cookie))"
           }
         ]
@@ -221,7 +221,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 319,
+            "line": 321,
             "statement": "return 200, {\"ok\": True}"
           }
         ]
@@ -251,7 +251,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 319,
+            "line": 321,
             "statement": "return 200, {\"ok\": True}"
           }
         ]
@@ -281,7 +281,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 323,
+            "line": 325,
             "statement": "return 200, snapshot"
           }
         ]
@@ -310,7 +310,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 323,
+            "line": 325,
             "statement": "return 200, snapshot"
           }
         ]
@@ -339,7 +339,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 325,
+            "line": 327,
             "statement": "return 201, w.create_page(body)"
           }
         ]
@@ -368,7 +368,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 332,
+            "line": 334,
             "statement": "return 200, detail"
           }
         ]
@@ -397,7 +397,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 332,
+            "line": 334,
             "statement": "return 200, detail"
           }
         ]
@@ -426,7 +426,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 333,
+            "line": 335,
             "statement": "return 200, w.update_page(page_id, body)"
           }
         ]
@@ -455,7 +455,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 334,
+            "line": 336,
             "statement": "return 200, w.update_page(page_id, {\"archived\": True})"
           }
         ]
@@ -484,7 +484,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 314,
+            "line": 316,
             "statement": "return 200, {'permissions': item.get('permissions') or {'default': 'workspace', 'members': {}, 'groups': {}, 'inherit': bool(item.get('parent_id'))},\n                         'row_permissions': item.get('row_permissions', {}), 'owner_id': item.get('owner_id', 'local'),\n                         'can_manage': access.can(kind, item, 4), 'members': safe_members,\n                         'groups': s.list('group') if access.can(kind, item, 4) else []}"
           }
         ]
@@ -513,7 +513,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 314,
+            "line": 316,
             "statement": "return 200, {'permissions': item.get('permissions') or {'default': 'workspace', 'members': {}, 'groups': {}, 'inherit': bool(item.get('parent_id'))},\n                         'row_permissions': item.get('row_permissions', {}), 'owner_id': item.get('owner_id', 'local'),\n                         'can_manage': access.can(kind, item, 4), 'members': safe_members,\n                         'groups': s.list('group') if access.can(kind, item, 4) else []}"
           }
         ]
@@ -542,7 +542,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 314,
+            "line": 316,
             "statement": "return 200, {'permissions': item.get('permissions') or {'default': 'workspace', 'members': {}, 'groups': {}, 'inherit': bool(item.get('parent_id'))},\n                         'row_permissions': item.get('row_permissions', {}), 'owner_id': item.get('owner_id', 'local'),\n                         'can_manage': access.can(kind, item, 4), 'members': safe_members,\n                         'groups': s.list('group') if access.can(kind, item, 4) else []}"
           }
         ]
@@ -571,7 +571,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 337,
+            "line": 339,
             "statement": "return 200, self.collaboration.snapshot(page_id, access)"
           }
         ]
@@ -600,7 +600,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 337,
+            "line": 339,
             "statement": "return 200, self.collaboration.snapshot(page_id, access)"
           }
         ]
@@ -629,7 +629,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 339,
+            "line": 341,
             "statement": "return 200, self.collaboration.apply(page_id, body, access)"
           }
         ]
@@ -658,7 +658,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 340,
+            "line": 342,
             "statement": "return 200, w.save_blocks(page_id, body.get(\"blocks\"), body.get(\"revision\"))"
           }
         ]
@@ -687,7 +687,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 341,
+            "line": 343,
             "statement": "return 200, w.update_page(page_id, {\"archived\": False})"
           }
         ]
@@ -716,7 +716,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 342,
+            "line": 344,
             "statement": "return 201, w.create_comment(page_id, body)"
           }
         ]
@@ -745,7 +745,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 355,
+            "line": 357,
             "statement": "return 200, w.restore_version(page_id, parts[4])"
           }
         ]
@@ -894,7 +894,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 861,
+            "line": 863,
             "statement": "self.stream_page(parts[2], cookie)"
           }
         ]
@@ -924,7 +924,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 362,
+            "line": 364,
             "statement": "return 200, s.put(\"comment\", comment)"
           }
         ]
@@ -953,7 +953,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 371,
+            "line": 373,
             "statement": "return 200, result"
           }
         ]
@@ -982,7 +982,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 371,
+            "line": 373,
             "statement": "return 200, result"
           }
         ]
@@ -1011,7 +1011,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 374,
+            "line": 376,
             "statement": "return 201, w.create_database(body)"
           }
         ]
@@ -1040,7 +1040,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 381,
+            "line": 383,
             "statement": "return 200, w.database_detail(database_id, parse_option(\"filters\"), parse_option(\"sorts\"), lambda row: access.can(\"row\", row))"
           }
         ]
@@ -1069,7 +1069,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 381,
+            "line": 383,
             "statement": "return 200, w.database_detail(database_id, parse_option(\"filters\"), parse_option(\"sorts\"), lambda row: access.can(\"row\", row))"
           }
         ]
@@ -1098,7 +1098,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 401,
+            "line": 403,
             "statement": "return 200, s.put(\"database\", database)"
           }
         ]
@@ -1128,7 +1128,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 314,
+            "line": 316,
             "statement": "return 200, {'permissions': item.get('permissions') or {'default': 'workspace', 'members': {}, 'groups': {}, 'inherit': bool(item.get('parent_id'))},\n                         'row_permissions': item.get('row_permissions', {}), 'owner_id': item.get('owner_id', 'local'),\n                         'can_manage': access.can(kind, item, 4), 'members': safe_members,\n                         'groups': s.list('group') if access.can(kind, item, 4) else []}"
           }
         ]
@@ -1157,7 +1157,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 314,
+            "line": 316,
             "statement": "return 200, {'permissions': item.get('permissions') or {'default': 'workspace', 'members': {}, 'groups': {}, 'inherit': bool(item.get('parent_id'))},\n                         'row_permissions': item.get('row_permissions', {}), 'owner_id': item.get('owner_id', 'local'),\n                         'can_manage': access.can(kind, item, 4), 'members': safe_members,\n                         'groups': s.list('group') if access.can(kind, item, 4) else []}"
           }
         ]
@@ -1186,7 +1186,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 314,
+            "line": 316,
             "statement": "return 200, {'permissions': item.get('permissions') or {'default': 'workspace', 'members': {}, 'groups': {}, 'inherit': bool(item.get('parent_id'))},\n                         'row_permissions': item.get('row_permissions', {}), 'owner_id': item.get('owner_id', 'local'),\n                         'can_manage': access.can(kind, item, 4), 'members': safe_members,\n                         'groups': s.list('group') if access.can(kind, item, 4) else []}"
           }
         ]
@@ -1215,7 +1215,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 410,
+            "line": 412,
             "statement": "return 201, s.get(\"row\", row[\"id\"])"
           }
         ]
@@ -1244,7 +1244,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 423,
+            "line": 425,
             "statement": "return 200, s.get(\"row\", row[\"id\"])"
           }
         ]
@@ -1273,7 +1273,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 425,
+            "line": 427,
             "statement": "return 200, w.delete_row(database_id, parts[4], lambda row: access.can(\"row\", row, 3))"
           }
         ]
@@ -1302,7 +1302,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 416,
+            "line": 418,
             "statement": "return 201, result"
           }
         ]
@@ -1336,7 +1336,7 @@
           },
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 404,
+            "line": 406,
             "statement": "return 200, DatabaseVerification(s,access).route(method,database_id,parts[4],body,query)"
           }
         ]
@@ -1375,7 +1375,7 @@
           },
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 404,
+            "line": 406,
             "statement": "return 200, DatabaseVerification(s,access).route(method,database_id,parts[4],body,query)"
           }
         ]
@@ -1414,7 +1414,7 @@
           },
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 404,
+            "line": 406,
             "statement": "return 200, DatabaseVerification(s,access).route(method,database_id,parts[4],body,query)"
           }
         ]
@@ -1453,7 +1453,7 @@
           },
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 404,
+            "line": 406,
             "statement": "return 200, DatabaseVerification(s,access).route(method,database_id,parts[4],body,query)"
           }
         ]
@@ -1487,7 +1487,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 428,
+            "line": 430,
             "statement": "return 200, w.export(query.get(\"format\", [\"json\"])[0], query.get(\"database\", [None])[0])"
           }
         ]
@@ -1517,7 +1517,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 428,
+            "line": 430,
             "statement": "return 200, w.export(query.get(\"format\", [\"json\"])[0], query.get(\"database\", [None])[0])"
           }
         ]
@@ -1547,7 +1547,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 446,
+            "line": 448,
             "statement": "return 200, Download('fountain-backup.db', target, directory)"
           }
         ]
@@ -1577,7 +1577,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 446,
+            "line": 448,
             "statement": "return 200, Download('fountain-backup.db', target, directory)"
           }
         ]
@@ -1607,7 +1607,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 448,
+            "line": 450,
             "statement": "return 201, w.import_data(body)"
           }
         ]
@@ -1636,7 +1636,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 453,
+            "line": 455,
             "statement": "return 201, result"
           }
         ]
@@ -1665,7 +1665,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 455,
+            "line": 457,
             "statement": "return 200, self.files.cleanup()"
           }
         ]
@@ -1695,7 +1695,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 458,
+            "line": 460,
             "statement": "return 200, self.files.status(parts[2], access.member_id, access)"
           }
         ]
@@ -1724,7 +1724,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 458,
+            "line": 460,
             "statement": "return 200, self.files.status(parts[2], access.member_id, access)"
           }
         ]
@@ -1753,7 +1753,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 463,
+            "line": 465,
             "statement": "return 200, result"
           }
         ]
@@ -1782,7 +1782,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 465,
+            "line": 467,
             "statement": "return 200, self.files.append(parts[2], body.get('offset'), body.get('data'), access.member_id, access)"
           }
         ]
@@ -1812,7 +1812,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 471,
+            "line": 473,
             "statement": "return 201, result"
           }
         ]
@@ -1841,7 +1841,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 474,
+            "line": 476,
             "statement": "return 201, {k: v for k, v in attachment.items() if k != \"data\"}"
           }
         ]
@@ -1870,7 +1870,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 478,
+            "line": 480,
             "statement": "return 200, attachment"
           }
         ]
@@ -1899,7 +1899,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 478,
+            "line": 480,
             "statement": "return 200, attachment"
           }
         ]
@@ -1928,7 +1928,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 493,
+            "line": 495,
             "statement": "return 200, metadata"
           }
         ]
@@ -1957,7 +1957,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 493,
+            "line": 495,
             "statement": "return 200, metadata"
           }
         ]
@@ -1986,12 +1986,12 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 498,
+            "line": 500,
             "statement": "return 200, AttachmentDownload(attachment['name'], attachment['id'], attachment['size'], attachment.get('sha256'))"
           },
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 499,
+            "line": 501,
             "statement": "return 200, Download(attachment['name'], base64.b64decode(attachment['data']), attachment_id=attachment['id'])"
           }
         ]
@@ -2021,12 +2021,12 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 498,
+            "line": 500,
             "statement": "return 200, AttachmentDownload(attachment['name'], attachment['id'], attachment['size'], attachment.get('sha256'))"
           },
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 499,
+            "line": 501,
             "statement": "return 200, Download(attachment['name'], base64.b64decode(attachment['data']), attachment_id=attachment['id'])"
           }
         ]
@@ -2056,7 +2056,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 509,
+            "line": 511,
             "statement": "return 200, {'deleted': True}"
           }
         ]
@@ -2085,7 +2085,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 286,
+            "line": 288,
             "statement": "return 200, {'accounts': self.auth.list_accounts(), 'required': self.auth.accounts_required}"
           }
         ]
@@ -2114,7 +2114,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 286,
+            "line": 288,
             "statement": "return 200, {'accounts': self.auth.list_accounts(), 'required': self.auth.accounts_required}"
           }
         ]
@@ -2143,7 +2143,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 290,
+            "line": 292,
             "statement": "return 201, result"
           }
         ]
@@ -2172,7 +2172,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 294,
+            "line": 296,
             "statement": "return 200, result"
           }
         ]
@@ -2201,7 +2201,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 299,
+            "line": 301,
             "statement": "return 200, result"
           }
         ]
@@ -2231,7 +2231,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 303,
+            "line": 305,
             "statement": "return 200, result"
           }
         ]
@@ -2923,7 +2923,7 @@
           },
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 274,
+            "line": 276,
             "statement": "return 200, Wiki(s, access).route(method, parts[2], parts[3], body, query)"
           }
         ]
@@ -2962,7 +2962,7 @@
           },
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 274,
+            "line": 276,
             "statement": "return 200, Wiki(s, access).route(method, parts[2], parts[3], body, query)"
           }
         ]
@@ -3001,7 +3001,7 @@
           },
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 274,
+            "line": 276,
             "statement": "return 200, Wiki(s, access).route(method, parts[2], parts[3], body, query)"
           }
         ]
@@ -3040,7 +3040,7 @@
           },
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 274,
+            "line": 276,
             "statement": "return 200, Wiki(s, access).route(method, parts[2], parts[3], body, query)"
           }
         ]
@@ -3079,7 +3079,7 @@
           },
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 274,
+            "line": 276,
             "statement": "return 200, Wiki(s, access).route(method, parts[2], parts[3], body, query)"
           }
         ]
@@ -3118,7 +3118,7 @@
           },
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 274,
+            "line": 276,
             "statement": "return 200, Wiki(s, access).route(method, parts[2], parts[3], body, query)"
           }
         ]
@@ -3157,7 +3157,7 @@
           },
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 274,
+            "line": 276,
             "statement": "return 200, Wiki(s, access).route(method, parts[2], parts[3], body, query)"
           }
         ]
@@ -3192,7 +3192,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 280,
+            "line": 282,
             "statement": "return 200, Inbox(s, access).get(query)"
           },
           {
@@ -3232,7 +3232,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 280,
+            "line": 282,
             "statement": "return 200, Inbox(s, access).get(query)"
           },
           {
@@ -3272,7 +3272,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 284,
+            "line": 286,
             "statement": "return 200, Inbox(s, access).patch(parts[2], body)"
           },
           {
@@ -6343,7 +6343,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 882,
+            "line": 884,
             "statement": "self.send_bytes(200, target.read_bytes(), mimetypes.guess_type(str(target))[0] or \"application/octet-stream\")"
           }
         ]
@@ -6372,7 +6372,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 882,
+            "line": 884,
             "statement": "self.send_bytes(200, target.read_bytes(), mimetypes.guess_type(str(target))[0] or \"application/octet-stream\")"
           }
         ]
@@ -6401,7 +6401,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 882,
+            "line": 884,
             "statement": "self.send_bytes(200, target.read_bytes(), mimetypes.guess_type(str(target))[0] or \"application/octet-stream\")"
           }
         ]
@@ -6431,7 +6431,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 882,
+            "line": 884,
             "statement": "self.send_bytes(200, target.read_bytes(), mimetypes.guess_type(str(target))[0] or \"application/octet-stream\")"
           }
         ]
@@ -6461,7 +6461,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 367,
+            "line": 369,
             "statement": "return 200, result"
           }
         ]
@@ -6490,7 +6490,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 367,
+            "line": 369,
             "statement": "return 200, result"
           }
         ]
@@ -6519,7 +6519,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 277,
+            "line": 279,
             "statement": "return 200, VerifiedPages(s, access).get(query)"
           }
         ]
@@ -6552,7 +6552,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 277,
+            "line": 279,
             "statement": "return 200, VerifiedPages(s, access).get(query)"
           }
         ]
@@ -6585,12 +6585,12 @@
         "evidence": [
           {
             "source": "fountain/admin_roles.py:AdminAuthority.route",
-            "line": 216,
+            "line": 217,
             "statement": "return {'actions': self.actions(), 'can_manage_roles': self._owner()}"
           },
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 271,
+            "line": 273,
             "statement": "return (201 if method == 'POST' and path == '/api/admin/roles' else 200), payload"
           }
         ]
@@ -6625,12 +6625,12 @@
         "evidence": [
           {
             "source": "fountain/admin_roles.py:AdminAuthority.route",
-            "line": 216,
+            "line": 217,
             "statement": "return {'actions': self.actions(), 'can_manage_roles': self._owner()}"
           },
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 271,
+            "line": 273,
             "statement": "return (201 if method == 'POST' and path == '/api/admin/roles' else 200), payload"
           }
         ]
@@ -6665,12 +6665,12 @@
         "evidence": [
           {
             "source": "fountain/admin_roles.py:AdminAuthority.route",
-            "line": 226,
+            "line": 227,
             "statement": "return self.overview()"
           },
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 271,
+            "line": 273,
             "statement": "return (201 if method == 'POST' and path == '/api/admin/roles' else 200), payload"
           }
         ]
@@ -6705,12 +6705,12 @@
         "evidence": [
           {
             "source": "fountain/admin_roles.py:AdminAuthority.route",
-            "line": 226,
+            "line": 227,
             "statement": "return self.overview()"
           },
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 271,
+            "line": 273,
             "statement": "return (201 if method == 'POST' and path == '/api/admin/roles' else 200), payload"
           }
         ]
@@ -6745,12 +6745,12 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 271,
+            "line": 273,
             "statement": "return (201 if method == 'POST' and path == '/api/admin/roles' else 200), payload"
           },
           {
             "source": "fountain/admin_roles.py:AdminAuthority.route",
-            "line": 288,
+            "line": 289,
             "statement": "return result"
           }
         ]
@@ -6785,12 +6785,12 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 271,
+            "line": 273,
             "statement": "return (201 if method == 'POST' and path == '/api/admin/roles' else 200), payload"
           },
           {
             "source": "fountain/admin_roles.py:AdminAuthority.route",
-            "line": 288,
+            "line": 289,
             "statement": "return result"
           }
         ]
@@ -6825,12 +6825,12 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 271,
+            "line": 273,
             "statement": "return (201 if method == 'POST' and path == '/api/admin/roles' else 200), payload"
           },
           {
             "source": "fountain/admin_roles.py:AdminAuthority.route",
-            "line": 288,
+            "line": 289,
             "statement": "return result"
           }
         ]
@@ -6865,12 +6865,12 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 271,
+            "line": 273,
             "statement": "return (201 if method == 'POST' and path == '/api/admin/roles' else 200), payload"
           },
           {
             "source": "fountain/admin_roles.py:AdminAuthority.route",
-            "line": 288,
+            "line": 289,
             "statement": "return result"
           }
         ]
@@ -6905,7 +6905,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 264,
+            "line": 265,
             "statement": "return 200, service.search(query)"
           }
         ]
@@ -6939,7 +6939,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 264,
+            "line": 265,
             "statement": "return 200, service.search(query)"
           }
         ]
@@ -7041,7 +7041,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 263,
+            "line": 264,
             "statement": "return 200, CSVDownload('fountain-admin-content.csv', service.csv(search_query), access.principal.get('_content_session_binding'), service.state['revision'], formats[0]=='frames')"
           }
         ]
@@ -7075,7 +7075,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 263,
+            "line": 264,
             "statement": "return 200, CSVDownload('fountain-admin-content.csv', service.csv(search_query), access.principal.get('_content_session_binding'), service.state['revision'], formats[0]=='frames')"
           }
         ]
@@ -7177,7 +7177,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 257,
+            "line": 258,
             "statement": "return 200, service.options(query)"
           }
         ]
@@ -7211,7 +7211,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 257,
+            "line": 258,
             "statement": "return 200, service.options(query)"
           }
         ]
@@ -7245,7 +7245,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 267,
+            "line": 269,
             "statement": "return 200, service.change(body, unpublish=path.endswith('/unpublish'))"
           }
         ]
@@ -7279,7 +7279,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 267,
+            "line": 269,
             "statement": "return 200, service.change(body, unpublish=path.endswith('/unpublish'))"
           }
         ]
@@ -7294,6 +7294,108 @@
         ]
       },
       "notes": "Exact literal path only; read endpoints normalize HEAD to GET at the real HTTP handler. Current content capability gates apply independently of ordinary page/database ACL. Search/access/options use bounded metadata and session-bound cursors; permissions review and mutations require their own action gates/review revision. CSV export has an explicit export gate and separate generic CSV transport. Mutation endpoints accept POST without query parameters. Other verbs and trailing/extra/unknown path aliases are rejected. This source/staged-contract inventory does not prove production or original-product parity."
+    },
+    {
+      "id": "GET /api/admin/content/restore",
+      "method": "GET",
+      "path": "/api/admin/content/restore",
+      "probe": "/api/admin/content/restore",
+      "kind": "canonical",
+      "auth": "session",
+      "public": false,
+      "handler": "Application._dispatch inline content routing → AdminContent.permissions(restore=True)",
+      "domain": "admin",
+      "module": "fountain/admin_content.py",
+      "source": {
+        "functions": [
+          "fountain/server.py:Application._dispatch"
+        ],
+        "evidence": [
+          {
+            "source": "fountain/server.py:Application._dispatch",
+            "line": 257,
+            "statement": "return 200, service.permissions(query,restore=True)"
+          }
+        ]
+      },
+      "cloud": {
+        "status": "staged-contract",
+        "productionParityVerified": false,
+        "evidence": [
+          "tests/test_admin_trash_restore.py",
+          "supabase/tests/admin-trash-restore.mjs",
+          "supabase/tests/admin-trash-restore-component.sql"
+        ]
+      },
+      "notes": "Exact GET/HEAD sharing-only review or POST restore of an existing trashed page. Explicit content.restore.manage plus content.search.read; strict opaque query/body fields, review CAS, private selected-page owner change, all selected-page sites off, existing creator/editor/CRDT preservation. Retained vault, purge and legal hold behavior remain separate unimplemented requirements. Live production verification is recorded separately."
+    },
+    {
+      "id": "HEAD /api/admin/content/restore",
+      "method": "HEAD",
+      "path": "/api/admin/content/restore",
+      "probe": "/api/admin/content/restore",
+      "kind": "canonical",
+      "auth": "session",
+      "public": false,
+      "handler": "Application._dispatch inline content routing → AdminContent.permissions(restore=True)",
+      "domain": "admin",
+      "module": "fountain/admin_content.py",
+      "source": {
+        "functions": [
+          "fountain/server.py:Application._dispatch"
+        ],
+        "evidence": [
+          {
+            "source": "fountain/server.py:Application._dispatch",
+            "line": 257,
+            "statement": "return 200, service.permissions(query,restore=True)"
+          }
+        ]
+      },
+      "cloud": {
+        "status": "staged-contract",
+        "productionParityVerified": false,
+        "evidence": [
+          "tests/test_admin_trash_restore.py",
+          "supabase/tests/admin-trash-restore.mjs",
+          "supabase/tests/admin-trash-restore-component.sql"
+        ]
+      },
+      "notes": "Exact GET/HEAD sharing-only review or POST restore of an existing trashed page. Explicit content.restore.manage plus content.search.read; strict opaque query/body fields, review CAS, private selected-page owner change, all selected-page sites off, existing creator/editor/CRDT preservation. Retained vault, purge and legal hold behavior remain separate unimplemented requirements. Live production verification is recorded separately."
+    },
+    {
+      "id": "POST /api/admin/content/restore",
+      "method": "POST",
+      "path": "/api/admin/content/restore",
+      "probe": "/api/admin/content/restore",
+      "kind": "canonical",
+      "auth": "session",
+      "public": false,
+      "handler": "Application._dispatch inline content routing → AdminContent.restore",
+      "domain": "admin",
+      "module": "fountain/admin_content.py",
+      "source": {
+        "functions": [
+          "fountain/server.py:Application._dispatch"
+        ],
+        "evidence": [
+          {
+            "source": "fountain/server.py:Application._dispatch",
+            "line": 268,
+            "statement": "return 200, service.restore(body)"
+          }
+        ]
+      },
+      "cloud": {
+        "status": "staged-contract",
+        "productionParityVerified": false,
+        "evidence": [
+          "tests/test_admin_trash_restore.py",
+          "supabase/tests/admin-trash-restore.mjs",
+          "supabase/tests/admin-trash-restore-component.sql"
+        ]
+      },
+      "notes": "Exact GET/HEAD sharing-only review or POST restore of an existing trashed page. Explicit content.restore.manage plus content.search.read; strict opaque query/body fields, review CAS, private selected-page owner change, all selected-page sites off, existing creator/editor/CRDT preservation. Retained vault, purge and legal hold behavior remain separate unimplemented requirements. Live production verification is recorded separately."
     }
   ],
   "staticExcludedPrefixes": [
@@ -7353,7 +7455,7 @@
     "supabase/functions/_shared/backend.ts": "9cb2c86f26bdcab840f9d215191dc4c956ac2ff7d3b91d5a39e7e9f79844736d",
     "supabase/functions/_shared/application.ts": "4158953003f6afde2ec84b390faf97a3333d9ddb45086a735b151ee0ed09981c",
     "supabase/functions/fountain-api/index.ts": "a0cdab7c410766064118e2e754dc30e4647c280d65fa02830d856613e3f33894",
-    "supabase/functions/fountain-api/deployment.ts": "9433b0ee859250bb37835b4066b7511ee9acf1535ec962f80ca8e8182ba917a5"
+    "supabase/functions/fountain-api/deployment.ts": "587b14fd375589e6309b42bdb32bc7ec99adff18c55bbd5b51cba4fb376e343e"
   },
   "foundationEvidence": {
     "qaChecks": 14,

@@ -206,10 +206,10 @@ admin_paths=[{'path':path,'method':method,'evidence':probe('fountain/server.py:A
   '/api/admin/unknown','/api/admin/roles//sample-role','/api//admin/roles','//api/admin/roles']
  for method in ['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']]
 content_paths=[{'path':path,'method':method,'evidence':probe('fountain/server.py:Application._dispatch',method,path)}
- for path in ['/api/admin/content','/api/admin/content/access','/api/admin/content/export','/api/admin/content/permissions','/api/admin/content/options','/api/admin/content/unpublish',
+ for path in ['/api/admin/content','/api/admin/content/access','/api/admin/content/export','/api/admin/content/permissions','/api/admin/content/options','/api/admin/content/unpublish','/api/admin/content/restore',
   '/api/admin/content/','/api/admin/content/extra','/api/admin/content/access/','/api/admin/content/access/extra',
   '/api/admin/content/export/','/api/admin/content/export/extra','/api/admin/content/permissions/','/api/admin/content/permissions/extra',
-  '/api/admin/content/options/','/api/admin/content/options/extra','/api/admin/content/unpublish/','/api/admin/content/unpublish/extra',
+  '/api/admin/content/options/','/api/admin/content/options/extra','/api/admin/content/unpublish/','/api/admin/content/unpublish/extra','/api/admin/content/restore/','/api/admin/content/restore/extra',
   '/api/admin/content/unknown','/api/admin/content//access','/api//admin/content','//api/admin/content']
  for method in ['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']]
 membership_paths=[{'path':path,'method':method,'role':role,'acceptedBySyntaxGuard':membership_gate(normalized_method(method),path),
@@ -311,7 +311,7 @@ for(const row of parsed.adminPaths){
 const contentMethods=new Map([
  ['/api/admin/content',['GET','HEAD']],['/api/admin/content/access',['GET','HEAD']],
  ['/api/admin/content/export',['GET','HEAD']],['/api/admin/content/permissions',['GET','HEAD','POST']],
- ['/api/admin/content/options',['GET','HEAD']],['/api/admin/content/unpublish',['POST']]
+ ['/api/admin/content/options',['GET','HEAD']],['/api/admin/content/unpublish',['POST']],['/api/admin/content/restore',['GET','HEAD','POST']]
 ]);
 for(const row of parsed.contentPaths){
  const recognized=row.evidence.some(entry=>!nonRoutes.has(site(entry)));

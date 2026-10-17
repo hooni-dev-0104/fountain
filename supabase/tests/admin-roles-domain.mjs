@@ -17,7 +17,7 @@ const copy = structuredClone;
 const key = (kind, id) => JSON.stringify([kind, id]);
 const hash = value => createHash('sha256').update(value).digest('hex');
 const legacyActions = ['audit.read', 'analytics.read', 'members.read', 'members.manage', 'groups.read', 'groups.membership.manage'];
-const contentActions = ['content.search.read', 'content.search.export', 'content.permissions.manage', 'content.publish.manage'];
+const contentActions = ['content.search.read', 'content.search.export', 'content.permissions.manage', 'content.publish.manage', 'content.restore.manage'];
 const actions = [...legacyActions, ...contentActions];
 
 class MemoryProviderRPC {

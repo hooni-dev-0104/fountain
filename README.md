@@ -26,7 +26,7 @@ node --check static/app.js
 
 목표 플랫폼은 웹·macOS·Windows·iOS·Android이며 같은 계정의 기기들은 하나의 원본 서버와 동기화합니다. macOS arm64 설치 앱에서는 Supabase 직접 연결과 별도 QA 공간의 실제 로그인·문서 편집·두 앱 사이 동기화·첨부 전송을 확인했습니다. Windows x64 portable 폴더는 생성·파일 검사를 통과했으나 Windows 실행은 미검증입니다. iOS·Android는 SDK 빌드와 운영 API의 익명 요청 검사, 별도 QA 공간의 실제 UI 로그인·문서 편집·Android→iOS→Android 변경 읽기를 통과했습니다. 동시 편집과 다섯 플랫폼 전체 전파는 남아 있습니다. 실행·패키징은 [데스크톱 안내](apps/desktop/README.md), SDK 검증 범위는 [모바일 안내](apps/mobile/README.md), 공통 계정/서버와 무료 저장소 제약은 [플랫폼 설계](docs/PLATFORMS.md)에 있습니다.
 
-모바일 미전송 편집은 현재 앱 캐시에 보관합니다. [SQLite 저장소 개발 상태](docs/NATIVE_OUTBOX.md)에서 기본 비활성 설정과 실기기 검증·이관 조건을 확인할 수 있습니다.
+모바일은 기본 활성화된 SQLite 저장소에 확인된 미전송 편집을 보관합니다. iOS Simulator·Android Emulator에서 별도 활성화 옵션 없이 저장·오프라인 재시작·캐시 제거 뒤 복구를 검증했습니다. [기기 저장과 복구 범위](docs/NATIVE_OUTBOX.md)를 확인하세요.
 
 설치된 Notion Desktop 7.39.0의 번들에서도 SQLite·저장소 마이그레이션·클립보드 연결을 정적으로 조사하고 REA로 분석했습니다. 범위·해시·재현 명령은 [Desktop 조사 기록](docs/research/notion-desktop.md)에 있으며, 계정 데이터와 개인 문서는 읽지 않았습니다.
 

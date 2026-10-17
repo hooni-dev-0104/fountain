@@ -1,16 +1,16 @@
 # 웹·데스크톱·모바일과 공통 계정 설계
 
-2026-10-16 재점검. 목표는 웹, macOS, Windows, iOS, Android에서 같은 계정으로 같은 작업공간을 사용하는 것이다. 가족 구성원은 각각의 계정을 사용하고, 공유한 자료만 서로 볼 수 있어야 한다. 아래의 목표 구조와 현재 실행 가능한 구현을 구분한다.
+2026-10-17 재점검. 목표는 웹, macOS, Windows, iOS, Android에서 같은 계정으로 같은 작업공간을 사용하는 것이다. 가족 구성원은 각각의 계정을 사용하고, 공유한 자료만 서로 볼 수 있어야 한다. Supabase 백엔드와 설치 앱의 연결은 구현됐지만 원본 소유자 연결·공개 웹 호스팅·전체 다섯 플랫폼 검증까지 끝난 상태는 아니다.
 
 ## 현재 확인한 상태
 
 | 항목 | 확인한 구현 | 아직 필요한 작업 |
 | --- | --- | --- |
-| 웹 | Python HTTP/선택 HTTPS 서버, SQLite 또는 선택 PostgreSQL 원본 DB, 웹 편집기, 개별 계정·권한, 문서 공동 편집·오프라인 보관 | 인증서 운영·상시 접속 가능한 서버 배포 |
-| macOS·Windows | Electron 44.8.0, 서버별 저장소, macOS arm64 실제 앱 실행·로그인/문서/SSE·재시작, Windows x64 portable 생성 | Windows OS 실행, 서명·업데이트·설치 프로그램 |
-| iOS·Android | Capacitor 8.5.3, 실제 iOS Simulator/Android Debug 빌드, 격리 SDK 검사와 mock bridge+실제 HTTP/Chrome 검증 | 물리 기기·실제 보안 저장소 장애·전체 TLS/파일 흐름·키보드·중단/복귀·영구 outbox·배포 검증 |
-| 기기 간 동기화 | 같은 서버를 사용하는 브라우저들은 같은 원본 DB를 읽고 문서 편집을 병합 | 네이티브 전송·인증 연결과 다섯 플랫폼 간 검증 |
-| Supabase | 서울 원본 DB·강제 RLS·최소 권한·TLS, 공유 파일 저장소, 기존 자료/계정 이관, 실제 5GB 저장소·SQLite 백업 복원 검증 | 상시 HTTPS 서버 운영·Supabase Auth 연결·대용량 전체 HTTP 전송 성능 |
+| 웹 | 공통 편집기·계정·권한·공동 편집·오프라인 캐시, 공개 자산과 같은 출처 전달 경로의 배포물 | 무료 호스트 확인·실제 HTTPS 호스팅·호스트를 통한 쿠키/SSE/Range 검증 |
+| macOS·Windows | Electron 44.8.0, 번들 UI와 비공개 세션의 Supabase 직접 연결, macOS arm64 실제 로그인·편집·두 프로필 동기화·첨부, Windows x64 portable 생성·검사 | Windows OS 실행, 릴리스 서명·설치·업데이트 |
+| iOS·Android | Capacitor 8.5.3, 비공개 네이티브 HTTPS·Keychain/Keystore, 기본 활성 SQLite outbox, 실제 Simulator/Emulator 5단계 실행 | 물리 기기·전원 차단·장시간 대용량 사용·릴리스 배포 |
+| 기기 간 동기화 | 별도 QA 공간에서 브라우저 두 세션·macOS 두 프로필과 Android→iOS→Android 순차 편집 확인 | 실제 가족 계정과 다섯 플랫폼 전체 전파·동시 편집 |
+| Supabase | Edge Functions·Auth·Postgres·비공개 Storage·Realtime·Cron의 구현과 격리된 실제 클라우드 검증 | 원본 소유자 연결·운영 전환·원본 예약/정리 등록·실제 AI 공급자 연결 |
 
 승인한 Electron/Capacitor 버전을 고정하고 두 데스크톱 패키지와 iOS/Android 프로젝트를 생성했다. [데스크톱 실행·검증](../apps/desktop/README.md)과 [모바일 실행·한계](../apps/mobile/README.md)를 구분한다. 모바일 크기의 Chrome 테스트는 네이티브 앱 검증을 대신하지 않는다. `localhost:8787`은 접속하는 기기 자신을 가리키므로 휴대폰에서 같은 주소를 여는 것만으로 PC 데이터에 연결되지는 않는다.
 
@@ -28,18 +28,21 @@
 
 ```mermaid
 flowchart TD
-  W[웹 브라우저] --> API[공통 HTTPS API · 권한 검사 · 병합]
+  W[웹 브라우저] --> HOST[공개 웹 호스트 · 같은 출처 전달]
+  HOST --> API[Supabase Edge API · 권한 검사 · 병합]
   D[macOS · Windows / Electron] --> API
   M[iOS · Android / Capacitor] --> API
   W --- WC[기기별 캐시 · 미전송 변경]
   D --- DC[기기별 캐시 · 미전송 변경]
-  M --- MC[네이티브 영구 캐시 · 미전송 변경]
-  API --> AUTH[공통 계정 / Supabase Auth 후보]
-  API --> DB[공통 원본 DB / SQLite 또는 Supabase Postgres]
-  API --> FILES[첨부 저장소]
+  M --- MC[네이티브 SQLite · 확인된 미전송 변경]
+  API --> AUTH[Supabase Auth · 비공개 세션 Vault]
+  API --> DB[Supabase Postgres 공통 원본]
+  API --> FILES[비공개 Supabase Storage]
+  CRON[Supabase Cron · 고정 worker] --> DB
+  RT[Realtime 변경 알림] --> API
 ```
 
-Electron과 Capacitor를 승인받아 프로젝트 전용 의존성으로 설치했다. 데스크톱은 같은 서버의 화면을 직접 열고, 모바일은 로컬 번들과 자체 native 전송을 연결하는 방식으로 구현 중이다. [Capacitor v8 공식 문서](https://capacitorjs.com/docs)는 웹 화면을 iOS·Android 네이티브 컨테이너에 통합하고 필요한 네이티브 API를 연결하는 방식을 제공한다. 공통 편집기를 재사용하면서 모바일에서 저장소·파일·공유·인증 기능을 단계적으로 연결하는 데 적합하다고 판단했다. 네이티브 성능과 접근성은 실제 기기에서 별도로 확인한다.
+Electron과 Capacitor는 승인받은 프로젝트 전용 의존성을 사용한다. 데스크톱과 모바일은 공개 UI를 번들에 담고 별도의 비공개 전송 계층으로 공통 API에 연결한다. 모바일은 정확한 기본 Supabase 프로젝트 origin에서만 네이티브 내부의 고정 함수 접두사를 사용한다. 주소 입력은 순수 HTTPS origin이며 임의 함수 URL·헤더·리디렉션이나 TLS 예외를 허용하지 않는다. [Capacitor v8 공식 문서](https://capacitorjs.com/docs)의 컨테이너 구조를 사용하며 성능·접근성은 물리 기기에서 추가 확인해야 한다.
 
 모든 클라이언트는 같은 서버 주소와 작업공간 ID를 사용한다. 각 앱에 독립 Python 서버와 새 원본 SQLite DB를 기본으로 넣으면 데이터가 갈라지므로 이 방식으로 기기 간 동기화를 구현하지 않는다. 로컬 서버를 운영하는 경우에도 가족이 연결하는 서버는 하나다.
 
@@ -49,19 +52,19 @@ Electron과 Capacitor를 승인받아 프로젝트 전용 의존성으로 설치
 
 ## Supabase 도입 경계
 
-승인받은 무료 조직에 Fountain 프로젝트를 서울 리전으로 생성하고 현재 미리보기의 원본을 PostgreSQL로 전환했다. 기존 SQLite·백업·계정·작업공간 ID·로그인 binding을 보존하며 첨부 청크는 공유 디스크에 저장한다. Supabase Auth는 아직 후보 단계이며 현재는 Fountain 개별 계정을 사용한다. 선택 설치·실행·권한·이관 검증은 [Supabase 안내](SUPABASE.md)에 기록했다.
+승인받은 무료 조직의 서울 프로젝트에 기존 자료를 PostgreSQL로 이관했다. `localhost:8787`은 기존 Python 호환 미리보기로 보존하며 SQLite 원본·백업·기존 계정과 binding도 남긴다. 이 호환 경로의 POSIX 첨부 디렉터리와 별도로, 새 클라우드 경로는 Supabase Auth·Edge·Postgres·Storage를 사용한다. 최종 운영에 Python 프로세스나 항상 켜진 개발자 Mac을 요구하지 않는다. [현재 백엔드와 운영 전환 범위](supabase-backend.md), [보존한 호환 실행](SUPABASE.md)을 구분한다.
 
 | 구성 | 도입 시 역할 | 보존해야 할 동작 |
 | --- | --- | --- |
 | Auth | 모든 플랫폼의 사용자 식별·세션 | 사용자 ID와 기존 가족 멤버 매핑, 계정 철회·기기별 로그아웃 |
 | Postgres | 문서·DB·권한·동기화 기록의 공통 원본 | 작업별 원자적 변경, 중복 방지, 스냅샷 revision, 숨긴 관계 보존 |
 | Realtime | 권한 있는 클라이언트에 변경 알림 | 알림을 받은 뒤 현재 권한으로 원본 재조회, 누락·재접속 복구 |
-| Storage 또는 별도 저장소 | 첨부 바이트 | 접근 권한, 이어 올리기, 해시, 백업·복원, 파일 크기 한도 |
-| 앱 서버 | 기존 도메인 API·CRDT·자동화·AI 실행 | 상시 HTTPS 운영, 서버 측 비밀 관리·감사 기록 |
+| 비공개 Storage | 첨부·백업 바이트 | 접근 권한, 이어 올리기, 해시, 백업·복원, 용량 예약과 물리 정리 |
+| Edge API·worker | 도메인 API·CRDT·예약 실행·AI 연결 | 현재 권한 재검사, 서버 측 비밀 관리·감사 기록, 짧은 실행 단위와 재시도 |
 
-Realtime 자체가 오프라인 변경 병합·충돌 처리·영구 작업 큐를 제공한다고 가정하지 않는다. 원본 JSON이나 비공개 문서 본문을 전체 작업공간에 무조건 방송하지 않는다. 앱 서버의 배포도 별도 작업이며 Supabase DB를 만든다고 현재 Python 서비스가 자동으로 호스팅되지는 않는다.
+Realtime은 재조회를 깨우는 변경 알림이며 오프라인 병합·충돌 처리·영구 작업 큐 자체가 아니다. 원본 JSON이나 비공개 문서 본문을 전체 작업공간에 방송하지 않는다. 공개 웹 호스트는 UI와 얇은 전달 경로만 제공하며 업무 데이터·service key·Python 서버를 넣지 않는다.
 
-Auth 연결에는 검증된 토큰의 사용자 ID를 사용하고, 사용자가 수정할 수 있는 `user_metadata`를 권한의 근거로 사용하지 않는다. 노출하는 테이블은 RLS로 보호하고 사용자·작업공간·문서 권한을 일관되게 적용한다. 서버 전용 secret/service-role 키는 웹·Electron renderer·모바일 번들에 넣지 않는다. 네이티브 OAuth를 도입하면 [딥 링크](https://supabase.com/docs/guides/auth/native-mobile-deep-linking)와 [PKCE](https://supabase.com/docs/guides/auth/sessions/pkce-flow), OS 보안 저장소와 세션 갱신을 함께 설계한다. 기존 세션/권한 철회 정책도 유지한다.
+Auth 사용자 UUID는 신뢰된 연결 절차로 기존 멤버 ID·role·ACL에 매핑한다. 가입 순서·이메일·사용자가 수정하는 `user_metadata`로 owner를 만들지 않는다. 현재 Store RPC는 신뢰된 서버의 권한 검사이며 최종 사용자별 RLS라고 설명하지 않는다. private 테이블 직접 접근은 차단하고 모든 요청에서 현재 작업공간·멤버·문서 권한을 확인한다. JWT·refresh token·secret/service-role 키는 웹·Electron renderer·모바일 번들에 넣지 않는다. 외부 IdP·SAML 연결은 아직 남아 있다.
 
 Supabase의 [로그아웃 기본 scope는 global](https://supabase.com/docs/guides/auth/signout)이므로 기기별 로그아웃에는 `local`을 명시한다. 이미 발행한 access JWT는 만료 전까지 유효할 수 있다. 즉시 철회가 필요한 API는 서명·만료 검증에 더해 현재 세션의 유효성을 확인해야 한다. 공식 [세션 검증 안내](https://supabase.com/docs/guides/auth/sessions#how-to-ensure-an-access-token-jwt-cannot-be-used-after-a-user-signs-out)를 따른다. 로컬 cache binding은 주기적으로 갱신되는 access JWT 문자열 대신 안정적인 세션 식별자에 연결한다.
 
@@ -73,15 +76,15 @@ Postgres 어댑터는 실제 트랜잭션·SAVEPOINT·작업공간 잠금으로 
 
 2026-10-16 [Supabase 가격표](https://supabase.com/pricing)에서 확인한 Free 기준은 DB 500MB, 파일 저장소 1GB, 일반 egress 5GB와 cached egress 5GB다. 비활성 프로젝트는 일주일 후 일시 정지될 수 있다. [Storage 한도 문서](https://supabase.com/docs/guides/storage/uploads/file-limits)의 무료 플랜 파일당 최대치는 50MB다. 이후 변경될 수 있으므로 실제 프로젝트 연결 때 다시 확인한다.
 
-현재 앱의 파일당 5GB 지원을 Supabase Free Storage에 그대로 옮길 수 없다. 현재는 큰 첨부의 바이트를 서버 디스크에 보관하고 DB에는 해시 manifest만 둔다. 이 저장소의 실제 5GB 전체 읽기·범위 다운로드·백업 복원을 검증했으며 전체 HTTP 5GB 전송 성능은 별도 측정 대상이다. 무료 DB의 용량에는 문서 이력·동기화 기록 증가도 고려해야 한다. 앱 안의 기능에 결제 제한을 넣지 않는 것과 호스팅·저장소·네트워크·AI 공급자의 비용은 별개다. 무료 인프라에서 무제한 용량과 상시 가용성을 보장하지 않는다.
+Python 호환 저장소의 실제 5GB 읽기·범위 다운로드·백업 복원은 Supabase의 5GB 전송 증거가 아니다. 클라우드 첨부는 작은 Storage 객체와 manifest로 나누지만 총 저장량·전송량·실행 한도는 그대로 적용된다. 실제 클라우드의 9MiB+123바이트 첨부와 분할 백업 검증 범위는 [백엔드 안내](supabase-backend.md)를 따른다. 무료 DB에는 문서 이력·동기화 기록 증가도 고려해야 한다. 앱 안에 플랜 제한을 넣지 않는 것과 호스팅·저장소·네트워크·AI 공급자의 비용은 별개이며 무제한 용량·상시 가용성을 보장하지 않는다.
 
-## 실제 앱으로 연결하기 전에 필요한 작업
+## 운영 전환과 배포에 남은 작업
 
-1. 공통 서버 주소, 안정적인 사용자/작업공간 식별, 재시도 가능한 동기화 계약을 사용한다. 웹 화면의 문서·DB 행·새 페이지·메타데이터 편집은 기기별 캐시와 작업 큐에 연결했다. 네이티브 저장소·전송 어댑터도 같은 계약을 유지해야 한다.
-2. `fetch`·EventSource·업로드 XHR·다운로드·공개/공유 링크를 `static/transport.js`로 모았다. 브라우저·Electron은 같은 출처 연결을 유지한다. 모바일은 자체 plugin에서 비공개 Cookie를 주입하고 Set-Cookie를 제거하며, 기존 서버의 Origin·인증 규칙을 완화하지 않는다. Android 전용 AVD에서는 실제 native HTTPS·보안 쿠키의 프로세스 재시작·로그아웃·OS 파일 저장을 검증했다. iOS는 실제 Swift/SQLite·WebView 검사까지 확인했으며 원격 HTTPS와 OS 파일 저장 완료는 남아 있다. 로그인 쿠키는 `HttpOnly; SameSite=Strict`이고 직접 HTTPS에서는 `Secure`도 설정한다. 서버 URL만 바꾸면 네이티브 로그인·실시간 연결이 완성되지 않는다. 네이티브 인증 전송과 세션 철회를 검증해야 한다. 허용 Origin을 무조건 풀어 해결하지 않는다.
-3. `--tls-cert`·`--tls-key`로 직접 TLS 1.2 이상의 HTTPS를 제공할 수 있다. 인증서 발급·갱신과 공통 서버의 상시 운영 배포는 남아 있다. 실제 소켓의 HTTP/HTTPS에 맞는 Origin만 허용하며 forwarded 헤더로 이 검사를 바꾸지 않는다. 현재 Supabase 이관과 원본 보존을 검증했으며 로그인은 기존 Fountain 계정을 사용한다.
-4. 생성한 iOS/Android 프로젝트를 SDK로 빌드하고 영구 캐시·Keychain/Keystore·앱 중단·복귀·파일 선택·공유를 각각 검증한다. 현재 native bundle의 IndexedDB 오프라인 흐름은 mock 검증이며 OS 퇴거에도 버티는 영구 outbox를 보장하지 않는다.
-5. macOS arm64·Windows x64 standalone 결과를 보존하고 Windows 실행 및 모바일 SDK 빌드를 검증한다. 사용자가 Xcode·Android Studio 설정을 마쳤고 기존 SDK로 iOS Simulator·Android Debug 빌드를 확인했다. 배포 서명·설치 프로그램·업데이트·상시 배포는 남아 있으며 실제 기기 배포에는 사용자 계정과 서명 설정이 필요하다.
+1. 원본을 백업한 뒤 실제 소유자가 비공개 UI에서 계정을 연결하고 가족 계정을 구성한다. 기존 멤버·권한·문서·첨부를 보존하며 관리용 Supabase 로그인만으로 앱 소유자를 추정하지 않는다.
+2. 무료 사용 조건을 확인한 공개 HTTPS 웹 호스트를 연결한다. 정확한 origin만 허용하고 실제 쿠키·로그아웃·SSE·Range·업로드·공개 페이지 로그인 복귀를 그 주소에서 검증한다. 복사할 문서 링크도 검증된 공개 웹 주소를 사용해야 한다.
+3. 원본의 자동화 설정을 검토한 뒤 예약 실행·첨부/백업 정리를 해당 작업공간에 등록한다. 실제 AI 공급자도 별도로 설정·검증해야 하며 개인 구독이나 유료 API를 자동 전환하지 않는다.
+4. Windows OS 실행과 물리 모바일 기기의 키보드·파일·공유·중단/복귀·저장 실패를 검증한다. 서명·설치 프로그램·업데이트·스토어 배포는 별도이며 실제 배포에는 사용자 계정과 서명 설정이 필요할 수 있다.
+5. 같은 실제 계정으로 다섯 플랫폼 전체 전파·동시 편집·오프라인 재접속·권한 철회·늦은 응답 차단을 확인한다. 기존 8787 호환 경로와 원본·백업은 복구 경로로 보존한다.
 
 완료 기준은 다섯 플랫폼에서 같은 계정으로 로그인하고, 문서·DB·댓글·공유 설정·첨부의 생성·편집·삭제가 다른 기기에 반영되는 것이다. 이어서 동시 편집, 오프라인 재시작·재접속, 같은 필드 충돌, 권한 철회, 로그아웃 후 늦은 응답, 다른 가족의 비공개 자료 차단까지 확인한다. 설치 가능한 앱과 이 검증이 갖춰지기 전에는 전체 플랫폼 지원 완료로 표시하지 않는다.
 
@@ -93,25 +96,31 @@ Postgres 어댑터는 실제 트랜잭션·SAVEPOINT·작업공간 잠금으로 
 
 `node tests/browser-transport.mjs`는 실제 계정·문서·파일·양식·사이트·백업이 공통 연결 경계를 사용하는지, 외부 URL·경로 순회·리다이렉트를 거절하는지 검사한다. 두 Chrome 컨텍스트의 검증은 웹 공통 기반의 증거이며 macOS·Windows·iOS·Android 앱 빌드나 실기기 검증을 대신하지 않는다.
 
-## 이번 네이티브 검증
+## 네이티브 검증 범위
 
 실제 macOS packaged Electron에서 로그인·문서·독립 Chrome의 수정 수신·IDB/SW·폼/사이트 팝업·재시작·동시 서버 전환 14개를 확인했다. 보안 실행 5개와 정책/전환 단위 8개도 통과했다. Windows는 PE32+ x64·ASAR source 일치·ZIP CRC/해시까지만 검증했다.
 
-모바일은 mock native bridge와 실제 임시 HTTP/Chrome으로 유효 4MiB·16MiB 응답, 4MiB+113바이트 청크, 파일/백업/내보내기, 계정·서버 범위, 실제 Capacitor 오류 형태의 오프라인 재시작/재전송과 저장소 실패 차단을 확인했다. JVM 정책·저장 실패 분기 114개도 통과했다. 이것은 모바일 SDK·실제 TLS·Keychain/Keystore·OS 파일 UI·실기기 다섯 플랫폼 동기화의 증거가 아니다.
+현재 모바일 SQLite outbox는 기본 활성화다. iOS Simulator와 Android Emulator의
+021 실행에서 별도 활성화 override 없이 실제 bridge의 활성 설정을 확인했다.
+각 플랫폼의 5단계는 서로 다른 프로세스에서 로그인·온라인 저장, 오프라인 보관,
+재시작, IndexedDB 제거 뒤 복원, 재접속·전송·로그아웃을 수행했다. 오프라인 두 단계는
+HTTPS 전송 0회였으며 iOS의 저장 표시·별도 native GET 200과 Android의 저장 표시·서버
+재조회도 확인했다. 원본 소유자가 아닌 격리된 실제 Supabase 계정의 검증이다.
+[활성화 검증](research/native-outbox-activation-verification.md) ·
+[증거 목록](research/native-outbox-activation-verification.json)
 
+네이티브 COMMIT이 확인된 현재 계정의 대기 편집과, COMMIT 전 미확인 입력·다른
+로그인의 원문을 보관한 내부 IndexedDB 저널은 보장이 다르다. 뒤의 자료는 IndexedDB
+제거 시 보존을 보장하지 않는다. 앱 삭제·OS 저장소 초기화 역시 로컬 보존 범위가 아니다.
+현재 권한·의존성·명시적 복구 정책은 [모바일 SQLite 저장소](NATIVE_OUTBOX.md),
+읽기 전용 목록·OS 파일 내보내기는 [기기 복구 안내](NATIVE_RECOVERY.md)를 따른다.
 
-SQLite outbox의 기반 코드는 기본 비활성 상태입니다. 정상 모바일 경로는 기존 IDB를 보존하고 앱 캐시로 안내하며, 현재 접근 검증 코드·남은 자료 재조정/승격·기기 검증 조건은 [모바일 저장소 개발 상태](NATIVE_OUTBOX.md)를 따릅니다.
+별도 019/020 네이티브 컴포넌트 검사는 활성 COMMIT 전 SIGKILL과 수락·미수락
+기록의 재시작 처리를 검증했다. 합성 인증을 사용하므로 실제 Auth와 결합한 강제 종료,
+트랜잭션 중 종료, 전원 차단의 증거가 아니다. 021의 5단계 검증과도 구분한다.
 
-이전 네이티브 기록의 읽기 전용 목록·현재 권한 확인·명시적 OS 파일 내보내기는 [기기 복구 안내](NATIVE_RECOVERY.md)를 따른다. 일반 outbox는 계속 비활성이며 자동 승격·재전송은 하지 않는다.
-
-
-2026-10-16 실제 SDK 검증 범위:
-
-| 대상 | 확인한 동작 | 남은 범위 |
-| --- | --- | --- |
-| iOS Simulator | unsigned build·설치·실행, Swift/SQLite 복구·WebView 차단 XCTest 6개 | 원격 HTTPS 로그인·Keychain 실패·OS 저장 완료·물리 기기 |
-| Android API 36 AVD | Debug APK, 실제 WebView→native HTTPS·SQLite 복구, 시스템 저장 취소/완료, 저장 JSON 원문 일치, 보안 쿠키 강제 종료/복원·로그아웃 | 물리 기기·저장 실패/공간 부족·앱 캐시 퇴거·장시간 대용량 전송 |
-
-두 대상 모두 일반 영구 outbox는 기본 비활성 상태다. 테스트 CA는 Android
-Debug 전용이며 릴리스 인증서 검증을 바꾸지 않는다. 기존 사용자 가상 기기와
-생산 데이터는 시험에 사용하지 않았다.
+이전 Chrome/mock bridge·JDK/일반 SQLite 검사와 2026-10-16의 기본 비활성 SDK 검증은
+당시의 범위를 기록한 근거다. 이후의 기본 활성화 결과를 그 과거 검사에 소급하지 않는다.
+현재도 물리 기기·Windows 실행·릴리스 서명·전체 다섯 플랫폼 동기화를 증명하지 않는다.
+Android 테스트 CA는 Debug 전용이며 릴리스 TLS 검증을 바꾸지 않았다. 격리 QA 가상 기기와
+작업공간만 사용하고 생산 데이터와 기존 사용자 기기는 시험에 사용하지 않았다.

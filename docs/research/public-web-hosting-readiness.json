@@ -1,17 +1,20 @@
 {
-  "checkedAt": "2026-10-17T08:06:06.377393+00:00",
-  "state": "prepared; fee information pending, not deployed",
-  "sourceCommit": "790db74d14636787a4cfdc0298514749c9334cd9",
+  "checkedAt": "2026-10-17T11:17:25.272080+00:00",
+  "state": "production deployed; anonymous browser/API boundary verified; owner onboarding pending",
+  "sourceCommit": "d9f9aafa01e732192f6e4a7fa805dfc685299d88",
   "target": {
     "teamId": "team_ZtzXXpuCkVLHkJ4c7RUR2FZr",
     "teamSlug": "hoonis-projects-1ccfd37e",
-    "currentFountainProjectCount": 0,
-    "projectCreated": false,
-    "deploymentCreated": false,
+    "currentFountainProjectCount": 1,
+    "projectCreated": true,
+    "deploymentCreated": true,
     "billingPlanReturnedByMCP": false,
     "billingUI": "Login redirect",
     "billingURL": "https://vercel.com/hoonis-projects-1ccfd37e/~/settings/billing",
-    "feeInformationRequested": true
+    "feeInformationRequested": false,
+    "projectId": "prj_uIK2dOeDyRSOi6Ra6uvVKTv1FZd8",
+    "billingPlan": "Hobby",
+    "billingPlanEvidence": "explicit current user confirmation; no paid upgrade"
   },
   "artifact": {
     "preparedOnly": true,
@@ -116,16 +119,24 @@
     "newDependencies": false,
     "VercelCLIInstalled": false,
     "schemaSupportsCancellation": "boolean defaultfalse confirmed officialschema",
-    "actualVercelRouterValidated": false
+    "actualVercelRouterValidated": true,
+    "actualAnonymousHTTPChecks": 17,
+    "originTests": 8,
+    "entryTests": 2,
+    "fullAuthenticatedVercelJourney": false
   },
   "runtime": {
-    "SupabaseMain": 21,
-    "migrations": 29,
+    "SupabaseMain": 23,
+    "migrations": 34,
     "worker": 4,
     "maintenance": 4,
-    "verifierRetired": 83,
+    "verifierRetired": 91,
     "backendRedeployed": true,
-    "originalPreviewChanged": false
+    "originalPreviewChanged": false,
+    "publicWebOrigin": "https://fountain-hoonis-projects-1ccfd37e.vercel.app",
+    "webOrigins": [
+      "https://fountain-hoonis-projects-1ccfd37e.vercel.app"
+    ]
   },
   "primarySources": [
     "https://vercel.com/docs/functions/functions-api-reference#enable-cancellation",
@@ -134,16 +145,14 @@
     "https://openapi.vercel.sh/vercel.json"
   ],
   "remaining": [
-    "Confirm account-specific free plan before project creation/deployment",
-    "Use only reviewed16fileartifact and assigned exact project/canonicalhostname",
-    "Validate deployed Origin/SecureCookie/privatecache/Range206/4MiBupload/SSEreconnect",
-    "Set exact Supabase webOrigins/publicWebOrigin without changing workspace/setup/data",
-    "Complete actual owner/family onboarding and five-platform whole journey"
+    "Actual owner and family onboarding in the hosted UI",
+    "Authenticated Vercel cookie/session, successful Range206/4MiBupload/SSEreconnect and five-platform whole journey",
+    "Full original paid feature inventory and remaining contracts"
   ],
-  "goal": "active; fee information blocks only external hosting step",
+  "goal": "active; deployment step completed, full replacement goal incomplete",
   "pushed": false,
   "artifactRefreshedAt": "2026-10-17T08:43:43.767250+00:00",
-  "billingEvidenceRefreshed": false,
+  "billingEvidenceRefreshed": true,
   "preparedFiles": {
     "preparedOnly": true,
     "teamId": "team_ZtzXXpuCkVLHkJ4c7RUR2FZr",
@@ -167,5 +176,46 @@
     "sourceHEAD": "790db74d14636787a4cfdc0298514749c9334cd9",
     "artifactRefreshedAt": "2026-10-17T08:43:43.767250+00:00"
   },
-  "backendUpdateScope": "Only admin-role release after isolatedQA; no Vercel project/deployment or webOrigins change"
+  "backendUpdateScope": "Main22 to23 changes only exact verified webOrigins/publicWebOrigin; workspace/setup/data unchanged",
+  "latest_admin_content_preparation": {
+    "source_commit": "d9f9aafa01e732192f6e4a7fa805dfc685299d88",
+    "main": 22,
+    "migration_count": 34,
+    "verifier_retired": 91,
+    "artifact": {
+      "preparedOnly": true,
+      "feeVerified": false,
+      "projectCreated": false,
+      "sourceCommit": "d9f9aafa01e732192f6e4a7fa805dfc685299d88",
+      "files": 16,
+      "rawBytes": 827312,
+      "sha256": "1e3db197caca5958823a0a16793be237900c79625ca5babe8b0efc3607245e2b"
+    },
+    "project_created": false,
+    "deployed": false,
+    "billing_verified": true
+  },
+  "deployment": {
+    "id": "dpl_Co6WTApFreGhXotHDx3b2f6SkiTp",
+    "status": "READY",
+    "target": "production",
+    "canonicalOrigin": "https://fountain-hoonis-projects-1ccfd37e.vercel.app",
+    "projectId": "prj_uIK2dOeDyRSOi6Ra6uvVKTv1FZd8",
+    "files": 16,
+    "rawBytes": 827312,
+    "artifactSHA256": "1e3db197caca5958823a0a16793be237900c79625ca5babe8b0efc3607245e2b",
+    "productionVercelAuthentication": "canonical production domain accessible; preview and immutable deployment URLs protected",
+    "newDependencies": false,
+    "paidResourcesEnabled": false,
+    "automaticGitConnection": false,
+    "actualBrowserLoginRendered": true,
+    "actualHumanOwnerLinked": false,
+    "originalEntities": 153,
+    "originalMeta": 6,
+    "authMappings": 0,
+    "authUsers": 0,
+    "authSessions": 0,
+    "refreshTokens": 0
+  },
+  "historyNote": "artifact/preparedFiles and latest_admin_content_preparation preserve earlier preparation snapshots; deployment and runtime describe the current release"
 }

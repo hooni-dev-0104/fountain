@@ -121,3 +121,5 @@ node supabase/tests/route-inventory.mjs
 운영 전환에는 인벤토리의 모든 지원 기능, 실제 두 사용자·다기기 동기화, 권한 강등/로그아웃 중 진행 요청, CRDT/Undo/동기화 receipt, 첨부와 백업, 공개 게시와 자동화, 실제 설치 앱 검증이 필요하다. 원본 DB·파일·ACL·세션·문서 fingerprint를 비교하고 복구 가능한 이전 경로를 보존한다. 초기 owner 연결이 끝나지 않은 health/Auth 후보 배포를 가족용 완성 앱으로 안내하지 않는다.
 
 참고: [Supabase Edge 제한](https://supabase.com/docs/guides/functions/limits), [Auth 세션](https://supabase.com/docs/guides/auth/sessions), [API 권한](https://supabase.com/docs/guides/api/securing-your-api), [Realtime 권한](https://supabase.com/docs/guides/realtime/authorization).
+
+2026-10-17: [Fountain 공개 웹](https://fountain-hoonis-projects-1ccfd37e.vercel.app)을 사용자가 확인한 Hobby 무료 팀에 배포했습니다. API 23은 이 주소만 `webOrigins`·`publicWebOrigin`에 설정하며 원본 워크스페이스·setup 설정·자료는 유지합니다. 실제 비로그인 HTTP 17건, Secure/HttpOnly/Strict 로그아웃 쿠키, Origin 거절과 로그인 화면을 확인했습니다. 실제 소유자 연결·인증 후 업로드/Range/SSE와 다섯 플랫폼 전체 여정은 남아 있습니다. 비용 제한이나 전체 기능 준비 상태를 검증 완료로 표시하지 않습니다. [최신 호스팅 근거](research/public-web-hosting-readiness.json)의 `deployment`·`runtime`이 위의 과거 상태보다 우선합니다.

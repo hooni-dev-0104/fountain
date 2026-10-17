@@ -2153,6 +2153,55 @@ function renderAdminContentDetail(view,content){const root=$('#admin-content-det
  root.onchange=event=>{if(!adminContentCurrent(view,content)||detail!==content.detail)return;const target=event.target;if(target.name==='default')detail.draft.default=target.value;else if(target.name==='inherit')detail.draft.inherit=target.checked;else if(target.dataset.aclKind){const key=target.dataset.aclKind,id=Object.keys(detail.draft[key])[Number(target.dataset.aclIndex)];if(id)detail.draft[key][id]=target.value;}content.review=null;};const form=$('#admin-content-acl',root);if(form)form.onsubmit=event=>{event.preventDefault();event.stopPropagation();content.review={path:'permissions',body:{operation:'replace_permissions',permissions:structuredClone(detail.draft)},label:'선택한 멤버·그룹·상속 설정으로 직접 공유를 교체합니다.'};renderAdminContentDetail(view,content);};
  root.onclick=event=>{const button=event.target.closest('button');if(!button)return;event.stopPropagation();if(!adminContentCurrent(view,content)||view.busy||detail.loading)return;const run=async()=>{if(button.hasAttribute('data-content-access-more'))return loadAdminContentDetail(view,content,item,true);if(button.hasAttribute('data-content-detail-close')){content.request?.abort();content.detail=null;content.review=null;renderAdminContentDetail(view,content);return;}if(button.hasAttribute('data-content-review-cancel')){content.review=null;renderAdminContentDetail(view,content);return;}if(button.hasAttribute('data-content-confirm'))return applyAdminContentChange(view,content);if(button.hasAttribute('data-content-deny')){const person=detail.items[Number(button.dataset.contentDeny)];content.review={path:'permissions',body:{operation:'revoke_member',member_id:person.id},label:`${person.name||person.email||'선택한 멤버'}의 접근을 명시적으로 거부합니다.`};}else if(button.hasAttribute('data-content-private'))content.review={path:'permissions',body:{operation:'set_private'},label:'직접 멤버·그룹 공유를 모두 제거하고 상속을 끄며 비공개로 전환합니다.'};else if(button.hasAttribute('data-content-unpublish'))content.review={path:'unpublish',body:{},label:item.kind==='page'?'이 페이지에 연결된 모든 활성 사이트의 게시를 중단합니다.':'이 데이터베이스에 연결된 모든 활성 폼의 게시를 중단합니다.'};else if(button.dataset.aclAdd){const key=button.dataset.aclAdd;content.picker={target:key==='members'?'grant-member':'grant-group',kind:key==='members'?'member':'group',q:'',items:[],next:null};return loadAdminContentOptions(view,content);}else if(button.dataset.aclRemove){const key=button.dataset.aclRemove,id=Object.keys(detail.draft[key])[Number(button.dataset.index)];if(key==='groups'&&detail.config?.permissions?.groups?.[id]&&detail.config.permissions.groups[id]!=='none'){content.review={path:'permissions',body:{operation:'remove_group',group_id:id},label:`${detail.labels.groups[id]||'선택한 그룹'}의 직접 공유만 제거합니다. 다른 공유 경로의 접근은 유지될 수 있습니다.`};}else delete detail.draft[key][id];}else return;renderAdminContentDetail(view,content);};void run().catch(error=>adminContentError(view,content,error));};for(const control of $$('button,input,select',root))if(detail.loading||view.busy)control.disabled=true;}
 async function applyAdminContentChange(view,content){const detail=content.detail,review=content.review;if(!detail||!review)return;const request=new AbortController();content.request=request;const generation=++content.generation,current=()=>adminContentCurrent(view,content)&&generation===content.generation;view.busy=true;renderAdminContentDetail(view,content);try{if(!await adminCheck(view,request.signal)||!current())return;const result=await api('/admin/content/'+review.path,{kind:detail.item.kind,id:detail.item.id,review_revision:detail.item.review_revision,...review.body},'POST',{signal:request.signal,current});if(!current()||!await adminCheck(view,request.signal)||!current())return;if(result.applied!==true)throw Error('변경 완료를 확인하지 못했습니다. 새로고침으로 현재 상태를 확인해 주세요.');content.review=null;content.detail=null;view.notice='검토한 관리 변경을 적용했습니다.';view.busy=false;content.cursor=null;content.history=[];await loadAdminConsole(view);}catch(error){if(current())adminContentError(view,content,error);}finally{if(current()){view.busy=false;renderAdminConsole(view);}}}
+// The file is committed only after a complete byte count and transport EOF.
+function createAdminCSVDecoder(onData,{current=()=>true}={}){
+ const buffer=new Uint8Array(99999),utf8=new TextDecoder('utf-8',{fatal:true});
+ let length=0,total=0,terminal=false,closed=false,pushing=false;
+ const failure=status=>Object.assign(new Error(status===401?'다시 로그인한 뒤 내보내 주세요.':status===403?'내보내기 권한이 변경되었습니다. 현재 권한을 확인해 주세요.':status===409?'콘텐츠가 변경되었습니다. 새로고침한 뒤 다시 내보내 주세요.':'내보내기 파일을 완전히 받지 못했습니다. 다시 시도해 주세요.'),status?{status}:{});
+ const assertCurrent=()=>{if(!current())throw Object.assign(new Error('지난 내보내기 요청입니다.'),{code:'STALE_REQUEST'});};
+ function record(line){
+  // Only flat two-field objects are valid. Parse keys before assignment so
+  // duplicate spellings (including escaped keys) cannot be hidden by JSON.parse.
+  const string=/"(?:[^"\\\u0000-\u001f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"/y;
+  const number=/-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/y;
+  const value=Object.create(null);let at=0;
+  const skip=()=>{while(/[ \t\r]/.test(line[at]||'')&&at<line.length)at++;};
+  const take=character=>{skip();if(line[at++]!==character)throw failure();};
+  const token=pattern=>{skip();pattern.lastIndex=at;const match=pattern.exec(line);if(!match)throw failure();at=pattern.lastIndex;return match[0];};
+  take('{');
+  for(let field=0;field<2;field++){
+   const key=JSON.parse(token(string));if(Object.hasOwn(value,key))throw failure();take(':');skip();
+   value[key]=line[at]==='"'?JSON.parse(token(string)):Number(token(number));
+   if(field===0)take(',');
+  }
+  take('}');skip();if(at!==line.length)throw failure();
+  const keys=Object.keys(value);
+  if(value.type==='data'&&keys.includes('data')&&typeof value.data==='string')return value;
+  if(value.type==='complete'&&keys.includes('bytes')&&Number.isSafeInteger(value.bytes)&&value.bytes>=0)return value;
+  if(value.type==='error'&&keys.includes('status')&&[400,401,403,409,413,503].includes(value.status))return value;
+  throw failure();
+ }
+ async function line(){
+  if(length===0||terminal)throw failure();
+  let frame;try{frame=record(utf8.decode(buffer.subarray(0,length)));}catch(error){if(error.status)throw error;throw failure();}
+  length=0;
+  if(frame.type==='error')throw failure(frame.status);
+  if(frame.type==='complete'){if(frame.bytes!==total)throw failure();terminal=true;return;}
+  const encoded=frame.data;
+  if(encoded.length===0||encoded.length>87384||!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded))throw failure();
+  let binary;try{binary=atob(encoded);}catch{throw failure();}
+  if(binary.length<1||binary.length>65536||btoa(binary)!==encoded||!Number.isSafeInteger(total+binary.length))throw failure();
+  total+=binary.length;assertCurrent();await onData(Uint8Array.from(binary,character=>character.charCodeAt(0)));assertCurrent();
+ }
+ return {
+  async push(bytes){if(closed||pushing||!(bytes instanceof Uint8Array))throw failure();pushing=true;
+   try{assertCurrent();let at=0;while(at<bytes.length){if(terminal)throw failure();const newline=bytes.indexOf(10,at),end=newline<0?bytes.length:newline,size=end-at;if(length+size>buffer.length)throw failure();buffer.set(bytes.subarray(at,end),length);length+=size;at=end;if(newline<0)break;at++;await line();}}
+   catch(error){closed=true;throw error;}finally{pushing=false;}
+  },
+  finish(){assertCurrent();if(closed||pushing||length!==0||!terminal)throw failure();closed=true;return total;}
+ };
+}
+
 async function exportAdminContent(view,content){
  const request=new AbortController();content.request?.abort();content.request=request;
  const generation=++content.generation,current=()=>adminContentCurrent(view,content)&&generation===content.generation;
@@ -2163,23 +2212,27 @@ async function exportAdminContent(view,content){
   const handle=!FountainTransport.native&&typeof window.showSaveFilePicker==='function'?await window.showSaveFilePicker({suggestedName:'fountain-content.csv',types:[{description:'CSV 파일',accept:{'text/csv':['.csv']}}]}):null;
   if(!current())return;
   if(!adminCan(view,'content.search.export')||!await adminCheck(view,request.signal)||!current())return;
-  const response=await FountainTransport.request('/api/admin/content/export?'+adminContentParams(content,null),{signal:request.signal});
+  const params=adminContentParams(content,null);params.set('format','frames');
+  const response=await FountainTransport.request('/api/admin/content/export?'+params,{signal:request.signal});
   if(!current())return;
   if(!response.ok){const data=await response.json().catch(()=>({}));const error=Error(data.error||'CSV 내보내기에 실패했습니다.');error.status=response.status;throw error;}
-  if(!/text\/csv/i.test(response.headers.get('content-type')||''))throw Error('CSV 응답 형식을 확인할 수 없습니다.');
+  const protocol=response.headers.get('X-Fountain-CSV-Protocol');
+  if(!/^application\/x-ndjson(?:;|$)/i.test(response.headers.get('content-type')||'')||protocol!=='1'&&(!FountainTransport.native||protocol!==null))throw Error('내보내기 응답을 확인할 수 없습니다.');
   if(handle)writable=await handle.createWritable();
   if(!current())return;
   const chunks=[],limit=FountainTransport.native?8*1024*1024:32*1024*1024;let buffered=0;
   const write=async chunk=>{if(writable){await writable.write(chunk);return;}buffered+=chunk.byteLength;if(buffered>limit)throw Error(FountainTransport.native?'이 앱의 파일 저장 한도 8 MB를 넘었습니다. 스트리밍 파일 저장을 지원하는 웹 브라우저에서 내보내 주세요.':'이 브라우저의 메모리 다운로드 한도 32 MB를 넘었습니다. 스트리밍 파일 저장을 지원하는 브라우저에서 다시 시도해 주세요.');chunks.push(chunk);};
+  const decoder=createAdminCSVDecoder(write,{current});
   reader=response.body?.getReader();
-  if(reader){while(true){const chunk=await reader.read();if(!current())throw Object.assign(Error('지난 내보내기 요청입니다.'),{code:'STALE_REQUEST'});if(chunk.done)break;await write(chunk.value);}}
-  else await write(new Uint8Array(await response.arrayBuffer()));
+  if(reader){while(true){const chunk=await reader.read();if(!current())throw Object.assign(Error('지난 내보내기 요청입니다.'),{code:'STALE_REQUEST'});if(chunk.done)break;await decoder.push(chunk.value);}}
+  else await decoder.push(new Uint8Array(await response.arrayBuffer()));
+  decoder.finish();
   if(!current()||!await adminCheck(view,request.signal)||!current())return;
   if(writable){await writable.close();committed=true;}
   else{const blob=new Blob(chunks,{type:'text/csv;charset=utf-8'}),filename='fountain-content.csv';if(FountainTransport.native)await FountainTransport.saveData(filename,blob,'text/csv;charset=utf-8');else{const url=URL.createObjectURL(blob),link=document.createElement('a');link.href=url;link.download=filename;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}}
   if(current())view.notice=writable||FountainTransport.native?'CSV 파일 저장을 완료했습니다.':'CSV 전송을 완료했습니다. 브라우저의 다운로드 목록에서 확인해 주세요.';
  }catch(error){if(current()){view.notice=null;if(error.name==='AbortError')view.notice='CSV 저장을 취소했습니다.';else adminContentError(view,content,error);}}
- finally{try{await reader?.cancel();}catch{}if(writable&&!committed)try{await writable.abort();}catch{}if(current()){view.busy=false;renderAdminConsole(view);}}
+ finally{request.abort();try{await reader?.cancel();}catch{}if(writable&&!committed)try{await writable.abort();}catch{}if(current()){view.busy=false;renderAdminConsole(view);}}
 }
 
 async function mountAdminConsole(content,{roleTab=false,capabilities=null}={}){clearAdminConsole();

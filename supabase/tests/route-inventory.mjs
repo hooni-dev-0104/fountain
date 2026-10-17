@@ -12,7 +12,7 @@ const root=fileURLToPath(new URL('../../',import.meta.url));
 const location=new URL('./route-inventory.json',import.meta.url);
 const inventory=JSON.parse(readFileSync(location,'utf8'));
 const parser=String.raw`
-import ast,hashlib,json,sys
+import ast,hashlib,json,re,sys
 from pathlib import Path
 root=Path(sys.argv[1]); manifest=json.load(sys.stdin)
 targets={
@@ -20,6 +20,7 @@ targets={
  'fountain/advanced.py':['Advanced.dispatch'],
  'fountain/wiki.py':['Wiki.route'],
  'fountain/database_verification.py':['DatabaseVerification.route'],
+ 'fountain/admin_roles.py':['AdminAuthority.route'],
  'fountain/scim.py':['scim_resource'],
  'fountain/publishing.py':['render_public'],
  'fountain/authorization.py':['Authorization.prepare','Authorization.project']}
@@ -46,6 +47,11 @@ if len(sys.argv)>2 and sys.argv[2]=='simulate-added-database-verification-method
  guard=next(item for item in ast.walk(node) if isinstance(item,ast.Compare)
   and isinstance(item.left,ast.Name) and item.left.id=='method' and isinstance(item.ops[0],ast.In))
  guard.comparators[0].elts.append(ast.Constant(value='PUT'));ast.fix_missing_locations(node)
+if len(sys.argv)>2 and sys.argv[2]=='simulate-added-admin-method':
+ node=functions['fountain/admin_roles.py:AdminAuthority.route']
+ guard=next(item for item in ast.walk(node) if isinstance(item,ast.Assign)
+  and any(isinstance(target,ast.Name) and target.id=='allowed' for target in item.targets))
+ guard.value.body.elts.append(ast.Constant(value='PUT'));ast.fix_missing_locations(node)
 def stable_ast(node):
  if isinstance(node,ast.AST):
   # Python 3.12 adds empty type_params to function/class AST nodes. Ignore only
@@ -58,17 +64,23 @@ for key,node in functions.items():
 collections=None
 for node in ast.walk(ast.parse((root/'fountain/advanced.py').read_text())):
  if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='collections' for t in node.targets):collections=sorted(ast.literal_eval(node.value))
-safe_names={'path','method','parts','resource','category','kind','identity','schemas','self','len'}
-route_names={'path','method','parts','resource','category','kind','identity','schemas'}
+safe_names={'path','method','parts','resource','category','kind','identity','schemas','self','len','re','roles_route','role_match','assignment_match','allowed'}
+route_names={'path','method','parts','resource','category','kind','identity','schemas','roles_route','role_match','assignment_match','allowed'}
 def evaluate(node,env):
  for item in ast.walk(node):
   if isinstance(item,ast.Name) and item.id not in safe_names:raise ValueError()
   if isinstance(item,ast.Attribute):
    if isinstance(item.value,ast.Name) and item.value.id=='self':
     if item.attr not in {'command','collections'}:raise ValueError()
+   elif isinstance(item.value,ast.Name) and item.value.id=='re':
+    if item.attr!='fullmatch':raise ValueError()
    elif item.attr not in {'strip','split','rsplit','startswith'}:raise ValueError()
   if isinstance(item,ast.Call):
-   if not (isinstance(item.func,ast.Name) and item.func.id=='len' or isinstance(item.func,ast.Attribute) and item.func.attr in {'strip','split','rsplit','startswith'}):raise ValueError()
+   regex=(isinstance(item.func,ast.Attribute) and isinstance(item.func.value,ast.Name) and item.func.value.id=='re'
+    and item.func.attr=='fullmatch' and len(item.args)==2 and not item.keywords
+    and isinstance(item.args[0],ast.Constant) and item.args[0].value in {r'/api/admin/roles/([^/]+)',r'/api/admin/assignments/([^/]+)'}
+    and isinstance(item.args[1],ast.Name) and item.args[1].id=='path')
+   if not (regex or isinstance(item.func,ast.Name) and item.func.id=='len' or isinstance(item.func,ast.Attribute) and item.func.attr in {'strip','split','rsplit','startswith'}):raise ValueError()
   if isinstance(item,(ast.Lambda,ast.NamedExpr,ast.ListComp,ast.SetComp,ast.DictComp,ast.GeneratorExp)):raise ValueError()
  return eval(compile(ast.Expression(node),'<route-predicate>','eval'),{'__builtins__':{'len':len}},env)
 def terminal(node,key):
@@ -95,6 +107,14 @@ def walk(nodes,env,key):
    result,continuations=walk(tail,current,key);done+=result;leftover+=continuations
   return done,leftover
  if isinstance(node,ast.Assign):
+  call=node.value
+  if (isinstance(call,ast.Call) and isinstance(call.func,ast.Attribute) and call.func.attr=='route'
+      and isinstance(call.func.value,ast.Call) and isinstance(call.func.value.func,ast.Name)
+      and call.func.value.func.id=='AdminAuthority'):
+   done,_=walk(functions['fountain/admin_roles.py:AdminAuthority.route'].body,dict(env),'fountain/admin_roles.py:AdminAuthority.route')
+   if not done:return [],[]
+   outer,leftover=walk(tail,env,key)
+   return [*outer,*done],leftover
   try:
    value=evaluate(node.value,env)
    for target in node.targets:
@@ -125,12 +145,28 @@ def walk(nodes,env,key):
   return [terminal(node,key)],[]
  if isinstance(node,ast.Raise):return [],[]
  return walk(tail,env,key)
+membership=next(node for node in ast.walk(functions['fountain/authorization.py:Authorization.prepare'])
+ if isinstance(node,ast.If) and isinstance(node.test,ast.Compare) and isinstance(node.test.left,ast.Name)
+ and node.test.left.id=='kind' and isinstance(node.test.ops[0],ast.In)
+ and isinstance(node.test.comparators[0],ast.Set) and ast.literal_eval(node.test.comparators[0])=={'members','groups'})
+membership_guards=[]
+for statement in membership.body:
+ if isinstance(statement,ast.If):break
+ if isinstance(statement,ast.Expr) and isinstance(statement.value,ast.Call) and isinstance(statement.value.func,ast.Name) and statement.value.func.id=='require':
+  membership_guards.append(statement.value.args[0])
+assert len(membership_guards)==2,'Membership path/method guards must precede every role/action branch'
+assert all({item.id for item in ast.walk(guard) if isinstance(item,ast.Name)}<={'parts','method','len'} for guard in membership_guards),'Membership syntax guards must not depend on a role or resource data'
+def membership_gate(method,path):
+ parts=path.strip('/').split('/')
+ if len(parts)<2 or parts[:2] not in [['api','members'],['api','groups']]:return True
+ return all(bool(evaluate(guard,{'parts':parts,'method':method})) for guard in membership_guards)
 def probe(key,method,path):
  class Receiver:pass
  receiver=Receiver();receiver.command=method;receiver.collections=set(collections)
  # Handler maps HEAD to GET; other entry points receive the normalized method.
  actual=method if key.endswith('handle_request') else 'GET' if method=='HEAD' else method
- result,_=walk(functions[key].body,{'method':actual,'path':path,'self':receiver},key)
+ if not membership_gate('GET' if method=='HEAD' else method,path):return []
+ result,_=walk(functions[key].body,{'method':actual,'path':path,'self':receiver,'re':re},key)
  unique={json.dumps(item,sort_keys=True):item for item in result}
  return sorted(unique.values(),key=lambda item:item['line'])
 routes=[];matrix=[]
@@ -147,6 +183,19 @@ verification_aliases=[{'path':path,'method':method,'evidence':probe('fountain/se
  for path in [verification_path+'/',verification_path+'/extra'] for method in ['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']]
 verified_pages_paths=[{'path':path,'method':method,'evidence':probe('fountain/server.py:Application._dispatch',method,path)}
  for path in ['/api/verified-pages','/api/verified-pages/','/api/verified-pages/extra'] for method in ['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']]
+admin_paths=[{'path':path,'method':method,'evidence':probe('fountain/server.py:Application._dispatch',method,path)}
+ for path in ['/api/admin/self','/api/admin/roles','/api/admin/roles/sample-role','/api/admin/assignments/sample-member',
+  '/api/admin/self/','/api/admin/self/extra','/api/admin/roles/','/api/admin/roles/sample-role/','/api/admin/roles/sample-role/extra',
+  '/api/admin/assignments','/api/admin/assignments/','/api/admin/assignments/sample-member/','/api/admin/assignments/sample-member/extra',
+  '/api/admin/unknown','/api/admin/roles//sample-role','/api//admin/roles','//api/admin/roles']
+ for method in ['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']]
+membership_paths=[{'path':path,'method':method,'role':role,'acceptedBySyntaxGuard':membership_gate('GET' if method=='HEAD' else method,path),
+ 'evidence':probe('fountain/advanced.py:Advanced.dispatch',method,path)}
+ for collection in ['members','groups']
+ for path in ['/api/'+collection,'/api/'+collection+'/', '/api/'+collection+'/sample-id','/api/'+collection+'/sample-id/',
+  '/api/'+collection+'/sample-id/extra','/api/'+collection+'/sample-id/extra/nested']
+ for method in ['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']
+ for role in ['owner','admin','member','guest']]
 def terminals(nodes,key):
  for node in nodes:
   if isinstance(node,(ast.FunctionDef,ast.ClassDef)):continue
@@ -158,7 +207,7 @@ all_terminals=[]
 for key,node in functions.items():
  if key.startswith('fountain/authorization.py:'):continue
  all_terminals.extend(terminals(node.body,key))
-print(json.dumps({'sources':sources,'collections':collections,'routes':routes,'matrix':matrix,'verificationAliases':verification_aliases,'verifiedPagesPaths':verified_pages_paths,'terminals':all_terminals},ensure_ascii=False))
+print(json.dumps({'sources':sources,'collections':collections,'routes':routes,'matrix':matrix,'verificationAliases':verification_aliases,'verifiedPagesPaths':verified_pages_paths,'adminPaths':admin_paths,'membershipPaths':membership_paths,'terminals':all_terminals},ensure_ascii=False))
 `;
 const result=spawnSync(process.env.FOUNTAIN_PYTHON||'python3',['-c',parser,root],{input:JSON.stringify(inventory),encoding:'utf8',maxBuffer:16*1024*1024});
 assert.equal(result.status,0,result.stderr);
@@ -221,6 +270,27 @@ for(const row of parsed.verifiedPagesPaths){
  const expected=row.path==='/api/verified-pages'&&['GET','HEAD'].includes(row.method);
  assert.equal(recognized,expected,'Verified pages exact path/method mismatch: '+row.method+' '+row.path);
 }
+const adminRouter='fountain/admin_roles.py:AdminAuthority.route';
+const changedAdmin=spawnSync(process.env.FOUNTAIN_PYTHON||'python3',['-c',parser,root,'simulate-added-admin-method'],{input:JSON.stringify(inventory),encoding:'utf8',maxBuffer:16*1024*1024});
+assert.equal(changedAdmin.status,0,changedAdmin.stderr);
+const addedAdmin=JSON.parse(changedAdmin.stdout);
+assert.notDeepEqual(addedAdmin.sources,inventory.sourceFingerprints,'An added admin method must change its delegated AST fingerprint.');
+assert(addedAdmin.matrix.some(row=>row.source==='fountain/server.py:Application._dispatch'&&row.probe==='/api/admin/roles'&&row.method==='PUT'&&row.evidence.some(entry=>entry.source===adminRouter)),'Admin method audit must follow the delegated guard after the payload assignment.');
+const adminMethods=new Map([
+ ['/api/admin/self',['GET','HEAD']],['/api/admin/roles',['GET','HEAD','POST']],
+ ['/api/admin/roles/sample-role',['PATCH','DELETE']],['/api/admin/assignments/sample-member',['PUT']]
+]);
+for(const row of parsed.adminPaths){
+ const recognized=row.evidence.some(entry=>entry.source===adminRouter);
+ assert.equal(recognized,adminMethods.get(row.path)?.includes(row.method)??false,'Admin exact path/method mismatch: '+row.method+' '+row.path);
+ assert.equal(row.evidence.some(entry=>!nonRoutes.has(site(entry))),recognized,'Outer admin delegation must not count a rejected inner route.');
+}
+for(const row of parsed.membershipPaths){
+ const segments=row.path.replace(/^\/+|\/+$/g,'').split('/');
+ const expected=segments.length===2?['GET','HEAD','POST'].includes(row.method):segments.length===3&&['GET','HEAD','PATCH','DELETE'].includes(row.method);
+ assert.equal(row.acceptedBySyntaxGuard,expected,'Role-independent membership syntax mismatch: '+row.role+' '+row.method+' '+row.path);
+ assert.equal(row.evidence.some(entry=>!nonRoutes.has(site(entry))),expected,'Membership authorization guards must reject extra segments/unsupported verbs before Advanced dispatch: '+row.role+' '+row.method+' '+row.path);
+}
 function matches(route,path){
  if(route.kind==='static-pattern'&&inventory.staticExcludedPrefixes.some(prefix=>path.startsWith(prefix)))return false;
  const pattern=route.path.split('/').map(segment=>/^\{[^}]+\+\}$/.test(segment)?'.+':/^\{[^}]+\}$/.test(segment)?'[^/]+':segment.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('/');
@@ -233,7 +303,7 @@ for(const row of parsed.matrix){
 }
 // The AST fingerprints make additions/changes fail even if their path has not yet
 // been entered. These presence checks also prevent accidentally deleting a family.
-for(const family of ['session','workspace','pages','wiki','inbox','databases','uploads','attachments','accounts','sync','ai','publishing','scim','advanced','static'])assert(inventory.routes.some(route=>route.domain===family),'Missing route family '+family);
+for(const family of ['session','workspace','pages','wiki','inbox','databases','uploads','attachments','accounts','sync','ai','publishing','scim','advanced','admin','static'])assert(inventory.routes.some(route=>route.domain===family),'Missing route family '+family);
 for(const collection of parsed.collections)for(const [method,path] of [['GET','/api/'+collection],['POST','/api/'+collection],['GET','/api/'+collection+'/{id}'],['PATCH','/api/'+collection+'/{id}'],['DELETE','/api/'+collection+'/{id}']])assert(routes.has(method+' '+path),'Missing Advanced collection method '+method+' '+path);
 // A real in-process Edge boundary invocation: staged health/auth plumbing must
 // continue to refuse all domain paths rather than being counted as parity.
@@ -248,4 +318,4 @@ for(const route of inventory.routes.filter(route=>route.cloud.status==='pending'
 const health=await candidate(new Request('https://fixture.invalid/functions/v1/fountain-api/health'));
 assert.equal((await health.json()).ready,false);
 assert(!inventory.routes.some(route=>route.path==='/health'),'New health surface is not legacy route coverage.');
-console.log(JSON.stringify({ok:true,routes:inventory.routes.length,sourceFunctions:Object.keys(parsed.sources).length,methodMatrixChecks:parsed.matrix.length,delegatedWikiMethodChecks:2,delegatedDatabaseVerificationMethodChecks:2,databaseVerificationAliasChecks:parsed.verificationAliases.length,verifiedPagesExactPathChecks:parsed.verifiedPagesPaths.length,pendingBoundaryChecks:pendingChecks,cloudProductionParityVerified:0,parser:'Python AST including delegated wiki and DB verification method guards; server never imported; no database access'}));
+console.log(JSON.stringify({ok:true,routes:inventory.routes.length,sourceFunctions:Object.keys(parsed.sources).length,methodMatrixChecks:parsed.matrix.length,delegatedWikiMethodChecks:2,delegatedDatabaseVerificationMethodChecks:2,delegatedAdminMethodChecks:2,databaseVerificationAliasChecks:parsed.verificationAliases.length,verifiedPagesExactPathChecks:parsed.verifiedPagesPaths.length,adminExactPathChecks:parsed.adminPaths.length,membershipAllRoleSyntaxChecks:parsed.membershipPaths.length,pendingBoundaryChecks:pendingChecks,cloudProductionParityVerified:0,parser:'Python AST including delegated wiki, DB verification and admin method guards; membership syntax checked before Advanced dispatch for every base role; server never imported; no database access'}));

@@ -4,7 +4,7 @@
   "installCommand": "",
   "buildCommand": "node build.mjs",
   "outputDirectory": "dist",
-  "functions": {"api/public-relay.mjs": {"maxDuration": 30}},
+  "functions": {"api/public-relay.mjs": {"maxDuration": 30, "supportsCancellation": true}},
   "rewrites": [
     {"source": "/sites/:slug", "destination": "/api/public-relay?kind=sites&slug=:slug"},
     {"source": "/forms/:slug", "destination": "/api/public-relay?kind=forms&slug=:slug"},

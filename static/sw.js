@@ -1,6 +1,6 @@
 /* Generic shell only. Private API, public-site and form responses never enter CacheStorage. */
 'use strict';
-const CACHE = 'fountain-shell-backup-v1';
+const CACHE = 'fountain-shell-database-verification-v1';
 const SHELL = ['/', '/index.html', '/app.js', '/style.css', '/collaboration.js', '/offline.js', '/uploads.js', '/transport.js', '/mutations.js', '/presence.js', '/version-diff.js', '/recovery-import.js', '/backup.js'];
 importScripts('/backup.js');
 const backupTickets=new Map();

@@ -39,17 +39,17 @@ const state = {
 };
 function unsubmittedNativeForms(){
   const forms=[];
-  for(const form of $$('#row-form,#comment-form')){
+  for(const form of $$('#row-form,#comment-form,#property-form,#owner-settings-form')){
     const fields=[];
     for(const control of [...form.elements]){
-      if(!control.name||control.disabled||control.readOnly||['password','file','submit','button'].includes(control.type))continue;
+      if(!(control.name||control.dataset.recoveryField)||control.disabled||control.readOnly||['password','file','submit','button'].includes(control.type))continue;
       let value,original;
       if(control.type==='checkbox'||control.type==='radio'){value=control.checked;original=control.defaultChecked;}
       else if(control.tagName==='SELECT'){value=[...control.selectedOptions].map(option=>option.value);original=[...control.options].filter(option=>option.defaultSelected).map(option=>option.value);if(!control.multiple&&!original.length&&control.options.length)original=[control.options[0].value];}
       else{value=control.value;original=control.defaultValue;}
-      if(JSON.stringify(value)!==JSON.stringify(original))fields.push({name:control.name,value});
+      if(JSON.stringify(value)!==JSON.stringify(original))fields.push({name:control.name||control.dataset.recoveryField,value});
     }
-    if(fields.length)forms.push({kind:form.id==='row-form'?'row':'comment',fields});
+    if(fields.length)forms.push({kind:form.id==='row-form'?'row':form.id==='comment-form'?'comment':'database-properties',fields});
   }
   return forms;
 }
@@ -65,7 +65,7 @@ window.addEventListener('fountain-native-outbox-pause',event=>{
   const paused={...detail,navigation,channel:state.channel,loaded:state.loaded,profile:state.offlineProfile,saveScheduled:!!state.saveTimer,titleScheduled:!!state.titleTimer,route:state.route,id:navigation?.id||(state.route==='page'?state.page?.id:state.database?.id),dom:[],input:null,forms:unsubmittedNativeForms(),resourceKind:navigation?.route==='database'?'database':state.route==='page'?'page':state.database?.id?'database':null,focus:document.activeElement,selection:state.route==='page'?selectedTextPosition():null};
   try{if(state.loaded)paused.input=authenticationInput(state.offlineProfile);}catch{ /* Keep the live DOM when it cannot yet be represented as a bounded draft. */ }
   if(previous?.channel)previous.channel.resumeNetwork?.(previous.owner+':'+previous.token);
-  state.nativeOutboxPause=paused;clearInbox();clearWikiMutation();clearWikiPage();clearTimeout(state.saveTimer);clearTimeout(state.titleTimer);
+  state.nativeOutboxPause=paused;clearDatabaseVerification();clearDatabasePropertyView();clearInbox();clearWikiMutation();clearWikiPage();clearTimeout(state.saveTimer);clearTimeout(state.titleTimer);
   state.channel?.pauseNetwork?.(detail.owner+':'+detail.token);
   state.presenceManager?.pause({leave:false});
   for(const node of [$('#main'),$('#sidebar'),$('#topbar'),$('#overlay-root')].filter(Boolean)){paused.dom.push({node,inert:previous?.dom.find(item=>item.node===node)?.inert??node.inert});node.inert=true;}
@@ -251,7 +251,7 @@ function pruneAdministrativeControls() {
   });
 }
 // Durable entity edits share the current login binding with document drafts.
-const serverOnlyActions=new Set(['new-database','teamspace','history','share','db-share','lock-page','delete-page','verify-page','move-page','duplicate-page','copy-blocks','new-property','task-settings','duplicate-row','restore-version','restore-page','trash','settings','ai','new-teamspace','wiki-toggle','confirm-wiki-toggle','wiki-owner']);
+const serverOnlyActions=new Set(['new-database','teamspace','history','share','db-share','lock-page','delete-page','verify-page','move-page','duplicate-page','copy-blocks','new-property','task-settings','duplicate-row','restore-version','restore-page','trash','settings','ai','new-teamspace','wiki-toggle','confirm-wiki-toggle','wiki-owner','row-verification','owner-settings']);
 const activeMutationStatuses=new Set(['pending','deferred','applied']);
 function closeMutations() {
   if(state.recoveryImport)closeModal();
@@ -302,37 +302,38 @@ function closeDeniedResource(detail) {
   }else if(detail.kind==='page'&&state.page?.id===id){closeDocument();state.page=null;state.blocks=[];state.route='denied';closeModal();$('#main').innerHTML=`<div class="empty"><h2>이 페이지에 접근할 수 없습니다.</h2><button class="outline-btn" data-action="home">홈으로 돌아가기</button></div>`;renderTopbar('접근 권한 없음');}
   renderSidebar();
 }
-async function refreshMutationUI(controller=state.mutations) {
-  if(state.nativeOutboxPause||!controller||state.mutations!==controller)return;
-  const records=await controller.records();if(state.nativeOutboxPause||state.mutations!==controller)return;
+async function refreshMutationUI(controller=state.mutations,current=()=>true) {
+  if(!current()||state.nativeOutboxPause||!controller||state.mutations!==controller)return;
+  const records=await controller.records();if(!current()||state.nativeOutboxPause||state.mutations!==controller)return;
   state.mutationRecords=records;
   const workspace=await controller.workspace(state.serverWorkspace||state.workspace);
-  if(state.nativeOutboxPause||state.mutations!==controller)return;state.workspace=workspace;
+  if(!current()||state.nativeOutboxPause||state.mutations!==controller)return;state.workspace=workspace;
   await cachedResourceIds();
-  if(state.nativeOutboxPause||state.mutations!==controller)return;
+  if(!current()||state.nativeOutboxPause||state.mutations!==controller)return;
   renderSidebar();renderSyncIndicators();
   if(state.route==='page'&&state.page){
     const local=await controller.localPage(state.page.id);
-    if(state.nativeOutboxPause||state.mutations!==controller)return;
+    if(!current()||state.nativeOutboxPause||state.mutations!==controller)return;
     state.localPageOnly=!!local?.metadata.localOnly;
     const basis=local?.metadata.page&&local.metadata.page.revision>=(state.channel?.base.page.revision||0)?local.metadata.page:state.channel?.base.page||state.page;
     state.page=metadataOverlay({...state.page,...basis,access_level:state.channel?.base.access_level??state.page.access_level});
     patchPageMetadataUI();
-    if(!state.localPageOnly&&state.channel?.remoteDeferred){await state.channel.resumeRemote();}
+    if(!state.localPageOnly&&state.channel?.remoteDeferred){await state.channel.resumeRemote();if(!current())return;}
     if(state.channel)documentStatus({status:state.channel.status,pending:state.channel.pending.size,durable:state.channel.durable!==false});
   }
   if(state.database&&['home','database'].includes(state.route)){
     const id=state.database.id;
     try{
       const data=await controller.loadDatabase(id,{remote:false});
-      if(state.mutations!==controller||state.database?.id!==id)return;
+      if(!current()||state.mutations!==controller||state.database?.id!==id)return;
       state.database=data.database;state.rows=data.rows||[];
       if(!$('.modal')&&!state.composition){
         if(state.route==='database')renderDatabase();
         else if($('#home-database')){$('#home-database').innerHTML=databaseToolbar(true)+tableHTML(state.rows.slice(0,5),true)+`<button class="new-row" data-action="add-row">+ 새 프로젝트</button>`;applyDatabaseControls();}
       }
-    }catch(error){if(error.status&&[401,403,404].includes(error.status))toast(error.message);}
+    }catch(error){if(current()&&error.status&&[401,403,404].includes(error.status))toast(error.message);}
   }
+  if(!current())return;
   if($('#mutation-queue-list'))renderMutationQueue();
   syncCreatedPageBodies(controller).catch(error=>{if(state.mutations===controller&&error.status)toast(error.message);});
 }
@@ -608,19 +609,20 @@ async function openMutationQueue() {
   const view={scope,modal:$('.mutation-modal'),sequence:0,rawText:null,prepared:null};state.recoveryImport=view;loadRecoveryArchives(view);
   try{const records=await scope.controller.records();if(!recoveryImportCurrent(view))return;state.mutationRecords=records;renderMutationQueue();}catch(error){if(recoveryImportCurrent(view)){view.error=recoveryImportError(error);renderRecoveryImport(view);}}
 }
-async function syncMutations() {
-  const controller=state.mutations;if(!controller)return;
-  const expected=new Set((await controller.records()).filter(record=>['pending','deferred'].includes(record.status)).map(record=>record.id));
+async function syncMutations({controller=state.mutations,current=()=>true}={}) {
+  const active=()=>!!controller&&state.mutations===controller&&!state.nativeOutboxPause&&!state.nativeRecoveryPaused&&current();if(!active())return;
+  const initial=await controller.records();if(!active())return;
+  const expected=new Set(initial.filter(record=>['pending','deferred'].includes(record.status)).map(record=>record.id));
   try{
     for(let attempt=0;attempt<3;attempt++){
-      await controller.sync();if(state.nativeOutboxPause||state.mutations!==controller)return;
-      const records=await controller.records(),paused=new Set(records.filter(record=>!activeMutationStatuses.has(record.status)).map(record=>record.id));
+      if(!active())return;await controller.sync();if(!active())return;
+      const records=await controller.records();if(!active())return;
+      const paused=new Set(records.filter(record=>!activeMutationStatuses.has(record.status)).map(record=>record.id));
       const remaining=records.filter(record=>expected.has(record.id)&&['pending','deferred'].includes(record.status));
       if(!remaining.length||remaining.every(record=>(record.operation.depends_on||[]).some(id=>paused.has(id))))break;
     }
-  }catch(error){if(error.status&&error.status<500)throw error;state.offline=true;toast('서버에 연결하지 못했습니다. 변경은 기기에 보관했으며 다시 연결되면 동기화합니다.');}
-  if(state.nativeOutboxPause||state.mutations!==controller)return;
-  await refreshMutationUI(controller);
+  }catch(error){if(!active())return;if(error.status&&error.status<500)throw error;state.offline=true;toast('서버에 연결하지 못했습니다. 변경은 기기에 보관했으며 다시 연결되면 동기화합니다.');}
+  if(!active())return;await refreshMutationUI(controller,active);
 }
 async function loadDatabaseData(id,{remote=!state.offline}={}) {
   const controller=await ensureMutations();
@@ -1308,7 +1310,7 @@ function taskTitle(item) {
 function taskListHTML(rows) {
   const statusProperty=state.database.properties.find(property=>property.type==='status');
   const dateProperty=state.database.properties.find(property=>property.id===state.database.task_settings?.date_property)||state.database.properties.find(property=>property.type==='date');
-  return `<div class="task-list"><div class="task-list-heading"><span>프로젝트</span><span>상태</span><span>일정</span></div>${rowHierarchy(rows).map(item=>`<div class="task-list-row" data-action="edit-row" data-id="${esc(item.row.id)}" role="button" tabindex="0">${taskTitle(item)}<span>${status(valuesOf(item.row)[statusProperty?.id])}</span><span class="task-date">${esc(dateRangeLabel(valuesOf(item.row)[dateProperty?.id]))}</span></div>`).join('')||'<div class="empty">표시할 항목이 없습니다.</div>'}</div>${canCreateRow()?'<button class="new-row" data-action="add-row">+ 새 항목</button>':''}`;
+  return `<div class="task-list"><div class="task-list-heading"><span>프로젝트</span><span>상태</span><span>일정</span></div>${rowHierarchy(rows).map(item=>`<div class="task-list-row" data-action="edit-row" data-id="${esc(item.row.id)}" role="button" tabindex="0">${taskTitle(item)}<span>${status(valuesOf(item.row)[statusProperty?.id])}</span><span class="task-date">${esc(dateRangeLabel(valuesOf(item.row)[dateProperty?.id]))}</span><div class="row-trust-summary">${databaseTrustSummary(item.row)}</div></div>`).join('')||'<div class="empty">표시할 항목이 없습니다.</div>'}</div>${canCreateRow()?'<button class="new-row" data-action="add-row">+ 새 항목</button>':''}`;
 }
 function timelineHTML(rows) {
   const properties=state.database.properties.filter(property=>property.type==='date');
@@ -1341,15 +1343,47 @@ function openTaskSettings() {
 }
 
 function databaseToolbar(compact=false) {
-  return `<div class="db-toolbar"><div class="view-tabs">${[['table','테이블','table'],['board','보드','board'],...(!compact?[['timeline','타임라인','calendar'],['list','리스트','menu'],['calendar','캘린더','calendar'],['gallery','갤러리','grid'],['chart','차트','chart']]:[])].map(([v,n,i])=>`<button data-action="db-view" data-view="${v}" class="${state.view===v?'active':''}">${icon(i)}${n}</button>`).join('')}</div><div class="db-actions"><button data-action="filter" aria-label="필터">${icon('filter')}</button>${!compact?'<button data-action="db-export" aria-label="CSV 내보내기">↗</button><button data-action="new-property" aria-label="속성 추가">＋ 속성</button><button data-action="task-settings" aria-label="프로젝트 일정 설정">⚙ 일정</button>':''}<button class="solid-btn" data-action="add-row">새로 만들기 ${icon('down')}</button></div></div>`;
+  return `<div class="db-toolbar"><div class="view-tabs">${[['table','테이블','table'],['board','보드','board'],...(!compact?[['timeline','타임라인','calendar'],['list','리스트','menu'],['calendar','캘린더','calendar'],['gallery','갤러리','grid'],['chart','차트','chart']]:[])].map(([v,n,i])=>`<button data-action="db-view" data-view="${v}" class="${state.view===v?'active':''}">${icon(i)}${n}</button>`).join('')}</div><div class="db-actions"><button data-action="filter" aria-label="필터">${icon('filter')}</button>${!compact?'<button data-action="db-export" aria-label="CSV 내보내기">↗</button><button data-action="new-property" aria-label="속성 추가">＋ 속성</button><button data-action="owner-settings" aria-label="담당자 속성 설정">☻ 담당자</button><button data-action="task-settings" aria-label="프로젝트 일정 설정">⚙ 일정</button>':''}<button class="solid-btn" data-action="add-row">새로 만들기 ${icon('down')}</button></div></div>`;
+}
+function databaseMemberName(id,members=state.workspace?.members||[]) { const member=members.find(member=>member?.id===id);return typeof member?.name==='string'&&member.name?member.name:'비공개 담당자'; }
+function databaseVerificationLabel(value) {
+  if(!value||typeof value!=='object'||Array.isArray(value))return '미검증';
+  const status=['unverified','verified','expired','unknown'].includes(value.status)?value.status:'unknown';
+  if(['verified','expired'].includes(status)&&(!verificationTimestamp(value.verified_at)||(value.expires_at!=null&&!verificationTimestamp(value.expires_at))))return '정보 확인 필요';
+  if(status==='verified'&&verificationTimestamp(value.expires_at)&&Date.parse(value.expires_at)<=Date.now())return '검증 만료';
+  return {unverified:'미검증',verified:'검증됨',expired:'검증 만료',unknown:'정보 확인 필요'}[status];
+}
+function databaseValueText(property,value,row=null) {
+  if(property?.type==='verification'&&row?.computed_pending)return '동기화 후 확인';
+  if(property?.type==='owner')return Array.isArray(value)?value.filter(id=>typeof id==='string').map(id=>databaseMemberName(id)).join(', ')||'미지정':'미지정';
+  if(property?.type==='verification')return databaseVerificationLabel(value);
+  if(property?.type==='date')return dateRangeLabel(value);
+  if(property?.type==='person')return typeof value==='string'?state.workspace?.members?.find(member=>member.id===value)?.name||value||'—':'—';
+  if(Array.isArray(value))return value.filter(item=>['string','number','boolean'].includes(typeof item)).join(', ');
+  return ['string','number','boolean'].includes(typeof value)?String(value):'—';
+}
+function databaseValueHTML(property,value,row=null) {
+  if(property.type==='verification'&&row?.computed_pending)return '<span class="verification-badge">동기화 후 확인</span>';
+  if(property.type==='verification'){const label=databaseVerificationLabel(value);return `<span class="verification-badge ${label==='검증됨'?'verified':''}">${label==='검증됨'?'✓ ':''}${esc(label)}</span>`;}
+  if(['status','select'].includes(property.type))return status(typeof value==='string'?value:'');
+  if(property.type==='checkbox')return value?'☑':'☐';
+  return esc(databaseValueText(property,value)||'—');
+}
+function databaseRowSummary(row){return state.database.properties.filter(property=>property.type!=='title').map(property=>databaseValueText(property,valuesOf(row)[property.id],row)).filter(text=>text&&text!=='—').join(' · ');}
+function databaseTrustSummary(row){return state.database.properties.filter(property=>['owner','verification'].includes(property.type)).map(property=>`<span>${esc(property.name)} · ${databaseValueHTML(property,valuesOf(row)[property.id],row)}</span>`).join('');}
+function scheduleDatabaseVerificationExpiry(){
+  clearTimeout(state.databaseVerificationTimer);state.databaseVerificationTimer=null;
+  const scope=databaseScope(),property=state.database?.properties?.find(property=>property.type==='verification');if(!property||state.route!=='database')return;
+  const future=state.rows.map(row=>valuesOf(row)[property.id]).filter(value=>value?.status==='verified'&&verificationTimestamp(value.expires_at)&&Date.parse(value.expires_at)>Date.now()).map(value=>Date.parse(value.expires_at));if(!future.length)return;
+  state.databaseVerificationTimer=setTimeout(()=>{if(!databaseScopeCurrent(scope))return;if($('#db-view'))$('#db-view').innerHTML=databaseView();const view=state.databaseVerification;if(databaseVerificationCurrent(view)&&view.info){const badge=$('.row-verification-heading .verification-badge',view.panel),label=$('.row-verification-value',view.form);if(badge)badge.outerHTML=databaseValueHTML(property,view.info.verification);if(label)label.innerHTML=databaseValueHTML(property,view.info.verification);}scheduleDatabaseVerificationExpiry();},Math.min(60000,Math.max(1,Math.min(...future)-Date.now())));
 }
 function tableHTML(rows,compact=false) {
-  const props=(state.database?.properties||[]).slice(0,compact?4:20);
-  return `<div class="data-table-scroll"><table class="data-table" style="--table-columns:${props.length}"><thead><tr>${props.map(property=>`<th>${property.type==='title'?'Aa':property.type==='status'?'◉':property.type==='date'?'▦':property.type==='person'?'☻':'≡'} &nbsp;${esc(property.name)}</th>`).join('')}</tr></thead><tbody>${rowHierarchy(rows).map(item=>`<tr tabindex="0" role="button" data-action="edit-row" data-id="${esc(item.row.id)}" aria-label="${esc(nameOf(item.row))}">${props.map((property,index)=>{const value=valuesOf(item.row)[property.id];return `<td>${index===0?taskTitle(item):['status','select'].includes(property.type)?status(value):property.type==='checkbox'?value?'☑':'☐':property.type==='date'?esc(dateRangeLabel(value)):property.type==='person'?esc(state.workspace.members.find(member=>member.id===value)?.name||value||'—'):esc(Array.isArray(value)?value.join(', '):value||'—')}</td>`;}).join('')}</tr>`).join('')}</tbody></table>${!rows.length?'<div class="empty">아직 항목이 없어요. 첫 번째 항목을 추가해 보세요.</div>':''}</div>`;
+  const props=(state.database?.properties||[]).slice(0,compact?4:100);
+  return `<div class="data-table-scroll"><table class="data-table" style="--table-columns:${props.length}"><thead><tr>${props.map(property=>`<th>${property.type==='title'?'Aa':property.type==='status'?'◉':property.type==='verification'?'✓':['person','owner'].includes(property.type)?'☻':property.type==='date'?'▦':'≡'} &nbsp;${esc(property.name)}</th>`).join('')}</tr></thead><tbody>${rowHierarchy(rows).map(item=>`<tr tabindex="0" role="button" data-action="edit-row" data-id="${esc(item.row.id)}" aria-label="${esc(nameOf(item.row))}">${props.map((property,index)=>{const value=valuesOf(item.row)[property.id];return `<td>${index===0?taskTitle(item):databaseValueHTML(property,value,item.row)}</td>`;}).join('')}</tr>`).join('')}</tbody></table>${!rows.length?'<div class="empty">아직 항목이 없어요. 첫 번째 항목을 추가해 보세요.</div>':''}</div>`;
 }
 function filteredRows() {
   let rows=[...state.rows];
-  if(state.filter)rows=rows.filter(r=>Object.values(valuesOf(r)).some(v=>(dateRange(v)?dateRangeLabel(v):String(v)).toLowerCase().includes(state.filter.toLowerCase())));
+  if(state.filter)rows=rows.filter(r=>state.database.properties.some(property=>databaseValueText(property,valuesOf(r)[property.id],r).toLowerCase().includes(state.filter.toLowerCase())));
   if(state.sort)rows.sort((a,b)=>String(nameOf(a)).localeCompare(String(nameOf(b)),'ko'));
   return rows;
 }
@@ -1363,9 +1397,9 @@ function databaseView() {
   if(state.view==='board') {
     const options=[...new Set([...optionsOf(group|| {
     }),...rows.map(r=>valuesOf(r)[group?.id]||'미지정')])];
-    return `<div class="board">${options.map(value=>`<div class="board-column"><h3>${status(value)}<span>${rows.filter(r=>(valuesOf(r)[group?.id]||'미지정')===value).length}</span></h3>${rows.filter(r=>(valuesOf(r)[group?.id]||'미지정')===value).map(r=>`<button class="board-card" data-action="edit-row" data-id="${esc(r.id)}">${esc(valuesOf(r)[title.id]||'제목 없음')}<small>${esc(Object.values(valuesOf(r)).slice(1).filter(Boolean).map(value=>dateRange(value)?dateRangeLabel(value):Array.isArray(value)?value.join(', '):String(value)).join(' · '))}</small></button>`).join('')}<button class="new-row" data-action="add-row" data-status="${esc(value)}">+ 새 항목</button></div>`).join('')}</div>`;
+    return `<div class="board">${options.map(value=>`<div class="board-column"><h3>${status(value)}<span>${rows.filter(r=>(valuesOf(r)[group?.id]||'미지정')===value).length}</span></h3>${rows.filter(r=>(valuesOf(r)[group?.id]||'미지정')===value).map(r=>`<button class="board-card" data-action="edit-row" data-id="${esc(r.id)}">${esc(valuesOf(r)[title.id]||'제목 없음')}<small>${esc(databaseRowSummary(r))}</small></button>`).join('')}<button class="new-row" data-action="add-row" data-status="${esc(value)}">+ 새 항목</button></div>`).join('')}</div>`;
   }
-  if(state.view==='gallery')return `<div class="gallery">${rows.map(r=>`<button class="board-card" data-action="edit-row" data-id="${esc(r.id)}">${esc(nameOf(r))}<small>${esc(Object.values(valuesOf(r)).slice(1).filter(Boolean).map(value=>dateRange(value)?dateRangeLabel(value):Array.isArray(value)?value.join(', '):String(value)).join(' · '))}</small></button>`).join('')}</div>`;
+  if(state.view==='gallery')return `<div class="gallery">${rows.map(r=>`<button class="board-card" data-action="edit-row" data-id="${esc(r.id)}">${esc(nameOf(r))}<small>${esc(databaseRowSummary(r))}</small></button>`).join('')}</div>`;
   if(state.view==='chart') {
     const counts= {
     };
@@ -1386,12 +1420,12 @@ function renderDatabase() {
   if(state.nativeRecoveryPaused)return;
   renderTopbar(state.database.name||state.database.title,'▤');
   $('#main').innerHTML=`<section class="db-full"><div class="eyebrow">TEAM WORK, IN ONE PLACE</div><div class="database-heading"><h1>▤ ${esc(state.database.name||state.database.title||'프로젝트')}</h1><button class="outline-btn" data-action="db-export">↗ CSV 내보내기</button></div><p class="muted">작은 할 일부터 큰 목표까지, 우리의 다음 한 걸음을 함께 기록해요.</p><div class="panel">${databaseToolbar()}<div id="db-filters" ${state.filter?'':'hidden'} class="filters"><input id="db-filter-input" aria-label="항목 필터" placeholder="모든 속성에서 검색" value="${esc(state.filter)}"><button class="outline-btn" data-action="db-sort">이름 ${state.sort?'↓':'↕'} 정렬</button><button data-action="clear-filter" aria-label="필터 해제">×</button></div><div id="db-view">${databaseView()}</div></div></section>`;
-  applyDatabaseControls();
+  applyDatabaseControls();scheduleDatabaseVerificationExpiry();
   if(state.view==='timeline')focusTimeline();
 }
 async function reloadDatabase() {
   const data=await loadDatabaseData(state.database.id);
-  state.database=data.database;
+  clearDatabaseVerification();state.database=data.database;
   state.rows=data.rows;
   if(state.route==='database')renderDatabase();
   else if($('#home-database'))$('#home-database').innerHTML=databaseToolbar(true)+tableHTML(state.rows.slice(0,5),true)+`<button class="new-row" data-action="add-row">+ 새 프로젝트</button>`;
@@ -1399,7 +1433,7 @@ async function reloadDatabase() {
 }
 function openModal(title,content,cls='') {
   clearSearch();searchNavigation++;
-  clearWikiMutation();clearInbox();clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;state.verificationView=null;closeSlash();
+  clearDatabaseVerification();clearDatabasePropertyView();clearWikiMutation();clearInbox();clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;state.verificationView=null;closeSlash();
   $('#overlay-root').innerHTML=`<div class="modal-backdrop"><section class="modal ${cls}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="modal-head"><h2>${esc(title)}</h2><button class="modal-close" data-action="close-modal" aria-label="닫기">×</button></header><div class="modal-body">${content}</div></section></div>`;
   if(state.route==='page'&&resourceLevel(state.page)<4)$$('[data-action="delete-page"],[data-action="move-page"]',$('.modal')).forEach(el=>el.remove());
   if(state.route==='page'&&resourceLevel(state.page)<3){for(const action of ['lock-page','delete-page','verify-page','move-page','change-block-type','move-block','delete-block','restore-version'])$$(`[data-action="${action}"]`,$('.modal')).forEach(el=>el.remove());}
@@ -1409,7 +1443,7 @@ function openModal(title,content,cls='') {
 }
 function closeModal() {
   clearSearch();searchNavigation++;
-  clearWikiMutation();clearInbox();clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;state.verificationView=null;$('#overlay-root').innerHTML='';
+  clearDatabaseVerification();clearDatabasePropertyView();clearWikiMutation();clearInbox();clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;state.verificationView=null;$('#overlay-root').innerHTML='';
   closeSlash();
 }
 function wikiScope(){return {pageId:state.page?.id,channel:state.channel,epoch:state.channel?.base?.epoch,binding:state.session?.cache_binding,member:state.session?.member?.id,role:state.session?.member?.role,profile:state.offlineProfile?.id,workspace:state.workspace?.workspace_id,boot:state.bootGeneration,transportEpoch:FountainTransport.scopeEpoch,origin:FountainTransport.origin};}
@@ -1505,11 +1539,11 @@ function inboxOnline(){return !state.offline&&navigator.onLine;}
 function renderInbox(view) {
   if(!inboxScopeCurrent(view))return;
   const disabled=view.loading||view.busy||!inboxOnline(),labels={all:'전체',unread:'읽지 않음',archived:'보관함'};
-  $('.modal-body',view.modal).innerHTML=`<p class="inbox-intro">내가 담당하는 페이지의 검증이 만료되면 표시됩니다. 읽음·보관 상태는 같은 계정의 다른 기기에서도 이어집니다.</p><div class="inbox-toolbar"><nav aria-label="알림 필터">${Object.entries(labels).map(([filter,label])=>`<button class="outline-btn ${view.filter===filter?'selected':''}" data-action="inbox-filter" data-filter="${filter}" aria-pressed="${view.filter===filter}" ${disabled?'disabled':''}>${label}</button>`).join('')}</nav><button class="outline-btn" data-action="inbox-refresh" ${view.loading||view.busy?'disabled':''}>새로고침</button></div><div id="inbox-status" role="status" aria-live="polite">${!inboxOnline()?'알림함은 인터넷 연결 후 사용할 수 있습니다.':view.loading?'알림을 확인하는 중…':`읽지 않은 알림 ${view.unread}개`}</div><div id="inbox-error" role="alert">${esc(view.error||'')}</div><div class="inbox-list">${view.items.map(item=>`<article class="inbox-item ${item.read?'':'unread'}"><button class="inbox-page" data-action="inbox-open" data-id="${item.id}" ${disabled?'disabled':''}><span aria-hidden="true">${esc(item.icon||'📄')}</span><span><strong>${esc(item.title||'제목 없음')}</strong><small>페이지 검증 만료 · ${esc(verificationDate(item.expires_at))}</small></span>${!item.read?'<span class="inbox-unread-dot" aria-label="읽지 않음"></span>':''}</button><div class="inbox-item-actions"><button class="text-btn" data-action="inbox-read" data-id="${item.id}" ${disabled?'disabled':''}>${item.read?'읽지 않음으로 표시':'읽음으로 표시'}</button><button class="text-btn" data-action="inbox-archive" data-id="${item.id}" ${disabled?'disabled':''}>${item.archived?'보관 해제':'보관'}</button></div></article>`).join('')||(!view.loading?'<div class="inbox-empty">이곳에 표시할 알림이 없습니다.</div>':'')}</div><div class="inbox-footer"><span>${view.total}개 중 ${view.items.length}개 표시</span>${view.hasMore?`<button class="outline-btn" data-action="inbox-more" ${disabled?'disabled':''}>더 보기</button>`:''}</div>`;
+  $('.modal-body',view.modal).innerHTML=`<p class="inbox-intro">내가 담당하는 페이지나 데이터베이스 항목의 검증이 만료되면 표시됩니다. 읽음·보관 상태는 같은 계정의 다른 기기에서도 이어집니다.</p><div class="inbox-toolbar"><nav aria-label="알림 필터">${Object.entries(labels).map(([filter,label])=>`<button class="outline-btn ${view.filter===filter?'selected':''}" data-action="inbox-filter" data-filter="${filter}" aria-pressed="${view.filter===filter}" ${disabled?'disabled':''}>${label}</button>`).join('')}</nav><button class="outline-btn" data-action="inbox-refresh" ${view.loading||view.busy?'disabled':''}>새로고침</button></div><div id="inbox-status" role="status" aria-live="polite">${!inboxOnline()?'알림함은 인터넷 연결 후 사용할 수 있습니다.':view.loading?'알림을 확인하는 중…':`읽지 않은 알림 ${view.unread}개`}</div><div id="inbox-error" role="alert">${esc(view.error||'')}</div><div class="inbox-list">${view.items.map(item=>`<article class="inbox-item ${item.read?'':'unread'}"><button class="inbox-page" data-action="inbox-open" data-id="${item.id}" ${disabled?'disabled':''}><span aria-hidden="true">${esc(item.icon||'📄')}</span><span><strong>${esc(item.title||'제목 없음')}</strong><small>${item.resource_type==='row'?'항목':'페이지'} 검증 만료 · ${esc(verificationDate(item.expires_at))}</small></span>${!item.read?'<span class="inbox-unread-dot" aria-label="읽지 않음"></span>':''}</button><div class="inbox-item-actions"><button class="text-btn" data-action="inbox-read" data-id="${item.id}" ${disabled?'disabled':''}>${item.read?'읽지 않음으로 표시':'읽음으로 표시'}</button><button class="text-btn" data-action="inbox-archive" data-id="${item.id}" ${disabled?'disabled':''}>${item.archived?'보관 해제':'보관'}</button></div></article>`).join('')||(!view.loading?'<div class="inbox-empty">이곳에 표시할 알림이 없습니다.</div>':'')}</div><div class="inbox-footer"><span>${view.total}개 중 ${view.items.length}개 표시</span>${view.hasMore?`<button class="outline-btn" data-action="inbox-more" ${disabled?'disabled':''}>더 보기</button>`:''}</div>`;
   view.modal.setAttribute('aria-busy',String(!!(view.loading||view.busy)));
 }
 function validInboxItem(item) {
-  return !!item&&/^[a-f0-9]{64}$/.test(item.id)&&item.type==='verification.expired'&&typeof item.page_id==='string'&&item.page_id.length>0&&typeof item.title==='string'&&(item.icon==null||typeof item.icon==='string')&&verificationTimestamp(item.verified_at)&&verificationTimestamp(item.expires_at)&&typeof item.read==='boolean'&&typeof item.archived==='boolean';
+  return !!item&&/^[a-f0-9]{64}$/.test(item.id)&&item.type==='verification.expired'&&[undefined,'page','row'].includes(item.resource_type)&&(item.resource_type==='row'?typeof item.row_id==='string'&&item.row_id.length>0&&typeof item.database_id==='string'&&item.database_id.length>0:typeof item.page_id==='string'&&item.page_id.length>0)&&typeof item.title==='string'&&(item.icon==null||typeof item.icon==='string')&&verificationTimestamp(item.verified_at)&&verificationTimestamp(item.expires_at)&&typeof item.read==='boolean'&&typeof item.archived==='boolean';
 }
 async function loadInbox(view,more=false) {
   if(!inboxScopeCurrent(view)||view.loading||view.busy)return;
@@ -1546,8 +1580,8 @@ async function inboxAction(action,id) {
     if(!inboxScopeCurrent(view)||!inboxOnline())return;
     const result=await api('/inbox/'+id,patch,'PATCH',{signal:view.request.signal,current:()=>inboxScopeCurrent(view)&&inboxOnline()});
     if(!inboxScopeCurrent(view)||!inboxOnline())return;
-    if(!validInboxItem(result)||result.id!==item.id||result.page_id!==item.page_id)throw new Error('변경된 알림을 확인하지 못했습니다. 새로고침해 주세요.');
-    if(action==='inbox-open'){closeModal();await navigate('page',item.page_id);return;}
+    if(!validInboxItem(result)||result.id!==item.id||result.page_id!==item.page_id||result.resource_type!==item.resource_type||result.row_id!==item.row_id||result.database_id!==item.database_id)throw new Error('변경된 알림을 확인하지 못했습니다. 새로고침해 주세요.');
+    if(action==='inbox-open'){const scope=view.scope;closeModal();if(item.resource_type==='row'){const opened=await navigate('database',item.database_id);if(opened===true&&sameDatabaseIdentity(scope)&&state.database?.id===item.database_id&&!$('.modal')&&state.rows.some(row=>row.id===item.row_id))openRow(item.row_id);}else await navigate('page',item.page_id);return;}
     refresh=true;
   }catch(error){if(!inboxScopeCurrent(view))return;if([401,403,404].includes(error.status)){view.items=[];view.total=0;view.hasMore=false;refresh=error.status!==401;}view.error=error.status===404?'알림이 갱신되었거나 접근 권한이 변경되었습니다. 목록을 다시 확인해 주세요.':error.status===403?'알림을 확인할 권한이 없습니다. 목록을 다시 확인해 주세요.':error.message;}
   finally{if(inboxScopeCurrent(view)){view.busy=false;view.request=null;renderInbox(view);}}
@@ -1644,6 +1678,85 @@ async function openSearchResult(view,item){
   if(!state.rows.some(row=>row.id===item.id)){toast('항목이 삭제되었거나 더 이상 접근할 수 없습니다.');return;}
   openRow(item.id);
 }
+function sameDatabaseIdentity(scope){return !!scope&&!state.authSuspending&&!state.nativeOutboxPause&&!state.nativeRecoveryPaused&&state.session?.cache_binding===scope.binding&&state.session?.member?.id===scope.member&&state.session?.member?.role===scope.role&&state.offlineProfile?.id===scope.profile&&state.workspace?.workspace_id===scope.workspace&&state.bootGeneration===scope.boot&&FountainTransport.scopeEpoch===(scope.epoch??scope.transportEpoch)&&FountainTransport.origin===scope.origin;}
+function databaseScope(){return {databaseId:state.database?.id,route:state.route,binding:state.session?.cache_binding,member:state.session?.member?.id,role:state.session?.member?.role,profile:state.offlineProfile?.id,workspace:state.workspace?.workspace_id,boot:state.bootGeneration,epoch:FountainTransport.scopeEpoch,origin:FountainTransport.origin,schema:FountainCollaboration.canonical(state.database?.properties||[])};}
+function databaseScopeCurrent(scope){return sameDatabaseIdentity(scope)&&state.route===scope.route&&state.database?.id===scope.databaseId&&FountainCollaboration.canonical(state.database?.properties||[])===scope.schema;}
+function databaseOwnerInputs(property,value,editable=true,members=state.workspace?.members||[]){
+  const selected=Array.isArray(value)?value.filter(id=>typeof id==='string'):[];
+  const people=members.filter(member=>member&&typeof member.id==='string'&&typeof member.name==='string'&&member.active!==false);
+  return `<fieldset class="database-owner-inputs" data-owner-property="${esc(property.id)}"><legend>${property.limit==='unlimited'?'여러 명 선택 가능':'한 명 선택'}</legend>${people.map(member=>`<label><input type="checkbox" name="${esc(property.id)}" value="${esc(member.id)}" ${selected.includes(member.id)?'checked':''} ${!editable?'disabled':''}><span>${esc(member.name||'이름 없는 멤버')}</span></label>`).join('')||'<span class="muted">선택할 수 있는 담당자가 없습니다.</span>'}</fieldset>`;
+}
+function clearDatabaseVerification(){const view=state.databaseVerification;state.databaseVerification=null;view?.request?.abort();if(view?.panel?.isConnected)view.panel.replaceChildren();}
+function clearDatabasePropertyView(){const view=state.databasePropertyView;state.databasePropertyView=null;view?.request?.abort();}
+function databaseVerificationCurrent(view){return !!view&&state.databaseVerification===view&&databaseScopeCurrent(view.scope)&&view.modal?.isConnected&&view.modal===state.rowEditingModal&&view.form===$('#row-form')&&view.form.dataset.id===view.rowId&&state.rowEditingBaseline?.id===view.rowId&&state.rows.some(row=>row.id===view.rowId&&resourceLevel(row)>=1)&&!state.offline&&FountainCollaboration.canonical(state.rows.find(row=>row.id===view.rowId))===view.rowCanonical;}
+function validDatabaseVerification(info,view){
+  const expectedOwner=state.rowEditingDatabase?.properties.find(property=>property.type==='owner'),expectedVerification=state.rowEditingDatabase?.properties.find(property=>property.type==='verification')||null;
+  if(FountainCollaboration.canonical(expectedOwner)!==FountainCollaboration.canonical(info?.owner_property)||FountainCollaboration.canonical(expectedVerification)!==FountainCollaboration.canonical(info?.verification_property))return false;
+  return !!info&&info.database_id===view.scope.databaseId&&info.row_id===view.rowId&&/^[a-f0-9]{64}$/.test(info.revision)&&info.owner_property?.type==='owner'&&typeof info.owner_property.id==='string'&&(info.verification_property===null||info.verification_property?.type==='verification'&&typeof info.verification_property.id==='string')&&Array.isArray(info.owners)&&info.owners.every(id=>typeof id==='string')&&Array.isArray(info.members)&&info.members.every(member=>member&&typeof member.id==='string'&&typeof member.name==='string')&&typeof info.can_verify==='boolean'&&typeof info.can_manage==='boolean'&&info.verification&&['unverified','verified','expired','unknown'].includes(info.verification.status)&&(info.verification.verified_at===null||verificationTimestamp(info.verification.verified_at))&&(info.verification.expires_at===null||verificationTimestamp(info.verification.expires_at));
+}
+function renderDatabaseVerification(view){
+  if(!databaseVerificationCurrent(view)||!view.info)return;const info=view.info,value=info.verification,expiry=value.expires_at,mode=expiry?'finite':'infinite';
+  view.panel.innerHTML=`<div class="row-verification-heading"><strong>항목 검증</strong>${databaseValueHTML({type:'verification'},value)}</div><p class="small muted">현재 담당자가 지정된 항목을 편집 권한으로 검증합니다. 작성 중인 다른 속성은 그대로 보관됩니다.</p><div class="row-verification-current">담당자 · ${info.owners.map(id=>esc(databaseMemberName(id,info.members))).join(', ')||'미지정'}${value.verified_at?`<br>확인 ${esc(verificationDate(value.verified_at))}`:''}</div>${info.verification_property?`<label>검증 유효 기간<select data-row-verification-mode data-recovery-field="__verification_mode"><option value="infinite" ${mode==='infinite'?'selected':''}>만료 없음</option><option value="finite" ${mode==='finite'?'selected':''}>만료일 지정</option></select></label><label data-row-verification-expiry ${!expiry?'hidden':''}>만료 날짜와 시간<input type="datetime-local" step="1" data-recovery-field="__verification_expires" value="${esc(expiry?verificationLocalTime(expiry):'')}"><small>기기 시간대 · ${esc(Intl.DateTimeFormat().resolvedOptions().timeZone||'로컬')}</small></label>`:'<p class="small muted">검증 속성을 추가하면 이 항목을 검증할 수 있습니다.</p>'}<div class="database-verification-error" role="alert"></div><div class="row-verification-actions">${info.verification_property?`<button type="button" class="solid-btn" data-action="row-verification-save" ${!info.can_verify?'disabled':''}>검증 저장</button>${value.status!=='unverified'?`<button type="button" class="danger-btn" data-action="row-verification-remove" ${!info.can_manage?'disabled':''}>검증 해제</button>`:''}`:''}<button type="button" class="outline-btn" data-action="row-verification-refresh">최신 검증 확인</button></div>`;
+  view.initialTime=$('[data-recovery-field="__verification_expires"]',view.panel)?.value||'';view.expiry=expiry;
+  $('[data-row-verification-mode]',view.panel)?.addEventListener('change',event=>{$('[data-row-verification-expiry]',view.panel).hidden=event.target.value!=='finite';});
+}
+async function openDatabaseVerification({ownerOnly=false}={}){
+  const form=$('#row-form'),rowId=form?.dataset.id,row=state.rows.find(row=>row.id===rowId),scope=state.rowEditingScope;
+  if(!row||!databaseScopeCurrent(scope)||state.offline||state.nativeOutboxPause||state.nativeRecoveryPaused){if(!ownerOnly)throw Error('현재 항목을 서버에 연결한 상태에서 다시 열어 주세요.');return;}
+  const previous=state.databaseVerification;if(previous?.busy)return;previous?.request?.abort();
+  let panel=$('#row-verification-panel',form);if(!panel&&!ownerOnly){panel=document.createElement('section');panel.id='row-verification-panel';panel.className='row-verification-panel';$('.form-actions',form).before(panel);}
+  const view={scope,rowId,rowCanonical:FountainCollaboration.canonical(row),modal:state.rowEditingModal,form,panel,request:new AbortController(),busy:false};state.databaseVerification=view;
+  if(panel&&!ownerOnly)panel.innerHTML='<p role="status">검증 설정을 확인하고 있습니다…</p>';
+  const property=state.rowEditingDatabase.properties.find(property=>property.type==='owner'),ownerFields=property?$$(`[name="${CSS.escape(property.id)}"]`,form):[],selection=ownerFields.filter(input=>input.checked).map(input=>input.value);
+  try{
+    const info=await api('/databases/'+encodeURIComponent(scope.databaseId)+'/rows/'+encodeURIComponent(rowId)+'/verification',undefined,'GET',{signal:view.request.signal,current:()=>databaseVerificationCurrent(view)});if(!databaseVerificationCurrent(view))return;if(!validDatabaseVerification(info,view))throw Error('검증 정보를 읽을 수 없습니다. 최신 항목을 다시 열어 주세요.');view.info=info;
+    const fields=property?$$(`[name="${CSS.escape(property.id)}"]`,form):[];
+    if(property&&JSON.stringify(fields.filter(input=>input.checked).map(input=>input.value))===JSON.stringify(selection)){
+      const element=$(`[data-owner-property="${CSS.escape(property.id)}"]`,form);if(element){const template=document.createElement('template');template.innerHTML=databaseOwnerInputs(info.owner_property,selection,resourceLevel(row)>=3,info.members);for(const input of template.content.querySelectorAll('input')){const original=fields.find(field=>field.value===input.value);if(original)input.defaultChecked=original.defaultChecked;}element.replaceWith(template.content);}
+    }
+    if(!ownerOnly)renderDatabaseVerification(view);
+  }catch(error){if(databaseVerificationCurrent(view)&&!ownerOnly&&panel)panel.innerHTML=`<div class="database-verification-error" role="alert">${esc(error.message)}</div><button type="button" class="outline-btn" data-action="row-verification-refresh">다시 확인</button>`;}
+  finally{if(databaseVerificationCurrent(view))view.request=null;}
+}
+async function saveDatabaseVerification(remove){
+  const view=state.databaseVerification;if(view?.busy)return;if(!databaseVerificationCurrent(view)||!view.info)return;
+  const error=$('.database-verification-error',view.panel),current=()=>databaseVerificationCurrent(view);error.textContent='';
+  if(remove?!view.info.can_manage:!view.info.can_verify){error.textContent='현재 담당자와 편집 권한을 확인해 주세요.';return;}
+  view.busy=true;for(const button of $$('.row-verification-actions button',view.panel))button.disabled=true;
+  try{
+    const finite=$('[data-recovery-field="__verification_mode"]',view.panel)?.value==='finite',local=$('[data-recovery-field="__verification_expires"]',view.panel)?.value||'';let expires=null;
+    if(!remove&&finite)expires=local===view.initialTime&&view.expiry?view.expiry:verificationExpiry(local);
+    const body={revision:view.info.revision,...(!remove?{expires_at:expires}:{})};view.request=new AbortController();
+    const info=await api('/databases/'+encodeURIComponent(view.scope.databaseId)+'/rows/'+encodeURIComponent(view.rowId)+'/verification',body,remove?'DELETE':'POST',{signal:view.request.signal,current});
+    if(!current())return;if(!validDatabaseVerification(info,view))throw Error('저장 결과를 읽을 수 없습니다. 최신 검증 확인으로 결과를 확인해 주세요.');
+    view.info=info;const property=info.verification_property;if(property){const row=state.rows.find(row=>row.id===view.rowId);row.properties={...valuesOf(row),[property.id]:structuredClone(info.verification)};state.rowEditingBaseline.properties={...valuesOf(state.rowEditingBaseline),[property.id]:structuredClone(info.verification)};view.rowCanonical=FountainCollaboration.canonical(row);const label=$('.row-verification-value',view.form);if(label)label.innerHTML=databaseValueHTML(property,info.verification);}
+    renderDatabaseVerification(view);if($('#db-view'))$('#db-view').innerHTML=databaseView();scheduleDatabaseVerificationExpiry();toast(remove?'항목 검증을 해제했습니다.':'항목을 검증했습니다.');
+  }catch(failure){if(current()){error.textContent=failure.status===409?'항목이나 담당자 설정이 변경되었습니다. 입력은 보관했습니다. 최신 검증 확인 후 다시 저장해 주세요.':failure.message;if(failure.status===409)view.conflict=true;}}
+  finally{if(current()){view.busy=false;view.request=null;for(const button of $$('.row-verification-actions button',view.panel))button.disabled=button.dataset.action==='row-verification-save'?view.conflict||!view.info.can_verify:button.dataset.action==='row-verification-remove'?view.conflict||!view.info.can_manage:false;}}
+}
+function captureDatabasePropertyView(kind){const form=$(kind==='add'?'#property-form':'#owner-settings-form');if(!form)return;const error=document.createElement('div');error.className='database-property-error';error.setAttribute('role','alert');$('.form-actions',form)?.before(error);state.databasePropertyView={kind,scope:databaseScope(),database:structuredClone(state.database),form,modal:form.closest('.modal'),busy:false};}
+function openOwnerSettings(){
+  if(state.offline||resourceLevel(state.database)<4)throw Error('연결된 데이터베이스의 전체 권한이 필요합니다.');const property=state.database.properties.find(property=>property.type==='owner');if(!property)throw Error('담당자 속성을 먼저 추가해 주세요.');
+  openModal('담당자 속성 설정',`<form id="owner-settings-form" class="form-grid"><p>지식 담당자 지정으로 항목 접근 권한이 추가되지 않습니다. 기본값 변경은 이후에 만드는 항목에 적용됩니다.</p><label>담당자 수<select name="limit"><option value="one" ${property.limit==='one'?'selected':''}>한 명</option><option value="unlimited" ${property.limit==='unlimited'?'selected':''}>제한 없음</option></select></label><label>새 항목의 담당자 기본값<select name="default"><option value="created_by" ${property.default==='created_by'?'selected':''}>작성자</option><option value="none" ${property.default==='none'?'selected':''}>기본값 없음</option></select></label><div class="form-actions"><button type="button" class="outline-btn" data-action="close-modal">취소</button><button type="submit" class="solid-btn">설정 저장</button></div></form>`,'database-property-modal');captureDatabasePropertyView('settings');
+}
+async function saveDatabaseProperty(form){
+  const view=state.databasePropertyView;if(!view||view.form!==form||view.busy)return;
+  const current=()=>state.databasePropertyView===view&&view.modal.isConnected&&databaseScopeCurrent(view.scope)&&!state.offline&&resourceLevel(state.database)>=4,error=$('.database-property-error',form);
+  if(!current()){error.textContent='데이터베이스나 로그인 상태가 변경되었습니다. 입력을 확인한 뒤 다시 열어 주세요.';return;}
+  view.busy=true;const submit=$('.solid-btn',form);submit.disabled=true;error.textContent='';
+  try{
+    const data=Object.fromEntries(new FormData(form));let properties=structuredClone(view.database.properties);
+    if(view.kind==='settings'){const property=properties.find(property=>property.type==='owner');property.limit=data.limit;property.default=data.default;}
+    else{const property={id:uid().slice(0,8),name:data.name||'새 속성',type:data.type};if(['status','select','multi_select'].includes(property.type))property.options=(data.options||'').split(',').map(value=>value.trim()).filter(Boolean);if(property.type==='formula')property.expression=data.expression;if(property.type==='relation')property.database_id=data.database_id;if(property.type==='rollup'){if(!data.relation_property||!data.target_property)throw Error('롤업에 사용할 관계 속성과 대상 속성 ID를 지정해 주세요.');Object.assign(property,{target_property:data.target_property,relation_property:data.relation_property,aggregation:data.aggregation});}properties.push(property);}
+    view.request=new AbortController();const latest=await api('/databases/'+encodeURIComponent(view.scope.databaseId),undefined,'GET',{signal:view.request.signal,current});if(!current())return;
+    if(FountainCollaboration.canonical(latest.database?.properties||[])!==view.scope.schema)throw Error('다른 기기에서 속성이 변경되었습니다. 입력을 보관했으니 최신 데이터베이스를 다시 열어 주세요.');
+    if(!/^[a-f0-9]{64}$/.test(latest.database?.schema_revision||''))throw Error('속성 버전을 확인할 수 없습니다. 최신 데이터베이스를 다시 열어 주세요.');
+    await api('/databases/'+encodeURIComponent(view.scope.databaseId),{properties,schema_revision:latest.database.schema_revision},'PATCH',{signal:view.request.signal,current});if(!current())return;
+    const result=await loadDatabaseData(view.scope.databaseId);if(!current())return;state.database=result.database;state.rows=result.rows||[];closeModal();renderDatabase();toast(view.kind==='settings'?'담당자 기본값과 인원 설정을 저장했습니다.':'속성을 추가했습니다.');
+  }catch(failure){if(current())error.textContent=failure.status===409?'입력은 보관했습니다. '+failure.message+' 최신 설정을 확인한 뒤 다시 열어 주세요.':failure.message;}
+  finally{if(state.databasePropertyView===view){view.busy=false;view.request=null;if(submit.isConnected)submit.disabled=false;}}
+}
+
 function openRow(id,initialStatus) {
   const row=state.rows.find(r=>r.id===id);
   state.rowEditingBaseline=row?structuredClone(row):null;state.rowEditingDatabase=structuredClone(state.database);
@@ -1651,15 +1764,17 @@ function openRow(id,initialStatus) {
   const props=state.database.properties;
   const editable=row?resourceLevel(row)>=3:canCreateRow();
   if(!row&&!editable)throw new Error('항목 생성 권한이 없습니다.');
-  openModal(row?'프로젝트 상세':'새 프로젝트',`<form id="row-form" data-id="${esc(id||'')}" class="form-grid"><div class="row-properties">${props.map(p=>{const value=vals[p.id]??(p.type==='status'?initialStatus:'')??'';let input;if(p.type==='person'){const options=(state.workspace.members||[]).map(m=>({value:m.id,label:m.name||m.email||m.id}));if(value&&!options.some(o=>o.value===value))options.unshift({value,label:String(value)});input=`<select name="${esc(p.id)}"><option value="">미지정</option>${options.map(o=>`<option value="${esc(o.value)}" ${o.value===value?'selected':''}>${esc(o.label)}</option>`).join('')}</select>`;}else if(['status','select'].includes(p.type)){let options=optionsOf(p);if(value&&!options.includes(value))options.unshift(value);input=`<select name="${esc(p.id)}"><option value="">미지정</option>${options.map(o=>`<option ${o===value?'selected':''}>${esc(o)}</option>`).join('')}</select>`;}else if(p.type==='date'){const range=dateRange(value);input=`<span class="date-range-inputs"><input name="${esc(p.id)}" type="date" aria-label="${esc(p.name)} 시작일" value="${esc(range?.startISO||'')}"><span>→</span><input name="${esc(p.id)}__end" type="date" aria-label="${esc(p.name)} 종료일" value="${esc(typeof value==='object'&&value&&value.end?range?.endISO||'':'')}"></span>`;}else if(p.type==='checkbox')input=`<input name="${esc(p.id)}" type="checkbox" ${value?'checked':''} style="width:auto;justify-self:start">`;else input=`<input ${['formula','rollup','created_time','last_edited_time'].includes(p.type)?'readonly':''} name="${esc(p.id)}" value="${esc(Array.isArray(value)?value.join(', '):value)}" type="${p.type==='number'?'number':p.type==='date'?'date':p.type==='url'?'url':p.type==='email'?'email':'text'}" ${p.type==='title'?'required':''}>`;return `<label>${esc(p.name)}${input}</label>`;}).join('')}</div>${state.database.task_settings?.subitems===true?`<label>상위 항목<select name="parent_row_id"><option value="">최상위 항목</option>${state.rows.filter(candidate=>candidate.id!==id).map(candidate=>`<option value="${esc(candidate.id)}" ${row?.parent_row_id===candidate.id?'selected':''}>${esc(nameOf(candidate))}</option>`).join('')}</select></label>`:''}${state.database.task_settings?.dependencies===true?`<label>선행 항목<select name="depends_on" multiple aria-label="선행 항목" style="min-height:90px">${state.rows.filter(candidate=>candidate.id!==id).map(candidate=>`<option value="${esc(candidate.id)}" ${(row?.depends_on||[]).includes(candidate.id)?'selected':''}>${esc(nameOf(candidate))}</option>`).join('')}</select><small class="muted">선택한 작업이 먼저 끝난 뒤 이 작업이 시작됩니다. 여러 항목은 Ctrl 또는 ⌘ 키로 선택하세요.</small></label>`:''}<div class="form-actions">${row&&canCreateRow()?`<button type="button" class="outline-btn" data-action="duplicate-row" data-id="${esc(id)}">하위 항목과 복제</button>`:''}${row?`<button type="button" class="danger-btn" data-action="delete-row" data-id="${esc(id)}" style="margin-right:auto">삭제</button>`:''}<button type="button" class="outline-btn" data-action="close-modal">취소</button><button class="solid-btn">저장하기</button></div></form>`);
+  openModal(row?'프로젝트 상세':'새 프로젝트',`<form id="row-form" data-id="${esc(id||'')}" class="form-grid"><div class="row-properties">${props.map(p=>{const value=vals[p.id]??(p.type==='owner'?p.default==='created_by'?[state.session?.member?.id].filter(Boolean):[]:p.type==='status'?initialStatus:'')??'';let input;if(p.type==='verification')input=`<span class="row-verification-value">${databaseValueHTML(p,value,row)}</span>`;else if(p.type==='owner')input=databaseOwnerInputs(p,value,editable);else if(p.type==='person'){const options=(state.workspace.members||[]).map(m=>({value:m.id,label:m.name||m.email||m.id}));if(value&&!options.some(o=>o.value===value))options.unshift({value,label:String(value)});input=`<select name="${esc(p.id)}"><option value="">미지정</option>${options.map(o=>`<option value="${esc(o.value)}" ${o.value===value?'selected':''}>${esc(o.label)}</option>`).join('')}</select>`;}else if(['status','select'].includes(p.type)){let options=optionsOf(p);if(value&&!options.includes(value))options.unshift(value);input=`<select name="${esc(p.id)}"><option value="">미지정</option>${options.map(o=>`<option ${o===value?'selected':''}>${esc(o)}</option>`).join('')}</select>`;}else if(p.type==='date'){const range=dateRange(value);input=`<span class="date-range-inputs"><input name="${esc(p.id)}" type="date" aria-label="${esc(p.name)} 시작일" value="${esc(range?.startISO||'')}"><span>→</span><input name="${esc(p.id)}__end" type="date" aria-label="${esc(p.name)} 종료일" value="${esc(typeof value==='object'&&value&&value.end?range?.endISO||'':'')}"></span>`;}else if(p.type==='checkbox')input=`<input name="${esc(p.id)}" type="checkbox" ${value?'checked':''} style="width:auto;justify-self:start">`;else input=`<input ${['formula','rollup','created_time','last_edited_time'].includes(p.type)?'readonly':''} name="${esc(p.id)}" value="${esc(Array.isArray(value)?value.join(', '):value)}" type="${p.type==='number'?'number':p.type==='date'?'date':p.type==='url'?'url':p.type==='email'?'email':'text'}" ${p.type==='title'?'required':''}>`;return p.type==='owner'?`<div class="row-owner-field"><span>${esc(p.name)}</span>${input}</div>`:`<label>${esc(p.name)}${input}</label>`;}).join('')}</div>${state.database.task_settings?.subitems===true?`<label>상위 항목<select name="parent_row_id"><option value="">최상위 항목</option>${state.rows.filter(candidate=>candidate.id!==id).map(candidate=>`<option value="${esc(candidate.id)}" ${row?.parent_row_id===candidate.id?'selected':''}>${esc(nameOf(candidate))}</option>`).join('')}</select></label>`:''}${state.database.task_settings?.dependencies===true?`<label>선행 항목<select name="depends_on" multiple aria-label="선행 항목" style="min-height:90px">${state.rows.filter(candidate=>candidate.id!==id).map(candidate=>`<option value="${esc(candidate.id)}" ${(row?.depends_on||[]).includes(candidate.id)?'selected':''}>${esc(nameOf(candidate))}</option>`).join('')}</select><small class="muted">선택한 작업이 먼저 끝난 뒤 이 작업이 시작됩니다. 여러 항목은 Ctrl 또는 ⌘ 키로 선택하세요.</small></label>`:''}${row&&props.some(property=>property.type==='verification')?'<section id="row-verification-panel" class="row-verification-panel"><button type="button" class="outline-btn" data-action="row-verification">검증 설정 열기</button><span class="small muted">검증에는 서버 연결이 필요합니다.</span></section>':''}<div class="form-actions">${row&&canCreateRow()?`<button type="button" class="outline-btn" data-action="duplicate-row" data-id="${esc(id)}">하위 항목과 복제</button>`:''}${row?`<button type="button" class="danger-btn" data-action="delete-row" data-id="${esc(id)}" style="margin-right:auto">삭제</button>`:''}<button type="button" class="outline-btn" data-action="close-modal">취소</button><button class="solid-btn">저장하기</button></div></form>`,'database-row-modal');
+  state.rowEditingScope=databaseScope();state.rowEditingModal=$('.modal');
+  if(row&&props.some(property=>property.type==='owner')&&!state.offline)void openDatabaseVerification({ownerOnly:true});
   if(!editable){
     $$('#row-form input,#row-form select,#row-form textarea').forEach(el=>el.disabled=true);
     $('#row-form .solid-btn')?.remove();$('#row-form .danger-btn')?.remove();
   }
 
 }
-function taskGraphChanges(formElement,data) {
-  const existing=state.rowEditingBaseline?.id===formElement.dataset.id?state.rowEditingBaseline:null,changes={};
+function taskGraphChanges(formElement,data,baseline=state.rowEditingBaseline) {
+  const existing=baseline?.id===formElement.dataset.id?baseline:null,changes={};
   if(formElement.elements.namedItem('parent_row_id')&&(!existing||(data.parent_row_id||null)!==(existing.parent_row_id||null)))changes.parent_row_id=data.parent_row_id||null;
   if(formElement.elements.namedItem('depends_on')){
     const selected=new FormData(formElement).getAll('depends_on');
@@ -1673,7 +1788,7 @@ async function deleteTaskRow(id) {
   state.collapsedRows.delete(id);closeModal();await reloadDatabase();toast('항목을 삭제했습니다.');
 }
 function applyDatabaseControls() {
-  if(resourceLevel(state.database)<4)$$('[data-action="new-property"],[data-action="task-settings"]').forEach(el=>el.remove());
+  if(resourceLevel(state.database)<4)$$('[data-action="new-property"],[data-action="task-settings"],[data-action="owner-settings"]').forEach(el=>el.remove());
   if(!canCreateRow())$$('[data-action="add-row"]').forEach(el=>el.remove());
   $('#database-offline-note')?.remove();
   if(state.offline){const note=document.createElement('p');note.id='database-offline-note';note.className='offline-notice';note.textContent='기기에 보관한 데이터입니다. 변경은 연결 후 동기화됩니다. 수식·롤업과 연쇄 일정은 서버에 연결한 뒤 최종 계산됩니다.';($('.db-full>.panel')||$('#home-database'))?.before(note);}
@@ -1883,7 +1998,7 @@ function advancedForm(kind,id) {
   else if(kind==='forms')content=nameField+select('응답을 저장할 데이터베이스','database_id',dbs.map(d=>[d.id,d.name||d.title]),item.database_id||dbs[0]?.id)+`<label>질문 (JSON)<textarea name="fields" spellcheck="false" required>${esc(JSON.stringify(item.fields||[{id:'name',label:'프로젝트 이름',type:'text',required:true,property_id:'name'},{id:'status',label:'진행 상태',type:'select',property_id:'status',options:['시작 전','진행 중','완료']}],null,2))}</textarea></label>`+checkbox('폼 공개 및 응답 허용','published',!!item.published)+'<div class="info-box">각 질문의 property_id는 연결된 데이터베이스의 속성 ID와 같아야 합니다. 질문에 condition: {field, equals}를 추가하면 조건부로 표시됩니다.</div>';
   else if(kind==='automations')content=nameField+select('데이터베이스','database_id',dbs.map(d=>[d.id,d.name||d.title]),item.database_id||dbs[0]?.id)+select('실행 조건','trigger',[['manual','직접 실행'],['row.created','항목을 만들었을 때'],['row.updated','항목을 수정했을 때'],['scheduled','일정에 따라 반복']],item.trigger||'manual')+automationScheduleFields(item)+`<label>속성을 변경할 대상 항목<select name="row_id" id="automation-row"><option value="">대상 항목 없음</option></select><small class="muted">속성 변경 작업에 사용합니다. 새 항목이나 페이지 생성 작업은 비워둘 수 있습니다.</small></label><label>실행할 작업 (JSON)<textarea name="actions" required spellcheck="false">${esc(JSON.stringify(item.actions||[{type:'set_property',property_id:'status',value:'완료'}],null,2))}</textarea></label>`+checkbox('자동화 사용','enabled',item.enabled!==false);
   else if(kind==='integrations')content=nameField+select('제공자','provider',[['webhook','Webhook'],['slack','Slack'],['github','GitHub'],['google_drive','Google Drive'],['custom','사용자 정의']],item.provider||'webhook')+field('연결 URL','url','https://…','url',item.url||'')+'<div class="info-box">연결 메타데이터를 등록합니다. 실제 동기화와 OAuth 인증은 공급자 연결이 필요합니다.</div>';
-  openModal(`${id?'관리':'새로 만들기'} · ${{members:'멤버',groups:'그룹',teamspaces:'팀스페이스',forms:'폼',sites:'사이트',automations:'자동화',integrations:'연결'}[kind]||kind}`,`<form id="advanced-form" data-kind="${kind}" data-id="${esc(id||'')}" class="form-grid">${content}<div class="form-actions"><button type="button" class="outline-btn" data-action="settings">설정으로 돌아가기</button><button class="solid-btn">저장하기</button></div></form>`);
+  openModal(`${id?'관리':'새로 만들기'} · ${{members:'멤버',groups:'그룹',teamspaces:'팀스페이스',forms:'폼',sites:'사이트',automations:'자동화',integrations:'연결'}[kind]||kind}`,`<form id="advanced-form" data-kind="${kind}" data-id="${esc(id||'')}" class="form-grid">${content}<div class="form-actions"><button type="button" class="outline-btn" data-action="settings">설정으로 돌아가기</button><button class="solid-btn">저장하기</button></div></form>`,'database-row-modal');
   if(kind==='automations')updateScheduleFields();
   if(kind==='automations')loadAutomationRows(item.database_id||dbs[0]?.id,item.row_id||'').catch(error=>toast(error.message));
 }
@@ -2475,7 +2590,12 @@ async function doAction(target,grouped=false) {
     }
     case'new-database':openModal('새 데이터베이스',form(field('데이터베이스 이름','name','팀 프로젝트'),'database-form'));
     break;
-    case'new-property':openModal('데이터베이스 속성 추가',form(field('속성 이름','name','마감일')+`<label>속성 종류<select name="type"><option value="text">텍스트</option><option value="number">숫자</option><option value="status">상태</option><option value="select">선택</option><option value="date">날짜</option><option value="person">사람</option><option value="checkbox">체크박스</option><option value="multi_select">다중 선택</option><option value="files">파일 ID 목록</option><option value="url">URL</option><option value="email">이메일</option><option value="relation">관계형</option><option value="formula">수식</option><option value="rollup">롤업</option></select></label>`+field('선택 항목 (쉼표로 구분)','options','시작 전, 진행 중, 완료')+field('수식','expression',"prop('estimate') * 2")+`<label>관계형 대상 데이터베이스<select name="database_id">${state.workspace.databases.map(d=>`<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('')}</select></label><label>롤업에 사용할 관계 속성<select name="relation_property"><option value="">관계 속성을 선택하세요</option>${state.database.properties.filter(p=>p.type==='relation').map(p=>`<option value="${esc(p.id)}">${esc(p.name)} (${esc(p.id)})</option>`).join('')}</select></label>`+field('롤업 대상 속성 ID','target_property','estimate')+`<label>롤업 집계<select name="aggregation"><option value="sum">합계</option><option value="count">개수</option><option value="average">평균</option><option value="min">최솟값</option><option value="max">최댓값</option></select></label>`,'property-form'));
+    case'owner-settings':openOwnerSettings();break;
+    case'row-verification':await openDatabaseVerification();break;
+    case'row-verification-save':await saveDatabaseVerification(false);break;
+    case'row-verification-remove':await saveDatabaseVerification(true);break;
+    case'row-verification-refresh':await openDatabaseVerification();break;
+    case'new-property':openModal('데이터베이스 속성 추가',form(field('속성 이름','name','마감일')+`<label>속성 종류<select name="type"><option value="text">텍스트</option><option value="number">숫자</option><option value="status">상태</option><option value="select">선택</option><option value="date">날짜</option><option value="person">사람</option><option value="owner">담당자</option><option value="verification">검증 · 담당자 자동 추가</option><option value="checkbox">체크박스</option><option value="multi_select">다중 선택</option><option value="files">파일 ID 목록</option><option value="url">URL</option><option value="email">이메일</option><option value="relation">관계형</option><option value="formula">수식</option><option value="rollup">롤업</option></select></label>`+field('선택 항목 (쉼표로 구분)','options','시작 전, 진행 중, 완료')+field('수식','expression',"prop('estimate') * 2")+`<label>관계형 대상 데이터베이스<select name="database_id">${state.workspace.databases.map(d=>`<option value="${esc(d.id)}">${esc(d.name)}</option>`).join('')}</select></label><label>롤업에 사용할 관계 속성<select name="relation_property"><option value="">관계 속성을 선택하세요</option>${state.database.properties.filter(p=>p.type==='relation').map(p=>`<option value="${esc(p.id)}">${esc(p.name)} (${esc(p.id)})</option>`).join('')}</select></label>`+field('롤업 대상 속성 ID','target_property','estimate')+`<label>롤업 집계<select name="aggregation"><option value="sum">합계</option><option value="count">개수</option><option value="average">평균</option><option value="min">최솟값</option><option value="max">최댓값</option></select></label>`,'property-form'));captureDatabasePropertyView('add');
     break;
     case'backup':{if(state.workspace.settings?.disable_export)throw new Error('워크스페이스에서 내보내기를 제한했습니다.');await openBackup();break;}
     case'backup-retry':if(state.backupManager?.restartRequired)await openBackup();else await state.backupManager?.retry();break;
@@ -2603,6 +2723,7 @@ document.addEventListener('submit',async event=> {
   if(state.nativeRecoveryPaused)return;
   if(event.target.id==='wiki-owner-form'){event.preventDefault();await saveWikiMutation();return;}
   if(event.target.id==='wiki-search-form'){event.preventDefault();const view=state.wikiPage;if(wikiCurrent(view)&&!view.loading){view.query=event.target.q.value;view.items=[];view.hasMore=false;await loadWikiPages(view);}return;}
+  if(event.target.id==='property-form'||event.target.id==='owner-settings-form'){event.preventDefault();await saveDatabaseProperty(event.target);return;}
   if(event.target.id==='verification-form'){event.preventDefault();await saveVerification(false);return;}
   const formElement=event.target; if(!formElement.id)return; event.preventDefault(); const data=Object.fromEntries(new FormData(formElement)),submit=$('button[type=submit],button.solid-btn',formElement); if(submit)submit.disabled=true; try {
     switch(formElement.id) {
@@ -2663,27 +2784,37 @@ document.addEventListener('submit',async event=> {
         }); state.comments.push(c.comment||c); $('#comments').innerHTML=commentsHTML(); formElement.reset(); toast('댓글을 남겼습니다.'); break;
       }
       case'row-form': {
-        const properties= {
-        }; for(const p of state.rowEditingDatabase.properties) {
-          if(['formula','rollup','created_time','last_edited_time'].includes(p.type))continue;
-          if(p.type==='date'){const start=data[p.id]||'',end=data[p.id+'__end']||'',original=valuesOf(state.rowEditingBaseline||{})[p.id],range=dateRange(original);if(end&&(!start||end<start))throw new Error('종료일은 시작일 이후여야 합니다.');properties[p.id]=range&&start===range.startISO&&end===(typeof original==='object'&&original?.end?range.endISO:'')?original:end?{start,end}:start;continue;}
+        if(!databaseScopeCurrent(state.rowEditingScope)||state.rowEditingModal!==formElement.closest('.modal'))throw new Error('데이터베이스나 로그인 상태가 변경되었습니다. 입력은 보관되어 있습니다.');
+        const rowScope=state.rowEditingScope,rowModal=state.rowEditingModal,controller=state.mutations,database=structuredClone(state.rowEditingDatabase),baselineRow=state.rowEditingBaseline?structuredClone(state.rowEditingBaseline):null,rowId=formElement.dataset.id;
+        const current=()=>databaseScopeCurrent(rowScope)&&state.mutations===controller&&state.rowEditingScope===rowScope&&state.rowEditingModal===rowModal&&rowModal.isConnected&&$('#row-form')===formElement&&formElement.dataset.id===rowId&&(rowId?resourceLevel(state.rows.find(row=>row.id===rowId))>=3:canCreateRow());
+        const properties=Object.create(null); for(const p of database.properties) {
+          if(['formula','rollup','created_time','last_edited_time','verification'].includes(p.type))continue;
+          if(p.type==='owner'){properties[p.id]=new FormData(formElement).getAll(p.id);if(p.limit==='one'&&properties[p.id].length>1)throw new Error('담당자는 한 명만 선택할 수 있습니다.');continue;}
+          if(p.type==='date'){const start=data[p.id]||'',end=data[p.id+'__end']||'',original=valuesOf(baselineRow||{})[p.id],range=dateRange(original);if(end&&(!start||end<start))throw new Error('종료일은 시작일 이후여야 합니다.');properties[p.id]=range&&start===range.startISO&&end===(typeof original==='object'&&original?.end?range.endISO:'')?original:end?{start,end}:start;continue;}
           properties[p.id]=p.type==='checkbox'?formElement.elements.namedItem(p.id).checked:p.type==='number'?(data[p.id]!==''?Number(data[p.id]):null):['relation','multi_select','files'].includes(p.type)?String(data[p.id]||'').split(',').map(s=>s.trim()).filter(Boolean):data[p.id]||'';
         }
-        const body={properties,...taskGraphChanges(formElement,data)};
-        if(formElement.dataset.id&&state.rowEditingBaseline){
-          for(const property of state.rowEditingDatabase.properties){
+        const body={properties,...taskGraphChanges(formElement,data,baselineRow)};
+        if(rowId&&baselineRow){
+          for(const property of database.properties){
             if(!(property.id in properties))continue;
-            const original=valuesOf(state.rowEditingBaseline)[property.id];
-            const baseline=property.type==='checkbox'?!!original:property.type==='number'?(original===''||original==null?null:Number(original)):['relation','multi_select','files'].includes(property.type)?(Array.isArray(original)?original:[]):original??'';
+            const original=valuesOf(baselineRow)[property.id];
+            const baseline=property.type==='checkbox'?!!original:property.type==='number'?(original===''||original==null?null:Number(original)):['relation','multi_select','files','owner'].includes(property.type)?(Array.isArray(original)?original:[]):original??'';
             if(JSON.stringify(properties[property.id])===JSON.stringify(baseline))delete properties[property.id];
           }
         }
-        if(state.mutations){
-          const previousIds=new Set((await state.mutations.records()).map(record=>record.id));
-          if(formElement.dataset.id)await state.mutations.patchRow(state.rowEditingDatabase.id,formElement.dataset.id,body,{baseline:state.rowEditingBaseline,schema:state.rowEditingDatabase.properties});else await state.mutations.createRow(state.rowEditingDatabase.id,body,{schema:state.rowEditingDatabase.properties});
-          if(!state.offline){await syncMutations();const invalid=(await state.mutations.records()).find(record=>!previousIds.has(record.id)&&record.status==='invalid');if(invalid)throw new Error(mutationError(invalid)+' 변경 내용은 동기화 목록에 보관했습니다.');}
-        }else await api('/databases/'+state.database.id+'/rows'+(formElement.dataset.id?'/'+formElement.dataset.id:''),body,formElement.dataset.id?'PATCH':'POST');
-        closeModal();await reloadDatabase();toast(state.offline?(nativeCacheOnly()?'변경을 앱 캐시에 보관했습니다. 연결되면 동기화합니다.':'변경을 기기에 저장했습니다. 연결되면 동기화합니다.'):state.mutationRecords?.some(record=>record.operation.database_id===state.database.id)?'변경을 기기에 보관했습니다. 동기화 목록에서 상태를 확인하세요.':'프로젝트를 저장했습니다.');break;
+        try{
+        if(controller){
+          const records=await controller.records();if(!current())break;const previousIds=new Set(records.map(record=>record.id));
+          if(rowId)await controller.patchRow(database.id,rowId,body,{baseline:baselineRow,schema:database.properties});else await controller.createRow(database.id,body,{schema:database.properties});
+          if(!current())break;
+          if(!state.offline){await syncMutations({controller,current});if(!current())break;const records=await controller.records();if(!current())break;const invalid=records.find(record=>!previousIds.has(record.id)&&record.status==='invalid');if(invalid)throw new Error(mutationError(invalid)+' 변경 내용은 동기화 목록에 보관했습니다.');}
+        }else{if(!current())break;await api('/databases/'+encodeURIComponent(database.id)+'/rows'+(rowId?'/'+encodeURIComponent(rowId):''),body,rowId?'PATCH':'POST',{current});if(!current())break;}
+        if(!current())break;closeModal();const ticket=searchNavigation,completed=()=>databaseScopeCurrent(rowScope)&&state.mutations===controller&&searchNavigation===ticket&&!$('.modal');
+        const result=await loadDatabaseData(database.id);if(!completed())break;state.database=result.database;state.rows=result.rows||[];
+        if(state.route==='database')renderDatabase();else if($('#home-database')){$('#home-database').innerHTML=databaseToolbar(true)+tableHTML(state.rows.slice(0,5),true)+`<button class="new-row" data-action="add-row">+ 새 프로젝트</button>`;applyDatabaseControls();}
+        toast(state.offline?(nativeCacheOnly()?'변경을 앱 캐시에 보관했습니다. 연결되면 동기화합니다.':'변경을 기기에 저장했습니다. 연결되면 동기화합니다.'):state.mutationRecords?.some(record=>record.operation.database_id===database.id)?'변경을 기기에 보관했습니다. 동기화 목록에서 상태를 확인하세요.':'프로젝트를 저장했습니다.');
+        }catch(error){if(current())throw error;}
+        break;
       }
       case'task-settings-form':{
         await api('/databases/'+state.database.id,{task_settings:{subitems:formElement.subitems.checked,dependencies:formElement.dependencies.checked,date_property:data.date_property,shift:data.shift,skip_weekends:formElement.skip_weekends.checked}},'PATCH');state.timelineProperty=data.date_property;closeModal();await reloadDatabase();toast('프로젝트 일정 설정을 저장했습니다.');break;
@@ -2698,17 +2829,6 @@ document.addEventListener('submit',async event=> {
             id:'due',name:'마감일',type:'date'
           }]
         }); await refreshWorkspace(); await navigate('database',d.id||d.database.id); break;
-      }
-      case'property-form': {
-        const p= {
-          id:uid().slice(0,8),name:data.name||'새 속성',type:data.type
-        }; if(['status','select','multi_select'].includes(p.type))p.options=data.options.split(',').map(v=>v.trim()).filter(Boolean); if(p.type==='formula')p.expression=data.expression; if(p.type==='relation')p.database_id=data.database_id; if(p.type==='rollup') {
-          if(!data.relation_property||!data.target_property)throw new Error('롤업에 사용할 관계 속성과 대상 속성 ID를 지정해 주세요.');
-          p.target_property=data.target_property;p.relation_property=data.relation_property;p.aggregation=data.aggregation;
-        }
-        await api('/databases/'+state.database.id, {
-          properties:[...state.database.properties,p]
-        },'PATCH'); closeModal(); await reloadDatabase(); toast('속성을 추가했습니다.'); break;
       }
       case'advanced-form': {
         const kind=formElement.dataset.kind,id=formElement.dataset.id; const payload= {

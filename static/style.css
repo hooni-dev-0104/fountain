@@ -2304,3 +2304,36 @@ svg {
  .wiki-mutation-modal select,.wiki-mutation-modal button{min-height:44px;font-size:14px;min-width:0}.wiki-mutation-modal .modal-close{min-width:44px}
  .wiki-mutation-modal .form-actions{flex-wrap:wrap}.wiki-mutation-modal .form-actions button{flex:1}
 }
+/* Typed database knowledge ownership and inline verification preserve the row editor. */
+.database-owner-inputs{border:1px solid var(--line);border-radius:6px;padding:10px;max-height:210px;overflow:auto;margin:6px 0 0;min-width:0}
+.database-owner-inputs legend{font-size:11px;padding:0 5px;color:var(--muted)}
+.database-owner-inputs label{display:flex;gap:10px;align-items:center;padding:7px 2px;overflow-wrap:anywhere}
+.database-owner-inputs input{width:auto;flex-shrink:0;accent-color:#667d50}
+.row-owner-field>span{font-size:12px;font-weight:500}
+.row-verification-panel{border:1px solid #d3dcc8;background:#f8faf5;padding:15px;border-radius:7px;display:grid;gap:11px;min-width:0}
+.row-verification-heading,.row-verification-actions{display:flex;align-items:center;flex-wrap:wrap;gap:9px}
+.row-verification-current{font-size:12px;line-height:1.8;overflow-wrap:anywhere}
+.row-verification-panel [hidden]{display:none}
+.row-verification-panel>label{display:grid;gap:6px}
+.database-verification-error:not(:empty),.database-property-error:not(:empty){color:#87402f;background:#fcf1e8;border:1px solid #e5c9b9;border-radius:5px;padding:10px;font-size:12px;line-height:1.7}
+.row-trust-summary{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:7px 15px;font-size:11px;color:#696b60;padding-left:var(--task-indent,0)}
+.row-trust-summary:empty{display:none}
+.row-verification-value{display:block;padding:6px 0}
+@media(max-width:600px){
+ .row-verification-panel{padding:12px;gap:12px}
+ .row-verification-panel button,.row-verification-panel input,.row-verification-panel select,#row-form button,#row-form input:not([type=checkbox]),#row-form select,#property-form button,#property-form input,#property-form select,#owner-settings-form button,#owner-settings-form select{min-height:44px;font-size:14px;min-width:0}
+ .database-owner-inputs label{min-height:44px;font-size:14px}
+ .database-owner-inputs input{width:20px;height:20px}
+ .row-verification-panel p,.row-verification-panel small,.row-verification-current,.database-property-error,.database-verification-error,.row-trust-summary{font-size:14px}
+ .row-verification-actions button{flex:1;white-space:normal}
+ #row-form .form-actions{flex-wrap:wrap}
+ #row-form .form-actions button{flex:1;white-space:normal}
+ .db-actions [data-action="owner-settings"],.db-actions [data-action="new-property"]{min-height:44px}
+}
+
+@media(max-width:600px){
+ .database-row-modal{display:flex;flex-direction:column;overflow:hidden;max-height:calc(100dvh - 20px)}
+ .database-row-modal .modal-head{flex-shrink:0}
+ .database-row-modal .modal-body{min-height:0;overflow:auto}
+ .database-row-modal .modal-close{min-width:44px;min-height:44px}
+}

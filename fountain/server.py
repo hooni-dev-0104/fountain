@@ -150,7 +150,7 @@ class Application:
                 inbox_route = (path == '/api/inbox' and method == 'GET'
                     or len(parts) == 3 and parts[:2] == ['api', 'inbox'] and method == 'PATCH')
                 wiki_route = len(parts) == 4 and parts[:2] == ['api','pages'] and parts[3] in {'wiki','wiki-owner'}
-                if self.advanced is None and not (inbox_route or wiki_route):
+                if self.advanced is None and not (inbox_route or wiki_route or path == '/api/verified-pages' and method == 'GET'):
                     from .advanced import Advanced
                     self.advanced = Advanced(self.store, self.workspace)
                 authority.prepare(method, path, body)
@@ -238,6 +238,9 @@ class Application:
         if len(parts) == 4 and parts[:2] == ['api','pages'] and parts[3] in {'wiki','wiki-owner'}:
             from .wiki import Wiki
             return 200, Wiki(s, access).route(method, parts[2], parts[3], body, query)
+        if path == '/api/verified-pages' and method == 'GET':
+            from .verified_pages import VerifiedPages
+            return 200, VerifiedPages(s, access).get(query)
         if path == '/api/inbox' and method == 'GET':
             from .inbox import Inbox
             return 200, Inbox(s, access).get(query)

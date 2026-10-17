@@ -1,0 +1,311 @@
+{
+  "scope": "Independent administrator restore of existing trashed pages. Full Notion paid-plan goal remains incomplete.",
+  "recordedAt": "2026-10-17T11:49:12.325394+00:00",
+  "sourceCommit": "2570f3e6b4828d723e1dac5fa12edb64cc9b1f1f",
+  "originalEvidence": {
+    "source": "https://www.notion.com/help/custom-data-retention-settings",
+    "kind": "official documentation body",
+    "paidAccountRuntimeObserved": false,
+    "privateNotionServerObserved": false,
+    "observed": [
+      "Workspace owners can review original sharing and restore deleted or retained pages to original location or private pages.",
+      "Trash and post-trash retention are separate stages; legal holds preserve content beyond deletion schedules."
+    ],
+    "independentChoices": [
+      "Explicit per-action capability and fresh authenticated review CAS",
+      "Selected page only; private restore explicitly transfers ownership to actor; independent child sharing remains",
+      "All sites for selected page are disabled and never automatically resumed",
+      "Creator/editor/generation and CRDT preserved; only manager history changes",
+      "Strict original-ancestor lifecycle validation with scalar projections and matching location filters"
+    ],
+    "legalHoldSource": "https://www.notion.com/help/legal-holds"
+  },
+  "release": {
+    "supabaseMain": 24,
+    "files": 48,
+    "exactSharedSourceAgainstQa92And93": true,
+    "changedFromMain23": [
+      "_shared/admin-content.ts",
+      "_shared/admin-roles.ts"
+    ],
+    "migrations": 36,
+    "restoreMigration": "20261017113232",
+    "locationFilterMigration": "20261017114654",
+    "maintenance": 4,
+    "worker": 4,
+    "verifierRetired": 95,
+    "newDependencies": false,
+    "productionOwnerLinked": false,
+    "canonicalURL": "https://fountain-hoonis-projects-1ccfd37e.vercel.app",
+    "vercelDeployment": "dpl_Gf2LBenLwnkF2rAddq7eZ7dz2Y9H",
+    "vercelReady": true,
+    "publicAssetsByteExact": 14,
+    "preparedFiles": 16,
+    "publicArtifactSHA256": "859a7e06367d7cba44cf1dd7a6fabeff81ac916cbb6f175befbb3bdcf282e47a"
+  },
+  "implementation": {
+    "action": "content.restore.manage",
+    "requires": "content.search.read",
+    "existingCustomRolesAutoUpgraded": false,
+    "routes": [
+      "GET /api/admin/content/restore",
+      "HEAD /api/admin/content/restore",
+      "POST /api/admin/content/restore"
+    ],
+    "requestKeys": [
+      "kind",
+      "id",
+      "review_revision",
+      "mode"
+    ],
+    "kind": "page",
+    "modes": [
+      "original",
+      "private"
+    ],
+    "response": {
+      "applied": true
+    },
+    "preserved": [
+      "title/body",
+      "versions",
+      "comments",
+      "collaboration epoch/state/operation ownership",
+      "attachment references",
+      "created_at",
+      "creator/editor identity cause timestamps and generation",
+      "independent child resources"
+    ],
+    "privateEffect": "actor becomes selected-page owner; parent/teamspace cleared and private noninherited empty grants; workspace-owner override remains",
+    "originalEffect": "owner/location/ACL retained only after complete valid current ancestor traversal",
+    "publicationEffect": "all sites for selected page off in same transaction",
+    "bodyReadDuringReview": false,
+    "sourceRevisionAndAccessRevisionCAS": true,
+    "authenticatedExactReceiptRetry": true
+  },
+  "verification": {
+    "fullPythonBeforeFinalLocationRefinement": {
+      "actualPostgresConfigured": true,
+      "tests": 692,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": true,
+      "sourceCommit": "b1660cad18a2bed7f8b57aafdad98bd1ce9f9514",
+      "scope": "Full suite before final archived-location filter parity refinement; later focused proof recorded separately"
+    },
+    "finalRelatedPython": {
+      "actualPostgresConfigured": true,
+      "scope": "Final location refinement plus restore/content/HTTP/role regressions",
+      "tests": 69,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": true
+    },
+    "newNodeRestoreTests": 14,
+    "existingNodeContentTests": 34,
+    "rolePythonTypeScriptExactResults": 91,
+    "roleSecurityChecks": 51,
+    "roleDomainTests": 10,
+    "routeInventory": {
+      "routes": 234,
+      "functions": 11,
+      "methodMatrices": 693,
+      "contentExactPathMethodChecks": 175,
+      "productionParityClaim": false
+    },
+    "sqlRestore": {
+      "actualPostgres": true,
+      "authContextStubInComponentOnly": true,
+      "groups": 6,
+      "fixtureEntities": 2140,
+      "rejectionCases": 74,
+      "publishedSitesPerMode": 1005,
+      "parentDepth": 100,
+      "rollbackVerified": true,
+      "migrationSHA256": "0ab8be738fc5b38302b95db8f3664765fae487633c461387dc53ec6e5d8568d6"
+    },
+    "sqlLocationFilter": {
+      "actualPostgres": true,
+      "groups": 5,
+      "invalidAncestorTeamspaceCases": 45,
+      "existingActivePageDatabaseRowParityCases": 36,
+      "rollbackVerified": true,
+      "sourceSHA256": "205a6aee6dde5efc3872515fec46d7fbe430343391939daa581c4318270e71d1",
+      "deployedFunctionBodySHA256": "dc58fe09bbd54afb9ada4dafb415b06eb65a682b9485e73d66d2ae31c06ec05b",
+      "clientExecuteRolesAllDenied": true,
+      "appliedMigrationVersion": "20261017114654"
+    },
+    "actualCloudHTTP": {
+      "qaVersion": 92,
+      "actualAuthUsers": 2,
+      "actualSessions": 3,
+      "groups": 7,
+      "all1001SitesUnpublished": true,
+      "savedBodyVersionCommentCRDTPreserved": true,
+      "creatorEditorPreserved": true,
+      "revokedAndStaleReviewDenied": true,
+      "locked423": true,
+      "noOrdinaryACLExpansionBeforeRestore": true,
+      "sourceBodyReturnedInReview": false,
+      "contentChangesDiagnosticInvalidAndNotUsed": true
+    },
+    "actualCloudBrowser": {
+      "qaVersion": 93,
+      "httpQaVersion": 92,
+      "all46ShippingSharedFilesIdentical": true,
+      "onlyQAEntryChange": "Repair diagnostic comma expression; no shipping change",
+      "groups": 10,
+      "successfulAdminGETs": 18,
+      "restoreGETs": 5,
+      "exactRestorePOSTs": 2,
+      "rawBodySelectionsOnReads": 0,
+      "domainWritesOnReads": 0,
+      "browserErrors": 0,
+      "privateBodyReadableOnlyAfterExplicitRestore": true,
+      "originalBodyStillDeniedToDelegate": true,
+      "bodyDigestsPreserved": true,
+      "actualParentLabel": true,
+      "selectedSitesOff": true,
+      "viewport390": true,
+      "realRevocationAndDelayedResponse": true,
+      "offlineAndLogoutDisposal": true,
+      "presentation": "isolated temporary HTTPS/SPKI proxy; external deployment verified separately",
+      "proofSHA256": "9a27b5b69d25e32020b1a1c61a7e936706e240f537cdf7da10b6deb1cedf7514",
+      "sourceScope": "Core restore/UI unchanged by final internal location-filter scalar refinement; helper separately checked on actual PostgreSQL"
+    },
+    "localBrowser": {
+      "groups": 14,
+      "validDTOs": 4,
+      "invalidDTOs": 14,
+      "invalidDTOsNeverPOST": true
+    },
+    "visual": {
+      "score": 94,
+      "reference": "Existing Fountain admin modal; no paid-original screen parity claim"
+    },
+    "publicVercel": {
+      "actualVercel": true,
+      "deploymentId": "dpl_Gf2LBenLwnkF2rAddq7eZ7dz2Y9H",
+      "status": "READY",
+      "publicAssetsExact": 14,
+      "restoreAnonymousBoundary": [
+        {
+          "method": "GET",
+          "status": 401,
+          "bytes": 64
+        },
+        {
+          "method": "HEAD",
+          "status": 401,
+          "bytes": 0
+        },
+        {
+          "method": "POST",
+          "status": 401,
+          "bytes": 64
+        }
+      ],
+      "passed": true
+    },
+    "syntax": "Python AST/compile and Node check passed",
+    "typescriptStaticCompiler": "not installed; no static typecheck claim",
+    "regressionHarnessRepair": "Initial full-suite run lacked repository PYTHONPATH and failed imports; fixed harness only and reran692 with zero skips"
+  },
+  "nativeInstallables": {
+    "directory": ".data/installables-admin-trash-restore-20261017",
+    "commandsTerminalZero": 15,
+    "archives": [
+      {
+        "name": "Fountain-macOS-arm64.zip",
+        "bytes": 127318685,
+        "sha256": "a7e1039e2dc71d47e1039ea732564efed02e9b0cd49224b9353ead495a02568a"
+      },
+      {
+        "name": "Fountain-Windows-x64.zip",
+        "bytes": 158685205,
+        "sha256": "e626734bd18ed71a52301d346dd77f4f5e23c60e434023cf4e2064f18e10854c"
+      },
+      {
+        "name": "Fountain-iOS-Simulator-Release.zip",
+        "bytes": 3140681,
+        "sha256": "c184ff6731d870f479e4f3331fd63cfc1986a08ccc91d74cbd3584398a98ef8a"
+      },
+      {
+        "name": "Fountain-Android-debug.apk",
+        "bytes": 4743766,
+        "sha256": "e609f27d9df7934134a1b29e5114c2ca956134de0aedb4933a3b7fa091ebe4f6"
+      }
+    ],
+    "allPublicAssetsIdentical": [
+      15,
+      15,
+      21,
+      21
+    ],
+    "androidDEXAndSigningCertificateUnchanged": true,
+    "iosExtractedStrictSignatureVerified": true,
+    "appsInstalledOrLaunched": false,
+    "limits": [
+      "iOS Simulator Release, not physical-device IPA",
+      "Windows OS execution unverified",
+      "New release native/physical-device authenticated journeys not run"
+    ]
+  },
+  "secretScan": {
+    "knownPrivateValues": 13,
+    "archiveEntries": 879,
+    "workingFilesAtScan": 677,
+    "matches": 0,
+    "valuesPrinted": false
+  },
+  "cleanup": {
+    "ownedAuthUsersDeleted": 2,
+    "ownedSessionsRemotelyLoggedOut": 2,
+    "owner2BrowserLogout": true,
+    "aliceBaselineRolesRestored": true,
+    "qaWorkspaceTables": 34,
+    "qaRows": 0,
+    "objects": 0,
+    "cron": 0,
+    "retiredVerifier": 95,
+    "oldNonceRoutes404": 4,
+    "originalEntities": 153,
+    "originalMeta": 6,
+    "originalIdentityMappings": 0,
+    "originalVaultRows": 0,
+    "originalFingerprintsCheck": "Four original entity/meta/identity/vault count+digest collections identical before/after; all unrelated test/index namespaces zero after full/focused suites",
+    "preview8787FrozenAssetSHA256": "82e8d9faa6219da972bfb902d5c20efe33f51d367884429a4983fe1347fe6d1f",
+    "authUsersAfter": 0,
+    "authSessionsAfter": 0,
+    "refreshTokensAfter": 0,
+    "otherEntitiesAfter": 0,
+    "otherIndexRowsAfter": 0
+  },
+  "advisors": {
+    "newSchemaWarnings": false,
+    "denyAllPrivateBrokerTableInformation": 24,
+    "existingWarnings": [
+      {
+        "name": "extension_in_public",
+        "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0014_extension_in_public"
+      },
+      {
+        "name": "auth_leaked_password_protection",
+        "remediation": "https://supabase.com/docs/guides/auth/password-security#password-strength-and-leaked-password-protection"
+      }
+    ]
+  },
+  "remaining": [
+    "Private retained-content vault and two-stage automatic retention",
+    "Retained-page restoration and permanent deletion",
+    "Legal hold materialized preservation and attachment/backup enforcement",
+    "Database/row lifecycle closure and organization-wide governance",
+    "Actual human owner/family onboarding and five-platform authenticated whole journey",
+    "Complete paid-original inventory/runtime comparison and external providers"
+  ],
+  "wholeFeatureOrProductParityVerified": false,
+  "goalComplete": false,
+  "pushed": false
+}

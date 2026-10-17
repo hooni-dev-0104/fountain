@@ -1,5 +1,5 @@
 {
-  "checkedAt": "2026-10-17T11:17:25.272080+00:00",
+  "checkedAt": "2026-10-17T11:53:10.091858+00:00",
   "state": "production deployed; anonymous browser/API boundary verified; owner onboarding pending",
   "sourceCommit": "d9f9aafa01e732192f6e4a7fa805dfc685299d88",
   "target": {
@@ -126,11 +126,11 @@
     "fullAuthenticatedVercelJourney": false
   },
   "runtime": {
-    "SupabaseMain": 23,
-    "migrations": 34,
+    "SupabaseMain": 24,
+    "migrations": 36,
     "worker": 4,
     "maintenance": 4,
-    "verifierRetired": 91,
+    "verifierRetired": 95,
     "backendRedeployed": true,
     "originalPreviewChanged": false,
     "publicWebOrigin": "https://fountain-hoonis-projects-1ccfd37e.vercel.app",
@@ -176,7 +176,7 @@
     "sourceHEAD": "790db74d14636787a4cfdc0298514749c9334cd9",
     "artifactRefreshedAt": "2026-10-17T08:43:43.767250+00:00"
   },
-  "backendUpdateScope": "Main22 to23 changes only exact verified webOrigins/publicWebOrigin; workspace/setup/data unchanged",
+  "backendUpdateScope": "Main23 to24 changes only shared admin content/role services; schema adds restore and location filter functions; original workspace/setup/origins/data unchanged",
   "latest_admin_content_preparation": {
     "source_commit": "d9f9aafa01e732192f6e4a7fa805dfc685299d88",
     "main": 22,
@@ -196,14 +196,14 @@
     "billing_verified": true
   },
   "deployment": {
-    "id": "dpl_Co6WTApFreGhXotHDx3b2f6SkiTp",
+    "id": "dpl_Gf2LBenLwnkF2rAddq7eZ7dz2Y9H",
     "status": "READY",
     "target": "production",
     "canonicalOrigin": "https://fountain-hoonis-projects-1ccfd37e.vercel.app",
     "projectId": "prj_uIK2dOeDyRSOi6Ra6uvVKTv1FZd8",
     "files": 16,
-    "rawBytes": 827312,
-    "artifactSHA256": "1e3db197caca5958823a0a16793be237900c79625ca5babe8b0efc3607245e2b",
+    "rawBytes": 835326,
+    "artifactSHA256": "859a7e06367d7cba44cf1dd7a6fabeff81ac916cbb6f175befbb3bdcf282e47a",
     "productionVercelAuthentication": "canonical production domain accessible; preview and immutable deployment URLs protected",
     "newDependencies": false,
     "paidResourcesEnabled": false,
@@ -215,7 +215,20 @@
     "authMappings": 0,
     "authUsers": 0,
     "authSessions": 0,
-    "refreshTokens": 0
+    "refreshTokens": 0,
+    "currentAssetSourceCommit": "b1660cad18a2bed7f8b57aafdad98bd1ce9f9514",
+    "sourceAppSHA256": "4fbeffd63bdb19dfbcf857a6a18a92770cd89bebbb19e535b70ea00614452206",
+    "sourceSWSHA256": "a8ea04ab603b5cb0f2533e409dd0397789396afcb3c2524430ee541769293076",
+    "publicAssetsByteExact": 14,
+    "restoreAnonymousBoundaryChecks": 3
   },
-  "historyNote": "artifact/preparedFiles and latest_admin_content_preparation preserve earlier preparation snapshots; deployment and runtime describe the current release"
+  "historyNote": "artifact/preparedFiles and latest_admin_content_preparation preserve earlier preparation snapshots; deployment and runtime describe the current release",
+  "latest_restore_release": {
+    "evidence": "admin-trash-restore-evidence.json",
+    "main": 24,
+    "migration_count": 36,
+    "verifier_retired": 95,
+    "actualAuthHTTPGroups": 7,
+    "actualCloudBrowserGroups": 10
+  }
 }

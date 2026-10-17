@@ -294,12 +294,12 @@
       "evidence/original-boundaries.md"
     ],
     "acceptance": [
-      "Complete and verify: 실제 이벤트 감사·집계, 소유자의 개인별 사용자 정의 관리자 역할·복수 지정·철회와 감사/분석/멤버/그룹/콘텐츠 10개 액션; ADMIN_ROLES.md·ADMIN_CONTENT.md 참조",
-      "Resolve: 외부 SIEM/DLP, 조직 분석·다중 작업공간·준비된 전체 관리 역할, 관리자 휴지통 복원·영구 삭제·보존 연계와 원본 유료 정책 비교"
+      "Complete and verify: 실제 이벤트 감사·집계, 소유자의 개인별 사용자 정의 관리자 역할·복수 지정·철회와 감사/분석/멤버/그룹/콘텐츠 11개 액션; ADMIN_ROLES.md·ADMIN_CONTENT.md 참조",
+      "Resolve: 외부 SIEM/DLP, 조직 분석·다중 작업공간·준비된 전체 관리 역할, 별도 보존 자료 복원·영구 삭제·보존 연계와 원본 유료 정책 비교"
     ],
     "verification": [],
     "limitations": [
-      "외부 SIEM/DLP, 조직 분석·다중 작업공간·준비된 전체 관리 역할, 관리자 휴지통 복원·영구 삭제·보존 연계와 원본 유료 정책 비교"
+      "외부 SIEM/DLP, 조직 분석·다중 작업공간·준비된 전체 관리 역할, 별도 보존 자료 복원·영구 삭제·보존 연계와 원본 유료 정책 비교"
     ],
     "implementation_inventory": "../FEATURES.md"
   },
@@ -565,11 +565,16 @@
         "command": "SQL959 ACL/1536 Unicode/100MiB corpus; Node68+service34; actualSupabase HTTP8/Chrome8+syncbackup/v2snapshotcancel; main22exact48/migrations34; cleanup91",
         "passed": true,
         "evidence": "evidence/admin-content-increment.json"
+      },
+      {
+        "command": "Final Python69 + Node restore14/content34; actualPostgres restore6groups+location5groups; actualAuthHTTP7/Chrome10; main24exact48/migrations36; cleanup95",
+        "passed": true,
+        "evidence": "evidence/admin-trash-restore-increment.json"
       }
     ],
     "limitations": [
-      "한 워크스페이스의 관리자 검색·공유/작성 메타데이터·CSV·권한 철회·게시 해제를 실제 Supabase Auth/Edge와 Chrome에서 검사하고 main22에 배포했다. 새 설치물 4종은 빌드·자산 검사만 마쳤고 해당 네이티브 인증 여정은 미검증이다.",
-      "관리자 휴지통 복원·영구 삭제·별도 보존 자료·법적 보류 연계, 조직의 여러 워크스페이스, 유료 원본 전체 비교는 남아 있다.",
+      "한 워크스페이스의 관리자 검색·공유/작성 메타데이터·CSV·권한 철회·게시 해제와 기존 휴지통 페이지 복원을 실제 Supabase Auth/Edge와 Chrome에서 검사하고 main24에 배포했다. 새 설치물4종은 빌드·자산·서명 검사까지이며 다섯 플랫폼 실제 계정 전체 여정은 남아 있다.",
+      "별도 보존 자료 복원·영구 삭제·법적 보류 연계, 조직의 여러 워크스페이스, 유료 원본 전체 비교는 남아 있다.",
       "원본 검색 일치 규칙·DB 행 포함 방식·전체 위임 액션은 유료 원본에서 미관찰이며 독립 구현이다. 큰 CSV의 재개형 처리, 브라우저 대체 저장32MiB/네이티브8MiB 한계도 남아 있다."
     ]
   },
@@ -667,7 +672,7 @@
       }
     ],
     "limitations": [
-      "한 작업공간의 명시적 사용자 정의 역할 10개 액션을 실제 main22와 Chrome에서 검사했다. 조직 범위·준비된 전체 역할·법적 보류/인증/과금 액션·원본 유료 전체 비교는 남아 있다."
+      "한 작업공간의 명시적 사용자 정의 역할 11개 액션을 실제 main24와 Chrome에서 검사했다. 조직 범위·준비된 전체 역할·법적 보류/인증/과금 액션·원본 유료 전체 비교는 남아 있다."
     ],
     "original_source_ids": [
       "enterprise-roles"

@@ -1,0 +1,13 @@
+{
+  "scope": "Current trashed page administrator restoration only",
+  "implemented": true,
+  "actualCloudAuthVerified": true,
+  "productionDeployed": true,
+  "source": "../../research/admin-trash-restore-evidence.json",
+  "wholeFeatureOrProductParityVerified": false,
+  "main": 24,
+  "files": 48,
+  "migrations": 36,
+  "verifierRetired": 95,
+  "cleaned": true
+}

@@ -23,6 +23,10 @@ use a fixed CSP and `nosniff`. Only the bounded `fountain_session` cookie and a
 canonical HTTPS Origin are forwarded; there are no upstream/key request options.
 The response streams with cancellation, backpressure, a 15-second total deadline
 and a 16MiB byte ceiling. A stream failure after headers interrupts the body.
+The relay alone sets `supportsCancellation: true` in `vercel.json`, as required
+by Vercel's [cancellation API](https://vercel.com/docs/functions/functions-api-reference#enable-cancellation)
+for client disconnects to reach `request.signal`. Local signal tests verify the
+handler; they do not prove deployed platform disconnect delivery.
 
 Published forms and sites currently require a family account login. A GET
 document navigation that explicitly accepts `text/html` and receives upstream

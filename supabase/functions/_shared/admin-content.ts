@@ -73,8 +73,8 @@ export function createAdminContent(config:Config){
   if(!ROUTES.has(path))return null;
   const method=request.method,url=new URL(request.url),read=['GET','HEAD'].includes(method),write=method==='POST';
   check(path===ROOT+'/permissions'?(read||write):path===ROOT+'/unpublish'?write:read,405);validateRawQuery(url.search);
-  let parsed:Entity,required='content.search.read';
-  if(path===ROOT||path===ROOT+'/export'){parsed=parseContentQuery(url.searchParams);if(path.endsWith('/export'))required='content.search.export';}
+  let parsed:Entity,required='content.search.read',exportFormat='raw';
+  if(path===ROOT||path===ROOT+'/export'){const params=new URLSearchParams(url.searchParams);if(path===ROOT+'/export'){const formats=params.getAll('format');check(formats.length<=1);if(formats.length){check(['raw','frames'].includes(formats[0]));exportFormat=formats[0];params.delete('format');}required='content.search.export';}parsed=parseContentQuery(params);}
   else if(path.endsWith('/options')){parsed=optionsQuery(url.searchParams);if(parsed.query.kind==='group')required='content.permissions.manage';}
   else if(path.endsWith('/access'))parsed=targetQuery(url.searchParams,true);
   else if(read){parsed=targetQuery(url.searchParams);required='content.permissions.manage';}
@@ -126,7 +126,7 @@ export function createAdminContent(config:Config){
    if(path.endsWith('/permissions'))return response((await page('permissions',{p_kind:parsed.kind,p_id:parsed.id},value=>{exact(value,['kind','id','permissions','review_revision','source_invalid']);check(value.kind===parsed.kind&&value.id===parsed.id&&typeof value.review_revision==='string'&&HASH.test(value.review_revision)&&typeof value.source_invalid==='boolean',503);return {kind:value.kind,id:value.id,permissions:value.permissions===null?null:acl(value.permissions,503),review_revision:value.review_revision,source_invalid:value.source_invalid};})).value);
    if(path.endsWith('/options'))return response((await page('options',{p_query:parsed.query,p_cursor:parsed.cursor},value=>{exact(value,['kind','items','next_cursor','content_revision']);check(value.kind===parsed.query.kind&&Array.isArray(value.items)&&value.items.length<=parsed.query.limit&&integer(value.content_revision),503);return {kind:value.kind,items:value.items.map((item:unknown)=>{exact(item,['id','label','email','role','active']);check(id(item.id)&&text(item.label)&&nullableText(item.email)&&(item.role===null||['owner','admin','member','guest'].includes(item.role))&&(item.active===null||typeof item.active==='boolean'),503);return {id:item.id,label:item.label,email:item.email,role:item.role,active:item.active};}),next_cursor:encodeCursor(value.next_cursor,value.content_revision,'options',value.items.length?{kind:value.kind,id:value.items.at(-1).id}:null),content_revision:value.content_revision};})).value);
    const first=await searchPage(parsed.cursor),revision=first.value.content_revision;let lastPin=first.pin;
-   const csvHeaders={'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="fountain-admin-content.csv"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
+   const csvHeaders:Record<string,string>=exportFormat==='frames'?{'Content-Type':'application/x-ndjson; charset=utf-8','X-Fountain-CSV-Protocol':'1','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'}:{'Content-Type':'text/csv; charset=utf-8','Content-Disposition':'attachment; filename="fountain-admin-content.csv"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'};
    if(method==='HEAD')return new Response(null,{headers:csvHeaders});
    const quote=(value:unknown)=>'"\''+String(value??'').replaceAll('"','""')+'"';
    async function* pieces():AsyncGenerator<string>{
@@ -143,8 +143,14 @@ export function createAdminContent(config:Config){
     }
    }
    async function* bytes():AsyncGenerator<Uint8Array>{const headerPin=await pin();check(headerPin.revision===lastPin.revision,409);yield enc.encode(ADMIN_CONTENT_CSV_COLUMNS.map(quote).join(',')+'\r\n');let buffer=new Uint8Array(65536),used=0;for await(const piece of pieces()){const data=enc.encode(piece);let offset=0;while(offset<data.length){let length=Math.min(buffer.length-used,data.length-offset);while(length>0&&offset+length<data.length&&(data[offset+length]&0xc0)===0x80)length--;if(length===0){const current=await pin();check(current.revision===lastPin.revision,409);yield buffer.slice(0,used);buffer=new Uint8Array(65536);used=0;continue;}buffer.set(data.subarray(offset,offset+length),used);used+=length;offset+=length;if(used===buffer.length){const current=await pin();check(current.revision===lastPin.revision,409);yield buffer;buffer=new Uint8Array(65536);used=0;}}}if(used){const current=await pin();check(current.revision===lastPin.revision,409);yield buffer.slice(0,used);}const final=await pin();check(final.revision===lastPin.revision,409);}
-   const generator=bytes();streaming=true;const cleanup=()=>request.signal.removeEventListener('abort',abort);
-   return new Response(new ReadableStream<Uint8Array>({async pull(target){try{const next=await generator.next();if(next.done){cleanup();target.close();}else target.enqueue(next.value);}catch(error){controller.abort();cleanup();target.error(error instanceof AdminContentError?error:new AdminContentError());}},async cancel(){controller.abort();cleanup();await generator.return(undefined);}}, {highWaterMark:0}),{headers:csvHeaders});
+   const generator=bytes();streaming=true;let totalBytes=0,cancelled=false;const cleanup=()=>request.signal.removeEventListener('abort',abort);
+   const frame=(value:Entity)=>{const line=enc.encode(JSON.stringify(value)+'\n');check(line.length<=100000,503);return line;};
+   const standardBase64=(value:Uint8Array)=>{const parts:string[]=[];for(let offset=0;offset<value.length;offset+=8192)parts.push(String.fromCharCode(...value.subarray(offset,offset+8192)));return btoa(parts.join(''));};
+   return new Response(new ReadableStream<Uint8Array>({async pull(target){
+    try{const next=await generator.next();if(cancelled)return;if(next.done){cleanup();if(exportFormat==='frames')target.enqueue(frame({type:'complete',bytes:totalBytes}));target.close();}
+     else if(exportFormat==='frames'){check(next.value.length>0&&next.value.length<=65536&&Number.isSafeInteger(totalBytes+next.value.length),413);const data=frame({type:'data',data:standardBase64(next.value)});totalBytes+=next.value.length;target.enqueue(data);}else target.enqueue(next.value);
+    }catch(error){controller.abort();cleanup();if(cancelled)return;if(exportFormat==='frames'){const status=(error as any)?.status;target.enqueue(frame({type:'error',status:[400,401,403,409,413,503].includes(status)?status:503}));target.close();}else target.error(error instanceof AdminContentError?error:new AdminContentError());}
+   },async cancel(){cancelled=true;controller.abort();cleanup();await generator.return(undefined);}}, {highWaterMark:0}),{headers:csvHeaders});
   }catch(error){if(error instanceof AdminContentError)throw error;const status=(error as any)?.status;throw new AdminContentError([400,401,403,404,405,409,413].includes(status)?status:503);}
   finally{if(!streaming){controller.abort();request.signal.removeEventListener('abort',abort);}}
  }

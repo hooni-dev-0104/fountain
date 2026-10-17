@@ -2553,7 +2553,24 @@ async function boot() {
   let renewLegacyLocal=false;
   try {
     document.body.classList.remove('login-mode');
-    if(localStorage.getItem(logoutPendingKey())){const marker=localStorage.getItem(logoutPendingKey()),record=JSON.parse(marker),clearMarker=()=>{if(localStorage.getItem(logoutPendingKey())===marker)localStorage.removeItem(logoutPendingKey());};if(!record.binding){clearMarker();renewLegacyLocal=record.mode==='local'&&!cachedIdentity;if(!cachedIdentity&&record.mode!=='local'){state.session={mode:['accounts','family'].includes(record.mode)?record.mode:'accounts',required:true,authenticated:false};renderLogin(false);return;}}else try{await api('/session',{cache_binding:record.binding},'DELETE');clearMarker();}catch(error){if(error.status===409){clearMarker();}else if(!error.status){state.session={mode:['accounts','family','local'].includes(record.mode)?record.mode:'accounts',required:true,authenticated:false};renderLogin();return;}else throw error;}}
+    if(localStorage.getItem(logoutPendingKey())){
+      const marker=localStorage.getItem(logoutPendingKey()),record=JSON.parse(marker),clearMarker=()=>{if(localStorage.getItem(logoutPendingKey())===marker)localStorage.removeItem(logoutPendingKey());};
+      if(!record.binding){clearMarker();renewLegacyLocal=record.mode==='local'&&!cachedIdentity;if(!cachedIdentity&&record.mode!=='local'){state.session={mode:['accounts','family'].includes(record.mode)?record.mode:'accounts',required:true,authenticated:false};renderLogin(false);return;}}
+      else try{
+        // A restart may follow a different login. Observe the actual private
+        // session before replaying this binding-specific logout intent.
+        const actual=await api('/session');if(generation!==state.bootGeneration||localStorage.getItem(logoutPendingKey())!==marker)return;
+        const anonymous=actual.authenticated===false&&typeof actual.required==='boolean'&&['cache_binding','member','identity','expires_at'].every(key=>actual[key]==null)&&(actual.mode===undefined||['accounts','family','local'].includes(actual.mode));
+        if(anonymous||actual.authenticated===true&&typeof actual.cache_binding==='string'&&actual.cache_binding&&actual.cache_binding!==record.binding)clearMarker();
+        else if(actual.authenticated===true&&typeof actual.cache_binding==='string'&&actual.cache_binding===record.binding){await api('/session',{cache_binding:record.binding},'DELETE');clearMarker();}
+        else throw Object.assign(new Error('현재 로그인을 서버에서 다시 확인한 뒤 종료해 주세요.'),{code:'NATIVE_SESSION_REQUIRED',status:503});
+      }catch(error){
+        if(error.code==='STALE_REQUEST'||generation!==state.bootGeneration)return;
+        if(error.status===409)clearMarker();
+        else if(!error.status){state.session={mode:['accounts','family','local'].includes(record.mode)?record.mode:'accounts',required:true,authenticated:false};renderLogin();return;}
+        else throw error;
+      }
+    }
     let session=await api('/session');if(generation!==state.bootGeneration)return;
     if(renewLegacyLocal&&session.mode==='local'&&session.authenticated===true&&session.required===false&&session.member?.id==='local'){await api('/session/renew-local',{cache_binding:session.cache_binding});if(generation!==state.bootGeneration)return;session=await api('/session');if(generation!==state.bootGeneration)return;}
     if(session.authenticated&&state.offlineProfile&&(state.offlineProfile.session.cache_binding!==session.cache_binding||state.offlineProfile.memberId!==session.member?.id)){if(!await suspendLoginInput(state.offlineProfile))return;state.offlineProfile=null;return boot();}state.session=session;

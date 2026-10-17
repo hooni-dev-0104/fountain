@@ -9,6 +9,9 @@
   const abortError=()=>new DOMException('연결 범위가 변경되었거나 요청이 취소되었습니다.','AbortError');
   function nativeFailure(error) {
     const code=error?.code;
+    if(code==='NATIVE_SESSION_CONFLICT')return Object.assign(new Error('로그인 계정이 변경되었습니다. 현재 화면을 다시 확인해 주세요.'),{code,status:409});
+    if(code==='NATIVE_SESSION_REQUIRED')return Object.assign(new Error('현재 로그인을 서버에서 다시 확인한 뒤 종료해 주세요.'),{code,status:503});
+    if(code==='NATIVE_SESSION_INVALID')return Object.assign(new Error('로그아웃 요청의 로그인 범위를 확인해 주세요.'),{code,status:400});
     if(code==='OUTBOX_ACCESS_REQUIRED')return Object.assign(new Error('보관된 내용의 접근 권한을 다시 확인해야 합니다. 미전송 내용은 유지했습니다.'),{code,status:503});
     if(['NETWORK_ERROR','NATIVE_NETWORK'].includes(code))return Object.assign(new TypeError('서버에 연결하지 못했습니다.'),{code});
     if(['TIMEOUT','NATIVE_TIMEOUT'].includes(code))return new DOMException('요청 시간이 초과되었습니다.','TimeoutError');

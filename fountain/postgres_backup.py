@@ -12,6 +12,7 @@ import uuid
 from .backup import (BackupError, CHUNK_SIZE, DEFINITIONS, PROVENANCE_COLUMNS,
                      _attachments, _provenance_provisioned, create_backup)
 from .content_index import INDEX_DEFINITIONS
+from .retention_vault import VAULT_COLUMNS, VAULT_DEFINITIONS
 from .core import APIError
 
 
@@ -68,6 +69,19 @@ def _export(store, target):
             for row in _rows(store, 'SELECT '+columns+' FROM fountain_private.content_provenance '
                              'WHERE workspace_id=%s ORDER BY kind COLLATE "C",id COLLATE "C"'):
                 target.execute('INSERT INTO content_provenance VALUES ('+','.join('?' for _ in row)+')', row)
+        provisioned = store._execute("SELECT to_regclass('fountain_private.retention_records') IS NOT NULL", fetch='one')[0]
+        populated = provisioned and store._execute('SELECT EXISTS ('+' UNION ALL '.join('(SELECT 1 FROM fountain_private.'+table+' WHERE workspace_id=%s LIMIT 1)' for table in VAULT_COLUMNS)+')', (store.workspace_id,)*len(VAULT_COLUMNS),fetch='one')[0]
+        if populated:
+            # Raw TEXT is copied without JSONB reserialization. All six tables
+            # belong to this same locked source transaction.
+            for table, names in VAULT_COLUMNS.items():
+                target.execute(VAULT_DEFINITIONS[table])
+                columns = ','.join('"'+name+'"' for name in names)
+                primary = [row[1] for row in sorted(target.execute('PRAGMA table_info('+table+')'),key=lambda row:row[5]) if row[5]]
+                order = ','.join('"'+name+'"'+('' if name=='offset' else ' COLLATE "C"') for name in primary)
+                for row in _rows(store, 'SELECT '+columns+' FROM fountain_private.'+table+
+                                 ' WHERE workspace_id=%s ORDER BY '+order,batch_size=1):
+                    target.execute('INSERT INTO '+table+' VALUES ('+','.join('?' for _ in row)+')', row)
         if store._files is not None:
             _file_chunks(store, target)
             target.commit()
@@ -77,9 +91,13 @@ def _export(store, target):
         for identity, offset, length, data in _rows(store,
                 'SELECT c.attachment_id,c."offset",octet_length(c.data),'
                 'substring(c.data FROM 1 FOR 4194304) FROM fountain_private.attachment_chunks c '
-                "WHERE c.workspace_id=%s AND EXISTS (SELECT 1 FROM fountain_private.entities e "
+                "WHERE c.workspace_id=%s AND (EXISTS (SELECT 1 FROM fountain_private.entities e "
                 "WHERE e.workspace_id=c.workspace_id AND e.kind='attachment' AND e.id=c.attachment_id "
-                "AND e.data->>'storage'='chunks') ORDER BY c.attachment_id,c.\"offset\"",
+                "AND e.data->>'storage'='chunks') "
+                + ("OR EXISTS (SELECT 1 FROM fountain_private.retention_entities r "
+                   "WHERE r.workspace_id=c.workspace_id AND r.kind='attachment' AND r.id=c.attachment_id "
+                   "AND (r.data::jsonb->>'storage'='chunks' OR EXISTS (SELECT 1 FROM fountain_private.retention_entities o WHERE o.workspace_id=r.workspace_id AND o.record_id=r.record_id AND o.kind='attachment_cloud' AND o.id=r.id AND o.data::jsonb->>'storage'='chunks'))) " if provisioned else '')
+                + ') ORDER BY c.attachment_id,c."offset"',
                 batch_size=1):
             if length > CHUNK_SIZE:
                 raise BackupError("Finalized attachment chunk exceeds the supported size")

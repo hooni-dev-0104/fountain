@@ -1,3 +1,4 @@
+import {schemaRevision} from './database-verification.ts';
 /** Route guards and response projection. Domain validation still runs after prepare.
  * Port of fountain/authorization.py; unknown routes are left to the router's 404.
  */
@@ -191,6 +192,8 @@ export class Authorization {
         delete body.owner_id;
       }
       if (parts.length >= 4 && parts[3] === 'permissions') { if (writing) a.require_resource('database', parts[2], 4); return; }
+      require(!has(body,'_property_generation'),'Property generations are server managed');
+      if(parts.length===6&&parts[3]==='rows'&&parts[5]==='verification'){const row=a.require_resource('row',parts[4],method==='GET'?1:3);require(row.database_id===database.id,'Row not found',404);return;}
       if (parts.length === 6 && parts[3] === 'rows' && parts[5] === 'duplicate' && method === 'POST') {
         require(a.can_create_row(database), 'Creating database rows is not allowed', 403);
         const row = a.require_resource('row', parts[4]);
@@ -277,7 +280,7 @@ export class Authorization {
   project(path: string, payload: any): any {
     const a = this.access;
     if (!is_object(payload)) return payload;
-    let result = clone(payload);
+    let result = clone(payload);if(Array.isArray(result.properties)&&has(result,'id'))result.schema_revision=schemaRevision(result);delete result._property_generation;
     const row_projection = (row: Entity): Entity => {
       const database = this.store.get('database', get(row, 'database_id'));
       if (!a.can('row', row)) return {id: row.id, database_id: get(row, 'database_id'), access_level: 0};

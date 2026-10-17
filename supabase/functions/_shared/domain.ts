@@ -1,3 +1,4 @@
+import {DatabaseVerification,prepareSchema,checkSchemaRevision} from './database-verification.ts';
 /** Legacy HTTP contract on Supabase transactions; no Python process or disk. */
 import {Access,APIError,clone,get,has,is_object,require,truth} from './access.ts';
 import type {Entity} from './access.ts';
@@ -78,14 +79,16 @@ function coreRoute(r:DomainRequest):DomainResult|null{
     if(parts.length===3&&method==='GET')return response(w.database_detail(id,jsonOption(query,'filters'),jsonOption(query,'sorts'),row=>a.can('row',row)));
     if(parts.length===3&&method==='PATCH'){
       const database=w.database(id);
+      checkSchemaRevision(database,body);
       if(has(body,'name'))database.name=text(body.name,'name',500,false);
-      if(has(body,'properties')){const properties=w.validate_properties(body.properties);authority.schema_references(database,properties);database.properties=properties;}
+      if(has(body,'properties')){const properties=w.validate_properties(body.properties);authority.schema_references(database,properties);prepareSchema(s,database,properties,clone(database));database.properties=properties;}
       if(has(body,'task_settings')||has(body,'properties'))database.task_settings=validate_settings(get(body,'task_settings',{}),database);
       if(has(body,'views')){require(Array.isArray(body.views)&&body.views.length<=50,'Invalid views');database.views=body.views;}
       return response(s.put('database',database));
     }
     // Automations wrap these three mutations through an extension before this
     // primitive is installed; a configured extension can call this core route.
+    if(parts.length===6&&parts[3]==='rows'&&parts[5]==='verification')return response(new DatabaseVerification(s,a).route(method,id,parts[4],body,query));
     if(parts.length===4&&parts[3]==='rows'&&method==='POST')return response(w.create_row(id,body),201);
     if(parts.length===6&&parts[3]==='rows'&&parts[5]==='duplicate'&&method==='POST')return response(w.duplicate_row(id,parts[4],row=>a.can('row',row)),201);
     if(parts.length===5&&parts[3]==='rows'){

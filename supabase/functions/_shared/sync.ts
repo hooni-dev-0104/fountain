@@ -110,8 +110,9 @@ export class SyncService {
     const current = new Map(get(database, 'properties', []).map((property: Entity) => [property.id, property]));
     for (const key of Object.keys(properties)) {
       require(has(schema, key) && is_object(schema[key]), 'Missing touched property schema');
-      require(current.has(key) && equal(current.get(key), schema[key]), 'Property schema changed while offline', 409);
-      require(!['formula', 'rollup'].includes(get(current.get(key), 'type')), 'Computed properties cannot be assigned');
+      const prop=current.get(key);
+      require(current.has(key)&&(get(prop,'type')==='owner'?['type','generation','limit','default','initial_default'].every(field=>equal(get(prop,field),get(schema[key],field))):equal(prop,schema[key])),'Property schema changed while offline',409);
+      require(!['formula', 'rollup','verification'].includes(get(current.get(key), 'type')), 'Computed properties cannot be assigned');
     }
   }
   private deleteBase(operation: Entity, access: Access, workspaceId: string): void {

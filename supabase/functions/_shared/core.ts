@@ -1,7 +1,9 @@
+import {DatabaseVerification,prepareSchema,protectRow,pair} from './database-verification.ts';
 import {protectFields,stampCreated,guardMove} from './wiki.ts';
 /** Synchronous domain staging port of fountain/core.py. Authorization wraps this
 * primitive; only CloudStore.commit may perform the eventual external write. */
 import {
+  Access,
   APIError,
   casefold,
   clone,
@@ -13,7 +15,6 @@ import {
   truth
 } from './access.ts';
 import type {
-  Access,
   Entity,
   StoreReader
 } from './access.ts';
@@ -63,7 +64,7 @@ export function compareText(a: string, b: string): number {
   }
   return first.length - second.length;
 }
-export const PROPERTY_TYPES = new Set(['title','text','number','select','multi_select','date','checkbox','person','url','email','status','relation','rollup','formula','files','created_time','last_edited_time']);
+export const PROPERTY_TYPES = new Set(['title','text','number','select','multi_select','date','checkbox','person','url','email','status','relation','rollup','formula','files','created_time','last_edited_time','owner','verification']);
 
 export function normalize_blocks(blocks: unknown, uid: () => string = uuid): Entity[] {
   return normalizeCRDT(blocks, uid);
@@ -337,6 +338,8 @@ export class WorkspaceCore {
         id:'table',name:'테이블',type:'table'
       }])
     };
+    require(!has(body,'_property_generation')&&!has(body,'schema_revision'),'Property generations are server managed');
+    prepareSchema(this.store,database,database.properties);
     database.task_settings=this.tasks.validate_settings(get(body,'task_settings',{
     }),database);
     return this.store.put('database',database);
@@ -348,7 +351,8 @@ export class WorkspaceCore {
       require(known.has(key),'Unknown property: '+key);
       const prop:any=known.get(key),
       kind=prop.type;
-      require(!['formula','rollup'].includes(kind),key+' is computed and cannot be assigned');
+      require(!['formula','rollup','verification'].includes(kind),key+' is computed and cannot be assigned');
+      if(kind==='owner'){require(Array.isArray(value)&&value.length<=1000&&value.every(Access.verification_id),'Owner must be a member ID list');continue;}
       if(value===null)continue;
       if(kind==='number')require(typeof value==='number'&&Math.abs(value)<1e15,key+' must be a finite number');
       else if(kind==='checkbox')require(typeof value==='boolean',key+' must be boolean');
@@ -368,6 +372,7 @@ export class WorkspaceCore {
     }return values;
   }
   create_row(databaseId: string, body: Entity): Entity {
+    protectRow(body);
     return this.store.transaction(()=>{
       const database=this.database(databaseId),id=text(truth(get(body,'id'))?body.id:this.id('row'),'row id',160,false);
       require(this.store.get('row',id)===null,'Row id already exists',409);
@@ -377,15 +382,15 @@ export class WorkspaceCore {
       const links=hasLinks?this.graph().prepare_row(database,id,body):{
         parent_row_id:null,depends_on:[]
       };if(!hasLinks)require(get(body,'parent_row_id')===null&&equal(get(body,'depends_on',[]),[]),'Enable task links before adding them');
-      const row=this.store.put('row',{
-        id,database_id:databaseId,owner_id:get(body,'owner_id',this.actor),properties:this.validate_values(database,get(body,'properties',get(body,'values',{
-        }))),...links
-      });this.store.audit('row.created',{
+      let row:Entity={id,database_id:databaseId,owner_id:this.actor,properties:this.validate_values(database,clone(get(body,'properties',get(body,'values',{})))),...links};
+      new DatabaseVerification(this.store,this.access).apply_values(database,row,row.properties);
+      row=this.store.put('row',row);this.store.audit('row.created',{
         database_id:databaseId,row_id:row.id
       });return row;
     });
   }
   update_row(databaseId: string, id: string, body: Entity, canEdit?: (row:Entity)=>boolean): Entity {
+    protectRow(body);
     return this.store.transaction(()=>{
       const database=this.database(databaseId);
       let row=this.store.get('row',id);
@@ -395,6 +400,7 @@ export class WorkspaceCore {
       
       const previous=clone(row),values=this.validate_values(database,get(body,'properties',get(body,'values',{
       })));for(const [key,value]of Object.entries(values))put_key(row.properties,key,value);
+      new DatabaseVerification(this.store,this.access).apply_values(database,row,values,previous);
       const graph=this.graph(),settings=get(database,'task_settings',{
       }),hasLinks=[get(previous,'parent_row_id'),get(previous,'depends_on'),get(settings,'subitems'),get(settings,'dependencies'),get(body,'parent_row_id'),get(body,'depends_on')].some(truth);
       
@@ -434,7 +440,7 @@ export class WorkspaceCore {
   }
   duplicate_row(databaseId:string,id:string,canRead?: (row:Entity)=>boolean):Entity {
     return this.store.transaction(()=>{
-      const planned=this.graph().duplicate_plan(databaseId,id,this.actor,canRead),rows=planned.map(item=>this.store.put('row',item));
+      const planned=this.graph().duplicate_plan(databaseId,id,this.actor,canRead),database=this.database(databaseId),resolver=new DatabaseVerification(this.store,this.access),rows=planned.map(item=>this.store.put('row',resolver.apply_values(database,item,{},null,true)));
       for(const row of rows)this.store.audit('row.duplicated',{
         database_id:databaseId,row_id:row.id,source_row_id:id
       });return {
@@ -443,6 +449,8 @@ export class WorkspaceCore {
     });
   }
   computed_rows(database:Entity,rows:Entity[],canRead?: (row:Entity)=>boolean):Entity[] {
+    const resolver=new DatabaseVerification(this.store,this.access),sources=new Map(rows.map(row=>[row.id,row]));
+    if(pair(database)[0])rows=rows.map(row=>resolver.project(database,row));
     const cache=new Map<string,
     any>(),
     databases=new Map([[database.id,database]]);
@@ -480,6 +488,7 @@ export class WorkspaceCore {
       else if(prop.type==='relation'&&canRead)result=get(row.properties,key,[]).filter((id:string)=>{
         const target=this.store.get('row',id);return target&&canRead(target);
       });
+      else if(['owner','verification'].includes(prop.type))result=get(resolver.project(db,sources.get(row.id)??row).properties,key);
       else result=get(row.properties,key);
       cache.set(token,result);
       if(typeof result==='number')numberKinds.set(token,numberKind??(!Number.isInteger(result)||Object.is(result,-0)?'float':'int'));
@@ -571,7 +580,8 @@ export class WorkspaceCore {
     }return {filename:'workspace.md',content:output.join('\n\n'),mime:'text/markdown'};
     }
     require(format==='json','Unsupported export format');
-    return {filename:'workspace.json',content:JSON.stringify({format:'fountain-v1',...this.snapshot(),rows:this.store.list('row')},null,2),mime:'application/json'};
+    const snapshot=this.snapshot();for(const database of snapshot.databases)delete database._property_generation;const resolver=new DatabaseVerification(this.store,this.access),rows=this.store.list('row').map(row=>resolver.project(this.database(row.database_id),row));
+    return {filename:'workspace.json',content:JSON.stringify({format:'fountain-v1',...snapshot,rows},null,2),mime:'application/json'};
     
   }
   import_data(body:Entity):Entity { return this.store.transaction(()=>this._import_data(body)); }
@@ -627,6 +637,7 @@ export class WorkspaceCore {
     require(!databaseIds.has(database.id),'Duplicate imported database');
     text(get(database,'name',''),'name',500,false);
     database.properties=this.validate_properties(clone(get(database,'properties')));
+    for(const prop of database.properties)for(const key of ['generation','initial_default','owner_property_id'])delete prop[key];delete database._property_generation;delete database.schema_revision;
     databaseIds.set(database.id,database);
     }
     const importedRows=new Map<string,Entity>();
@@ -636,7 +647,7 @@ export class WorkspaceCore {
     importedRows.set(row.id,row);
     }
     for(const database of databases)database.task_settings=this.tasks.validate_settings(get(database,'task_settings',{}),database);
-    for(const row of rows){this.validate_values(databaseIds.get(row.database_id)!,get(row,'properties'),importedRows);
+    for(const row of rows){require(is_object(row.properties),'Invalid imported row properties');for(const prop of databaseIds.get(row.database_id)!.properties)if(['owner','verification'].includes(prop.type))delete row.properties[prop.id];this.validate_values(databaseIds.get(row.database_id)!,get(row,'properties'),importedRows);
     if(truth(get(row,'parent_row_id'))||truth(get(row,'depends_on')))this.graph().prepare_row(databaseIds.get(row.database_id)!,row.id,row,{existing:row,rows:importedRows});
     }
     const pages:Entity[]=[],pageMap=new Map<string,string>(),databaseMap=new Map<string,string>();
@@ -660,7 +671,8 @@ export class WorkspaceCore {
     const rowMap=new Map<string,string>(rows.map(row=>[row.id,this.id('row')]));
     for(const row of rows){const values=clone(row.properties);
     for(const prop of databaseIds.get(row.database_id)!.properties)if(prop.type==='relation'&&truth(get(values,prop.id)))put_key(values,prop.id,values[prop.id].map((id:string)=>rowMap.get(id)));
-    this.store.put('row',{id:rowMap.get(row.id),owner_id:this.actor,database_id:databaseMap.get(row.database_id),properties:values,parent_row_id:rowMap.get(get(row,'parent_row_id'))??null,depends_on:get(row,'depends_on',[]).map((id:string)=>rowMap.get(id))});
+    const importedRow={id:rowMap.get(row.id),owner_id:this.actor,database_id:databaseMap.get(row.database_id),properties:values,parent_row_id:rowMap.get(get(row,'parent_row_id'))??null,depends_on:get(row,'depends_on',[]).map((id:string)=>rowMap.get(id))};
+    new DatabaseVerification(this.store,this.access).apply_values(this.database(importedRow.database_id!),importedRow,values);this.store.put('row',importedRow);
     }
     return {pages,databases:Array.from(databaseMap.values()),count:pages.length,row_count:rows.length};
   }

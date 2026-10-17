@@ -1,3 +1,4 @@
+import {DatabaseVerification} from './database-verification.ts';
 /** Synchronous, authorized lexical retrieval. No embeddings, provider or stored cursor. */
 import {APIError,casefold,get,has,is_object,truth,valid_id} from './access.ts';
 import type {Access,Entity,StoreReader} from './access.ts';
@@ -80,6 +81,8 @@ function rowValues(database:Entity,row:Entity):{title:string;body:string} {
   const body:string[]=[];
   for(const property of properties){if(!is_object(property)||typeof property.id!=='string')continue;const value=get(values,property.id),kind=property.type;let extracted='';
     if(STRINGS.has(kind))extracted=string(value);
+    else if(kind==='owner'&&Array.isArray(value)&&value.every(text))extracted=value.join(' ');
+    else if(kind==='verification'&&is_object(value))extracted=string(value.status);
     else if(kind==='number')extracted=scalarNumber(value);
     else if(kind==='checkbox'&&typeof value==='boolean')extracted=value?'true':'false';
     else if(kind==='multi_select'&&Array.isArray(value)&&value.every(text))extracted=value.join(' ');
@@ -123,7 +126,7 @@ export function advancedSearch(store:StoreReader,access:Access,query:URLSearchPa
     let title='',rawBody='';
     if(kind==='page'){title=string(item.title);rawBody=(Array.isArray(item.blocks)?item.blocks:[]).filter(b=>is_object(b)&&TEXT_BLOCKS.has(get(b,'type','paragraph'))&&!truth(get(b,'attachment_id'))&&text(b.text)).map(b=>b.text).join(' ');}
     else if(kind==='database'){title=text(item.name)?item.name:string(item.title);rawBody=string(item.description);}
-    else{const row=rowValues(db!,item);title=row.title;rawBody=row.body;}
+    else{const row=rowValues(db!,new DatabaseVerification(store,access).project(db!,item));title=row.title;rawBody=row.body;}
     const foldedTitle=normalized(title),body=display(rawBody),foldedBody=casefold(body);let score=0;
     for(const term of f.terms){const titleHit=foldedTitle.includes(term),bodyHit=!f.title_only&&foldedBody.includes(term);if(!titleHit&&!bodyHit)return;score+=50*Number(titleHit)+8*Number(bodyHit);}
     if(f.terms.length&&foldedTitle.includes(f.q.replaceAll('"','').replace(WHITE,' ').replace(/^ +| +$/g,'')))score+=30;

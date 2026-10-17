@@ -1,3 +1,4 @@
+import {DatabaseVerification,PRIVATE_ROW_FIELDS,pair,schemaRevision} from './database-verification.ts';
 /** Pure permission evaluation over one caller-pinned workspace snapshot.
  * Port of fountain/access.py. Never perform network reads inside this adapter.
  */
@@ -141,6 +142,7 @@ export class Access {
     if (!is_object(policy) || !['all', 'assigned'].includes(get(policy, 'mode', 'all'))) return null;
     if (['edit_assigned', 'allow_create'].some(field => typeof get(policy, field, false) !== 'boolean')) return null;
     if (get(policy, 'mode', 'all') === 'assigned' && (typeof get(policy, 'property_id') !== 'string' || !policy.property_id)) return null;
+    if(get(policy,'mode','all')==='assigned'&&get(database,'properties',[]).some((p:Entity)=>p.id===policy.property_id&&['owner','verification'].includes(p.type)))return null;
     return policy;
   }
   can(kind: string, entity: unknown, needed = 1): boolean { return this.level(kind, entity) >= needed; }
@@ -205,12 +207,17 @@ export class Access {
     const safe = new Set(['id', 'name', 'email', 'role', 'active', 'created_at', 'updated_at']);
     result.members = get(result, 'members', []).filter((member: Entity) => this.regular || get(member, 'id') === this.member_id).map((member: Entity) => dictionary(Object.entries(member).filter(([key]) => safe.has(key))));
     if (has(result, 'groups') && !this.regular) result.groups = [];
+    for(const database of get(result,'databases',[])){database.schema_revision=schemaRevision(database);delete database._property_generation;}
     return result;
   }
   filter_database(detail: Entity): Entity {
     const result = clone(detail), database = get(result, 'database');
     require(this.can('database', database), 'Resource not found', 404);
     result.rows = get(result, 'rows', []).filter((row: Entity) => this.can('row', row));
+    database.schema_revision=schemaRevision(database);
+    const resolver=new DatabaseVerification(this.store,this);
+    if(pair(database)[0])for(const row of result.rows){const source=this.store.get('row',row.id)??row,projected=resolver.project(database,source);for(const prop of database.properties)if(['owner','verification'].includes(prop.type)){row.properties??={};put_key(row.properties,prop.id,projected.properties[prop.id]);}}
+    for(const row of result.rows)for(const key of PRIVATE_ROW_FIELDS)delete row[key];delete database._property_generation;
     const properties: Entity[] = get(database, 'properties', []), known = new Set(properties.map(prop => prop.id));
     const relations = properties.filter(prop => get(prop, 'type') === 'relation').map(prop => prop.id);
     for (const row of result.rows) {

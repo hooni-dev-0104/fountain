@@ -9,7 +9,9 @@ import sqlite3
 import tempfile
 import uuid
 
-from .backup import BackupError, CHUNK_SIZE, DEFINITIONS, _attachments, create_backup
+from .backup import (BackupError, CHUNK_SIZE, DEFINITIONS, PROVENANCE_COLUMNS,
+                     _attachments, _provenance_provisioned, create_backup)
+from .content_index import INDEX_DEFINITIONS
 from .core import APIError
 
 
@@ -60,6 +62,12 @@ def _export(store, target):
             if key in ("attachment_file_root", "attachment_file_gc_cursor"):
                 continue
             target.execute("INSERT INTO meta VALUES (?,?)", (key, _json(data)))
+        if _provenance_provisioned(store):
+            target.execute(INDEX_DEFINITIONS['content_provenance'])
+            columns = ','.join(PROVENANCE_COLUMNS)
+            for row in _rows(store, 'SELECT '+columns+' FROM fountain_private.content_provenance '
+                             'WHERE workspace_id=%s ORDER BY kind COLLATE "C",id COLLATE "C"'):
+                target.execute('INSERT INTO content_provenance VALUES ('+','.join('?' for _ in row)+')', row)
         if store._files is not None:
             _file_chunks(store, target)
             target.commit()

@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import patch
 import uuid
 
-from fountain.backup import BackupError, CHUNK_SIZE, inspect_backup, restore_backup
+from fountain.backup import BackupError, CHUNK_SIZE, PROVENANCE_COLUMNS, inspect_backup, restore_backup, _provenance_provisioned
 from fountain.core import Store
 from fountain.postgres import PostgresStore
 from fountain.postgres_backup import create_postgres_backup
@@ -55,6 +55,12 @@ class PostgresBackupTests(unittest.TestCase):
                 with store.transaction():
                     for table in ("attachment_chunks", "entities", "meta"):
                         store._execute(f"DELETE FROM fountain_private.{table} WHERE workspace_id=%s", (namespace,))
+                    if _provenance_provisioned(store):
+                        # Source deletion triggers invalidate private state;
+                        # remove that state only after every source/cache row.
+                        for table in ('content_search_chunks', 'content_provenance',
+                                      'content_search_documents', 'content_search_state'):
+                            store._execute('DELETE FROM fountain_private.'+table+' WHERE workspace_id=%s', (namespace,))
         finally:
             for store in self.stores:
                 store.close()
@@ -228,7 +234,33 @@ class PostgresBackupTests(unittest.TestCase):
                 yield row
         with patch.object(module, "_rows", side_effect=rows):
             create_postgres_backup(self.store, self.root / "bounded.db")
-        self.assertEqual(batches, [128, 128, 1])
+        self.assertIn(batches, ([128, 128, 1], [128, 128, 128, 1]))
+
+    def test_private_provenance_exports_without_active_members_or_cursor_secret(self):
+        with self.store.transaction():
+            if not _provenance_provisioned(self.store):
+                self.skipTest('Content provenance migration is not provisioned')
+        self.store.put('page', {'id': 'history/가족😀', 'title': '작성 이력'})
+        columns = ','.join(PROVENANCE_COLUMNS)
+        with self.store.transaction():
+            self.store._execute("UPDATE fountain_private.content_provenance SET creator_id='deleted-author',creator_cause='human',"
+                                "editor_id='inactive-editor',editor_cause='automation',edited_at='2026-10-17T01:02:03.123456Z',"
+                                "manager_id='deleted-manager',manager_at='2026-10-17T04:05:06+09:00' WHERE workspace_id=%s",
+                                (self.namespace,))
+            history = self.store._execute('SELECT '+columns+' FROM fountain_private.content_provenance WHERE workspace_id=%s',
+                                          (self.namespace,), fetch='all')
+            secret = self.store._execute('SELECT cursor_secret FROM fountain_private.content_search_state WHERE workspace_id=%s',
+                                         (self.namespace,), fetch='one')[0]
+        destination = self.root / 'history.db'
+        create_postgres_backup(self.store, destination)
+        with sqlite3.connect(destination) as connection:
+            self.assertEqual(connection.execute('SELECT '+columns+' FROM content_provenance').fetchall(), history)
+        self.assertNotIn(secret.encode(), destination.read_bytes())
+        restored = Store(destination)
+        try:
+            self.assertEqual(restored.db.execute('SELECT '+columns+' FROM content_provenance').fetchall(), history)
+        finally:
+            restored.close()
 
     def enable_file_chunks(self):
         self.attachment_root = self.root / "chunks"

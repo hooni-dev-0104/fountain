@@ -117,4 +117,33 @@ class InboxTests(unittest.TestCase):
                 self.assertEqual(error.exception.status,404)
         finally:CURRENT_ACCESS.reset(current);AUDIT_ACTOR.reset(actor)
 
+    def test_application_first_inbox_without_settings_has_no_get_domain_writes(self):
+        from fountain.server import Application
+        page={**self.page,'verification':{**self.page['verification'],
+            'verified_at':'2019-01-01T00:00:00Z','expires_at':'2020-01-01T00:00:00Z'}}
+        self.store.put('page',page)
+        app=Application(self.store)
+        self.assertIsNone(self.store.get('settings','workspace'))
+        principal=self.store.get('member','alice')
+        entities=list(self.store.db.execute('SELECT kind,id,data,created_at,updated_at FROM entities ORDER BY kind,id'))
+        revision=self.store.meta('_entity_revision')
+        status,result=app.dispatch('GET','/api/inbox',{}, {},principal=principal)
+        self.assertEqual(status,200);self.assertEqual(result['total'],1)
+        self.assertEqual(list(self.store.db.execute('SELECT kind,id,data,created_at,updated_at FROM entities ORDER BY kind,id')),entities)
+        self.assertEqual(self.store.meta('_entity_revision'),revision)
+        self.assertIsNone(app.advanced);self.assertIsNone(self.store.get('settings','workspace'))
+        # PATCH is also a first Application request; only its private receipt may change.
+        app=Application(self.store);identity=result['items'][0]['id']
+        before_page=self.store.get('page','page');before_audit=self.store.list('audit')
+        status,item=app.dispatch('PATCH','/api/inbox/'+identity,{'read':True}, {},principal=principal)
+        self.assertEqual(status,200);self.assertTrue(item['read'])
+        self.assertEqual(self.store.meta('_entity_revision'),revision+1)
+        self.assertEqual(len(self.store.list('inbox_receipt')),1)
+        self.assertEqual(self.store.get('page','page'),before_page);self.assertEqual(self.store.list('audit'),before_audit)
+        self.assertIsNone(app.advanced);self.assertIsNone(self.store.get('settings','workspace'))
+        # Preserve the pre-existing lazy defaults for the actual advanced route.
+        status,_=app.dispatch('GET','/api/advanced',{}, {},principal=principal)
+        self.assertEqual(status,200);self.assertIsNotNone(app.advanced)
+        self.assertIsNotNone(self.store.get('settings','workspace'))
+
 if __name__=='__main__':unittest.main()

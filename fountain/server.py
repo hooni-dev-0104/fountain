@@ -147,7 +147,9 @@ class Application:
                 context = self._request_context(principal, session_cookie)
                 access = context['access']
                 authority = Authorization(access)
-                if self.advanced is None:
+                inbox_route = (path == '/api/inbox' and method == 'GET'
+                    or len(parts) == 3 and parts[:2] == ['api', 'inbox'] and method == 'PATCH')
+                if self.advanced is None and not inbox_route:
                     from .advanced import Advanced
                     self.advanced = Advanced(self.store, self.workspace)
                 authority.prepare(method, path, body)
@@ -232,6 +234,13 @@ class Application:
     def _dispatch(self, method, path, body, query, access):
         w, s = self.workspace, self.store
         parts = path.strip("/").split("/")
+        if path == '/api/inbox' and method == 'GET':
+            from .inbox import Inbox
+            return 200, Inbox(s, access).get(query)
+        if len(parts) == 3 and parts[:2] == ['api', 'inbox'] and method == 'PATCH':
+            from .inbox import Inbox
+            require(not query, 'Invalid inbox query')
+            return 200, Inbox(s, access).patch(parts[2], body)
         if path == '/api/accounts' and method == 'GET':
             return 200, {'accounts': self.auth.list_accounts(), 'required': self.auth.accounts_required}
         if path == '/api/accounts' and method == 'POST':

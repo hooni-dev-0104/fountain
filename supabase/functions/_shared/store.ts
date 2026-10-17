@@ -6,6 +6,7 @@
 import {APIError, clone, get, has, is_object, truth, valid_id} from './access.ts';
 import type {Entity, StoreReader} from './access.ts';
 import {PAGE_HEADER_META_KEY, projectPageHeader, validatePageHeaders} from './page-headers.ts';
+import {VERIFICATION_INDEX_META_KEY,validateVerificationIndex,projectVerificationDatabase,projectVerificationRow,verificationProjectionSignature,type VerificationIndex} from './verification-index.ts';
 
 export type StoreContext = Readonly<{workspaceId: string; memberId: string; userId: string; authSessionId: string; sessionHash: string; cacheBinding: string}>;
 export type Selection = {kinds?: string[]; ids?: Record<string, string[]>; metaKeys?: string[]; pageSize?: number};
@@ -254,10 +255,28 @@ class StagingKernel<C extends DataContext> implements StoreReader {
       }
       return Array.from(pages.values()).sort((a,b)=>compare(a.id,b.id)).map(clone);
     }
+    if (key === VERIFICATION_INDEX_META_KEY) {
+      const base=validateVerificationIndex(this.metadata.get(key));
+      const databases=new Map(base.databases.map(db=>[db.id,db])),rows=new Map(base.rows.map(row=>[row.id,row]));
+      for(const change of this.changes){
+        if(change.op==='meta')continue;
+        if(change.kind==='database'){
+          const previous=databases.get(change.id),next=change.op==='put'?projectVerificationDatabase(change.data):null;
+          // A new/reconfigured projection may require absent row columns. No raw fallback.
+          if(next&&(!previous||verificationProjectionSignature(previous)!==verificationProjectionSignature(next)))fail('STORAGE_RESPONSE_INVALID',503,'Workspace database verification index requires a fresh snapshot');
+          if(next)databases.set(change.id,next);else {databases.delete(change.id);for(const [id,row] of rows)if(row.database_id===change.id)rows.delete(id);}
+        }else if(change.kind==='row'){
+          rows.delete(change.id);if(change.op==='put'){const db=databases.get(change.data.database_id);if(db){const projected=projectVerificationRow(change.data,db);if(projected)rows.set(change.id,projected);}}
+        }
+      }
+      return {databases:Array.from(databases.values()).sort((a,b)=>compare(a.id,b.id)).map(clone),rows:Array.from(rows.values()).sort((a,b)=>compare(a.id,b.id)).map(clone)};
+    }
     return this.metadata.has(key) ? clone(this.metadata.get(key)) : clone(fallback);
   }
   get page_header_generation(): number { this.readable(); return this.headerGeneration; }
   page_headers(): Entity[] { return this.meta(PAGE_HEADER_META_KEY); }
+  get database_verification_generation():number { this.readable();return this.headerGeneration; }
+  database_verification_rows():VerificationIndex { return this.meta(VERIFICATION_INDEX_META_KEY); }
   private stage(change: Change): void {
     check(this.changes.length < MAX_CHANGES && this.currentRevision < Number.MAX_SAFE_INTEGER,'STORAGE_LIMIT',413);
     const next = [...this.changes,change]; json({context:this.context,expectedRevision:this.baseRevision,changes:next});
@@ -296,7 +315,7 @@ class StagingKernel<C extends DataContext> implements StoreReader {
     this.stage({op:'delete',kind:kindName,id:identity}); this.entities.get(kindName)!.delete(identity);
   }
   set_meta(key: string, value: any): any {
-    this.writable(); metaKey(key); check(!['_entity_revision','_backup_storage_reserved',PAGE_HEADER_META_KEY].includes(key) && (key !== 'workspace_id' || value === this.context.workspaceId),'SELECTION_FORBIDDEN');
+    this.writable(); metaKey(key); check(!['_entity_revision','_backup_storage_reserved',PAGE_HEADER_META_KEY,VERIFICATION_INDEX_META_KEY].includes(key) && (key !== 'workspace_id' || value === this.context.workspaceId),'SELECTION_FORBIDDEN');
     json(value); this.meta(key); this.stage({op:'meta',key,value:clone(value)});this.metadata.set(key,clone(value));return clone(value);
   }
   audit(action:string, details:Entity, user:string=this.context.memberId):Entity {

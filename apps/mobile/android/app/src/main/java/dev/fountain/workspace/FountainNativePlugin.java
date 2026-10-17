@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.SystemClock;
+import android.os.Looper;
 import android.util.Base64;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
@@ -26,6 +27,7 @@ import java.net.URI;
 import java.net.URL;
 import java.security.MessageDigest;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -57,11 +59,16 @@ public class FountainNativePlugin extends Plugin {
     };
     private CookieVault vault;
     private static final boolean OUTBOX_ENABLED = false; // Enable only after SDK/device and recovery-UI verification.
+    private boolean outboxEnabled() {
+        return OUTBOX_ENABLED || (getContext().getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+            && "1".equals(System.getProperty("dev.fountain.outbox.qa"));
+    }
     private NativeOutbox outbox;
     private NativeRecovery recovery;
     private volatile boolean recoveryMode;
     private long recoveryEpoch;
     private final String outboxOwner = java.util.UUID.randomUUID().toString();
+    private long outboxAdmissionSequence;
     private String origin, activeCookie, revokeCookie, revokeOrigin;
     private boolean broken, destroyed;
     private Operation picker;
@@ -82,7 +89,10 @@ public class FountainNativePlugin extends Plugin {
         volatile ScheduledFuture<?> timeout;
         volatile long deadline;
         volatile long responseProofEpoch = -1, responseProofBoundary = -1, responseProofDeadline = Long.MAX_VALUE;
-        volatile NativeOutbox responseProofStore;
+        volatile NativeOutbox responseProofStore, admittedOutboxStore, sessionDeliveryStore;
+        volatile String admittedOutboxLease, sessionDeliveryLease;
+        NativeReconcile.Tag reconciliationTag;
+        NativeSyncReceipts.Admission syncAdmission;
         volatile NativeRecovery.Prepared recoveryExport;
         String undeliveredRecoveryInventory, undeliveredRecoveryExport;
         volatile NativeRecovery.Authority recoveryAuthority;
@@ -196,7 +206,7 @@ public class FountainNativePlugin extends Plugin {
     }
     private NativePolicy.SessionInvalidation invalidateSession(String explicitNativeActor) {
         publicWeb.clear();
-        if (OUTBOX_ENABLED && !recoveryMode) try { NativeOutbox storage=durableOutbox();storage.revoke();if(explicitNativeActor!=null)storage.eraseActor(explicitNativeActor); }
+        if (outboxEnabled() && !recoveryMode) try { NativeOutbox storage=durableOutbox();storage.revoke();if(explicitNativeActor!=null)storage.eraseActor(explicitNativeActor); }
         catch (Exception failure) { broken = true; }
         NativePolicy.SessionInvalidation result = NativePolicy.invalidateSession(origin, activeCookie, revokeCookie, sessionStorage());
         activeCookie = null;
@@ -242,7 +252,7 @@ public class FountainNativePlugin extends Plugin {
         JSObject result = new JSObject();
         result.put("origin", origin == null ? JSONObject.NULL : origin);
         result.put("generation", generation);
-        result.put("outboxVersion", 1); result.put("outboxEnabled", OUTBOX_ENABLED);
+        result.put("outboxVersion", 1); result.put("outboxEnabled", outboxEnabled());
         result.put("recoveryVersion", 1); result.put("recoveryEnabled", true);
         return result;
     }
@@ -263,7 +273,7 @@ public class FountainNativePlugin extends Plugin {
                 try {
                     invalidateRecovery();
                     publicWeb.clear();
-                    if (OUTBOX_ENABLED && !recoveryMode && origin != null) durableOutbox().revoke();
+                    if (outboxEnabled() && !recoveryMode && origin != null) durableOutbox().revoke();
                     persist(next, generation + 1, null, null, null);
                     if (outbox != null) { outbox.close(); outbox = null; }
                     origin = next; generation++; authGeneration++; cancelAll(null, "CONFIGURATION_CHANGED");
@@ -273,7 +283,7 @@ public class FountainNativePlugin extends Plugin {
         }));
     }
 
-    private void sessionWrite(Runnable action) { if (OUTBOX_ENABLED || recoveryMode) sessions.execute(action); else action.run(); }
+    private void sessionWrite(Runnable action) { if (outboxEnabled() || recoveryMode) sessions.execute(action); else action.run(); }
 
     private NativeOutbox durableOutbox() throws Exception {
         NativePolicy.require(origin != null);
@@ -283,28 +293,41 @@ public class FountainNativePlugin extends Plugin {
     private boolean outboxBlocked() { return broken || destroyed || revokeCookie != null || vault.invalidated(origin); }
     private interface OutboxAction { JSObject run(NativeOutbox storage) throws Exception; }
     private void outboxCall(PluginCall call, OutboxAction action) {
+        outboxCall(call, false, action);
+    }
+    private void outboxCall(PluginCall call, boolean recoveryMetadata, OutboxAction action) {
         entry(call, () -> {
-            if (!OUTBOX_ENABLED) { call.reject("Native durable outbox is not enabled", "OUTBOX_DISABLED"); return; }
-            if (recoveryMode) { call.reject("Recovery mode preserves the device archive", "OUTBOX_ACCESS_REQUIRED"); return; }
+            if (!outboxEnabled()) { call.reject("Native durable outbox is not enabled", "OUTBOX_DISABLED"); return; }
+            if (recoveryMode && !recoveryMetadata) { call.reject("Recovery mode preserves the device archive", "OUTBOX_ACCESS_REQUIRED"); return; }
             sessions.execute(() -> {
             synchronized (lock) {
                 try {
-                    if (recoveryMode) throw new NativeOutbox.AccessRequired();
+                    if (recoveryMode && !recoveryMetadata) throw new NativeOutbox.AccessRequired();
                     NativePolicy.require(!broken && !destroyed && NativeCookieBoundary.permits(ownerBoundaryEpoch)
                         && integer(call, "generation", 0, OutboxPolicy.SAFE - 1) == generation);
                     NativeOutbox storage = durableOutbox();
+                    if(recoveryMode){JSONObject grant=storage.verified(activeCookie,outboxBlocked());if((grant==null||recovery==null||!recovery.qualifiesOutbox(origin,grant,activeCookie,generation+":"+authGeneration+":"+ownerBoundaryEpoch)) && storage.knownBlockedProfile(activeCookie,outboxBlocked())==null)throw new NativeOutbox.AccessRequired();}
                     JSObject result = action.run(storage);
                     long expected = generation, expectedAuth = authGeneration, expectedBoundary = storage.boundary(), expectedProof = storage.proofEpoch();
-                    long expectedDeadline = result.has("fragments") || "verified".equals(result.optString("identityState")) ? storage.deliveryDeadline() : Long.MAX_VALUE;
+                    long expectedDeadline = result.has("expiresAt") ? result.getLong("expiresAt") : result.has("fragments") || "verified".equals(result.optString("identityState")) ? storage.deliveryDeadline() : Long.MAX_VALUE;
+                    if (Arrays.asList("committed", "settled").contains(result.optString("state"))) {
+                        JSONObject current = storage.verified(activeCookie, outboxBlocked());
+                        if (current == null) {
+                            if (!storage.terminalMetadataCurrent(call.getData(), result, generation, activeCookie, outboxBlocked())) throw new NativeOutbox.AccessRequired();
+                        } else expectedDeadline = Math.min(expectedDeadline, current.getLong("validUntil"));
+                    }
+                    final long deliveryUntil = expectedDeadline;
                     String expectedOrigin = origin;
                     getActivity().runOnUiThread(() -> { synchronized (lock) {
-                        if (!broken && !destroyed && generation == expected && authGeneration == expectedAuth
-                            && Objects.equals(origin, expectedOrigin) && outbox == storage && storage.boundary() == expectedBoundary
-                            && storage.proofEpoch() == expectedProof && System.currentTimeMillis() < expectedDeadline
-                            && NativeCookieBoundary.permits(ownerBoundaryEpoch) && bundleAllowed()) call.resolve(result);
-                        else call.reject("Native outbox owner changed", "STALE_SESSION");
+                        try {
+                            if (!resolveCurrent(call, result, () -> !broken && !destroyed && generation == expected && authGeneration == expectedAuth
+                                && Objects.equals(origin, expectedOrigin) && outbox == storage && storage.boundary() == expectedBoundary
+                                && storage.proofEpoch() == expectedProof && storage.deliveryCurrent(call.getData(), result, expected, activeCookie, outboxBlocked(), outboxOwner + ":" + expectedAuth) && System.currentTimeMillis() < deliveryUntil
+                                && NativeCookieBoundary.permits(ownerBoundaryEpoch) && bundleAllowed())) call.reject("Native outbox owner changed", "STALE_SESSION");
+                        } catch (Exception unsupported) { call.setKeepAlive(false); call.reject("Native response could not be delivered", "NATIVE_INPUT"); }
                     } });
-                } catch (NativeOutbox.AccessRequired error) { call.reject("Native resource access must be refreshed", "OUTBOX_ACCESS_REQUIRED"); }
+                } catch (NativeReconcile.Failure error) { call.reject("Native reconciliation requires refresh or retry", error.code); }
+                catch (NativeOutbox.AccessRequired error) { call.reject("Native resource access must be refreshed", "OUTBOX_ACCESS_REQUIRED"); }
                 catch (IllegalArgumentException error) { call.reject("Native outbox scope or input rejected", "OUTBOX_REJECTED"); }
                 catch (Exception error) {
                     // Any uncertain SQLite outcome fences this owner, including subsequent reads.
@@ -316,14 +339,23 @@ public class FountainNativePlugin extends Plugin {
         }); });
     }
     @PluginMethod public void outboxOpen(PluginCall call) {
-        outboxCall(call, storage -> storage.open(generation, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration));
+        outboxCall(call, true, storage -> storage.open(generation, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration));
     }
-    @PluginMethod public void stageDelta(PluginCall call) { outboxCall(call, storage -> storage.stage(call.getData(), generation)); }
+    @PluginMethod public void stageDelta(PluginCall call) { outboxCall(call, true, storage -> {if(storage.verified(activeCookie,outboxBlocked())==null)throw new NativeOutbox.AccessRequired();return storage.stage(call.getData(), generation);}); }
     @PluginMethod public void commitDelta(PluginCall call) {
-        outboxCall(call, storage -> storage.commit(call.getData(), generation, activeCookie, outboxBlocked()));
+        outboxCall(call, true, storage -> {if(storage.verified(activeCookie,outboxBlocked())==null&&!storage.acceptedTerminal(call.getData(),generation,activeCookie,outboxBlocked()))throw new NativeOutbox.AccessRequired();return storage.commit(call.getData(), generation, activeCookie, outboxBlocked(), recoveryMode);});
     }
     @PluginMethod public void readPage(PluginCall call) {
         outboxCall(call, storage -> storage.read(call.getData(), generation, activeCookie, outboxBlocked()));
+    }
+    @PluginMethod public void outboxReconcile(PluginCall call) {
+        outboxCall(call, true, storage -> {
+            boolean exitRecovery=recoveryMode&&"prepare".equals(call.getString("phase"));
+            if(recoveryMode){NativePolicy.require(Arrays.asList("settle","cancel").contains(call.getString("phase"))||exitRecovery&&!call.getData().has("planId")&&Arrays.asList("current","upgrade","promote").contains(call.getString("mode")));}
+            JSObject result=storage.reconcile(call.getData(),generation,activeCookie,outboxBlocked(),outboxOwner+":"+authGeneration,outboxAdmissionSequence);
+            if(exitRecovery){recoveryMode=false;invalidateRecovery();}
+            return result;
+        });
     }
 
     private static long integer(PluginCall call, String key, long minimum, long maximum) {
@@ -401,7 +433,7 @@ public class FountainNativePlugin extends Plugin {
             NativePolicy.require(id != null && id.matches("[A-Za-z0-9_.:-]{1,160}") && !operations.containsKey(id));
             if (mutation) {
                 String explicitNativeActor=null;
-                if(method.equals("DELETE")&&OUTBOX_ENABLED&&!recoveryMode)try{explicitNativeActor=durableOutbox().nativeActor(activeCookie!=null?activeCookie:revokeCookie);}catch(Exception unavailable){broken=true;}
+                if(method.equals("DELETE")&&outboxEnabled()&&!recoveryMode)try{explicitNativeActor=durableOutbox().nativeActor(activeCookie!=null?activeCookie:revokeCookie);}catch(Exception unavailable){broken=true;}
                 invalidateRecovery();
                 authGeneration++;
                 cancelAll(null, "SESSION_CHANGED");
@@ -414,6 +446,17 @@ public class FountainNativePlugin extends Plugin {
                 }
             }
             Operation operation = begin(call, session && method.equals("DELETE"), timeout, session && !method.equals("DELETE"));
+            try {
+                if (outboxEnabled() && !recoveryMode && !session) {
+                    NativePolicy.require(outboxAdmissionSequence < OutboxPolicy.SAFE - 1);
+                    NativeOutbox storage = durableOutbox();
+                    operation.reconciliationTag = storage.admitReconcile(++outboxAdmissionSequence, method, path, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration);
+                    operation.syncAdmission = storage.admitSync(method, path, body, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration);
+                    operation.admittedOutboxStore = storage; operation.admittedOutboxLease = storage.get("lease");
+                }
+            } catch (NativeReconcile.Failure invalid) { fail(operation, "Native request requires reconciliation", invalid.code); return; }
+            catch (NativeOutbox.AccessRequired invalid) { fail(operation, "Native resource access must be refreshed", "OUTBOX_ACCESS_REQUIRED"); return; }
+            catch (Exception invalid) { fail(operation, "Native request input was rejected", "NATIVE_INPUT"); return; }
             Runnable work = () -> {
                 try {
                     if (session) revokePending(); // Never attaches the caller's cancellable connection.
@@ -433,6 +476,7 @@ public class FountainNativePlugin extends Plugin {
                             deliverResponse(operation, response);
                         } else sessionWrite(() -> {
                             try { applySessionResponse(operation, response, false, false, cookie); observeResourceResponse(operation, response, method, path, cookie); deliverResponse(operation, response); }
+                            catch (NativeReconcile.Failure error) { fail(operation, "Native reconciliation requires refresh or retry", error.code); }
                             catch (NativeOutbox.AccessRequired error) { fail(operation, "Native resource access must be refreshed", "OUTBOX_ACCESS_REQUIRED"); }
                             catch (Exception error) { fail(operation, "Native session or outbox unavailable", "STALE_SESSION"); }
                         });
@@ -576,12 +620,15 @@ public class FountainNativePlugin extends Plugin {
                     retryRevocationAfterStorageFailure();
                     throw new IOException();
                 }
-            } else if (response.status == 401 && (OUTBOX_ENABLED || recoveryMode || sentCookie != null) && Objects.equals(sentCookie, activeCookie)) {
+            } else if (response.status == 401 && (outboxEnabled() || recoveryMode || sentCookie != null) && Objects.equals(sentCookie, activeCookie)) {
                 invalidateRecovery();
                 authGeneration++;
                 operation.authGeneration = authGeneration;
                 cancelAll(operation, "SESSION_EXPIRED");
                 NativePolicy.SessionInvalidation invalidated = invalidateSession();
+                // The actual unauthenticated response carries the revocation,
+                // and may be delivered without borrowing expired cache rights.
+                operation.admittedOutboxStore = null; operation.admittedOutboxLease = null;
                 if (!invalidated.saved) {
                     fail(operation, invalidated.durable ? "Secure session storage failed; local session remains invalidated"
                         : "Durable session invalidation failed; remote revocation is being attempted",
@@ -589,7 +636,7 @@ public class FountainNativePlugin extends Plugin {
                     throw new IOException();
                 }
             }
-            if (OUTBOX_ENABLED && !recoveryMode && session && response.status == 200) {
+            if (outboxEnabled() && session && response.status == 200) {
                 JSONObject description;
                 try { description = new JSONObject(OutboxPolicy.utf8(response.body)); }
                 catch (Exception malformed) { durableOutbox().revoke(); throw new IOException(); }
@@ -607,6 +654,7 @@ public class FountainNativePlugin extends Plugin {
                 catch(Exception unauthenticated){invalidateRecovery();}
             }
             if (session) {
+                if (outboxEnabled()) { operation.sessionDeliveryStore = durableOutbox(); operation.sessionDeliveryLease = operation.sessionDeliveryStore.get("lease"); }
                 check(operation);
                 Object primary = null;
                 if (response.status >= 200 && response.status < 300) try {
@@ -625,7 +673,7 @@ public class FountainNativePlugin extends Plugin {
                     check(operation);
                     if (!bundleAllowed()) throw new IOException();
                     if (operation.responseProofStore != null && (outbox != operation.responseProofStore
-                        || outbox.proofEpoch() != operation.responseProofEpoch || outbox.boundary() != operation.responseProofBoundary
+                        || !outbox.currentOwner(outboxOwner + ":" + authGeneration) || outbox.proofEpoch() != operation.responseProofEpoch || outbox.boundary() != operation.responseProofBoundary
                         || System.currentTimeMillis() >= operation.responseProofDeadline)) throw new NativeOutbox.AccessRequired();
                     JSObject result = new JSObject(); result.put("status", response.status);
                     result.put("headers", response.headers); result.put("bodyBase64", Base64.encodeToString(response.body, Base64.NO_WRAP));
@@ -643,12 +691,33 @@ public class FountainNativePlugin extends Plugin {
                 recovery.observe(method,path,response.status,response.status==200?new JSONObject(OutboxPolicy.utf8(response.body)):new JSONObject()); }
             return;
         }
-        if (!OUTBOX_ENABLED || OutboxPolicy.observedResource(method, path, response.status) == null) return;
+        if (outboxEnabled() && operation.syncAdmission != null) {
+            synchronized (lock) {
+                check(operation); if (!Objects.equals(sentCookie, activeCookie)) throw new NativeOutbox.AccessRequired();
+                durableOutbox().observeSync(operation.syncAdmission, response.status, response.body, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration);
+                durableOutbox().captureReconcile(null, response.status, response.body, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration);
+            }
+            return;
+        }
+        if (outboxEnabled() && !"GET".equals(method) && !NativePolicy.sessionPath(path) && OutboxPolicy.canonicalResource(method,path)==null) {
+            synchronized(lock){check(operation);durableOutbox().invalidateReconcile();}
+        }
+        if (outboxEnabled() && operation.reconciliationTag != null && (operation.reconciliationTag.kind.equals("attachment") || response.status != 200 && response.status != 403 && response.status != 404)) {
+            synchronized (lock) {
+                check(operation); if (!Objects.equals(sentCookie, activeCookie)) throw new NativeOutbox.AccessRequired();
+                NativeOutbox storage = durableOutbox(); storage.beforeReconcileObservation(operation.reconciliationTag, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration);
+                storage.captureReconcile(operation.reconciliationTag, response.status, response.body, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration);
+            }
+            return;
+        }
+        if (!outboxEnabled() || OutboxPolicy.observedResource(method, path, response.status) == null) return;
         synchronized (lock) {
             check(operation); if (!Objects.equals(sentCookie, activeCookie)) throw new NativeOutbox.AccessRequired();
             try {
                 NativeOutbox storage = durableOutbox();
+                storage.beforeReconcileObservation(operation.reconciliationTag, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration);
                 storage.observe(method, path, response.status, response.body, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration);
+                storage.captureReconcile(operation.reconciliationTag, response.status, response.body, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration);
                 operation.responseProofStore = storage; operation.responseProofEpoch = storage.proofEpoch();
                 operation.responseProofBoundary = storage.boundary(); operation.responseProofDeadline = storage.deliveryDeadline();
             } catch (NativeOutbox.AccessRequired required) { throw required; }
@@ -664,6 +733,8 @@ public class FountainNativePlugin extends Plugin {
             if (operation.closed.get() || broken || destroyed || operation.generation != generation
                 || operation.authGeneration != authGeneration || !Objects.equals(operation.origin, origin)
                 || !NativeCookieBoundary.permits(operation.boundaryEpoch)
+                || operation.admittedOutboxStore != null && (outbox != operation.admittedOutboxStore || !operation.admittedOutboxStore.currentLease(operation.admittedOutboxLease))
+                || operation.sessionDeliveryStore != null && (outbox != operation.sessionDeliveryStore || !operation.sessionDeliveryStore.currentLease(operation.sessionDeliveryLease))
                 || SystemClock.elapsedRealtime() > operation.deadline
                 || operation.backupScope != null && (!Objects.equals(activeCookie, operation.backupCookie) || System.currentTimeMillis() >= operation.backupUntil)) throw new IOException();
         }
@@ -691,16 +762,24 @@ public class FountainNativePlugin extends Plugin {
             }
         };
     }
+    interface RecoveryPublication { void run() throws Exception; }
+    static void publishRecoveryAuthority(Object scopeLock, NativeRecovery.Authority authority, RecoveryPublication publication) throws Exception {
+        synchronized(scopeLock) { authority.check(); publication.run(); }
+    }
     private NativeRecovery.Authority refreshRecovery(Operation operation,long epoch)throws Exception {
         String cookie;synchronized(lock){check(operation);cookie=activeCookie;if(revokeCookie!=null||vault.invalidated(origin))throw new NativeRecovery.Failure("RECOVERY_AUTH_REQUIRED");}
         NativeRecovery.Authority authority=recoveryAuthority(operation,epoch,cookie);
         JSONObject description;
         try{description=authority.get("/api/session");authority.check();}
-        catch(NativeRecovery.Failure failure){if("RECOVERY_AUTH_REQUIRED".equals(failure.code)){if(recovery!=null)recovery.invalidate();synchronized(lock){recoveryEpoch++;}}throw failure;}
+        catch(NativeRecovery.Failure failure){if("RECOVERY_AUTH_REQUIRED".equals(failure.code))publishRecoveryAuthority(lock,authority,()->{if(recovery!=null)recovery.invalidate();recoveryEpoch++;});throw failure;}
         NativeRecovery.Session identity;
         try {identity=new NativeRecovery.Session(operation.origin,description,cookie,operation.generation+":"+operation.authGeneration+":"+operation.boundaryEpoch);}
-        catch(Exception unauthenticated){if(recovery!=null)recovery.invalidate();synchronized(lock){recoveryEpoch++;}throw new NativeRecovery.Failure("RECOVERY_AUTH_REQUIRED");}
-        if(recovery==null)recovery=new NativeRecovery(getContext());recovery.refresh(identity);return authority;
+        catch(Exception unauthenticated){publishRecoveryAuthority(lock,authority,()->{if(recovery!=null)recovery.invalidate();recoveryEpoch++;});throw new NativeRecovery.Failure("RECOVERY_AUTH_REQUIRED");}
+        publishRecoveryAuthority(lock,authority,()->{
+            if(recovery==null)recovery=new NativeRecovery(getContext());recovery.refresh(identity);
+            if(outboxEnabled())try{durableOutbox().grant(description,cookie);}catch(NativeOutbox.AccessRequired requiresFreshBinding){/* Dedicated recovery authority still refreshes while the Outbox binding is suspended. */}
+        });
+        return authority;
     }
     private interface RecoveryAction { JSObject run(Operation operation,NativeRecovery.Authority authority)throws Exception; }
     private void recoveryCall(PluginCall call,boolean inventory,RecoveryAction action) {
@@ -713,6 +792,7 @@ public class FountainNativePlugin extends Plugin {
             sessions.execute(()->{
                 try {
                     NativeRecovery.Authority authority=refreshRecovery(operation,epoch);operation.recoveryAuthority=authority;
+                    if(inventory&&outboxEnabled())synchronized(lock){check(operation);durableOutbox().open(generation,activeCookie,outboxBlocked(),outboxOwner+":"+authGeneration);}
                     JSObject result=action.run(operation,authority);if(result==null)return;
                     synchronized(lock){if(result.has("exportToken")){operation.undeliveredRecoveryInventory=call.getString("inventoryToken");operation.undeliveredRecoveryExport=result.getString("exportToken");}if(operation.closed.get()){cleanupFile(operation);return;}}
                     getActivity().runOnUiThread(()->{synchronized(lock){try{authority.check();recovery.checkResponse(result,authority);if(!bundleAllowed())throw new NativeRecovery.Failure("RECOVERY_STALE");succeed(operation,result);}catch(Exception stale){fail(operation,"Recovery request was superseded","RECOVERY_STALE");}}});
@@ -746,13 +826,30 @@ public class FountainNativePlugin extends Plugin {
         });
     }
 
+    private boolean resolveCurrent(PluginCall call, JSObject result, NativeBridgeReply.Current current) throws Exception {
+        NativePolicy.require(Looper.myLooper() == Looper.getMainLooper() && Thread.holdsLock(lock));
+        return NativeBridgeReply.deliver(call, result, current, new NativeBridgeReply.Destination() {
+            public void evaluate(String script) { getBridge().getWebView().evaluateJavascript(script, null); }
+            public void release() { call.release(getBridge()); }
+        });
+    }
     private void succeed(Operation operation, JSObject result) {
-        if (!operation.closed.compareAndSet(false, true)) return;
-        operations.remove(operation.id);
-        if (operation.timeout != null) operation.timeout.cancel(false);
-        operation.undeliveredRecoveryExport=null;operation.undeliveredRecoveryInventory=null;
-        cleanupFile(operation);
-        operation.call.resolve(result);
+        if (operation.closed.get()) return;
+        try {
+            boolean delivered = resolveCurrent(operation.call, result, () -> {
+                try {
+                    check(operation); if (!bundleAllowed()) return false;
+                    if (operation.responseProofStore != null && (outbox != operation.responseProofStore || !outbox.currentOwner(outboxOwner + ":" + authGeneration)
+                        || outbox.proofEpoch() != operation.responseProofEpoch || outbox.boundary() != operation.responseProofBoundary || System.currentTimeMillis() >= operation.responseProofDeadline)) return false;
+                    if (operation.recoveryAuthority != null && recovery != null) recovery.checkResponse(result, operation.recoveryAuthority);
+                    return true;
+                } catch (Exception stale) { return false; }
+            });
+            if (!delivered) { fail(operation, "Native response scope changed", "STALE_SESSION"); return; }
+            operation.closed.set(true); operations.remove(operation.id);
+            if (operation.timeout != null) operation.timeout.cancel(false);
+            operation.undeliveredRecoveryExport=null;operation.undeliveredRecoveryInventory=null; cleanupFile(operation);
+        } catch (Exception unsupported) { fail(operation, "Native response could not be delivered", "NATIVE_INPUT"); }
     }
 
     private void fail(Operation operation, String message, String code) {
@@ -765,7 +862,7 @@ public class FountainNativePlugin extends Plugin {
             if (operation.connection != null) operation.connection.disconnect();
             if (operation.exportStream != null) try { operation.exportStream.close(); } catch (IOException ignored) {}
             cleanupFile(operation);
-            operation.call.reject(message, code); // Never pass native exceptions, cookies, or headers to the logger.
+            operation.call.setKeepAlive(false); operation.call.reject(message, code); // Never pass native exceptions, cookies, or headers to the logger.
         }
     }
 

@@ -85,6 +85,8 @@ class Store:
         ContentIndex(self).initialize()
         from .retention_vault import RetentionVault
         RetentionVault(self).initialize()
+        from .activity import ActivityLedger
+        ActivityLedger(self).initialize()
 
     @contextmanager
     def transaction(self):
@@ -93,10 +95,16 @@ class Store:
             outer = self.transaction_depth == 0
             name = f"fountain_{self.transaction_depth}"
             self.db.execute("BEGIN IMMEDIATE" if outer else f"SAVEPOINT {name}")
+            if outer:
+                from .activity import activity_id
+                self._activity_command = {'id': activity_id(), 'ordinal': 0}
+            activity_command = getattr(self, '_activity_command', None)
+            activity_ordinal = activity_command['ordinal'] if activity_command else 0
             self.transaction_depth += 1
             try:
                 yield self
             except BaseException:
+                if activity_command: activity_command['ordinal'] = activity_ordinal
                 if outer:
                     self.db.rollback()
                 else:
@@ -108,6 +116,7 @@ class Store:
                 else: self.db.execute(f"RELEASE SAVEPOINT {name}")
             finally:
                 self.transaction_depth -= 1
+                if outer: self._activity_command = None
 
     def commit(self):
         if not self.transaction_depth:
@@ -134,9 +143,13 @@ class Store:
         text(entity_id, "id", 160, False)
         from .content_index import ContentIndex, INVALIDATES
         from .retention_vault import RetentionVault, SNAPSHOT_KINDS
-        with self.transaction() if kind in INVALIDATES or kind in SNAPSHOT_KINDS or kind == 'upload' else self.lock:
+        from .activity import ActivityLedger, KINDS
+        with self.transaction() if kind in INVALIDATES or kind in SNAPSHOT_KINDS or kind in ('upload','credential') else self.lock:
             RetentionVault(self).guard_entity(kind, entity_id, data)
+            activity = ActivityLedger(self)
+            if kind in (*KINDS,'member','credential') and not getattr(self,'_retention_transition_depth',0): activity._runtime()
             previous = self.get(kind, entity_id)
+            before = self.db.execute('SELECT data FROM entities WHERE kind=? AND id=?',(kind,entity_id)).fetchone() if kind in KINDS else None
             data.update(id=entity_id, created_at=(previous or {}).get("created_at", now()), updated_at=now())
             self.db.execute("INSERT OR REPLACE INTO entities VALUES (?,?,?,?,?)", (
                 kind, entity_id, json.dumps(data, ensure_ascii=False), data["created_at"], data["updated_at"]))
@@ -145,14 +158,24 @@ class Store:
                 invalidate_member(self, entity_id)
             self._advance_revision()
             ContentIndex(self).changed(kind, entity_id, previous=previous)
+            activity.lifecycle(kind, entity_id, previous, data)
+            if kind in KINDS and not getattr(self,'_retention_transition_depth',0):
+                after = self.db.execute('SELECT data FROM entities WHERE kind=? AND id=?',(kind,entity_id)).fetchone()[0]
+                activity.mutation(kind, entity_id, before[0] if before else None, after, activity.generation(kind,entity_id))
             self.commit()
         return data
 
     def delete(self, kind, entity_id):
         from .content_index import ContentIndex, INVALIDATES
         from .retention_vault import RetentionVault, SNAPSHOT_KINDS
-        with self.transaction() if kind in INVALIDATES or kind in SNAPSHOT_KINDS or kind == 'upload' else self.lock:
+        from .activity import ActivityLedger, KINDS
+        with self.transaction() if kind in INVALIDATES or kind in SNAPSHOT_KINDS or kind in ('upload','credential') else self.lock:
             RetentionVault(self).guard_entity(kind, entity_id)
+            activity = ActivityLedger(self)
+            if kind in (*KINDS,'member','credential') and not getattr(self,'_retention_transition_depth',0): activity._runtime()
+            before = self.db.execute('SELECT data FROM entities WHERE kind=? AND id=?',(kind,entity_id)).fetchone() if kind in KINDS else None
+            generation = activity.generation(kind,entity_id) if before and not getattr(self,'_retention_transition_depth',0) else None
+            lifecycle_before = self.get(kind,entity_id) if kind in ('member','credential') else None
             previous = self.get(kind, entity_id) if kind in ('site','form') else None
             cursor = self.db.execute("DELETE FROM entities WHERE kind=? AND id=?", (kind, entity_id))
             if kind == "member" and cursor.rowcount:
@@ -161,6 +184,8 @@ class Store:
             if cursor.rowcount:
                 self._advance_revision()
                 ContentIndex(self).changed(kind, entity_id, previous=previous)
+                activity.lifecycle(kind,entity_id,lifecycle_before,None)
+                if before and not getattr(self,'_retention_transition_depth',0):activity.mutation(kind,entity_id,before[0],None,generation)
             self.commit()
 
     def meta(self, key, default=None):

@@ -29,9 +29,15 @@ class RetentionVaultTests(unittest.TestCase):
             value=self.s.get('page',page);value['blocks']=[{'id':'block','type':'file','attachment_id':identity}];self.s.put('page',value)
         return data
     def test_initialization_does_not_change_entities_or_meta(self):
+        from fountain.activity import ACTIVITY_COLUMNS, ACTIVITY_RUNTIME_COLUMNS, ACTIVITY_TRIGGER_DEFINITIONS
+        activity_before={table:tuple(self.s.db.execute('SELECT * FROM '+table+' ORDER BY 1,2'))
+                         for table in (*ACTIVITY_COLUMNS,*ACTIVITY_RUNTIME_COLUMNS)}
         before=self.state();self.v.initialize();self.assertEqual(before,self.state())
         for name,columns in VAULT_COLUMNS.items():self.assertEqual(tuple(r[1] for r in self.s.db.execute('PRAGMA table_info('+name+')')),columns)
-        self.assertEqual(set(VAULT_TRIGGER_DEFINITIONS),{r[0] for r in self.s.db.execute("SELECT name FROM sqlite_schema WHERE type='trigger'")})
+        self.assertEqual(set(VAULT_TRIGGER_DEFINITIONS) | set(ACTIVITY_TRIGGER_DEFINITIONS),
+                         {r[0] for r in self.s.db.execute("SELECT name FROM sqlite_schema WHERE type='trigger'")})
+        self.assertEqual(activity_before,{table:tuple(self.s.db.execute('SELECT * FROM '+table+' ORDER BY 1,2'))
+                                         for table in activity_before})
     def test_whole_nested_closure_is_private_and_raw_history_is_exact(self):
         self.page('child',parent_id='root');self.page('grand',parent_id='child')
         self.s.put('database',{'id':'db','parent_id':'child','properties':[{'id':'files','type':'files'}]})

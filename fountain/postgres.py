@@ -94,11 +94,19 @@ class PostgresStore:
                         self._execute("SELECT pg_advisory_xact_lock(%s)", (self._lock_key,))
                         if not self._initializing:
                             self._check_attachment_mode()
+                        from .activity import activity_id
+                        self._activity_command = {'id': activity_id(), 'ordinal': 0}
+                    activity_command = getattr(self, '_activity_command', None)
+                    activity_ordinal = activity_command['ordinal'] if activity_command else 0
                     self.transaction_depth += 1
                     try:
                         yield self
+                    except BaseException:
+                        if activity_command: activity_command['ordinal'] = activity_ordinal
+                        raise
                     finally:
                         self.transaction_depth -= 1
+                        if outer: self._activity_command = None
             except self._driver.Error:
                 raise APIError(503, "PostgreSQL transaction could not complete") from None
 
@@ -183,6 +191,11 @@ class PostgresStore:
         entity_id = value.get("id") or uid()
         text(entity_id, "id", 160, False)
         with self.transaction():
+            from .activity import ActivityLedger, KINDS
+            activity = ActivityLedger(self)
+            if kind in (*KINDS,'member','credential'): activity._runtime()
+            before = self._execute('SELECT data::text FROM fountain_private.entities WHERE workspace_id=%s AND kind=%s AND id=%s',
+                                   (self.workspace_id,kind,entity_id),fetch='one') if kind in KINDS else None
             previous = self.get(kind, entity_id)
             value.update(id=entity_id, created_at=(previous or {}).get("created_at", now()), updated_at=now())
             with self._content_actor():
@@ -194,10 +207,20 @@ class PostgresStore:
                 from .admin_roles import invalidate_member
                 invalidate_member(self, entity_id)
             self._advance_revision()
+            if kind in KINDS:
+                after = self._execute('SELECT data::text FROM fountain_private.entities WHERE workspace_id=%s AND kind=%s AND id=%s',
+                                      (self.workspace_id,kind,entity_id),fetch='one')[0]
+                activity.mutation(kind,entity_id,before[0] if before else None,after,activity.generation(kind,entity_id))
         return value
 
     def delete(self, kind, entity_id):
         with self.transaction():
+            from .activity import ActivityLedger, KINDS
+            activity = ActivityLedger(self)
+            if kind in (*KINDS,'member','credential'): activity._runtime()
+            before = self._execute('SELECT data::text FROM fountain_private.entities WHERE workspace_id=%s AND kind=%s AND id=%s',
+                                   (self.workspace_id,kind,entity_id),fetch='one') if kind in KINDS else None
+            generation = activity.generation(kind,entity_id) if before else None
             with self._content_actor():
                 removed = self._execute("DELETE FROM fountain_private.entities WHERE workspace_id=%s AND kind=%s AND id=%s",
                                         (self.workspace_id, kind, entity_id))
@@ -205,6 +228,7 @@ class PostgresStore:
                 from .admin_roles import invalidate_member
                 invalidate_member(self, entity_id)
             if removed: self._advance_revision()
+            if before: activity.mutation(kind,entity_id,before[0],None,generation)
 
     def meta(self, key, default=None):
         with self._read():

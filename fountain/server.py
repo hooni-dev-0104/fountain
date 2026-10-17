@@ -103,11 +103,13 @@ class Application:
 
     def _request_context(self, principal, session_cookie):
         """Resolve the original login while the caller holds the SQLite writer."""
+        activity_auth_kind = 'local'
         if session_cookie is not _INTERNAL_PRINCIPAL:
             info = self.auth.session_info(session_cookie)
             require(info.get('authenticated') and isinstance(info.get('member'), dict), 'Authentication required', 401)
             principal = info['member']
             binding = info['cache_binding']
+            activity_auth_kind = 'password' if info.get('mode') == 'accounts' else 'local'
         else:
             if principal is _INTERNAL_PRINCIPAL:
                 principal = {'id': 'local', 'role': 'owner', 'active': True, '_service': True}
@@ -116,10 +118,12 @@ class Application:
         if self.auth.accounts_required and not principal.get('_service'):
             principal = self.auth._member(principal.get('id'))
             require(principal is not None, 'Authentication required', 401)
-        return {'access': Access(self.store, principal), 'workspace_id': self.store.meta('workspace_id'),
+        access = Access(self.store, principal)
+        access._activity_auth_kind = activity_auth_kind
+        return {'access': access, 'workspace_id': self.store.meta('workspace_id'),
                 'session_binding': binding}
 
-    def dispatch(self, method, path, body, query, principal=_INTERNAL_PRINCIPAL, session_cookie=_INTERNAL_PRINCIPAL):
+    def dispatch(self, method, path, body, query, principal=_INTERNAL_PRINCIPAL, session_cookie=_INTERNAL_PRINCIPAL, *, capture_reads=True):
         body = copy.deepcopy(body)
         parts = path.strip('/').split('/')
         if len(parts) == 4 and parts[:2] == ['api', 'pages'] and parts[3] == 'presence':
@@ -155,6 +159,7 @@ class Application:
             with self.store.transaction() if claiming else nullcontext():
                 context = self._request_context(principal, session_cookie)
                 access = context['access']
+                access._activity_capture_reads = capture_reads is True
                 access.principal['_content_session_binding'] = context['session_binding']
                 authority = Authorization(access)
                 inbox_route = (path == '/api/inbox' and method == 'GET'
@@ -331,12 +336,21 @@ class Application:
                 if method == "GET":
                     detail = w.detail(page_id)
                     s.audit('page.viewed', {'page_id': page_id})
+                    from .activity import ActivityLedger
+                    command = query.get('open_command')
+                    require(command is None or len(command)==1,'A single document open command is required')
+                    ActivityLedger(s).record_view('page',page_id,command[0] if command else None)
                     return 200, detail
                 if method == "PATCH": return 200, w.update_page(page_id, body)
                 if method == "DELETE": return 200, w.update_page(page_id, {"archived": True})
             if len(parts) == 4:
                 if parts[3] == 'collaboration' and method == 'GET':
-                    return 200, self.collaboration.snapshot(page_id, access)
+                    snapshot = self.collaboration.snapshot(page_id, access)
+                    if 'open_command' in query:
+                        from .activity import ActivityLedger
+                        require(len(query['open_command']) == 1, 'A single document open command is required')
+                        ActivityLedger(s).record_view('page',page_id,query['open_command'][0])
+                    return 200, snapshot
                 if parts[3] == 'operations' and method == 'POST':
                     return 200, self.collaboration.apply(page_id, body, access)
                 if parts[3] == "blocks" and method == "PUT": return 200, w.save_blocks(page_id, body.get("blocks"), body.get("revision"))
@@ -863,7 +877,8 @@ def handler_for(application):
                     except UnicodeError:
                         raise APIError(400, 'Invalid content query encoding') from None
                     status, payload = application.dispatch(method, path, body, parsed_query, principal=principal,
-                        session_cookie=cookie if not is_scim and path != '/api/health' else _INTERNAL_PRINCIPAL)
+                        session_cookie=cookie if not is_scim and path != '/api/health' else _INTERNAL_PRINCIPAL,
+                        capture_reads=self.command != 'HEAD')
                     if isinstance(payload, CSVDownload):
                         self.send_csv(payload)
                     elif isinstance(payload, (Download, AttachmentDownload)):

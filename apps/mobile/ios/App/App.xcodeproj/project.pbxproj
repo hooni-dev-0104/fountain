@@ -6,11 +6,22 @@
 	objectVersion = 60;
 	objects = {
 
+
+        F05000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "ios-reconcile-vectors.swift"; path = "../../tests/ios-reconcile-vectors.swift"; sourceTree = SOURCE_ROOT; };
+        F05000000000000000000011 = {isa = PBXBuildFile; fileRef = F05000000000000000000001; };
+        F05000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "ios-reconcile-vector-driver.swift"; path = "../../tests/ios-reconcile-vector-driver.swift"; sourceTree = SOURCE_ROOT; };
+        F05000000000000000000012 = {isa = PBXBuildFile; fileRef = F05000000000000000000002; };
+        F05000000000000000000003 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "ios-reconcile-sdk-test.swift"; path = "../../tests/ios-reconcile-sdk-test.swift"; sourceTree = SOURCE_ROOT; };
+        F05000000000000000000013 = {isa = PBXBuildFile; fileRef = F05000000000000000000003; };
+        F05000000000000000000004 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "ios-outbox-observer.swift"; path = "../../tests/ios-outbox-observer.swift"; sourceTree = SOURCE_ROOT; };
+        F05000000000000000000014 = {isa = PBXBuildFile; fileRef = F05000000000000000000004; };
+        F05000000000000000000005 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "ios-native-authority-sdk.swift"; path = "../../tests/ios-native-authority-sdk.swift"; sourceTree = SOURCE_ROOT; };
+        F05000000000000000000015 = {isa = PBXBuildFile; fileRef = F05000000000000000000005; };
         F04900000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FountainNativeTests.swift; sourceTree = "<group>"; };
         F04900000000000000000002 = {isa = PBXBuildFile; fileRef = F04900000000000000000001; };
-        F04900000000000000000003 = {isa = PBXGroup; children = (F04900000000000000000001,); path = AppTests; sourceTree = "<group>"; };
+        F04900000000000000000003 = {isa = PBXGroup; children = (F04900000000000000000001,F05000000000000000000001,F05000000000000000000002,F05000000000000000000003,F05000000000000000000004,F05000000000000000000005,); path = AppTests; sourceTree = "<group>"; };
         F04900000000000000000004 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = FountainNativeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-        F04900000000000000000005 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (F04900000000000000000002,); runOnlyForDeploymentPostprocessing = 0; };
+        F04900000000000000000005 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (F04900000000000000000002,F05000000000000000000011,F05000000000000000000012,F05000000000000000000013,F05000000000000000000014,F05000000000000000000015,); runOnlyForDeploymentPostprocessing = 0; };
         F04900000000000000000006 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
         F04900000000000000000007 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
         F04900000000000000000008 = {isa = PBXContainerItemProxy; containerPortal = 504EC2FC1FED79650016851F; proxyType = 1; remoteGlobalIDString = 504EC3031FED79650016851F; remoteInfo = App; };

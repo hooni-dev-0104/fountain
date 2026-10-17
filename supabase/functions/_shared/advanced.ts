@@ -36,6 +36,7 @@ function actorStore(store:CoreStore,actor:string):CoreStore{
     if(key==='audit')return (action:string,details:Entity,user=actor)=>target.audit(action,details,user);
     if(key==='context')return {...target.context,memberId:actor};
     if(key==='transaction')return <T>(action:(value:CoreStore)=>T)=>target.transaction(()=>action(wrapped));
+    if(key==='put'&&target.with_content_actor)return (kind:string,value:Entity)=>target.with_content_actor!({member_id:actor,cause:'automation'},()=>target.put(kind,value));
     const value=Reflect.get(target,key,target);return typeof value==='function'?value.bind(target):value;
   }});return wrapped;
 }

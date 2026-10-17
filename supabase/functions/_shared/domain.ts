@@ -108,7 +108,7 @@ function coreRoute(r:DomainRequest):DomainResult|null{
 export {coreRoute};
 /** The caller owns the staged transaction. Sync operations use this same route
  * authorization and projection rather than invoking an unguarded primitive. */
-export function dispatchStaged(s:CloudStore,method:string,path:string,input:Entity,query=new URLSearchParams(),extensions:DomainExtension[]=[]):DomainResult {
+function dispatchStagedBody(s:CloudStore,method:string,path:string,input:Entity,query:URLSearchParams,extensions:DomainExtension[]):DomainResult {
   const body=clone(input),access=new Access(s,s.principal),authority=new Authorization(access,{ownerAccounts:'cloud-commit'}),workspace=new Workspace(s,{access});
   authority.prepare(method,path,body);
   const r={method,path,parts:path.replace(/^\/+|\/+$/g,'').split('/'),body,query,store:s,access,authority,workspace};
@@ -121,6 +121,10 @@ export function dispatchStaged(s:CloudStore,method:string,path:string,input:Enti
   const payload=authority.project(path,routed.payload),canonical=method==='GET'&&(path==='/api/workspace'||/^\/api\/databases\/[^/]+$/.test(path));
   if(is_object(payload)&&(canonical||path.endsWith('/collaboration')||path.endsWith('/operations')))Object.assign(payload,{workspace_id:s.context.workspaceId,current_member_id:access.member_id,session_binding:s.context.cacheBinding,access_revision:s.meta('access_revision',0),data_revision:s.meta('_entity_revision',0)});
   return {status:routed.status,payload};
+}
+export function dispatchStaged(s:CloudStore,method:string,path:string,input:Entity,query=new URLSearchParams(),extensions:DomainExtension[]=[]):DomainResult {
+  const cause=path==='/api/import'?'import':/^\/api\/forms\/[^/]+\/submit$/.test(path)?'public_form':'human';
+  return s.with_content_actor({member_id:s.context.memberId,cause},()=>dispatchStagedBody(s,method,path,input,query,extensions));
 }
 export function createDomain(config:Config){
   const execute=createTransactions(config);

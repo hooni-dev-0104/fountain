@@ -13,7 +13,8 @@ export type Selection = {kinds?: string[]; ids?: Record<string, string[]>; metaK
 export type NormalizedSelection = {kinds: string[]; ids: Record<string, string[]>; metaKeys: string[]; pageSize: number};
 export type SnapshotRecord = {kind: string; id: string; data: Entity; createdAt: string; updatedAt: string};
 export type SnapshotPage = {workspaceId: string; memberId: string; revision: number; accessRevision: number; principal: Entity; entities: SnapshotRecord[]; meta: Array<{key: string; value: any; present: boolean}>; nextCursor: unknown | null};
-export type Change = {op: 'put'; kind: string; id: string; data: Entity; previousCreatedAt: string | null} | {op: 'delete'; kind: string; id: string} | {op: 'meta'; key: string; value: any};
+export type ContentOrigin = {member_id:string;cause:'human'|'automation'|'import'|'public_form'};
+export type Change = {op: 'put'; kind: string; id: string; data: Entity; previousCreatedAt: string | null; origin?:ContentOrigin} | {op: 'delete'; kind: string; id: string} | {op: 'meta'; key: string; value: any};
 type DataContext = Readonly<{workspaceId:string;memberId:string}>;
 type KernelSnapshot<C> = {context:C;selection:NormalizedSelection;cursor?:unknown;expectedRevision?:number};
 type KernelCommit<C> = {context:C;expectedRevision:number;transactionId:string;digest:string;canonical:string;changes:Change[]};
@@ -171,6 +172,7 @@ class StagingKernel<C extends DataContext> implements StoreReader {
   private currentRevision: number;
   private headerGeneration = 0;
   private changes: Change[] = [];
+  private contentActor: ContentOrigin | null = null;
   private transactionDepth = 0;
   private phase: 'ready'|'pending'|'uncertain'|'committed'|'aborted' = 'ready';
   private commitRequest: KernelCommit<C> | null = null;
@@ -311,6 +313,24 @@ class StagingKernel<C extends DataContext> implements StoreReader {
     }
     return fail('ID_ALLOCATION_FAILED',503,'A unique workspace identifier is unavailable');
   }
+  /** Trusted server scope, separate from submitted entity fields and RPC Auth.
+   * Only automation may attribute a write to another verified active author. */
+  with_content_actor<T>(origin:ContentOrigin,action:()=>T):T {
+    this.writable();check(is_object(origin)&&Object.keys(origin).length===2&&has(origin,'member_id')&&has(origin,'cause')&&valid_id(origin.member_id)&&['human','automation','import','public_form'].includes(origin.cause));
+    jsonString(origin.member_id);
+    const member=origin.member_id===this.context.memberId?this.principal:this.get('member',origin.member_id);
+    check(member&&get(member,'active',true)===true&&['owner','admin','member','guest'].includes(member.role),'INVALID_CONTENT_ACTOR',403);
+    check(origin.cause==='automation'?member.role!=='guest':origin.member_id===this.context.memberId,'INVALID_CONTENT_ACTOR',403);
+    const previous=this.contentActor;this.contentActor=freeze(clone(origin));
+    try {
+      const value=action();
+      if(value&&typeof (value as any).then==='function'){
+        this.phase='aborted';void Promise.resolve(value).catch(()=>{});
+        return fail('ASYNC_TRANSACTION_FORBIDDEN',400,'Content actor scopes must be synchronous');
+      }
+      return value;
+    } finally { this.contentActor=previous; }
+  }
   put(kindName: string, data: Entity): Entity {
     this.writable(); kind(kindName); check(is_object(data),'INVALID_STORE_INPUT'); json(data);
     const value = clone(data), generated = !truth(get(value,'id')), identity = generated ? this.allocate_id(kindName) : value.id;
@@ -318,7 +338,8 @@ class StagingKernel<C extends DataContext> implements StoreReader {
     const previous = generated ? clone(this.entities.get(kindName)?.get(identity)?.data ?? null) : this.get(kindName,identity);
     value.id=identity;value.created_at=previous ? get(previous,'created_at',this.requestTime) : this.requestTime;value.updated_at=this.requestTime;
     check(kindName !== 'attachment' || !has(value,'data'),'SELECTION_FORBIDDEN');
-    this.stage({op:'put',kind:kindName,id:identity,data:value,previousCreatedAt:previous ? previous.created_at : null});
+    const origin=this.contentActor&&['page','database','row','site','form'].includes(kindName)?{origin:clone(this.contentActor)}:{};
+    this.stage({op:'put',kind:kindName,id:identity,data:value,previousCreatedAt:previous ? previous.created_at : null,...origin});
     if (!this.entities.has(kindName)) this.entities.set(kindName,new Map());
     if(generated){if(!this.generatedIds.has(kindName))this.generatedIds.set(kindName,new Set());this.generatedIds.get(kindName)!.add(identity);}
     this.entities.get(kindName)!.set(identity,{kind:kindName,id:identity,data:clone(value),createdAt:value.created_at,updatedAt:value.updated_at});

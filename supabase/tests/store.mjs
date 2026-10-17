@@ -103,6 +103,28 @@ await test('administration generations use one bounded selection and follow stag
  expectCode(()=>store.set_meta(index,{}),'SELECTION_FORBIDDEN');
  assert(!JSON.stringify(store.admin_member_generations()).includes('MUST_NOT_USE'));
 });
+await test('trusted per-resource authors are scoped, rollback-safe and never copied from entity fields',async()=>{
+ const provider=new MemoryProvider(),store=await CloudStore.open(provider,context,{kinds:['member','page','site','audit']},options);
+ const content=id=>({id,title:'Authored',origin:{member_id:'bob',cause:'automation'}});
+ store.with_content_actor({member_id:'alice',cause:'human'},()=>{
+  store.put('page',content('human'));
+  store.with_content_actor({member_id:'bob',cause:'automation'},()=>store.put('page',content('automation')));
+  assert.throws(()=>store.transaction(()=>store.with_content_actor({member_id:'bob',cause:'automation'},()=>{store.put('page',content('rolled-back'));throw Error('rollback');})),/rollback/);
+  store.put('page',content('human-again'));store.put('audit',{id:'audit-origin',action:'test',details:{}});
+ });
+ store.put('page',content('legacy'));
+ expectCode(()=>store.with_content_actor({member_id:'bob',cause:'human'},()=>{}),'INVALID_CONTENT_ACTOR');
+ expectCode(()=>store.with_content_actor({member_id:'alice',cause:'human',extra:true},()=>{}),'INVALID_STORE_INPUT');
+ await store.commit();const changes=provider.requests[0].changes;
+ assert.deepEqual(changes.filter(change=>change.origin).map(change=>[change.id,change.origin]),[
+  ['human',{member_id:'alice',cause:'human'}],['automation',{member_id:'bob',cause:'automation'}],['human-again',{member_id:'alice',cause:'human'}]]);
+ assert(!changes.some(change=>change.id==='rolled-back'));
+ assert(!Object.hasOwn(changes.find(change=>change.id==='legacy'),'origin'));
+ assert(!Object.hasOwn(changes.find(change=>change.kind==='audit'),'origin'));
+ assert.equal(changes.find(change=>change.id==='human').data.origin.member_id,'bob','Untrusted entity origin remains data, not actor proof');
+ const other=await CloudStore.open(new MemoryProvider(),context,{kinds:['member']},options);
+ expectCode(()=>other.with_content_actor({member_id:'alice',cause:'human'},async()=>null),'ASYNC_TRANSACTION_FORBIDDEN');assert.equal(other.state,'aborted');
+});
 await test('permission projection uses pinned data and fails closed until expanded',async()=>{
  const provider=new MemoryProvider();let selected={ids:{page:['__proto__']}};
  const partial=await CloudStore.open(provider,context,selected,options);assert.throws(()=>new Access(partial,partial.principal),MissingSelection);

@@ -30,6 +30,7 @@ export {
   validate_marks
 } from './crdt.ts';
 export interface CoreStore extends StoreReader {
+  with_content_actor?<T>(origin:{member_id:string;cause:'human'|'automation'|'import'|'public_form'},action:()=>T):T;
   requestTime?: string;
   context?: {
     memberId: string

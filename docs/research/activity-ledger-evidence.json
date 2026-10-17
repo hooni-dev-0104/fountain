@@ -1,0 +1,309 @@
+{
+  "scope": "Private canonical content activity, identity episodes and portable full backup v4; foundation for retention and legal holds",
+  "wholeGoalComplete": false,
+  "featureInventory": {
+    "features": 41,
+    "wholeFeaturesVerified": 0,
+    "goalStatus": "active"
+  },
+  "reference": {
+    "url": "https://www.notion.com/help/legal-holds",
+    "use": "Public product requirements; not evidence of proprietary server implementation"
+  },
+  "contracts": {
+    "captureScope": "canonical-server-v1",
+    "actions": [
+      "created",
+      "edited",
+      "managed",
+      "deleted",
+      "viewed"
+    ],
+    "resourceKinds": [
+      "page",
+      "database",
+      "row"
+    ],
+    "newCollectionEpoch": true,
+    "backfillFromAuditOrCreatedAt": false,
+    "factsImmutableAfterCommit": true,
+    "freshAuthCASAndReceiptSameTransaction": true,
+    "sourceEncoding": "fountain-cjson-v1",
+    "sourceDigestIsHistoricalContentSnapshot": false,
+    "identity": "Membership episodes separate from password/Supabase account episodes and administrator grant generations",
+    "portableExcludes": [
+      "credentials",
+      "tokens",
+      "Auth session identifiers",
+      "actual Supabase Auth user identifiers",
+      "current runtime bindings"
+    ],
+    "viewCapture": [
+      "authorized direct page GET",
+      "explicit collaboration open_command"
+    ],
+    "noViewsFrom": [
+      "HEAD",
+      "workspace reads",
+      "background collaboration polling"
+    ],
+    "outsideCapture": [
+      "arbitrary privileged SQL",
+      "database/row UI view integration",
+      "offline backdating"
+    ],
+    "serviceOrigins": [
+      "automation",
+      "system",
+      "public_form"
+    ]
+  },
+  "portableBackup": {
+    "version": 4,
+    "realTables": 14,
+    "previousContentAndVaultTables": 10,
+    "activityTables": [
+      "activity_ledgers",
+      "activity_memberships",
+      "activity_accounts",
+      "activity_events"
+    ],
+    "runtimeTablesExcluded": 3,
+    "internalFrozenIndexAliasesNotExported": true,
+    "v1ToV3MeaningsPreserved": true,
+    "trustedRestoreStartsNewEpoch": true,
+    "oldOpenEpisodesClosedOnRestore": true,
+    "runtimeAuthorityNotRestored": true,
+    "allPortableChangesFenceResumableJobs": true
+  },
+  "deployment": {
+    "main": 27,
+    "mainFiles": 48,
+    "qa": 103,
+    "qaFiles": 47,
+    "exactSharedFiles": 46,
+    "sourceReadbackExact": true,
+    "authCleanup": 104,
+    "authCleanupFiles": 3,
+    "retiredVerifier": 105,
+    "retiredVerifierFiles": 1,
+    "retiredVerifierUnconditional404": true,
+    "migrations": 44,
+    "newMigrations": [
+      {
+        "file": "supabase/migrations/20261017140811_fountain_activity_ledger.sql",
+        "sha256": "1177c78895c55daeee90c9941ffcbd4c96b2b406a1ef9f997cb4f8cd04fc16f2",
+        "applied": true
+      },
+      {
+        "file": "supabase/migrations/20261017140932_fountain_activity_backup_v4.sql",
+        "sha256": "37f4a079eab9588ddb1bc80d33c69994b6c61e118309f055b61325b2a3ff9108",
+        "applied": true
+      },
+      {
+        "file": "supabase/migrations/20261017145348_fountain_activity_counter_fence.sql",
+        "sha256": "5af9dc9136c988630c8bb2c59d021ff2d9faf5904979bff2cfa9f6bc04916b91",
+        "applied": true
+      },
+      {
+        "file": "supabase/migrations/20261017145700_fountain_activity_member_eligibility.sql",
+        "sha256": "c37ffddca739314946d89275c07ef39cc6f1a809c1b32d9ea4a5d156927018bb",
+        "applied": true
+      }
+    ],
+    "exactLatestFunctionBodies": 33,
+    "functionsReadbackPassed": true,
+    "forceRLSTables": 7,
+    "clientTableAccessDenied": true,
+    "newDependencies": false,
+    "frontendChanged": false
+  },
+  "verification": {
+    "python": {
+      "actualPostgresConfigured": true,
+      "tests": 802,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": true
+    },
+    "node": {
+      "scripts": 74,
+      "allExitZero": true,
+      "sourceUnchangedDuringRun": true,
+      "staticTypeCompiler": false,
+      "passed": true
+    },
+    "actualPostgresTransfers": {
+      "actualPostgres": true,
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": true,
+      "actualGoTrueLoginClaim": false,
+      "runtimeDDL": false,
+      "fixtures": "fresh namespaces with rollback; constructor-only metadata cleanup"
+    },
+    "actualCloud": {
+      "realGoTrueUsersAndSessions": 2,
+      "realEdgePostgresAndStorage": true,
+      "stages": [
+        "setup",
+        "create",
+        "edit",
+        "noop",
+        "background",
+        "direct-view",
+        "member-denied",
+        "grant",
+        "member-view",
+        "explicit-open",
+        "upload",
+        "attach"
+      ],
+      "canonicalEventsAfterTwelveStages": 7,
+      "historyComparedToActualSQL": true,
+      "noAuditInference": true,
+      "viewerMutationStatus": 403,
+      "viewerFullBackupStatus": 403,
+      "attachmentBytes": 16384
+    },
+    "browser": {
+      "actualBrowserAuthEdgePostgres": true,
+      "temporaryLoopbackPresentation": true,
+      "publicHostedBrowser": false,
+      "ownerConnectedObserved": true,
+      "memberConnectedAndReadOnlyObserved": true,
+      "twoOnlineViewsAdded": 2,
+      "totalEventsAfterBrowser": 10,
+      "includesEarlierHarnessView": true,
+      "noShippingUIChange": true,
+      "newNativeJourney": false,
+      "passed": true
+    },
+    "actualArtifacts": {
+      "actualArtifactsCompared": true,
+      "allLogicalRowsEqual": true,
+      "activityRawRowsExact": true,
+      "attachmentBytesEqual": true,
+      "wholeFilesByteIdentical": false,
+      "differentRows": [
+        {
+          "table": "entities",
+          "kind": "attachment",
+          "onlyNormalizedLiveAttachmentJSONWhitespace": true
+        }
+      ],
+      "syncSHA256": "cdc8ed736fc1011ac1e6e86f442e29dc523752c8b056b5417894b8d6d3f64bf6",
+      "resumableSHA256": "d3fcb1552a9ed5d0be132334574e102a3b5c313506d5ddde6c5e6d1089b17a1a",
+      "bytesEach": 172032,
+      "passed": true
+    },
+    "publicHTTP": {
+      "checks": 18,
+      "passed": true,
+      "publicAppSHA256": "4fbeffd63bdb19dfbcf857a6a18a92770cd89bebbb19e535b70ea00614452206",
+      "frozen8787AppSHA256": "82e8d9faa6219da972bfb902d5c20efe33f51d367884429a4983fe1347fe6d1f",
+      "assetsExact": true
+    }
+  },
+  "cleanup": {
+    "unitOwnedNamespaces": 113,
+    "actualOwnedNamespaces": 1,
+    "allOwnedWorkspaceAuthAndStorageEmpty": true,
+    "ordinaryGC": {
+      "physical_objects": 0,
+      "frozen_source_rows": 0,
+      "output_rows": 0,
+      "output_bytes": 0,
+      "reserved_bytes": "0",
+      "retained_server_tokens": 0
+    },
+    "globalAfter": {
+      "meta": 6,
+      "mapping": 0,
+      "CronJobs": 0,
+      "entities": 153,
+      "AuthUsers": 0,
+      "otherMeta": 0,
+      "guardSHA256": "c21142301cb07ed6fb52613c3e530d589f0b759f7ede7d3071e041bd11e08300",
+      "AuthSessions": 0,
+      "otherEntities": 0,
+      "StorageObjects": 0,
+      "activityCounts": {
+        "activity_events": 0,
+        "activity_ledgers": 0,
+        "activity_runtime": 0,
+        "activity_accounts": 0,
+        "activity_memberships": 0,
+        "activity_current_members": 0,
+        "activity_current_accounts": 0
+      },
+      "AuthRefreshTokens": 0
+    },
+    "originalCountsPreserved": true,
+    "originalFingerprintComparisonThisResumedSegment": true,
+    "temporaryGuardExceptionOnlyInsideSameTransaction": true,
+    "guardRestoredBeforeCommit": true,
+    "noGlobalTriggerDisable": true,
+    "noPrivilegesGranted": true,
+    "actualAuthUsersDeletedAfterProtectedMarkerCheck": 2,
+    "normalLogoutSessions": 2,
+    "passed": true,
+    "originalFingerprintsExact": true,
+    "originalAfter": [
+      {
+        "name": "entities",
+        "rows": 153,
+        "fingerprint": "d6ae3976f89c45244ad227d7c80d35c8"
+      },
+      {
+        "name": "meta",
+        "rows": 6,
+        "fingerprint": "cf3fe70d7b1a86265669c88e2489dbec"
+      },
+      {
+        "name": "identity_mapping",
+        "rows": 0,
+        "fingerprint": "d41d8cd98f00b204e9800998ecf8427e"
+      }
+    ]
+  },
+  "simplifications": [
+    "Canonical JSON source encoding is shared with migration verification",
+    "Both backup writers reuse the same portable activity schema",
+    "Explicit page views use the existing authenticated transaction and receipt path"
+  ],
+  "remainingLimits": [
+    "Legal hold historical snapshots and attachment pins",
+    "Organization ownership and multiple-workspace legal hold scope",
+    "Persistent AI-chat lifecycle",
+    "Retention policies and maintenance authority",
+    "Administrator retained-content review and physical purge workflow",
+    "Human and family journeys across web, macOS, Windows, iOS and Android",
+    "Database/row view UI and offline view capture",
+    "No TypeScript static compiler; no new dependency installed",
+    "No 5GB v4 or concurrent-load claim",
+    "Actual sync and resumable files are logically equal but not byte-identical due to one attachment JSON whitespace representation",
+    "Existing 24 RLS default-deny informational diagnostics and pg_net public-schema warning remain"
+  ],
+  "sourceFiles": [
+    "fountain/activity.py",
+    "fountain/canonical.py",
+    "fountain/backup.py",
+    "fountain/postgres_backup.py",
+    "fountain/migrate.py",
+    "supabase/functions/_shared/domain.ts",
+    "supabase/functions/_shared/store.ts",
+    "supabase/functions/_shared/sqlite-backup.ts",
+    "supabase/functions/_shared/sqlite-backup-resumable.ts",
+    "tests/test_activity.py",
+    "tests/test_activity_backup_v4.py",
+    "tests/test_activity_migrate.py",
+    "tests/test_activity_postgres_backup_v4.py",
+    "supabase/tests/activity-view.mjs",
+    "supabase/tests/backup-v4.mjs",
+    "supabase/tests/backup-v4-sql-wire.mjs"
+  ]
+}

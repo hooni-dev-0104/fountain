@@ -1,0 +1,157 @@
+{
+  "verifiedAt": "2026-10-16T21:26:21.275357+00:00",
+  "sourceCommit": "c7d61a7",
+  "projectRef": "ehnovtfadpkwtubmwltl",
+  "api": {
+    "version": 12,
+    "sha256": "2dce2f77a0e62712e4c6c66a75912b4a4052f13ff1b303d456b867c964f9ae17",
+    "retrievedFilesMatch": 39,
+    "changedDeployedModules": [
+      "_shared/authorization.ts"
+    ],
+    "originalScopeAndSetupPreserved": true,
+    "ready": false
+  },
+  "sourceSHA256": {
+    "fountain/authorization.py": "fdbec718c99c57c4093d38f3ef06f767b54aa4c9380882be0bba9f2949e510aa",
+    "supabase/functions/_shared/authorization.ts": "3e0ce68d67e9f7ada51b25ebf8ba0f957c92c8e708741eca8992cb774587d3d5",
+    "tests/test_native_workspace_authority.py": "8ead2ec36cbe415039ed931ccd5bff498b28204c4fad5aefd3d3243083f840e9",
+    "supabase/tests/domain.mjs": "d9e071537c7226f6cd85e113680f899fab4a32f403b019f56cf74d74193b4161",
+    "supabase/tests/route-inventory.json": "77bfcfb25ef52774d5d616c2739ab769a42c68204a434f65333121cfa887cf35"
+  },
+  "pythonSQLiteTests": 36,
+  "nodeSourceTests": 383,
+  "nodeSourceSkips": 0,
+  "strictTypecheckExecuted": false,
+  "independentReview": "APPROVE; new Python2 and Node domain6 independently passed",
+  "actualAuthWorkspace": {
+    "phase": "workspace",
+    "workspaceSHA256": "9e7a3b28b736c81d4ffc62732b8f78f710419fb8de690467ac89ffa19152c2aa",
+    "actualSupabaseHTTP": true,
+    "actualStorageIO": false,
+    "semanticAI": false,
+    "checks": [
+      "actual_owner4_member3_server_teamspace_authority",
+      "actual_guest_explicit_teamspace_membership_still_no_top_level_creation_but_parent_child_allowed",
+      "actual_member_role_restored"
+    ],
+    "ownerLevel": 4,
+    "memberLevel": 3,
+    "passed": true
+  },
+  "actualSync": {
+    "phase": "sync",
+    "workspaceSHA256": "9e7a3b28b736c81d4ffc62732b8f78f710419fb8de690467ac89ffa19152c2aa",
+    "actualSupabaseHTTP": true,
+    "actualStorageIO": false,
+    "semanticAI": false,
+    "checks": [
+      "actual_native_sync_dto_request_index_and_duplicate_id_receipt",
+      "actual_create_patch_child_dependency_and_real_canonical_epochs",
+      "exact_batch_retry_and_changed_id_conflict_preserve_source",
+      "wrong_session_binding_denied"
+    ],
+    "appliedEntries": 4,
+    "distinctOperations": 3,
+    "rendererReceiptIsAuthority": false,
+    "nativeObserverSDKVerified": false,
+    "passed": true
+  },
+  "mainBoundaryChecks": {
+    "actualSupabaseEdge": true,
+    "version": 12,
+    "checks": [
+      {
+        "method": "GET",
+        "path": "/api/scim/tokens",
+        "status": 401,
+        "code": "AUTH_REQUIRED",
+        "ready": null,
+        "authenticated": null
+      },
+      {
+        "method": "POST",
+        "path": "/api/scim/tokens",
+        "status": 401,
+        "code": "AUTH_REQUIRED",
+        "ready": null,
+        "authenticated": null
+      },
+      {
+        "method": "GET",
+        "path": "/health",
+        "status": 200,
+        "code": null,
+        "ready": false,
+        "authenticated": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/session",
+        "status": 200,
+        "code": null,
+        "ready": null,
+        "authenticated": false
+      },
+      {
+        "method": "GET",
+        "path": "/api/workspace",
+        "status": 401,
+        "code": "AUTH_REQUIRED",
+        "ready": null,
+        "authenticated": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/accounts",
+        "status": 401,
+        "code": "AUTH_REQUIRED",
+        "ready": null,
+        "authenticated": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/backup",
+        "status": 401,
+        "code": "AUTH_REQUIRED",
+        "ready": null,
+        "authenticated": null
+      },
+      {
+        "method": "POST",
+        "path": "/api/session",
+        "status": 401,
+        "code": "AUTH_REJECTED",
+        "ready": null,
+        "authenticated": null
+      },
+      {
+        "method": "POST",
+        "path": "/api/session",
+        "status": 503,
+        "code": "SETUP_UNAVAILABLE",
+        "ready": null,
+        "authenticated": null
+      },
+      {
+        "method": "GET",
+        "path": "/api/workspace",
+        "status": 403,
+        "code": "ORIGIN_DENIED",
+        "ready": null,
+        "authenticated": null
+      }
+    ]
+  },
+  "originalSixCollectionFingerprints": "unchanged",
+  "cleanup": {
+    "status": "pending",
+    "scope": "disposable native QA workspace; temporarily retained for real SDK lifecycle tests"
+  },
+  "notClaimed": [
+    "original owner linkage or public hosting cutover",
+    "actual mobile bridge observer correctness from HTTP-only proof",
+    "native durable outbox release activation",
+    "strict TypeScript typecheck"
+  ]
+}

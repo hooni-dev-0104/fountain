@@ -929,7 +929,7 @@ async function cacheProfile(workspaceId=state.workspace?.workspace_id||state.ses
   state.offlineProfile=profile;return profile;
 }
 function closeDocument() {
-  if(state.versionView)closeModal();state.versions=[];
+  if(state.versionView||state.verificationView)closeModal();clearTimeout(state.verificationTimer);state.verificationTimer=null;state.versions=[];
   state.presenceManager?.close();state.presenceManager=null;state.presenceChannel=null;
   state.uploadManager?.dispose();state.uploadManager=null;state.uploadReselectId=null;
   state.channel?.close();state.channel=null;state.history={};state.expectedSelection=null;state.renderedChars=new Map();state.composition=null;state.inputBaseline=null;clearTimeout(state.saveTimer);state.saveTimer=null;state.recoveryDrafts=[];
@@ -1022,7 +1022,7 @@ async function openDocument(id,detail,cachedSnapshot) {
     onChange:change=>{
       if(state.nativeOutboxPause||state.channel!==channel||state.route!=='page')return;
       const beforeEditable=pageEditable(),selection=change.selection||selectedTextPosition();
-      state.page=metadataOverlay({...change.snapshot.page,access_level:change.snapshot.access_level},change.snapshot);state.blocks=change.blocks;invalidateVersionView();
+      state.page=metadataOverlay({...change.snapshot.page,access_level:change.snapshot.access_level},change.snapshot);state.blocks=change.blocks;invalidateVersionView();invalidateVerificationView();
       if(!pageEditable())state.uploadManager?.pauseAll('문서가 읽기 전용으로 바뀌어 전송을 일시 중지했습니다.');
       ensurePresence();
       if(state.nativeOutboxPause||state.openingDocument||state.composition)return;
@@ -1091,19 +1091,20 @@ function renderPage() {
   if(state.nativeRecoveryPaused)return;
   const p=state.page;state.pageViewBasis=structuredClone(p);
   renderTopbar(p.title,p.icon);
-  $('#main').innerHTML=`${p.cover?'<div class="page-cover"></div>':''}<article class="editor-wrap ${p.cover?'has-cover':''}"><button class="page-emoji" data-action="change-icon" aria-label="페이지 아이콘 변경">${esc(p.icon||'📄')}</button><h1 class="page-title" id="page-title" contenteditable="${pageEditable()}" role="textbox" aria-label="페이지 제목">${esc(p.title)}</h1><div class="page-tools" style="flex-wrap:wrap"><span>${icon('clock')}</span><span>${date(p.updated_at)} 수정</span><button data-action="favorite" class="${p.favorite?'favorite-on':''}">${p.favorite?'★ 즐겨찾기':'☆ 즐겨찾기'}</button><button data-action="toggle-cover">${p.cover?'커버 제거':'커버 추가'}</button>${!pageEditable()?'<span>🔒 읽기 전용</span>':'<button data-action="add-file" title="파일당 최대 5 GB">📎 파일 추가</button><input id="attachment-input" type="file" aria-label="첨부할 파일 (최대 5 GB)" hidden>'}<button data-action="ai" style="margin-left:auto">✦ AI 도우미</button></div>${pageEditable()?`<div class="rich-toolbar" aria-label="본문 편집"><button data-action="undo" aria-label="실행 취소" title="실행 취소 (⌘/Ctrl Z)">↶</button><button data-action="redo" aria-label="다시 실행" title="다시 실행 (⌘/Ctrl Shift Z)">↷</button><span class="history-divider" aria-hidden="true"></span><button data-action="rich-mark" data-mark="bold" aria-label="굵게"><b>B</b></button><button data-action="rich-mark" data-mark="italic" aria-label="기울임"><i>I</i></button><button data-action="rich-mark" data-mark="underline" aria-label="밑줄"><u>U</u></button><button data-action="rich-mark" data-mark="strike" aria-label="취소선"><s>S</s></button><button data-action="rich-mark" data-mark="code" aria-label="인라인 코드">&lt;/&gt;</button><button data-action="rich-link">${icon('link')}링크</button><label>글자색<select id="rich-color" aria-label="글자색"><option value="default">기본</option>${FountainCollaboration.PALETTE.filter(color=>color!=='default').map(color=>`<option value="${color}">${esc(({gray:'회색',brown:'갈색',orange:'주황',yellow:'노랑',green:'초록',blue:'파랑',purple:'보라',pink:'분홍',red:'빨강'})[color])}</option>`).join('')}</select></label><label>배경<select id="rich-background" aria-label="글자 배경"><option value="default">없음</option>${FountainCollaboration.PALETTE.filter(color=>color!=='default').map(color=>`<option value="${color}">${esc(({gray:'회색',brown:'갈색',orange:'주황',yellow:'노랑',green:'초록',blue:'파랑',purple:'보라',pink:'분홍',red:'빨강'})[color])}</option>`).join('')}</select></label></div>`:''}<div id="blocks" aria-label="페이지 블록">${state.blocks.map(blockHTML).join('')}</div>${pageEditable()?'<button class="editor-end" data-action="add-block"><span>+</span> 글을 쓰거나 ‘/’로 블록을 추가하세요</button>':''}<section class="comment-section"><h3>댓글 <span class="muted">${state.comments.filter(c=>!c.resolved).length}</span></h3><div id="comments">${commentsHTML()}</div><form class="comment-form" id="comment-form"><input name="text" aria-label="댓글 내용" placeholder="생각을 나눠보세요…" required maxlength="10000"><button class="outline-btn">보내기 ${icon('arrow')}</button></form></section></article>`;
+  $('#main').innerHTML=`${p.cover?'<div class="page-cover"></div>':''}<article class="editor-wrap ${p.cover?'has-cover':''}"><button class="page-emoji" data-action="change-icon" aria-label="페이지 아이콘 변경">${esc(p.icon||'📄')}</button><h1 class="page-title" id="page-title" contenteditable="${pageEditable()}" role="textbox" aria-label="페이지 제목">${esc(p.title)}</h1><div id="page-verification-status" class="page-verification-status" role="status" aria-live="polite"></div><div class="page-tools" style="flex-wrap:wrap"><span>${icon('clock')}</span><span>${date(p.updated_at)} 수정</span><button data-action="favorite" class="${p.favorite?'favorite-on':''}">${p.favorite?'★ 즐겨찾기':'☆ 즐겨찾기'}</button><button data-action="toggle-cover">${p.cover?'커버 제거':'커버 추가'}</button>${!pageEditable()?'<span>🔒 읽기 전용</span>':'<button data-action="add-file" title="파일당 최대 5 GB">📎 파일 추가</button><input id="attachment-input" type="file" aria-label="첨부할 파일 (최대 5 GB)" hidden>'}<button data-action="ai" style="margin-left:auto">✦ AI 도우미</button></div>${pageEditable()?`<div class="rich-toolbar" aria-label="본문 편집"><button data-action="undo" aria-label="실행 취소" title="실행 취소 (⌘/Ctrl Z)">↶</button><button data-action="redo" aria-label="다시 실행" title="다시 실행 (⌘/Ctrl Shift Z)">↷</button><span class="history-divider" aria-hidden="true"></span><button data-action="rich-mark" data-mark="bold" aria-label="굵게"><b>B</b></button><button data-action="rich-mark" data-mark="italic" aria-label="기울임"><i>I</i></button><button data-action="rich-mark" data-mark="underline" aria-label="밑줄"><u>U</u></button><button data-action="rich-mark" data-mark="strike" aria-label="취소선"><s>S</s></button><button data-action="rich-mark" data-mark="code" aria-label="인라인 코드">&lt;/&gt;</button><button data-action="rich-link">${icon('link')}링크</button><label>글자색<select id="rich-color" aria-label="글자색"><option value="default">기본</option>${FountainCollaboration.PALETTE.filter(color=>color!=='default').map(color=>`<option value="${color}">${esc(({gray:'회색',brown:'갈색',orange:'주황',yellow:'노랑',green:'초록',blue:'파랑',purple:'보라',pink:'분홍',red:'빨강'})[color])}</option>`).join('')}</select></label><label>배경<select id="rich-background" aria-label="글자 배경"><option value="default">없음</option>${FountainCollaboration.PALETTE.filter(color=>color!=='default').map(color=>`<option value="${color}">${esc(({gray:'회색',brown:'갈색',orange:'주황',yellow:'노랑',green:'초록',blue:'파랑',purple:'보라',pink:'분홍',red:'빨강'})[color])}</option>`).join('')}</select></label></div>`:''}<div id="blocks" aria-label="페이지 블록">${state.blocks.map(blockHTML).join('')}</div>${pageEditable()?'<button class="editor-end" data-action="add-block"><span>+</span> 글을 쓰거나 ‘/’로 블록을 추가하세요</button>':''}<section class="comment-section"><h3>댓글 <span class="muted">${state.comments.filter(c=>!c.resolved).length}</span></h3><div id="comments">${commentsHTML()}</div><form class="comment-form" id="comment-form"><input name="text" aria-label="댓글 내용" placeholder="생각을 나눠보세요…" required maxlength="10000"><button class="outline-btn">보내기 ${icon('arrow')}</button></form></section></article>`;
   if(!pageEditable()) {
     for(const action of ['change-icon','favorite','toggle-cover'])$$(`[data-action="${action}"]`).forEach(el=>el.disabled=true);
   }
   if(resourceLevel(p)<2)$('#comment-form')?.remove();
   state.renderedChars=new Map(state.blocks.map(block=>[block.id,state.channel?.chars(block.id)||[]]));
   documentStatus({status:state.channel?.status||'synced',pending:state.channel?.pending.size||0,durable:state.channel?.durable!==false});renderRecoveryDrafts();ensureUploads();
-  pruneAdministrativeControls();
+  pruneAdministrativeControls();renderVerificationStatus();
 
 }
 function patchPageMetadataUI() {
   if(state.nativeOutboxPause)return;
   if(!state.page||state.route!=='page')return;
+  renderVerificationStatus();
   state.pageViewBasis||=structuredClone(state.page);
   const title=$('#page-title');
   if(title&&document.activeElement!==title&&!state.titlePending&&!state.titleSaving){title.textContent=state.page.title;state.pageViewBasis.title=state.page.title;}
@@ -1397,7 +1398,7 @@ async function reloadDatabase() {
 }
 function openModal(title,content,cls='') {
   clearSearch();searchNavigation++;
-  clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;closeSlash();
+  clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;state.verificationView=null;closeSlash();
   $('#overlay-root').innerHTML=`<div class="modal-backdrop"><section class="modal ${cls}" role="dialog" aria-modal="true" aria-label="${esc(title)}"><header class="modal-head"><h2>${esc(title)}</h2><button class="modal-close" data-action="close-modal" aria-label="닫기">×</button></header><div class="modal-body">${content}</div></section></div>`;
   if(state.route==='page'&&resourceLevel(state.page)<4)$$('[data-action="delete-page"],[data-action="move-page"]',$('.modal')).forEach(el=>el.remove());
   if(state.route==='page'&&resourceLevel(state.page)<3){for(const action of ['lock-page','delete-page','verify-page','move-page','change-block-type','move-block','delete-block','restore-version'])$$(`[data-action="${action}"]`,$('.modal')).forEach(el=>el.remove());}
@@ -1407,7 +1408,7 @@ function openModal(title,content,cls='') {
 }
 function closeModal() {
   clearSearch();searchNavigation++;
-  clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;$('#overlay-root').innerHTML='';
+  clearScimPanel();stopBackup();clearRecoveryImport();state.versionView=null;state.verificationView=null;$('#overlay-root').innerHTML='';
   closeSlash();
 }
 function stopBackup(){const manager=state.backupManager;state.backupManager=null;if(manager)void manager.close();}
@@ -1797,6 +1798,92 @@ async function updatePage(patch,basePage=structuredClone(state.pageViewBasis||st
   renderSidebar();
   renderTopbar(state.page.title,state.page.icon);
 }
+function verificationMembers() {
+  const members=(state.workspace?.members||[]).filter(member=>member.active!==false&&typeof member.id==='string'&&member.id);
+  const self=state.session?.member;
+  if(self?.id&&!members.some(member=>member.id===self.id)&&self.active!==false)members.push(self);
+  return members;
+}
+function verificationOwners(value) {return Array.isArray(value?.owners)?value.owners:typeof value?.owner==='string'?[value.owner]:[];}
+function verificationDate(value) {return new Date(value).toLocaleString('ko-KR',{year:'numeric',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});}
+function verificationTimestamp(value) {
+  if(typeof value!=='string')return false;
+  const match=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/.exec(value);
+  if(!match)return false;const [year,month,day,hour,minute,second,offsetHour=0,offsetMinute=0]=match.slice(1).map(part=>Number(part||0));
+  return year>=1000&&month>=1&&month<=12&&day>=1&&day<=new Date(year,month,0).getDate()&&hour<=23&&minute<=59&&second<=59&&offsetHour<=23&&offsetMinute<=59&&Number.isFinite(Date.parse(value));
+}
+function verificationSummary() {
+  const value=state.page?.verification,ownerShape=Array.isArray(value?.owners)?value.owners.every(id=>typeof id==='string'&&id.length>0):Object.hasOwn(value||{},'owner')&&(value.owner===null||typeof value.owner==='string'&&value.owner.length>0),valid=!!value&&typeof value==='object'&&!Array.isArray(value)&&ownerShape&&verificationTimestamp(value.verified_at)&&(value.expires_at==null||verificationTimestamp(value.expires_at)),expired=valid&&value.expires_at!=null&&Date.parse(value.expires_at)<=Date.now();
+  const names=verificationOwners(value).map(id=>verificationMembers().find(member=>member.id===id)?.name).filter(Boolean);
+  return {value,valid,expired,label:value==null?'검증 미설정':!valid?'검증 상태 확인 필요':expired?'검증 만료':'검증됨',names};
+}
+function renderVerificationStatus() {
+  clearTimeout(state.verificationTimer);state.verificationTimer=null;
+  const element=$('#page-verification-status');if(state.route!=='page'||!state.page||!element)return;
+  const {value,valid,expired,label,names}=verificationSummary();
+  element.innerHTML=`<span class="verification-badge ${valid&&!expired?'verified':''}">${valid&&!expired?'✓ ':''}${label}</span>${names.length?`<span>${names.map(esc).join(', ')}</span>`:value?'<span>담당자 정보 비공개</span>':''}${valid?`<span>확인 <time datetime="${esc(value.verified_at)}">${esc(verificationDate(value.verified_at))}</time> · ${value.expires_at?`<time datetime="${esc(value.expires_at)}">${esc(verificationDate(value.expires_at))}</time> 만료`:'만료 없음'}</span>`:''}${pageEditable()&&!state.offline&&!state.localPageOnly?'<button class="text-btn" data-action="verify-page">검증 설정</button>':''}`;
+  const page=state.page.id,binding=state.session?.cache_binding,boot=state.bootGeneration;
+  if(valid&&value.expires_at&&!expired){const remaining=Date.parse(value.expires_at)-Date.now();state.verificationTimer=setTimeout(()=>{if(state.route==='page'&&state.page?.id===page&&state.session?.cache_binding===binding&&state.bootGeneration===boot)renderVerificationStatus();},Math.min(60000,Math.max(1,remaining)));}
+}
+function verificationLocalTime(value) {
+  const time=new Date(value);if(!Number.isFinite(time.getTime()))return '';
+  const pad=number=>String(number).padStart(2,'0');
+  return `${time.getFullYear()}-${pad(time.getMonth()+1)}-${pad(time.getDate())}T${pad(time.getHours())}:${pad(time.getMinutes())}:${pad(time.getSeconds())}`;
+}
+function verificationExpiry(value) {
+  const match=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/.exec(value);
+  if(!match)throw new Error('만료 날짜와 시간을 입력해 주세요.');
+  const [year,month,day,hour,minute,second]=match.slice(1).map(part=>Number(part||0)),time=new Date(year,month-1,day,hour,minute,second);
+  if(year<1000||year>9998||time.getFullYear()!==year||time.getMonth()!==month-1||time.getDate()!==day||time.getHours()!==hour||time.getMinutes()!==minute||time.getSeconds()!==second)throw new Error('기기 시간대에 존재하는 날짜와 시간을 입력해 주세요.');
+  if(time.getTime()<=Date.now())throw new Error('만료일은 현재보다 나중이어야 합니다.');
+  return time.toISOString();
+}
+function verificationScopeCurrent(view) {
+  const scope=view?.scope;
+  return !!scope&&state.verificationView===view&&view.modal?.isConnected&&$('.verification-modal')===view.modal&&state.route==='page'&&state.page?.id===scope.pageId&&state.channel===scope.channel&&scope.channel.pageId===scope.pageId&&!scope.channel.closed&&scope.channel.base?.epoch===scope.epoch&&pageEditable()&&!state.offline&&!state.localPageOnly&&!state.nativeRecoveryPaused&&!state.nativeOutboxPause&&state.session?.cache_binding===scope.binding&&state.session?.member?.id===scope.member&&state.session?.member?.role===scope.role&&state.offlineProfile?.id===scope.profile&&state.workspace?.workspace_id===scope.workspace&&state.bootGeneration===scope.boot&&FountainTransport.scopeEpoch===scope.transportEpoch;
+}
+function invalidateVerificationView() {
+  const view=state.verificationView;if(!view||verificationScopeCurrent(view))return;
+  if(view.modal?.isConnected){$('#verification-error',view.modal).textContent='문서나 로그인 상태가 변경되었습니다. 입력을 확인한 뒤 취소하고 다시 열어 주세요.';for(const control of $('#verification-form',view.modal).elements)if(control.dataset.action!=='close-modal')control.disabled=true;}
+}
+function verificationModal() {
+  if(state.route!=='page'||!state.channel||!pageEditable()||state.offline||state.localPageOnly)throw new Error('연결된 페이지의 편집 권한이 필요합니다.');
+  if(!Number.isSafeInteger(state.page.revision)||state.page.revision<0)throw new Error('페이지를 다시 열어 최신 버전을 확인해 주세요.');
+  const scope={pageId:state.page.id,channel:state.channel,epoch:state.channel.base?.epoch,binding:state.session?.cache_binding,member:state.session?.member?.id,role:state.session?.member?.role,profile:state.offlineProfile?.id,workspace:state.workspace?.workspace_id,boot:state.bootGeneration,transportEpoch:FountainTransport.scopeEpoch};
+  const {value,valid,label}=verificationSummary(),members=verificationMembers(),selected=verificationOwners(value).filter(id=>members.some(member=>member.id===id)),owners=selected.length?selected:[scope.member],expiry=valid?value.expires_at||null:null,initialTime=expiry?verificationLocalTime(expiry):'';
+  const zone=Intl.DateTimeFormat().resolvedOptions().timeZone||'기기 시간대';
+  openModal('페이지 검증',`<form id="verification-form" class="form-grid" novalidate><p class="muted">담당자가 내용을 확인한 페이지임을 표시합니다. 담당자 지정으로 문서 접근 권한이 추가되지 않습니다.</p><div class="verification-current"><strong>${esc(label)}</strong>${valid?`<span>확인 ${esc(verificationDate(value.verified_at))}</span>`:''}</div><fieldset class="verification-owners"><legend>검증 담당자 · 한 명 이상</legend>${members.map(member=>`<label><input type="checkbox" name="owners" value="${esc(member.id)}" ${owners.includes(member.id)?'checked':''}><span>${esc(member.name||'이름 없는 멤버')}${member.id===scope.member?' (나)':''}</span></label>`).join('')||'<p>선택할 수 있는 활성 멤버가 없습니다.</p>'}</fieldset><label>검증 유효 기간<select name="expiry_mode"><option value="infinite" ${!expiry?'selected':''}>만료 없음</option><option value="finite" ${expiry?'selected':''}>만료일 지정</option></select></label><label id="verification-expiry-label" ${!expiry?'hidden':''}>만료 날짜와 시간<input name="expires" type="datetime-local" step="1" value="${esc(initialTime)}"><small class="muted">기기 시간대: ${esc(zone)}</small></label><div id="verification-error" role="alert" aria-live="assertive"></div><div class="form-actions">${value!=null?'<button type="button" class="danger-btn" data-action="remove-verification">검증 해제</button>':''}<button type="button" class="outline-btn" data-action="close-modal">취소</button><button type="submit" class="solid-btn">검증 저장</button></div></form>`,'verification-modal');
+  const modal=$('.verification-modal'),view={scope,modal,revision:state.page.revision,expiry,initialTime:$('[name="expires"]',modal).value,busy:false};state.verificationView=view;
+  $('[name="expiry_mode"]',modal).onchange=event=>{$('#verification-expiry-label',modal).hidden=event.target.value!=='finite';};
+  modal.onkeydown=event=>{
+    if(event.key!=='Tab')return;
+    const controls=$$('button,input,select',modal).filter(control=>!control.disabled&&control.getClientRects().length),first=controls[0],last=controls.at(-1);
+    if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}
+    else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}
+  };
+}
+async function saveVerification(remove) {
+  const view=state.verificationView;if(view?.busy)return;if(!verificationScopeCurrent(view)){invalidateVerificationView();return;}
+  const form=$('#verification-form',view.modal),error=$('#verification-error',view.modal);
+  const current=()=>verificationScopeCurrent(view);
+  try{
+    const owners=$$('[name="owners"]:checked',form).map(input=>input.value);
+    if(!remove&&!owners.length)throw new Error('검증 담당자를 한 명 이상 선택해 주세요.');
+    const finite=$('[name="expiry_mode"]',form).value==='finite',local=$('[name="expires"]',form).value;
+    let expires=null;
+    if(!remove&&finite){if(local===view.initialTime&&view.expiry){if(Date.parse(view.expiry)<=Date.now())throw new Error('만료일은 현재보다 나중이어야 합니다.');expires=view.expiry;}else expires=verificationExpiry(local);}
+    view.busy=true;error.textContent='';for(const control of form.elements)control.disabled=true;form.setAttribute('aria-busy','true');
+    if(!current())return;await saveTitle();if(!current())return;
+    await savePage();if(!current())return;
+    if(state.page.revision!==view.revision)throw new Error('페이지가 설정을 연 뒤 변경되었습니다. 입력을 확인한 뒤 취소하고 검증 설정을 다시 열어 주세요.');
+    await api('/pages/'+encodeURIComponent(view.scope.pageId)+'/verify',remove?{revision:view.revision}:{owners,expires_at:expires,revision:view.revision},remove?'DELETE':'POST',{current});
+    if(!current())return;
+    const snapshot=await api('/pages/'+encodeURIComponent(view.scope.pageId)+'/collaboration',undefined,'GET',{current});if(!current())return;
+    await view.scope.channel.receive(snapshot,'verification');if(!current())return;
+    closeModal();renderVerificationStatus();toast(remove?'검증을 해제했습니다.':'페이지를 검증했습니다.');
+  }catch(failure){if(current())error.textContent=failure.status===409?'페이지가 설정을 연 뒤 변경되었습니다. 입력은 유지됩니다. 취소하고 최신 페이지에서 다시 설정해 주세요.':failure.message;}
+  finally{if(current()){view.busy=false;for(const control of form.elements)control.disabled=false;form.removeAttribute('aria-busy');}}
+}
 function versionScopeCurrent(view) {
   const scope=view?.scope;
   return !!scope&&state.versionView===view&&view.modal?.isConnected&&$('.version-modal')===view.modal&&state.route==='page'&&state.page?.id===scope.pageId&&state.channel===scope.channel&&scope.channel.pageId===scope.pageId&&!scope.channel.closed&&scope.channel.base?.epoch===scope.epoch&&resourceLevel(state.page)>=3&&!state.page.archived&&!state.offline&&state.session?.cache_binding===scope.binding&&state.session?.member?.id===scope.memberId&&state.offlineProfile?.id===scope.profileId&&state.workspace?.workspace_id===scope.workspaceId;
@@ -2064,7 +2151,7 @@ async function doAction(target,grouped=false) {
     state.comments.find(c=>c.id===id).resolved=true;
     $('#comments').innerHTML=commentsHTML();
     break;
-    case'page-menu':openModal('페이지 메뉴',`<div class="form-grid"><button class="outline-btn" data-action="pin-page">기기에 보관 · 오프라인 편집</button><button class="outline-btn" data-action="copy-blocks">${icon('link')}블록 복사</button><button class="outline-btn" data-action="lock-page">${icon('lock')}${state.page.locked?'페이지 잠금 해제':'페이지 잠그기'}</button><button class="outline-btn" data-action="verify-page">${state.page.verification?"페이지 검증 해제":"페이지 검증"}</button><button class="outline-btn" data-action="move-page">페이지 이동</button><button class="outline-btn" data-action="duplicate-page">페이지 복제</button><button class="outline-btn" data-action="history">${icon('clock')}페이지 기록</button><button class="danger-btn" data-action="delete-page">${icon('trash')}휴지통으로 이동</button></div>`);
+    case'page-menu':openModal('페이지 메뉴',`<div class="form-grid"><button class="outline-btn" data-action="pin-page">기기에 보관 · 오프라인 편집</button><button class="outline-btn" data-action="copy-blocks">${icon('link')}블록 복사</button><button class="outline-btn" data-action="lock-page">${icon('lock')}${state.page.locked?'페이지 잠금 해제':'페이지 잠그기'}</button><button class="outline-btn" data-action="verify-page">페이지 검증 설정</button><button class="outline-btn" data-action="move-page">페이지 이동</button><button class="outline-btn" data-action="duplicate-page">페이지 복제</button><button class="outline-btn" data-action="history">${icon('clock')}페이지 기록</button><button class="danger-btn" data-action="delete-page">${icon('trash')}휴지통으로 이동</button></div>`);
     break;
     case'lock-page':{const locked=!state.page.locked;closeModal();await updatePage({locked});renderPage();break;}
     case'delete-page':await api('/pages/'+state.page.id, {
@@ -2085,13 +2172,8 @@ async function doAction(target,grouped=false) {
       await navigate('page',p.id||p.page.id);
       break;
     }
-    case'verify-page': {
-      await saveTitle();
-      await savePage();
-      state.page = await api('/pages/' + state.page.id + '/verify', state.page.verification ? {} : {owner:'local'}, state.page.verification ? 'DELETE' : 'POST');
-      closeModal(); renderPage(); toast(state.page.verification ? '페이지를 검증했습니다.' : '검증을 해제했습니다.');
-      break;
-    }
+    case'verify-page':verificationModal();break;
+    case'remove-verification':await saveVerification(true);break;
     case'move-page':openModal('페이지 이동',`<form id="move-page-form" class="form-grid"><label>상위 페이지<select name="parent_id"><option value="">최상위 페이지</option>${state.workspace.pages.filter(p=>p.id!==state.page.id&&!p.archived).map(p=>`<option value="${esc(p.id)}" ${p.id===state.page.parent_id?'selected':''}>${esc(p.title)}</option>`).join('')}</select></label><button class="solid-btn">이동하기</button></form>`);
     break;
     case'copy-blocks': {
@@ -2362,6 +2444,7 @@ document.addEventListener('dragend',()=> {
 document.addEventListener('submit',async event=> {
   if(state.nativeOutboxPause&&!event.target.closest?.('.native-recovery-dialog')){event.preventDefault();return;}
   if(state.nativeRecoveryPaused)return;
+  if(event.target.id==='verification-form'){event.preventDefault();await saveVerification(false);return;}
   const formElement=event.target; if(!formElement.id)return; event.preventDefault(); const data=Object.fromEntries(new FormData(formElement)),submit=$('button[type=submit],button.solid-btn',formElement); if(submit)submit.disabled=true; try {
     switch(formElement.id) {
       case'rich-link-form':{FountainCollaboration.validateMarks({link:data.link||null});closeModal();applyRichMark('link',data.link||null);break;}

@@ -2203,3 +2203,30 @@ svg {
 @media(max-width:600px){.recovery-import-panel{padding:12px}.recovery-import-controls{flex-wrap:wrap}.recovery-import-controls label{flex-basis:100%}.recovery-import-pair{gap:9px}.recovery-import-item{padding:10px}}
 
 .recovery-import-pair.recovery-import-body{grid-template-columns:minmax(0,1fr)}
+
+.page-verification-status{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin:10px 0;color:#696b60;font-size:11px;line-height:1.7}
+.verification-badge{border:1px solid var(--line);border-radius:4px;padding:2px 7px;color:#696b60;background:#f5f5ef;font-weight:600}
+.verification-badge.verified{color:#405c37;background:#eef4e6;border-color:#cddbbc}
+.verification-modal{max-width:560px}
+.verification-current{display:flex;gap:12px;flex-wrap:wrap;font-size:12px}
+.verification-current span,.verification-modal .muted{color:#696b60}
+.verification-owners{border:1px solid var(--line);border-radius:6px;padding:12px;max-height:230px;overflow:auto}
+.verification-owners legend{font-size:12px;padding:0 5px}
+.verification-owners label{display:flex;align-items:center;gap:10px;padding:7px 2px;overflow-wrap:anywhere}
+.verification-owners input{width:auto;flex-shrink:0;accent-color:#667d50}
+#verification-error:not(:empty){color:#87402f;background:#fcf1e8;border:1px solid #e5c9b9;border-radius:5px;padding:10px;font-size:12px;line-height:1.7}
+.verification-modal [hidden]{display:none}
+@media(max-width:600px){
+  .verification-modal{display:flex;flex-direction:column;overflow:hidden;max-height:95vh;max-height:calc(100dvh - 20px)}
+  .verification-modal .modal-head{flex-shrink:0}
+  .verification-modal .modal-body{min-height:0;overflow:auto;font-size:14px}
+  .verification-modal .modal-body p,.verification-modal label,.verification-modal legend,.verification-modal small,.verification-modal .verification-current,.verification-modal #verification-error{font-size:14px}
+  .verification-modal .verification-owners label{min-height:44px}
+  .verification-modal input:not([type=checkbox]),.verification-modal select{min-height:44px;min-width:0;font-size:14px}
+  .verification-modal .form-actions{flex-wrap:wrap}
+  .verification-modal .form-actions button{flex:1;min-height:44px;font-size:14px}
+  .verification-modal .modal-close{min-width:44px;min-height:44px}
+  .page-verification-status{gap:6px;font-size:14px}
+  .page-verification-status button{min-height:44px;font-size:14px}
+  .verification-owners{max-height:200px}
+}

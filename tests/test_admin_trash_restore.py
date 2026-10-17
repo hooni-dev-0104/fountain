@@ -150,14 +150,70 @@ class AdminTrashRestoreTests(unittest.TestCase):
 
     def test_trashed_leaf_metadata_never_exposes_unavailable_ancestor_location(self):
         baseline=self.s.get('page','ancestor')
-        for update in [{'archived':True},{'deleted':True},{'deleted_at':'date'},{'parent_id':'missing'}]:
+        for update in [{'archived':True},{'archived':0},{'deleted':True},{'deleted':None},{'deleted_at':'date'},
+                       {'active':False},{'active':'true'},{'active':1},{'active':None},{'parent_id':'missing'}]:
             with self.subTest(update=update):
                 self.s.put('page',{**baseline,**update})
                 item=next(item for item in self.api().search({})['items'] if item['id']=='trash/秘密😀')
                 self.assertIsNone(item['location'])
+                for kind,identity in [('page','ancestor'),('teamspace','space')]:
+                    filtered=self.api().search({'location_kind':[kind],'location_id':[identity],'status':['trash']})
+                    self.assertNotIn('trash/秘密😀',{item['id'] for item in filtered['items']})
         self.s.delete('page','ancestor')
         item=next(item for item in self.api().search({})['items'] if item['id']=='trash/秘密😀')
         self.assertIsNone(item['location'])
+
+    def test_trashed_leaf_metadata_and_filters_reject_unavailable_teamspace(self):
+        baseline=self.s.get('teamspace','space')
+        for update in [{'active':False},{'active':'true'},{'active':1},{'active':None},{'archived':True},
+                       {'archived':0},{'deleted':True},{'deleted':None},{'deleted_at':'date'}]:
+            with self.subTest(update=update):
+                self.s.put('teamspace',{**baseline,**update})
+                item=next(item for item in self.api().search({})['items'] if item['id']=='trash/秘密😀')
+                self.assertIsNone(item['location'])
+                for kind,identity in [('page','ancestor'),('teamspace','space')]:
+                    filtered=self.api().search({'location_kind':[kind],'location_id':[identity],'status':['trash']})
+                    self.assertNotIn('trash/秘密😀',{item['id'] for item in filtered['items']})
+        self.s.delete('teamspace','space')
+        item=next(item for item in self.api().search({})['items'] if item['id']=='trash/秘密😀')
+        self.assertIsNone(item['location'])
+        filtered=self.api().search({'location_kind':['teamspace'],'location_id':['space'],'status':['trash']})
+        self.assertNotIn('trash/秘密😀',{item['id'] for item in filtered['items']})
+
+    def test_trashed_leaf_location_rejects_missing_or_mismatched_source_behind_index(self):
+        with self.s.transaction():
+            self.s.db.execute("UPDATE entities SET data=json_set(data,'$.id','mismatch') WHERE kind='page' AND id='ancestor'")
+        item=next(item for item in self.api().search({})['items'] if item['id']=='trash/秘密😀')
+        self.assertIsNone(item['location'])
+        with self.s.transaction():
+            self.s.db.execute("DELETE FROM entities WHERE kind='page' AND id='ancestor'")
+        item=next(item for item in self.api().search({})['items'] if item['id']=='trash/秘密😀')
+        self.assertIsNone(item['location'])
+        filtered=self.api().search({'location_kind':['page'],'location_id':['ancestor'],'status':['trash']})
+        self.assertNotIn('trash/秘密😀',{item['id'] for item in filtered['items']})
+
+    def test_trashed_leaf_location_checks_project_scalar_from_4mib_parent(self):
+        parent=self.s.get('page','ancestor');parent['blocks']=[{'type':'paragraph','text':'x'*(4*1024*1024)}]
+        self.s.put('page',parent)
+        real_get,real_list=self.s.get,self.s.list
+        statements=[]
+        def get(kind,identity):
+            self.assertNotEqual(kind,'page','Metadata must not transfer any page body')
+            return real_get(kind,identity)
+        def listing(kind):
+            self.assertNotEqual(kind,'page','Metadata must not transfer the page corpus')
+            return real_list(kind)
+        self.s.db.set_trace_callback(statements.append)
+        try:
+            with patch.object(self.s,'get',side_effect=get),patch.object(self.s,'list',side_effect=listing):
+                item=next(item for item in self.api().search({})['items'] if item['id']=='trash/秘密😀')
+                self.assertEqual(item['location'],{'kind':'page','id':'ancestor','title':'Parent'})
+                filtered=self.api().search({'location_kind':['page'],'location_id':['ancestor'],'status':['trash']})
+                self.assertIn('trash/秘密😀',{item['id'] for item in filtered['items']})
+        finally:self.s.db.set_trace_callback(None)
+        projections=[statement for statement in statements if "json_type(data,'$.active')" in statement]
+        self.assertTrue(projections)
+        self.assertTrue(all("SELECT json_type(data,'$.id')='text'" in statement for statement in projections))
 
     def test_original_rejects_missing_malformed_deleted_and_cyclic_ancestors(self):
         cases=[{'parent_id':'missing'},{'parent_id':''},{'parent_id':False},{'parent_id':[]},{'parent_id':'trash/秘密😀'},

@@ -262,12 +262,33 @@ class AdminContent:
         disabled=any(doc['header'].get(key) for key in ('archived','deleted','deleted_at')) or not self._valid(doc) or isinstance(settings,dict) and settings.get('disable_public_sharing') is True
         return {'state':'disabled' if disabled and (sites or forms) else 'authenticated' if sites else 'none','site_count':len(sites),'form_count':len(forms)}
 
+    def _active_location_ancestor(self,kind,identity):
+        """Read only a lifecycle predicate, never transfer an ancestor's body."""
+        if self.index.postgres:
+            row=self.store._execute("SELECT jsonb_typeof(data->'id')='string' AND data->>'id'=%s "
+                "AND coalesce(data->'active','true'::jsonb)='true'::jsonb "
+                "AND coalesce(data->'archived','false'::jsonb)='false'::jsonb "
+                "AND coalesce(data->'deleted','false'::jsonb)='false'::jsonb "
+                "AND coalesce(data->'deleted_at','null'::jsonb)='null'::jsonb "
+                "FROM fountain_private.entities WHERE workspace_id=%s AND kind=%s AND id=%s",
+                (identity,self.store.workspace_id,kind,identity),fetch='one')
+            return row is not None and row[0] is True
+        row=self.store.db.execute("SELECT json_type(data,'$.id')='text' AND json_extract(data,'$.id')=? "
+            "AND (json_type(data,'$.active') IS NULL OR json_type(data,'$.active')='true') "
+            "AND (json_type(data,'$.archived') IS NULL OR json_type(data,'$.archived')='false') "
+            "AND (json_type(data,'$.deleted') IS NULL OR json_type(data,'$.deleted')='false') "
+            "AND (json_type(data,'$.deleted_at') IS NULL OR json_type(data,'$.deleted_at')='null') "
+            "FROM entities WHERE kind=? AND id=?",(identity,kind,identity)).fetchone()
+        return row is not None and row[0]==1
+
     def _locations(self,doc):
         result=[];seen=set();links=0
+        trash_location=doc['kind']=='page' and doc['header'].get('archived') is True
         while True:
             token=(doc['kind'],doc['id'])
-            trashed_leaf=not seen and doc['kind']=='page' and doc['header'].get('archived') is True
+            trashed_leaf=not seen and trash_location
             if token in seen or not doc['validity'] or not trashed_leaf and any(doc['header'].get(k) for k in ('archived','deleted','deleted_at')):return None
+            if trash_location and seen and not self._active_location_ancestor(doc['kind'],doc['id']):return None
             seen.add(token);value=doc['header']
             if doc['kind']=='row':
                 kind,identity='database',value.get('database_id')
@@ -279,6 +300,9 @@ class AdminContent:
                 if identity is None:return result
                 space=self.spaces.get(identity) if _id(identity) else None
                 if space is None:return None
+                if trash_location and (space.get('id')!=identity or space.get('active',True) is not True or
+                    space.get('archived',False) is not False or space.get('deleted',False) is not False or
+                    space.get('deleted_at') is not None):return None
                 result.append({'kind':'teamspace','id':identity,'title':space.get('name') if isinstance(space.get('name'),str) else ''})
                 return result
             if not _id(identity):return None

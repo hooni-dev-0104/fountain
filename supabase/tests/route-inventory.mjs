@@ -19,6 +19,7 @@ targets={
  'fountain/server.py':['Application.dispatch','Application._dispatch','handler_for.Handler.handle_request'],
  'fountain/advanced.py':['Advanced.dispatch'],
  'fountain/wiki.py':['Wiki.route'],
+ 'fountain/database_verification.py':['DatabaseVerification.route'],
  'fountain/scim.py':['scim_resource'],
  'fountain/publishing.py':['render_public'],
  'fountain/authorization.py':['Authorization.prepare','Authorization.project']}
@@ -40,6 +41,11 @@ if len(sys.argv)>2 and sys.argv[2]=='simulate-added-wiki-method':
  # Add PUT only to the wiki conversion method guard, without editing source.
  guard=node.body[0].body[0].value.args[0].comparators[0]
  guard.elts.append(ast.Constant(value='PUT'));ast.fix_missing_locations(node)
+if len(sys.argv)>2 and sys.argv[2]=='simulate-added-database-verification-method':
+ node=functions['fountain/database_verification.py:DatabaseVerification.route']
+ guard=next(item for item in ast.walk(node) if isinstance(item,ast.Compare)
+  and isinstance(item.left,ast.Name) and item.left.id=='method' and isinstance(item.ops[0],ast.In))
+ guard.comparators[0].elts.append(ast.Constant(value='PUT'));ast.fix_missing_locations(node)
 def stable_ast(node):
  if isinstance(node,ast.AST):
   # Python 3.12 adds empty type_params to function/class AST nodes. Ignore only
@@ -104,14 +110,17 @@ def walk(nodes,env,key):
    return [terminal(node,key)],[]
  if isinstance(node,ast.Return):
   if node.value is None or isinstance(node.value,ast.Constant) and node.value.value is None:return [],[]
-  # The outer wiki branch accepts every verb syntactically; the dedicated
-  # router's require guards decide which methods really reach a response.
+  # Outer delegation branches accept every verb syntactically; dedicated
+  # router require guards decide which methods really reach a response.
   if isinstance(node.value,ast.Tuple) and len(node.value.elts)==2:
    call=node.value.elts[1]
    if (isinstance(call,ast.Call) and isinstance(call.func,ast.Attribute) and call.func.attr=='route'
-       and isinstance(call.func.value,ast.Call) and isinstance(call.func.value.func,ast.Name) and call.func.value.func.id=='Wiki'):
-    delegated=dict(env);delegated['kind']=evaluate(call.args[2],env)
-    done,_=walk(functions['fountain/wiki.py:Wiki.route'].body,delegated,'fountain/wiki.py:Wiki.route')
+       and isinstance(call.func.value,ast.Call) and isinstance(call.func.value.func,ast.Name)
+       and call.func.value.func.id in {'Wiki','DatabaseVerification'}):
+    delegated=dict(env);router=call.func.value.func.id
+    if router=='Wiki':delegated['kind']=evaluate(call.args[2],env)
+    target={'Wiki':'fountain/wiki.py:Wiki.route','DatabaseVerification':'fountain/database_verification.py:DatabaseVerification.route'}[router]
+    done,_=walk(functions[target].body,delegated,target)
     return ([terminal(node,key),*done] if done else []),[]
   return [terminal(node,key)],[]
  if isinstance(node,ast.Raise):return [],[]
@@ -133,6 +142,9 @@ for route in manifest['routes']:
 for key,path in sorted({(r['source']['functions'][0],r['probe']) for r in manifest['routes']}):
  for method in ['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']:
   matrix.append({'source':key,'probe':path,'method':method,'evidence':probe(key,method,path)})
+verification_path='/api/databases/sample-database/rows/sample-row/verification'
+verification_aliases=[{'path':path,'method':method,'evidence':probe('fountain/server.py:Application._dispatch',method,path)}
+ for path in [verification_path+'/',verification_path+'/extra'] for method in ['GET','HEAD','POST','PUT','PATCH','DELETE','OPTIONS']]
 def terminals(nodes,key):
  for node in nodes:
   if isinstance(node,(ast.FunctionDef,ast.ClassDef)):continue
@@ -144,7 +156,7 @@ all_terminals=[]
 for key,node in functions.items():
  if key.startswith('fountain/authorization.py:'):continue
  all_terminals.extend(terminals(node.body,key))
-print(json.dumps({'sources':sources,'collections':collections,'routes':routes,'matrix':matrix,'terminals':all_terminals},ensure_ascii=False))
+print(json.dumps({'sources':sources,'collections':collections,'routes':routes,'matrix':matrix,'verificationAliases':verification_aliases,'terminals':all_terminals},ensure_ascii=False))
 `;
 const result=spawnSync(process.env.FOUNTAIN_PYTHON||'python3',['-c',parser,root],{input:JSON.stringify(inventory),encoding:'utf8',maxBuffer:16*1024*1024});
 assert.equal(result.status,0,result.stderr);
@@ -191,6 +203,17 @@ const addedWiki=JSON.parse(changedWiki.stdout);
 assert.notDeepEqual(addedWiki.sources,inventory.sourceFingerprints,'An added delegated wiki method must change its AST fingerprint.');
 assert(addedWiki.matrix.some(row=>row.source==='fountain/server.py:Application._dispatch'&&row.probe==='/api/pages/sample-page/wiki'&&row.method==='PUT'&&row.evidence.length>0),'Method audit must follow the delegated wiki guard.');
 assert(!parsed.matrix.some(row=>row.source==='fountain/server.py:Application._dispatch'&&row.probe==='/api/pages/sample-page/wiki'&&['PUT','PATCH','OPTIONS'].includes(row.method)&&row.evidence.length>0),'Unsupported wiki methods must not be counted as implemented routes.');
+const verificationProbe='/api/databases/sample-database/rows/sample-row/verification',verificationRouter='fountain/database_verification.py:DatabaseVerification.route';
+const changedVerification=spawnSync(process.env.FOUNTAIN_PYTHON||'python3',['-c',parser,root,'simulate-added-database-verification-method'],{input:JSON.stringify(inventory),encoding:'utf8',maxBuffer:16*1024*1024});
+assert.equal(changedVerification.status,0,changedVerification.stderr);
+const addedVerification=JSON.parse(changedVerification.stdout);
+assert.notDeepEqual(addedVerification.sources,inventory.sourceFingerprints,'An added DB verification method must change its delegated AST fingerprint.');
+assert(addedVerification.matrix.some(row=>row.source==='fountain/server.py:Application._dispatch'&&row.probe===verificationProbe&&row.method==='PUT'&&row.evidence.some(entry=>entry.source===verificationRouter)),'DB verification audit must follow the delegated method guard.');
+for(const row of parsed.verificationAliases){
+ const recognized=row.evidence.some(entry=>entry.source===verificationRouter);
+ const expected=row.path===verificationProbe+'/'&&['GET','HEAD','POST','DELETE'].includes(row.method);
+ assert.equal(recognized,expected,'DB verification slash/suffix method mismatch: '+row.method+' '+row.path);
+}
 function matches(route,path){
  if(route.kind==='static-pattern'&&inventory.staticExcludedPrefixes.some(prefix=>path.startsWith(prefix)))return false;
  const pattern=route.path.split('/').map(segment=>/^\{[^}]+\+\}$/.test(segment)?'.+':/^\{[^}]+\}$/.test(segment)?'[^/]+':segment.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('/');
@@ -218,4 +241,4 @@ for(const route of inventory.routes.filter(route=>route.cloud.status==='pending'
 const health=await candidate(new Request('https://fixture.invalid/functions/v1/fountain-api/health'));
 assert.equal((await health.json()).ready,false);
 assert(!inventory.routes.some(route=>route.path==='/health'),'New health surface is not legacy route coverage.');
-console.log(JSON.stringify({ok:true,routes:inventory.routes.length,sourceFunctions:Object.keys(parsed.sources).length,methodMatrixChecks:parsed.matrix.length,delegatedWikiMethodChecks:2,pendingBoundaryChecks:pendingChecks,cloudProductionParityVerified:0,parser:'Python AST including delegated wiki method guards; server never imported; no database access'}));
+console.log(JSON.stringify({ok:true,routes:inventory.routes.length,sourceFunctions:Object.keys(parsed.sources).length,methodMatrixChecks:parsed.matrix.length,delegatedWikiMethodChecks:2,delegatedDatabaseVerificationMethodChecks:2,databaseVerificationAliasChecks:parsed.verificationAliases.length,pendingBoundaryChecks:pendingChecks,cloudProductionParityVerified:0,parser:'Python AST including delegated wiki and DB verification method guards; server never imported; no database access'}));

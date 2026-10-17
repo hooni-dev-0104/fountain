@@ -3,14 +3,15 @@
   "purpose": "Current Python HTTP route inventory with bounded Supabase foundation/model coverage; live production parity requires separate deployment evidence.",
   "sourceFingerprints": {
     "fountain/server.py:Application.dispatch": "fd95ed8f6205a56c3af0ac4665da04689f7166c24efeda5f894c9fe91424d4f2",
-    "fountain/server.py:Application._dispatch": "cf83354f0ffcd8123a9a9a222832be4b24841eac28d1d83b1817625d5b5a9f11",
+    "fountain/server.py:Application._dispatch": "0d39943bb1a1f2fb1656ebf833b5c0318eafe3639faff120d8e4b8b2d930ba26",
     "fountain/server.py:handler_for.Handler.handle_request": "a3c86840fae3894b70eb165137bec8729e4b3251db16753e15f8dc428ec3d895",
     "fountain/advanced.py:Advanced.dispatch": "5007047308a5681b84e7dc434ae14409c4767ed402eee7c84a308e8f4c17c206",
     "fountain/wiki.py:Wiki.route": "0b900b57d742a8f2694b337b4d62106f3675bc2e24c871f35c267f4bd51cbeae",
+    "fountain/database_verification.py:DatabaseVerification.route": "be7a8da2981caa0390cea060cecee7e4cf6a60e27749405f36e1eb04cb547fa8",
     "fountain/scim.py:scim_resource": "608931082a7fb9e062d17c6bb60273d36a74c9e307f20c50357ae928d7985824",
     "fountain/publishing.py:render_public": "68fec110fb1e43ed5ac9e7947b6e52ea7087ce8653e66fe0e7a3779af063a6c7",
-    "fountain/authorization.py:Authorization.prepare": "829c25fe101c9502b08932a07c92ad36382a24358fa27c88c494a42d031a74b8",
-    "fountain/authorization.py:Authorization.project": "ed6f292e347105673e8c5c780e81c835097cadd17f451600c987df048d61e9a6"
+    "fountain/authorization.py:Authorization.prepare": "e8ebcef41a646537113950dbac8ea50e530ea2e492d63dc1122c52fb9fddb595",
+    "fountain/authorization.py:Authorization.project": "5cf1765d74c8e3f845a20c40db1ba93fa71f7e6452d1cf7dba185e4c9bf5cf97"
   },
   "advancedCollections": [
     "automations",
@@ -48,7 +49,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 714,
+            "line": 721,
             "statement": "self.send_payload(200, auth.session_info(cookie))"
           }
         ]
@@ -83,7 +84,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 714,
+            "line": 721,
             "statement": "self.send_payload(200, auth.session_info(cookie))"
           }
         ]
@@ -118,7 +119,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 719,
+            "line": 726,
             "statement": "self.send_payload(200, auth.session_info('fountain_session=' + token))"
           }
         ]
@@ -153,7 +154,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 724,
+            "line": 731,
             "statement": "self.send_payload(200, {'authenticated': not auth.enabled, 'required': auth.enabled})"
           }
         ]
@@ -188,7 +189,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 709,
+            "line": 716,
             "statement": "self.send_payload(200, application.auth.renew_local(body, cookie))"
           }
         ]
@@ -891,7 +892,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 738,
+            "line": 745,
             "statement": "self.stream_page(parts[2], cookie)"
           }
         ]
@@ -1085,7 +1086,7 @@
       "kind": "canonical",
       "auth": "session",
       "public": false,
-      "handler": "Workspace.validate_properties / tasks.validate_settings / Store.put",
+      "handler": "Workspace.validate_properties / database_verification schema CAS+prepare_schema / tasks.validate_settings / Store.put",
       "domain": "databases",
       "module": "fountain/core.py",
       "source": {
@@ -1095,7 +1096,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 360,
+            "line": 364,
             "statement": "return 200, s.put(\"database\", database)"
           }
         ]
@@ -1104,7 +1105,8 @@
         "status": "pending",
         "productionParityVerified": false,
         "evidence": []
-      }
+      },
+      "notes": "Existing schema PATCH now validates an optional opaque schema_revision and prepares server-owned Owner/Verification generations and pairing before storing; unchanged legacy requests remain supported. Typed schema checks do not create a new HTTP route."
     },
     {
       "id": "GET /api/databases/{database_id}/permissions",
@@ -1211,7 +1213,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 366,
+            "line": 373,
             "statement": "return 201, s.get(\"row\", row[\"id\"])"
           }
         ]
@@ -1240,7 +1242,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 379,
+            "line": 386,
             "statement": "return 200, s.get(\"row\", row[\"id\"])"
           }
         ]
@@ -1269,7 +1271,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 381,
+            "line": 388,
             "statement": "return 200, w.delete_row(database_id, parts[4], lambda row: access.can(\"row\", row, 3))"
           }
         ]
@@ -1298,7 +1300,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 372,
+            "line": 379,
             "statement": "return 201, result"
           }
         ]
@@ -1308,6 +1310,162 @@
         "productionParityVerified": false,
         "evidence": []
       }
+    },
+    {
+      "id": "GET /api/databases/{database_id}/rows/{row_id}/verification",
+      "method": "GET",
+      "path": "/api/databases/{database_id}/rows/{row_id}/verification",
+      "probe": "/api/databases/sample-database/rows/sample-row/verification",
+      "kind": "canonical",
+      "auth": "session",
+      "public": false,
+      "handler": "DatabaseVerification.route -> context / mutate",
+      "domain": "databases",
+      "module": "fountain/database_verification.py",
+      "source": {
+        "functions": [
+          "fountain/server.py:Application._dispatch"
+        ],
+        "evidence": [
+          {
+            "source": "fountain/database_verification.py:DatabaseVerification.route",
+            "line": 213,
+            "statement": "return self.context(database_id,row_id)"
+          },
+          {
+            "source": "fountain/server.py:Application._dispatch",
+            "line": 367,
+            "statement": "return 200, DatabaseVerification(s,access).route(method,database_id,parts[4],body,query)"
+          }
+        ]
+      },
+      "cloud": {
+        "status": "staged-contract",
+        "productionParityVerified": false,
+        "evidence": [
+          "tests/test_database_verification.py",
+          "supabase/tests/database-verification.mjs",
+          "tests/browser-database-verification.mjs"
+        ]
+      },
+      "notes": "Dedicated DatabaseVerification.route accepts GET (HEAD normalizes to GET), POST and DELETE only; PUT/PATCH/OPTIONS are rejected. Segment-based surrounding slash normalization is retained, with no extra suffix aliases. Queries are rejected, GET rejects body fields, and POST/DELETE use a strict opaque SHA256 revision. Current database/row match and read/edit access apply; verification knowledge ownership grants no ACL. This typed DB row endpoint is separate from wiki owner-only page verification."
+    },
+    {
+      "id": "HEAD /api/databases/{database_id}/rows/{row_id}/verification",
+      "method": "HEAD",
+      "path": "/api/databases/{database_id}/rows/{row_id}/verification",
+      "probe": "/api/databases/sample-database/rows/sample-row/verification",
+      "kind": "canonical",
+      "auth": "session",
+      "public": false,
+      "handler": "DatabaseVerification.route -> context / mutate",
+      "domain": "databases",
+      "module": "fountain/database_verification.py",
+      "source": {
+        "functions": [
+          "fountain/server.py:Application._dispatch"
+        ],
+        "evidence": [
+          {
+            "source": "fountain/database_verification.py:DatabaseVerification.route",
+            "line": 213,
+            "statement": "return self.context(database_id,row_id)"
+          },
+          {
+            "source": "fountain/server.py:Application._dispatch",
+            "line": 367,
+            "statement": "return 200, DatabaseVerification(s,access).route(method,database_id,parts[4],body,query)"
+          }
+        ]
+      },
+      "cloud": {
+        "status": "staged-contract",
+        "productionParityVerified": false,
+        "evidence": [
+          "tests/test_database_verification.py",
+          "supabase/tests/database-verification.mjs",
+          "tests/browser-database-verification.mjs"
+        ]
+      },
+      "notes": "Dedicated DatabaseVerification.route accepts GET (HEAD normalizes to GET), POST and DELETE only; PUT/PATCH/OPTIONS are rejected. Segment-based surrounding slash normalization is retained, with no extra suffix aliases. Queries are rejected, GET rejects body fields, and POST/DELETE use a strict opaque SHA256 revision. Current database/row match and read/edit access apply; verification knowledge ownership grants no ACL. This typed DB row endpoint is separate from wiki owner-only page verification."
+    },
+    {
+      "id": "POST /api/databases/{database_id}/rows/{row_id}/verification",
+      "method": "POST",
+      "path": "/api/databases/{database_id}/rows/{row_id}/verification",
+      "probe": "/api/databases/sample-database/rows/sample-row/verification",
+      "kind": "canonical",
+      "auth": "session",
+      "public": false,
+      "handler": "DatabaseVerification.route -> context / mutate",
+      "domain": "databases",
+      "module": "fountain/database_verification.py",
+      "source": {
+        "functions": [
+          "fountain/server.py:Application._dispatch"
+        ],
+        "evidence": [
+          {
+            "source": "fountain/database_verification.py:DatabaseVerification.route",
+            "line": 214,
+            "statement": "return self.mutate(database_id,row_id,body,method=='DELETE')"
+          },
+          {
+            "source": "fountain/server.py:Application._dispatch",
+            "line": 367,
+            "statement": "return 200, DatabaseVerification(s,access).route(method,database_id,parts[4],body,query)"
+          }
+        ]
+      },
+      "cloud": {
+        "status": "staged-contract",
+        "productionParityVerified": false,
+        "evidence": [
+          "tests/test_database_verification.py",
+          "supabase/tests/database-verification.mjs",
+          "tests/browser-database-verification.mjs"
+        ]
+      },
+      "notes": "Dedicated DatabaseVerification.route accepts GET (HEAD normalizes to GET), POST and DELETE only; PUT/PATCH/OPTIONS are rejected. Segment-based surrounding slash normalization is retained, with no extra suffix aliases. Queries are rejected, GET rejects body fields, and POST/DELETE use a strict opaque SHA256 revision. Current database/row match and read/edit access apply; verification knowledge ownership grants no ACL. This typed DB row endpoint is separate from wiki owner-only page verification."
+    },
+    {
+      "id": "DELETE /api/databases/{database_id}/rows/{row_id}/verification",
+      "method": "DELETE",
+      "path": "/api/databases/{database_id}/rows/{row_id}/verification",
+      "probe": "/api/databases/sample-database/rows/sample-row/verification",
+      "kind": "canonical",
+      "auth": "session",
+      "public": false,
+      "handler": "DatabaseVerification.route -> context / mutate",
+      "domain": "databases",
+      "module": "fountain/database_verification.py",
+      "source": {
+        "functions": [
+          "fountain/server.py:Application._dispatch"
+        ],
+        "evidence": [
+          {
+            "source": "fountain/database_verification.py:DatabaseVerification.route",
+            "line": 214,
+            "statement": "return self.mutate(database_id,row_id,body,method=='DELETE')"
+          },
+          {
+            "source": "fountain/server.py:Application._dispatch",
+            "line": 367,
+            "statement": "return 200, DatabaseVerification(s,access).route(method,database_id,parts[4],body,query)"
+          }
+        ]
+      },
+      "cloud": {
+        "status": "staged-contract",
+        "productionParityVerified": false,
+        "evidence": [
+          "tests/test_database_verification.py",
+          "supabase/tests/database-verification.mjs",
+          "tests/browser-database-verification.mjs"
+        ]
+      },
+      "notes": "Dedicated DatabaseVerification.route accepts GET (HEAD normalizes to GET), POST and DELETE only; PUT/PATCH/OPTIONS are rejected. Segment-based surrounding slash normalization is retained, with no extra suffix aliases. Queries are rejected, GET rejects body fields, and POST/DELETE use a strict opaque SHA256 revision. Current database/row match and read/edit access apply; verification knowledge ownership grants no ACL. This typed DB row endpoint is separate from wiki owner-only page verification."
     },
     {
       "id": "GET /api/export",
@@ -1327,7 +1485,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 384,
+            "line": 391,
             "statement": "return 200, w.export(query.get(\"format\", [\"json\"])[0], query.get(\"database\", [None])[0])"
           }
         ]
@@ -1357,7 +1515,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 384,
+            "line": 391,
             "statement": "return 200, w.export(query.get(\"format\", [\"json\"])[0], query.get(\"database\", [None])[0])"
           }
         ]
@@ -1387,7 +1545,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 402,
+            "line": 409,
             "statement": "return 200, Download('fountain-backup.db', target, directory)"
           }
         ]
@@ -1417,7 +1575,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 402,
+            "line": 409,
             "statement": "return 200, Download('fountain-backup.db', target, directory)"
           }
         ]
@@ -1447,7 +1605,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 404,
+            "line": 411,
             "statement": "return 201, w.import_data(body)"
           }
         ]
@@ -1476,7 +1634,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 409,
+            "line": 416,
             "statement": "return 201, result"
           }
         ]
@@ -1505,7 +1663,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 411,
+            "line": 418,
             "statement": "return 200, self.files.cleanup()"
           }
         ]
@@ -1535,7 +1693,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 414,
+            "line": 421,
             "statement": "return 200, self.files.status(parts[2], access.member_id, access)"
           }
         ]
@@ -1564,7 +1722,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 414,
+            "line": 421,
             "statement": "return 200, self.files.status(parts[2], access.member_id, access)"
           }
         ]
@@ -1593,7 +1751,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 419,
+            "line": 426,
             "statement": "return 200, result"
           }
         ]
@@ -1622,7 +1780,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 421,
+            "line": 428,
             "statement": "return 200, self.files.append(parts[2], body.get('offset'), body.get('data'), access.member_id, access)"
           }
         ]
@@ -1652,7 +1810,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 427,
+            "line": 434,
             "statement": "return 201, result"
           }
         ]
@@ -1681,7 +1839,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 430,
+            "line": 437,
             "statement": "return 201, {k: v for k, v in attachment.items() if k != \"data\"}"
           }
         ]
@@ -1710,7 +1868,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 434,
+            "line": 441,
             "statement": "return 200, attachment"
           }
         ]
@@ -1739,7 +1897,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 434,
+            "line": 441,
             "statement": "return 200, attachment"
           }
         ]
@@ -1768,7 +1926,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 449,
+            "line": 456,
             "statement": "return 200, metadata"
           }
         ]
@@ -1797,7 +1955,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 449,
+            "line": 456,
             "statement": "return 200, metadata"
           }
         ]
@@ -1826,12 +1984,12 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 454,
+            "line": 461,
             "statement": "return 200, AttachmentDownload(attachment['name'], attachment['id'], attachment['size'], attachment.get('sha256'))"
           },
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 455,
+            "line": 462,
             "statement": "return 200, Download(attachment['name'], base64.b64decode(attachment['data']), attachment_id=attachment['id'])"
           }
         ]
@@ -1861,12 +2019,12 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 454,
+            "line": 461,
             "statement": "return 200, AttachmentDownload(attachment['name'], attachment['id'], attachment['size'], attachment.get('sha256'))"
           },
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 455,
+            "line": 462,
             "statement": "return 200, Download(attachment['name'], base64.b64decode(attachment['data']), attachment_id=attachment['id'])"
           }
         ]
@@ -1896,7 +2054,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:Application._dispatch",
-            "line": 465,
+            "line": 472,
             "statement": "return 200, {'deleted': True}"
           }
         ]
@@ -2136,7 +2294,7 @@
           },
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 527,
+            "line": 541,
             "statement": "return 200, self.ai(body)"
           }
         ]
@@ -2166,7 +2324,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 517,
+            "line": 531,
             "statement": "return 200, self.overview()"
           }
         ]
@@ -2195,7 +2353,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 517,
+            "line": 531,
             "statement": "return 200, self.overview()"
           }
         ]
@@ -2224,7 +2382,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 519,
+            "line": 533,
             "statement": "return 200, self.capabilities()"
           }
         ]
@@ -2253,7 +2411,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 519,
+            "line": 533,
             "statement": "return 200, self.capabilities()"
           }
         ]
@@ -2282,7 +2440,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 521,
+            "line": 535,
             "statement": "return 200, self.update_settings(body)"
           }
         ]
@@ -2311,7 +2469,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 521,
+            "line": 535,
             "statement": "return 200, self.update_settings(body)"
           }
         ]
@@ -2340,7 +2498,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 523,
+            "line": 537,
             "statement": "return 200, self.analytics()"
           }
         ]
@@ -2369,7 +2527,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 523,
+            "line": 537,
             "statement": "return 200, self.analytics()"
           }
         ]
@@ -2398,7 +2556,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 525,
+            "line": 539,
             "statement": "return 200, self.cleanup()"
           }
         ]
@@ -2427,7 +2585,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 529,
+            "line": 543,
             "statement": "return 200, self.clipboard(body)"
           }
         ]
@@ -2456,7 +2614,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 531,
+            "line": 545,
             "statement": "return 200, self.item('clipboard', path.rsplit('/', 1)[1])"
           }
         ]
@@ -2485,7 +2643,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 531,
+            "line": 545,
             "statement": "return 200, self.item('clipboard', path.rsplit('/', 1)[1])"
           }
         ]
@@ -2514,7 +2672,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 531,
+            "line": 545,
             "statement": "return 200, self.item('clipboard', path.rsplit('/', 1)[1])"
           }
         ]
@@ -2544,7 +2702,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 531,
+            "line": 545,
             "statement": "return 200, self.item('clipboard', path.rsplit('/', 1)[1])"
           }
         ]
@@ -2574,7 +2732,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 535,
+            "line": 549,
             "statement": "return 200, {'events': [e for e in events if search in json.dumps(e, ensure_ascii=False).casefold()]}"
           }
         ]
@@ -2603,7 +2761,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 535,
+            "line": 549,
             "statement": "return 200, {'events': [e for e in events if search in json.dumps(e, ensure_ascii=False).casefold()]}"
           }
         ]
@@ -2632,7 +2790,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 541,
+            "line": 555,
             "statement": "return 200, {'runs': [{key: value for key, value in record.items() if key != 'result'} for record in runs[:200]]}"
           }
         ]
@@ -2661,7 +2819,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 541,
+            "line": 555,
             "statement": "return 200, {'runs': [{key: value for key, value in record.items() if key != 'result'} for record in runs[:200]]}"
           }
         ]
@@ -2690,7 +2848,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 544,
+            "line": 558,
             "statement": "return 200, self.verify_page(method, parts[2], body)"
           }
         ]
@@ -2724,7 +2882,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 544,
+            "line": 558,
             "statement": "return 200, self.verify_page(method, parts[2], body)"
           }
         ]
@@ -3037,7 +3195,7 @@
           },
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 508,
+            "line": 522,
             "statement": "return 200, Inbox(self.store, CURRENT_ACCESS.get() or Access(self.store, self.store.get('member', AUDIT_ACTOR.get()))).get(query)"
           }
         ]
@@ -3051,7 +3209,7 @@
           "tests/browser-inbox.mjs"
         ]
       },
-      "notes": "Application handles the canonical inbox routes before Advanced construction; the Advanced dispatcher retains the same GET/PATCH compatibility branch. Current signed-in recipient and current page visibility are checked inside Inbox; no anonymous access. HEAD is GET. PATCH query parameters are rejected; receipt state changes do not modify the source page."
+      "notes": "Application handles the canonical inbox routes before Advanced construction; the Advanced dispatcher retains the same GET/PATCH compatibility branch. Current signed-in recipient and current page or database-row visibility are checked inside Inbox; no anonymous access. HEAD is GET. PATCH query parameters are rejected; receipt state changes do not modify the source page."
     },
     {
       "id": "HEAD /api/inbox",
@@ -3077,7 +3235,7 @@
           },
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 508,
+            "line": 522,
             "statement": "return 200, Inbox(self.store, CURRENT_ACCESS.get() or Access(self.store, self.store.get('member', AUDIT_ACTOR.get()))).get(query)"
           }
         ]
@@ -3091,7 +3249,7 @@
           "tests/browser-inbox.mjs"
         ]
       },
-      "notes": "Application handles the canonical inbox routes before Advanced construction; the Advanced dispatcher retains the same GET/PATCH compatibility branch. Current signed-in recipient and current page visibility are checked inside Inbox; no anonymous access. HEAD is GET. PATCH query parameters are rejected; receipt state changes do not modify the source page."
+      "notes": "Application handles the canonical inbox routes before Advanced construction; the Advanced dispatcher retains the same GET/PATCH compatibility branch. Current signed-in recipient and current page or database-row visibility are checked inside Inbox; no anonymous access. HEAD is GET. PATCH query parameters are rejected; receipt state changes do not modify the source page."
     },
     {
       "id": "PATCH /api/inbox/{notification_id}",
@@ -3117,7 +3275,7 @@
           },
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 511,
+            "line": 525,
             "statement": "return 200, Inbox(self.store, CURRENT_ACCESS.get() or Access(self.store, self.store.get('member', AUDIT_ACTOR.get()))).patch(path.removeprefix('/api/inbox/'), body)"
           }
         ]
@@ -3131,7 +3289,7 @@
           "tests/browser-inbox.mjs"
         ]
       },
-      "notes": "Application handles the canonical inbox routes before Advanced construction; the Advanced dispatcher retains the same GET/PATCH compatibility branch. Current signed-in recipient and current page visibility are checked inside Inbox; no anonymous access. HEAD is GET. PATCH query parameters are rejected; receipt state changes do not modify the source page."
+      "notes": "Application handles the canonical inbox routes before Advanced construction; the Advanced dispatcher retains the same GET/PATCH compatibility branch. Current signed-in recipient and current page or database-row visibility are checked inside Inbox; no anonymous access. HEAD is GET. PATCH query parameters are rejected; receipt state changes do not modify the source page."
     },
     {
       "id": "GET /api/automations",
@@ -3151,7 +3309,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -3181,7 +3339,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -3211,7 +3369,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 557,
+            "line": 571,
             "statement": "return 201, self.save(kind, body)"
           }
         ]
@@ -3241,7 +3399,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -3271,7 +3429,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -3301,7 +3459,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 559,
+            "line": 573,
             "statement": "return 200, self.save(kind, body, identity)"
           }
         ]
@@ -3331,7 +3489,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 564,
+            "line": 578,
             "statement": "return 200, {'deleted': True}"
           }
         ]
@@ -3361,7 +3519,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -3391,7 +3549,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -3421,7 +3579,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 559,
+            "line": 573,
             "statement": "return 200, self.save(kind, body, identity)"
           }
         ]
@@ -3451,7 +3609,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 564,
+            "line": 578,
             "statement": "return 200, {'deleted': True}"
           }
         ]
@@ -3481,7 +3639,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -3511,7 +3669,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -3541,7 +3699,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 557,
+            "line": 571,
             "statement": "return 201, self.save(kind, body)"
           }
         ]
@@ -3571,7 +3729,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -3601,7 +3759,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -3631,7 +3789,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 559,
+            "line": 573,
             "statement": "return 200, self.save(kind, body, identity)"
           }
         ]
@@ -3661,7 +3819,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 564,
+            "line": 578,
             "statement": "return 200, {'deleted': True}"
           }
         ]
@@ -3691,7 +3849,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -3721,7 +3879,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -3751,7 +3909,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 559,
+            "line": 573,
             "statement": "return 200, self.save(kind, body, identity)"
           }
         ]
@@ -3781,7 +3939,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 564,
+            "line": 578,
             "statement": "return 200, {'deleted': True}"
           }
         ]
@@ -3811,7 +3969,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -3841,7 +3999,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -3871,7 +4029,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 557,
+            "line": 571,
             "statement": "return 201, self.save(kind, body)"
           }
         ]
@@ -3901,7 +4059,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -3931,7 +4089,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -3961,7 +4119,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 559,
+            "line": 573,
             "statement": "return 200, self.save(kind, body, identity)"
           }
         ]
@@ -3991,7 +4149,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 564,
+            "line": 578,
             "statement": "return 200, {'deleted': True}"
           }
         ]
@@ -4021,7 +4179,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -4051,7 +4209,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -4081,7 +4239,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 559,
+            "line": 573,
             "statement": "return 200, self.save(kind, body, identity)"
           }
         ]
@@ -4111,7 +4269,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 564,
+            "line": 578,
             "statement": "return 200, {'deleted': True}"
           }
         ]
@@ -4141,7 +4299,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -4171,7 +4329,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -4201,7 +4359,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 557,
+            "line": 571,
             "statement": "return 201, self.save(kind, body)"
           }
         ]
@@ -4231,7 +4389,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -4261,7 +4419,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -4291,7 +4449,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 559,
+            "line": 573,
             "statement": "return 200, self.save(kind, body, identity)"
           }
         ]
@@ -4321,7 +4479,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 564,
+            "line": 578,
             "statement": "return 200, {'deleted': True}"
           }
         ]
@@ -4351,7 +4509,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -4381,7 +4539,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -4411,7 +4569,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 559,
+            "line": 573,
             "statement": "return 200, self.save(kind, body, identity)"
           }
         ]
@@ -4441,7 +4599,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 564,
+            "line": 578,
             "statement": "return 200, {'deleted': True}"
           }
         ]
@@ -4471,7 +4629,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -4501,7 +4659,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -4531,7 +4689,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 557,
+            "line": 571,
             "statement": "return 201, self.save(kind, body)"
           }
         ]
@@ -4561,7 +4719,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -4591,7 +4749,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -4621,7 +4779,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 559,
+            "line": 573,
             "statement": "return 200, self.save(kind, body, identity)"
           }
         ]
@@ -4651,7 +4809,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 564,
+            "line": 578,
             "statement": "return 200, {'deleted': True}"
           }
         ]
@@ -4681,7 +4839,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -4711,7 +4869,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -4741,7 +4899,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 559,
+            "line": 573,
             "statement": "return 200, self.save(kind, body, identity)"
           }
         ]
@@ -4771,7 +4929,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 564,
+            "line": 578,
             "statement": "return 200, {'deleted': True}"
           }
         ]
@@ -4801,7 +4959,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -4831,7 +4989,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -4861,7 +5019,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 557,
+            "line": 571,
             "statement": "return 201, self.save(kind, body)"
           }
         ]
@@ -4891,7 +5049,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -4921,7 +5079,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -4951,7 +5109,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 559,
+            "line": 573,
             "statement": "return 200, self.save(kind, body, identity)"
           }
         ]
@@ -4981,7 +5139,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 564,
+            "line": 578,
             "statement": "return 200, {'deleted': True}"
           }
         ]
@@ -5011,7 +5169,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -5041,7 +5199,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -5071,7 +5229,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 559,
+            "line": 573,
             "statement": "return 200, self.save(kind, body, identity)"
           }
         ]
@@ -5101,7 +5259,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 564,
+            "line": 578,
             "statement": "return 200, {'deleted': True}"
           }
         ]
@@ -5131,7 +5289,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -5161,7 +5319,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -5191,7 +5349,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 557,
+            "line": 571,
             "statement": "return 201, self.save(kind, body)"
           }
         ]
@@ -5221,7 +5379,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -5251,7 +5409,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -5281,7 +5439,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 559,
+            "line": 573,
             "statement": "return 200, self.save(kind, body, identity)"
           }
         ]
@@ -5311,7 +5469,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 564,
+            "line": 578,
             "statement": "return 200, {'deleted': True}"
           }
         ]
@@ -5341,7 +5499,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -5371,7 +5529,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 555,
+            "line": 569,
             "statement": "return 200, (self.item(kind, identity) if identity else {kind: self.store.list(kind[:-1])})"
           }
         ]
@@ -5401,7 +5559,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 559,
+            "line": 573,
             "statement": "return 200, self.save(kind, body, identity)"
           }
         ]
@@ -5431,7 +5589,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 564,
+            "line": 578,
             "statement": "return 200, {'deleted': True}"
           }
         ]
@@ -5461,7 +5619,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 550,
+            "line": 564,
             "statement": "return 201, self.submit_form(identity, body)"
           }
         ]
@@ -5491,7 +5649,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 552,
+            "line": 566,
             "statement": "return 200, self.run_automation(identity, body)"
           }
         ]
@@ -5521,7 +5679,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 513,
+            "line": 527,
             "statement": "return self.public_view(path)"
           },
           {
@@ -5557,7 +5715,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 513,
+            "line": 527,
             "statement": "return self.public_view(path)"
           },
           {
@@ -5593,7 +5751,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 513,
+            "line": 527,
             "statement": "return self.public_view(path)"
           },
           {
@@ -5629,7 +5787,7 @@
         "evidence": [
           {
             "source": "fountain/advanced.py:Advanced.dispatch",
-            "line": 513,
+            "line": 527,
             "statement": "return self.public_view(path)"
           },
           {
@@ -6423,7 +6581,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 753,
+            "line": 760,
             "statement": "self.send_bytes(200, target.read_bytes(), mimetypes.guess_type(str(target))[0] or \"application/octet-stream\")"
           }
         ]
@@ -6452,7 +6610,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 753,
+            "line": 760,
             "statement": "self.send_bytes(200, target.read_bytes(), mimetypes.guess_type(str(target))[0] or \"application/octet-stream\")"
           }
         ]
@@ -6481,7 +6639,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 753,
+            "line": 760,
             "statement": "self.send_bytes(200, target.read_bytes(), mimetypes.guess_type(str(target))[0] or \"application/octet-stream\")"
           }
         ]
@@ -6511,7 +6669,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 753,
+            "line": 760,
             "statement": "self.send_bytes(200, target.read_bytes(), mimetypes.guess_type(str(target))[0] or \"application/octet-stream\")"
           }
         ]

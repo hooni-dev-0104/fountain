@@ -126,6 +126,13 @@ final class OutboxPolicy {
             && !("POST".equals(method) && status == 200)) return null;
         return canonicalResource(method, path);
     }
+    static String[] collectionResource(String method, String path) throws Exception {
+        String[] ordinary = canonicalResource(method, path); if (ordinary != null) return ordinary;
+        if (!"GET".equals(method) || path == null || path.contains("?") || path.contains("#") || !path.startsWith("/api/attachments/") || !path.endsWith("/metadata")) return null;
+        String encoded = path.substring(17, path.length() - 9);
+        String[] parsed = canonicalResource("GET", "/api/databases/" + encoded);
+        return parsed == null ? null : new String[]{"attachment", parsed[1]};
+    }
     static String acknowledgement(Object value) {
         NativePolicy.require(value instanceof String);
         String identity = (String) value;

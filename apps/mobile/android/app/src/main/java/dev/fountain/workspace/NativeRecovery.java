@@ -24,11 +24,12 @@ final class NativeRecovery implements AutoCloseable {
     }
     interface Authority { JSONObject get(String path) throws Exception; void check() throws Exception; }
     static final class Session {
-        final String origin, workspace, member, binding, scope;
+        final String origin, workspace, member, binding, scope, role;
         long validUntil;
         Session(String origin, JSONObject body, String cookie, String ownerScope) throws Exception {
             if (body.opt("authenticated") != Boolean.TRUE || body.getJSONObject("member").opt("active") != Boolean.TRUE) throw new Failure("RECOVERY_AUTH_REQUIRED");
             if(!Arrays.asList("owner","admin","member","guest").contains(body.getJSONObject("member").opt("role")))throw new Failure("RECOVERY_AUTH_REQUIRED");
+            role = body.getJSONObject("member").getString("role");
             this.origin = origin; workspace = text(body.opt("workspace_id")); member = text(body.getJSONObject("member").opt("id")); binding = text(body.opt("cache_binding"));
             String mode = text(body.opt("mode")); long now = System.currentTimeMillis();
             if (mode.equals("local") && body.opt("required") == Boolean.FALSE && cookie == null) validUntil = now + OutboxPolicy.LOCAL_TTL;
@@ -39,12 +40,12 @@ final class NativeRecovery implements AutoCloseable {
         }
     }
     private static final class Row {
-        final long id; final String profile, resource, bucket, key, sha; final int size;final long metadataBytes;
-        Row(long id, String profile, String resource, String bucket, String key, String sha, int size) { this.id=id;this.profile=profile;this.resource=resource;this.bucket=bucket;this.key=key;this.sha=sha;this.size=size;metadataBytes=256L+profile.getBytes(StandardCharsets.UTF_8).length+resource.getBytes(StandardCharsets.UTF_8).length+bucket.getBytes(StandardCharsets.UTF_8).length+key.getBytes(StandardCharsets.UTF_8).length; }
+        final long id; final String profile, resource, bucket, key, sha, rawSha, storage; final int size;final long metadataBytes;
+        Row(long id, String profile, String resource, String bucket, String key, String sha, String rawSha, String storage, int size) { this.storage=storage;this.rawSha=rawSha;this.id=id;this.profile=profile;this.resource=resource;this.bucket=bucket;this.key=key;this.sha=sha;this.size=size;metadataBytes=256L+profile.getBytes(StandardCharsets.UTF_8).length+resource.getBytes(StandardCharsets.UTF_8).length+bucket.getBytes(StandardCharsets.UTF_8).length+key.getBytes(StandardCharsets.UTF_8).length; }
     }
     private static final class Item {
         final String handle=UUID.randomUUID().toString(), profile, resource, category;
-        final List<Row> rows=new ArrayList<>(); long bytes;
+        final List<Row> rows=new ArrayList<>(); long bytes; boolean readableOnly;
         Item(String profile,String resource,String category) { this.profile=profile;this.resource=resource;this.category=category; }
     }
     static final class Prepared {
@@ -73,17 +74,23 @@ final class NativeRecovery implements AutoCloseable {
     private volatile Prepared prepared;
     private int indexedRows;
     private long indexedBytes;
+    private boolean archiveTable;
+    private boolean ownersTable, localVersionsTable;
+    private final Map<String,Long> localChecks = new HashMap<>();
+    private long localChecksVersion = -1;
 
     NativeRecovery(Context context) { this.context=context; }
     private static String text(Object value) { return OutboxPolicy.text(value,1000); }
     private static String id(Object value) {String result=OutboxPolicy.text(value,160);NativePolicy.require(!result.equals(".")&&!result.equals("..")&&!result.contains("/")&&!result.contains("\\"));return result;}
-    private static void jsonSafe(Object value) throws Exception {
+    static void jsonSafe(Object value) throws Exception { jsonSafe(value, 0); }
+    private static void jsonSafe(Object value, int depth) throws Exception {
+        if (depth > 32) throw new Failure("RECOVERY_ACCESS_REQUIRED");
         if(value instanceof String){String text=(String)value;for(int i=0;i<text.length();i++){char point=text.charAt(i);if(Character.isHighSurrogate(point)){if(++i>=text.length()||!Character.isLowSurrogate(text.charAt(i)))throw new Failure("RECOVERY_ACCESS_REQUIRED");}else if(Character.isLowSurrogate(point))throw new Failure("RECOVERY_ACCESS_REQUIRED");}}
-        else if(value instanceof JSONObject){JSONObject object=(JSONObject)value;Iterator<String> names=object.keys();while(names.hasNext()){String name=names.next();if(Arrays.asList("__proto__","constructor","prototype").contains(name))throw new Failure("RECOVERY_ACCESS_REQUIRED");jsonSafe(name);jsonSafe(object.get(name));}}
-        else if(value instanceof JSONArray){JSONArray array=(JSONArray)value;for(int i=0;i<array.length();i++)jsonSafe(array.get(i));}
+        else if(value instanceof JSONObject){JSONObject object=(JSONObject)value;Iterator<String> names=object.keys();while(names.hasNext()){String name=names.next();if(Arrays.asList("__proto__","constructor","prototype").contains(name))throw new Failure("RECOVERY_ACCESS_REQUIRED");jsonSafe(name,depth+1);jsonSafe(object.get(name),depth+1);}}
+        else if(value instanceof JSONArray){JSONArray array=(JSONArray)value;for(int i=0;i<array.length();i++)jsonSafe(array.get(i),depth+1);}
     }
     private static JSONObject exportValue(JSONObject value) throws Exception {jsonSafe(value);return value;}
-    private static String content(Object value,int maximum)throws Exception {if(!(value instanceof String)||((String)value).length()>maximum)throw new Failure("RECOVERY_ACCESS_REQUIRED");jsonSafe(value);return (String)value;}
+    static String content(Object value,int maximum)throws Exception {if(!(value instanceof String)||((String)value).length()>maximum)throw new Failure("RECOVERY_ACCESS_REQUIRED");jsonSafe(value);return (String)value;}
     private static long number(JSONObject value,String field) throws Exception { return OutboxPolicy.integer(value.opt(field),0,OutboxPolicy.SAFE-1); }
     private static boolean flag(JSONObject value,String field) { NativePolicy.require(value.opt(field) instanceof Boolean); return value.opt(field)==Boolean.TRUE; }
     private void current(Authority authority) throws Exception {
@@ -98,6 +105,14 @@ final class NativeRecovery implements AutoCloseable {
         session=next;
     }
     void invalidate() { close(); session=null; }
+    boolean qualifiesOutbox(String origin, JSONObject grant, String cookie, String ownerScope) throws Exception {
+        Session current=session;
+        if(current==null||System.currentTimeMillis()>=current.validUntil||!current.origin.equals(origin)
+            ||!OutboxPolicy.profile(origin,current.workspace,current.member,current.binding).equals(grant.getString("profileId")))return false;
+        JSONObject description=grant.getJSONObject("session");
+        String expected=ownerScope+":"+OutboxPolicy.hash(origin+"|"+current.workspace+"|"+current.member+"|"+current.binding+"|"+description.getJSONObject("member").getString("role")+"|"+(cookie==null?"local":OutboxPolicy.hash(cookie)));
+        return expected.equals(current.scope);
+    }
     void cancel(String inventory,String export) throws Exception {
         if(export!=null) { if(prepared!=null&&prepared.token.equals(export)&&prepared.inventory.equals(inventory)) { prepared.delete();prepared=null; } return; }
         if(inventoryToken!=null&&!inventoryToken.equals(inventory)) throw new Failure("RECOVERY_STALE");
@@ -125,6 +140,10 @@ final class NativeRecovery implements AutoCloseable {
             try(Cursor schema=opened.rawQuery("SELECT mode,bucket,key,profile_id,resource_key,length(payload),rowid FROM records LIMIT 0",null)) { schema.moveToFirst(); }
             try(Cursor journal=opened.rawQuery("PRAGMA journal_mode",null)) { if(!journal.moveToFirst()||!"delete".equalsIgnoreCase(journal.getString(0)))throw new Failure("RECOVERY_STORAGE"); }
             source=file;database=opened;
+            try(Cursor schema=database.rawQuery("SELECT 1 FROM sqlite_master WHERE type='table' AND name='native_recovery_records'",null)){archiveTable=schema.moveToFirst();}
+            if(archiveTable){Set<String> columns=new HashSet<>();try(Cursor schema=database.rawQuery("PRAGMA table_info(native_recovery_records)",null)){while(schema.moveToNext())columns.add(schema.getString(1));}archiveTable=columns.containsAll(Arrays.asList("id","version","profile_id","resource_key","bucket","key","digest","actor","trust"));}
+            try(Cursor schema=database.rawQuery("SELECT 1 FROM sqlite_master WHERE type='table' AND name='native_record_owners'",null)){ownersTable=schema.moveToFirst();}
+            try(Cursor schema=database.rawQuery("SELECT 1 FROM sqlite_master WHERE type='table' AND name='native_local_versions_v1'",null)){localVersionsTable=schema.moveToFirst();}
         } catch(Exception error) { opened.close();throw error; }
     }
     private String fingerprint(Authority authority) throws Exception {
@@ -143,11 +162,20 @@ final class NativeRecovery implements AutoCloseable {
         ByteArrayOutputStream bytes=new ByteArrayOutputStream(size);
         for(int offset=0;offset<size;offset+=OutboxPolicy.PART) {
             current(authority);int count=Math.min(OutboxPolicy.PART,size-offset);
-            try(Cursor chunk=database.rawQuery("SELECT substr(payload,?,?) FROM records WHERE rowid=?",new String[]{Integer.toString(offset+1),Integer.toString(count),Long.toString(row)})) {
+            try(Cursor chunk=database.rawQuery("SELECT substr(payload,?,?) FROM "+(row<0?"recovery":"records")+" WHERE rowid=?",new String[]{Integer.toString(offset+1),Integer.toString(count),Long.toString(row<0?-row:row)})) {
                 if(!chunk.moveToFirst()||chunk.getBlob(0).length!=count) throw new Failure("RECOVERY_STALE");bytes.write(chunk.getBlob(0));
             }
         }
         String raw=OutboxPolicy.utf8(bytes.toByteArray());bounded(raw);return new JSONObject(raw);
+    }
+    private String payloadHash(long row,int size,Authority authority)throws Exception {
+        MessageDigest digest=MessageDigest.getInstance("SHA-256");
+        for(int offset=0;offset<size;offset+=OutboxPolicy.PART){current(authority);int count=Math.min(OutboxPolicy.PART,size-offset);
+            try(Cursor part=database.rawQuery("SELECT substr(payload,?,?) FROM "+(row<0?"recovery":"records")+" WHERE rowid=?",new String[]{Integer.toString(offset+1),Integer.toString(count),Long.toString(row<0?-row:row)})){
+                if(!part.moveToFirst()||part.getBlob(0).length!=count)throw new Failure("RECOVERY_STALE");digest.update(part.getBlob(0));
+            }
+        }
+        StringBuilder result=new StringBuilder();for(byte value:digest.digest())result.append(String.format(java.util.Locale.ROOT,"%02x",value&255));return result.toString();
     }
     private boolean sourceIdentity(JSONObject value,String profile,String resource,String bucket,String encodedKey) throws Exception {
         if(!profile.equals(value.opt("profileId"))) return false;
@@ -162,17 +190,38 @@ final class NativeRecovery implements AutoCloseable {
     }
     private List<Row> rows(Item item,Authority authority) throws Exception {
         List<Row> result=new ArrayList<>();long metadataBytes=0;
-        String buckets=item.category.equals("typed")?"'mutations'":item.category.equals("local_page")?"'localPages'":"'snapshots','operations','drafts'";
-        try(Cursor cursor=database.rawQuery("SELECT rowid,bucket,length(payload),key FROM records WHERE profile_id=? AND resource_key=? AND mode IN ('active','quarantine') AND bucket IN ("+buckets+") ORDER BY rowid",new String[]{item.profile,item.resource})) {
+        String buckets=item.category.equals("typed")?"'mutations'":item.category.equals("local_page")?"'localPages'":"'snapshots','operations','drafts','databaseSnapshots','transfers'";
+        String actor=session.origin+"|"+OutboxPolicy.encode(session.workspace)+"|"+OutboxPolicy.encode(session.member)+"|";
+        if(ownersTable)try(Cursor cursor=database.rawQuery("SELECT r.rowid,r.bucket,length(r.payload),r.key,n.digest,r.mode FROM records r JOIN native_record_owners n ON n.mode=r.mode AND n.bucket=r.bucket AND n.key=r.key AND n.profile_id=r.profile_id WHERE r.profile_id=? AND r.resource_key=? AND r.mode IN ('active','quarantine') AND r.bucket IN ("+buckets+") AND n.actor=? AND n.trust IN ('native','untrusted') ORDER BY r.rowid",new String[]{item.profile,item.resource,actor})) {
             while(cursor.moveToNext()) {
                 current(authority); if(result.size()>=100000) throw new Failure("RECOVERY_STORAGE");
                 long id=cursor.getLong(0);String bucket=cursor.getString(1);int size=cursor.getInt(2);
                 if(size<=0||size>FILE_LIMIT) continue;
-                JSONObject value;String key=cursor.getString(3);try { value=read(id,size,authority);if(!sourceIdentity(value,item.profile,item.resource,bucket,key))continue; }
-                catch(org.json.JSONException|IllegalArgumentException invalid) { continue; }
-                catch(Failure unsupported){if("RECOVERY_ACCESS_REQUIRED".equals(unsupported.code))continue;throw unsupported;}
-                Row row=new Row(id,item.profile,item.resource,bucket,key,OutboxPolicy.hash(value.toString()),size);metadataBytes+=row.metadataBytes;
+                String key=cursor.getString(3),digest=cursor.getString(4);if(!payloadHash(id,size,authority).equals(digest))continue;
+                String sha;try { JSONObject value=read(id,size,authority);sha=sourceIdentity(value,item.profile,item.resource,bucket,key)?OutboxPolicy.hash(value.toString()):"blocked:"+digest; }
+                catch(org.json.JSONException|IllegalArgumentException invalid) { sha="blocked:"+digest; }
+                catch(Failure unsupported){if(!"RECOVERY_ACCESS_REQUIRED".equals(unsupported.code))throw unsupported;sha="blocked:"+digest;}
+                Row row=new Row(id,item.profile,item.resource,bucket,key,sha,digest,cursor.getString(5),size);metadataBytes+=row.metadataBytes;
                 if(indexedBytes+metadataBytes>FILE_LIMIT)throw new Failure("RECOVERY_LIMIT");result.add(row);
+            }
+        }
+        if(archiveTable){
+            Set<String> copies=new HashSet<>();for(Row row:result)copies.add(row.bucket+"\n"+row.key+"\n"+row.sha+"\n"+(rowLocalContext(row,authority)!=null));
+            try(Cursor cursor=database.rawQuery("SELECT r.rowid,a.bucket,length(r.payload),a.key,a.digest,a.version,a.id FROM native_recovery_records a JOIN recovery r ON r.id=a.id WHERE a.profile_id=? AND a.resource_key=? AND a.bucket IN ("+buckets+") AND a.actor=? AND a.trust IN ('native','untrusted') ORDER BY r.rowid",new String[]{item.profile,item.resource,actor})){
+                while(cursor.moveToNext()){
+                    current(authority);if(result.size()>=100000)throw new Failure("RECOVERY_STORAGE");
+                    long id=-cursor.getLong(0);String bucket=cursor.getString(1),key=cursor.getString(3),digest=cursor.getString(4);int size=cursor.getInt(2);
+                    if(cursor.getInt(5)!=1||size<=0||size>FILE_LIMIT||!digest.matches("[0-9a-f]{64}"))throw new Failure("RECOVERY_ACCESS_REQUIRED");
+                    try(Cursor owner=database.rawQuery("SELECT value FROM control WHERE key=?",new String[]{"recovery-owner:"+cursor.getString(6)})){if(!owner.moveToFirst()||!item.profile.equals(owner.getString(0)))throw new Failure("RECOVERY_ACCESS_REQUIRED");}
+                    if(!payloadHash(id,size,authority).equals(digest))throw new Failure("RECOVERY_STALE");
+                    String sha;
+                    try{JSONObject value=read(id,size,authority);sha=OutboxPolicy.hash(value.toString());if(!sourceIdentity(value,item.profile,item.resource,bucket,key))sha="blocked:"+digest;}
+                    catch(org.json.JSONException|IllegalArgumentException invalid){sha="blocked:"+digest;}
+                    catch(Failure invalid){if(!invalid.code.equals("RECOVERY_ACCESS_REQUIRED"))throw invalid;sha="blocked:"+digest;}
+                    Row row=new Row(id,item.profile,item.resource,bucket,key,sha,digest,"archive:"+cursor.getString(6),size);
+                    if(!copies.add(bucket+"\n"+key+"\n"+sha+"\n"+(rowLocalContext(row,authority)!=null)))continue;
+                    metadataBytes+=row.metadataBytes;if(indexedBytes+metadataBytes>FILE_LIMIT)throw new Failure("RECOVERY_LIMIT");result.add(row);
+                }
             }
         }
         return result;
@@ -187,7 +236,9 @@ final class NativeRecovery implements AutoCloseable {
         JSONArray output=new JSONArray();String next=null;
         if(database!=null) {
             String prefix=session.origin+"|"+OutboxPolicy.encode(session.workspace)+"|"+OutboxPolicy.encode(session.member)+"|";
-            try(Cursor groups=database.rawQuery("SELECT profile_id,resource_key,CASE WHEN bucket='mutations' THEN 'typed' WHEN bucket='localPages' THEN 'local_page' ELSE 'body' END AS category,min(rowid) FROM records WHERE substr(profile_id,1,?)=? AND mode IN ('active','quarantine') AND bucket IN ('mutations','localPages','snapshots','operations','drafts') GROUP BY profile_id,resource_key,category HAVING min(rowid)>CAST(? AS INTEGER) ORDER BY min(rowid)",new String[]{Integer.toString(prefix.length()),prefix,Long.toString(after)})) {
+            String sourceRows=ownersTable?"SELECT r.profile_id,r.resource_key,r.bucket,r.rowid*2 AS position,n.actor,n.trust FROM records r JOIN native_record_owners n ON n.mode=r.mode AND n.bucket=r.bucket AND n.key=r.key AND n.profile_id=r.profile_id WHERE r.mode IN ('active','quarantine') AND r.bucket IN ('mutations','localPages','snapshots','operations','drafts','databaseSnapshots','transfers')":"SELECT profile_id,resource_key,bucket,rowid*2 AS position,'' AS actor,'opaque' AS trust FROM records WHERE 0";
+            if(archiveTable)sourceRows+=" UNION ALL SELECT a.profile_id,a.resource_key,a.bucket,r.rowid*2+1 AS position,a.actor,a.trust FROM native_recovery_records a JOIN recovery r ON r.id=a.id WHERE a.version=1 AND a.bucket IN ('mutations','localPages','snapshots','operations','drafts','databaseSnapshots','transfers')";
+            try(Cursor groups=database.rawQuery("SELECT profile_id,resource_key,CASE WHEN bucket='mutations' THEN 'typed' WHEN bucket='localPages' THEN 'local_page' ELSE 'body' END AS category,min(position) FROM ("+sourceRows+") WHERE substr(profile_id,1,?)=? AND actor=? AND trust IN ('native','untrusted') GROUP BY profile_id,resource_key,category HAVING min(position)>CAST(? AS INTEGER) ORDER BY min(position)",new String[]{Integer.toString(prefix.length()),prefix,prefix,Long.toString(after)})) {
                 while(groups.moveToNext()) {
                     current(authority);String profile=groups.getString(0),resource=groups.getString(1),category=groups.getString(2);after=groups.getLong(3);
                     if(OutboxPolicy.recoveryProfile(session.origin,profile,session.workspace,session.member)==null||!OutboxPolicy.resource(profile,resource))continue;
@@ -195,7 +246,7 @@ final class NativeRecovery implements AutoCloseable {
                     String groupKey=profile+"\n"+resource+"\n"+category;Item item=groupsByKey.get(groupKey);
                     if(item==null) { item=new Item(profile,resource,category);item.rows.addAll(rows(item,authority));if(item.rows.isEmpty())continue;
                         indexedRows+=item.rows.size();if(indexedRows>100000)throw new Failure("RECOVERY_STORAGE");for(Row row:item.rows){item.bytes+=row.size;indexedBytes+=row.metadataBytes;}if(indexedBytes>FILE_LIMIT)throw new Failure("RECOVERY_LIMIT");groupsByKey.put(groupKey,item); }
-                    items.put(item.handle,item);output.put(new JSONObject().put("handle",item.handle).put("category",category).put("recordCount",item.rows.size()).put("byteLength",item.bytes).put("state",category.equals("local_page")?"blocked":"needs_check"));
+                    items.put(item.handle,item);output.put(new JSONObject().put("handle",item.handle).put("category",category).put("recordCount",item.rows.size()).put("byteLength",item.bytes).put("state","needs_check"));
                     if(output.length()==limit) { next=UUID.randomUUID().toString();cursors.put(next,after);break; }
                 }
             }
@@ -206,9 +257,98 @@ final class NativeRecovery implements AutoCloseable {
     private void closeInventory() {
         if(prepared!=null)prepared.delete();prepared=null;items.clear();groupsByKey.clear();indexedRows=0;indexedBytes=0;cursors.clear();inventoryToken=null;fingerprint=null;
     }
-    private void closeReaderCaps(){closeInventory();proofs.clear();attachments.clear();authorityVersion++;if(database!=null)database.close();database=null;source=null;}
+    private void closeReaderCaps(){closeInventory();proofs.clear();attachments.clear();localChecks.clear();authorityVersion++;if(database!=null)database.close();database=null;source=null;}
     @Override public void close() { closeReaderCaps();denied.clear();maxAccess=0;maxData=0; }
 
+    private static String privateControl(SQLiteDatabase db, String key) {
+        try (Cursor c = db.rawQuery("SELECT value,length(CAST(value AS BLOB)) FROM control WHERE key=?", new String[]{key})) {
+            if (!c.moveToFirst()) return null; NativePolicy.require(c.getInt(1) <= 16384); return c.getString(0);
+        }
+    }
+    private boolean persistObservedPages(Set<String> pages) throws Exception {
+        if (pages.isEmpty()) return false;
+        File file = source;
+        if (file == null) file = new File(new File(context.getNoBackupFilesDir().getCanonicalFile(), "durable_outbox"), OutboxPolicy.hash(session.origin) + ".sqlite");
+        if (!file.exists()) return false; // No old cache/context can exist yet.
+        protectedFile(file.getParentFile(), true); protectedFile(file, false);
+        NativePolicy.require(file.getCanonicalFile().equals(file.getAbsoluteFile()));
+        SQLiteDatabase inspection = database; boolean temporary = inspection == null; Set<String> missing = new HashSet<>();
+        if (temporary) inspection = SQLiteDatabase.openDatabase(file.getPath(), null, SQLiteDatabase.OPEN_READONLY | SQLiteDatabase.NO_LOCALIZED_COLLATORS);
+        try { for (String page : pages) if (!"1".equals(privateControl(inspection, NativeOutbox.serverPageKey(session.workspace, page)))) missing.add(page); }
+        finally { if (temporary) inspection.close(); }
+        if (missing.isEmpty()) return false; // Idempotent observation makes no write.
+        closeReaderCaps(); // Preserve the current private Session and recovery latch.
+        try (SQLiteDatabase writer = SQLiteDatabase.openDatabase(file.getPath(), null, SQLiteDatabase.OPEN_READWRITE | SQLiteDatabase.NO_LOCALIZED_COLLATORS)) {
+            writer.disableWriteAheadLogging();
+            try (Cursor journal = writer.rawQuery("PRAGMA journal_mode=DELETE", null)) { NativePolicy.require(journal.moveToFirst() && "delete".equalsIgnoreCase(journal.getString(0))); }
+            writer.execSQL("PRAGMA synchronous=EXTRA");
+            writer.beginTransaction(); try {
+                boolean changed = false;
+                for (String page : missing) { String key = NativeOutbox.serverPageKey(session.workspace, page);
+                    if (!"1".equals(privateControl(writer, key))) { writer.execSQL("INSERT OR REPLACE INTO control VALUES(?,?)", new Object[]{key, "1"}); changed = true; }
+                }
+                if (changed) { long next = Long.parseLong(privateControl(writer, "proof_epoch")) + 1; NativePolicy.require(next < OutboxPolicy.SAFE); writer.execSQL("UPDATE control SET value=? WHERE key='proof_epoch'", new Object[]{Long.toString(next)}); }
+                writer.setTransactionSuccessful();
+            } finally { writer.endTransaction(); }
+        }
+        return true;
+    }
+    private JSONObject rowLocalContext(Row row, Authority authority) throws Exception {
+        current(authority); if (!localVersionsTable || database == null) return null;
+        String actor = session.origin + "|" + OutboxPolicy.encode(session.workspace) + "|" + OutboxPolicy.encode(session.member) + "|";
+        try (Cursor c = database.rawQuery("SELECT actor,context FROM native_local_versions_v1 WHERE mode=? AND profile_id=? AND bucket=? AND key=? AND digest=?", new String[]{row.storage, row.profile, row.bucket, row.key, row.rawSha})) {
+            if (!c.moveToFirst() || !actor.equals(c.getString(0))) return null;
+            String raw = c.getString(1); if (raw.getBytes(StandardCharsets.UTF_8).length > 16384) return null;
+            JSONObject context = new JSONObject(raw); String page = text(context.opt("page"));
+            if (context.optInt("version") != 1 || !actor.equals(context.opt("actor")) || !row.profile.equals(context.opt("profile"))
+                || !row.resource.equals(row.profile + "|" + OutboxPolicy.encode(page)) || OutboxPolicy.recoveryProfile(session.origin, row.profile, session.workspace, session.member) == null
+                || !raw.equals(privateControl(database, NativeOutbox.localContextKey(row.profile, page)))
+                || "1".equals(privateControl(database, NativeOutbox.serverPageKey(session.workspace, page)))) return null;
+            return context;
+        }
+    }
+    private boolean hasLocalVersion(JSONObject context, String bucket, String key, Authority authority) throws Exception {
+        String profile = context.getString("profile"), actor = context.getString("actor"), expected = context.toString();
+        String query = "SELECT r.rowid,length(r.payload),n.digest,v.context FROM records r JOIN native_record_owners n ON n.mode=r.mode AND n.bucket=r.bucket AND n.key=r.key AND n.profile_id=r.profile_id JOIN native_local_versions_v1 v ON v.mode=n.mode AND v.profile_id=n.profile_id AND v.bucket=n.bucket AND v.key=n.key AND v.digest=n.digest AND v.actor=n.actor WHERE r.profile_id=? AND r.bucket=? AND r.key=? AND n.actor=? AND n.trust='native'";
+        try (Cursor c = database.rawQuery(query, new String[]{profile, bucket, key, actor})) {
+            while (c.moveToNext()) if (expected.equals(c.getString(3)) && payloadHash(c.getLong(0), c.getInt(1), authority).equals(c.getString(2))) return true;
+        }
+        if (archiveTable) try (Cursor c = database.rawQuery("SELECT r.rowid,length(r.payload),a.digest,v.context FROM native_recovery_records a JOIN recovery r ON r.id=a.id JOIN native_local_versions_v1 v ON v.mode='archive:'||a.id AND v.profile_id=a.profile_id AND v.bucket=a.bucket AND v.key=a.key AND v.digest=a.digest AND v.actor=a.actor WHERE a.profile_id=? AND a.bucket=? AND a.key=? AND a.actor=? AND a.trust='native' AND a.version=1", new String[]{profile, bucket, key, actor})) {
+            while (c.moveToNext()) if (expected.equals(c.getString(3)) && payloadHash(-c.getLong(0), c.getInt(1), authority).equals(c.getString(2))) return true;
+        }
+        return false;
+    }
+    private boolean localPermission(Row row, Authority authority) throws Exception {
+        JSONObject context = rowLocalContext(row, authority); if (context == null) return false;
+        String cacheKey = OutboxPolicy.hash(context.toString());
+        if (localChecksVersion != authorityVersion) { localChecks.clear(); localChecksVersion = authorityVersion; }
+        Long until = localChecks.get(cacheKey); if (until != null && until > System.currentTimeMillis()) return true;
+        Set<String> visited = new HashSet<>(); JSONObject current = context;
+        while (true) {
+            String profile = text(current.opt("profile")), page = text(current.opt("page")), actor = session.origin + "|" + OutboxPolicy.encode(session.workspace) + "|" + OutboxPolicy.encode(session.member) + "|";
+            if (!visited.add(page) || visited.size() > 100000 || current.optInt("version") != 1 || !actor.equals(current.opt("actor"))
+                || !row.profile.equals(profile) || !current.toString().equals(privateControl(database, NativeOutbox.localContextKey(profile, page)))
+                || "1".equals(privateControl(database, NativeOutbox.serverPageKey(session.workspace, page)))
+                || !hasLocalVersion(current, "localPages", JSONObject.quote(profile + "|" + OutboxPolicy.encode(page)), authority)
+                || !hasLocalVersion(current, "mutations", new JSONArray().put(profile).put(text(current.opt("creation"))).toString(), authority)) throw new Failure("RECOVERY_ACCESS_REQUIRED");
+            String teamspace = text(current.opt("teamspace"));
+            if (current.isNull("parent")) {
+                if (!Arrays.asList("owner", "admin", "member").contains(session.role)) throw new Failure("RECOVERY_ACCESS_REQUIRED");
+                JSONObject workspace = proof("workspace", "workspace", 1, authority);
+                if (workspace.getJSONObject("teamspaces").optLong(teamspace) < 3) throw new Failure("RECOVERY_ACCESS_REQUIRED"); break;
+            }
+            String parent = text(current.opt("parent")), raw = privateControl(database, NativeOutbox.localContextKey(profile, parent));
+            if (raw != null && !"1".equals(privateControl(database, NativeOutbox.serverPageKey(session.workspace, parent)))) {
+                JSONObject next = new JSONObject(raw); if (!teamspace.equals(next.opt("teamspace"))) throw new Failure("RECOVERY_ACCESS_REQUIRED"); current = next;
+            } else {
+                JSONObject external = proof("page", parent, 3, authority);
+                String parentSpace = external.isNull("teamspace") ? "general" : text(external.opt("teamspace"));
+                if (!teamspace.equals(parentSpace)) throw new Failure("RECOVERY_ACCESS_REQUIRED"); break;
+            }
+        }
+        long deadline = Math.min(session.validUntil, System.currentTimeMillis() + AUTHORITY_TTL); for (JSONObject proof : proofs.values()) deadline = Math.min(deadline, proof.getLong("until"));
+        if (localChecksVersion != authorityVersion) { localChecks.clear(); localChecksVersion = authorityVersion; } localChecks.put(cacheKey, deadline); return true;
+    }
     private void envelope(JSONObject body) throws Exception {
         if(!session.workspace.equals(text(body.opt("workspace_id")))||!session.member.equals(text(body.opt("current_member_id")))||!session.binding.equals(text(body.opt("session_binding"))))throw new Failure("RECOVERY_ACCESS_REQUIRED");
         long access=number(body,"access_revision"),data=number(body,"data_revision");
@@ -224,7 +364,7 @@ final class NativeRecovery implements AutoCloseable {
     void observe(String method,String path,int status,JSONObject body) throws Exception {
         Session current=session;if(current==null)return;if(current.validUntil<=System.currentTimeMillis())throw new Failure("RECOVERY_AUTH_REQUIRED");String[] target=OutboxPolicy.canonicalResource(method,path);if(target==null){String file=attachmentPath(method,path);if(file==null)return;if(status==403||status==404){if(denied.size()>=1000){denied.clear();denied.add("workspace:workspace");}else denied.add("attachment:"+file);attachments.remove(file);authorityVersion++;}else if(status==200&&denied.contains("attachment:"+file))throw new Failure("RECOVERY_ACCESS_REQUIRED");return;}
         String key=resource(target[0],target[1]);
-        if(status==403||status==404) { if(denied.size()>=1000){denied.clear();denied.add("workspace:workspace");proofs.clear();}else denied.add(key);proofs.remove(key);authorityVersion++;return; }
+        if(status==403||status==404) { if(denied.size()>=1000){denied.clear();denied.add("workspace:workspace");proofs.clear();}else denied.add(key);proofs.remove(key);authorityVersion++;if(target[0].equals("workspace"))discardPreparedExport();return; }
         if(status!=200)return;
         try {
             envelope(body);long access=number(body,"access_revision"),data=number(body,"data_revision");
@@ -234,20 +374,39 @@ final class NativeRecovery implements AutoCloseable {
             if(target[0].equals("page")) {
                 JSONObject page=body.getJSONObject("page");if(!target[1].equals(text(page.opt("id"))))throw new Failure("RECOVERY_ACCESS_REQUIRED");
                 long level=OutboxPolicy.integer(body.opt("access_level"),1,4);if(OutboxPolicy.integer(page.opt("access_level"),1,4)!=level)throw new Failure("RECOVERY_ACCESS_REQUIRED");
-                next.put("level",level).put("locked",flag(page,"locked")).put("archived",flag(page,"archived"));
+                next.put("level",level).put("locked",flag(page,"locked")).put("archived",flag(page,"archived")).put("teamspace",page.isNull("teamspace_id")?JSONObject.NULL:text(page.opt("teamspace_id")));
             }else if(target[0].equals("database")) {
                 JSONObject database=body.getJSONObject("database");if(!target[1].equals(text(database.opt("id"))))throw new Failure("RECOVERY_ACCESS_REQUIRED");
                 JSONObject rows=new JSONObject(),schema=new JSONObject();JSONArray projected=body.getJSONArray("rows"),properties=database.getJSONArray("properties");
                 for(int i=0;i<projected.length();i++){JSONObject row=projected.getJSONObject(i);String id=text(row.opt("id"));if(rows.has(id)||!target[1].equals(text(row.opt("database_id"))))throw new Failure("RECOVERY_ACCESS_REQUIRED");rows.put(id,OutboxPolicy.integer(row.opt("access_level"),1,4));}
                 for(int i=0;i<properties.length();i++){JSONObject property=properties.getJSONObject(i);String id=id(property.opt("id"));if(schema.has(id)||!Arrays.asList("title","text","number","select","multi_select","date","checkbox","person","url","email","status","relation","rollup","formula","files","created_time","last_edited_time").contains(property.opt("type")))throw new Failure("RECOVERY_ACCESS_REQUIRED");schema.put(id,property);}
                 next.put("level",OutboxPolicy.integer(database.opt("access_level"),1,4)).put("canCreate",flag(database,"can_create_row")).put("rows",rows).put("schema",schema);
-            }else next.put("level",1);
+            }else {
+                JSONObject settings = body.optJSONObject("settings");
+                if (body.has("settings") && settings == null || settings != null && settings.has("disable_export") && !(settings.opt("disable_export") instanceof Boolean)) { discardPreparedExport(); throw new Failure("RECOVERY_ACCESS_REQUIRED"); }
+                next.put("exportAllowed", settings == null || settings.opt("disable_export") != Boolean.TRUE);
+                JSONObject spaces = new JSONObject(); JSONArray list = body.optJSONArray("teamspaces");
+                if (list != null) for (int i = 0; i < list.length(); i++) { JSONObject space = list.getJSONObject(i); String id = text(space.opt("id")); NativePolicy.require(!spaces.has(id)); spaces.put(id, OutboxPolicy.integer(space.opt("access_level"), 1, 4)); }
+                next.put("level",1).put("teamspaces",spaces);
+            }
+            Set<String> observed = new HashSet<>();
+            if (target[0].equals("page")) observed.add(target[1]);
+            if (target[0].equals("workspace")) { JSONArray pages = body.getJSONArray("pages"); NativePolicy.require(pages.length() <= 100000); for (int i = 0; i < pages.length(); i++) observed.add(text(pages.getJSONObject(i).opt("id"))); }
+            if (persistObservedPages(observed)) throw new Failure("RECOVERY_STALE");
             JSONObject previous=proofs.get(key);next.put("until",previous!=null&&previous.getLong("until")>System.currentTimeMillis()?Math.min(previous.getLong("until"),next.getLong("until")):next.getLong("until"));
             boolean changed=access>maxAccess||data>maxData||previous==null||!withoutUntil(previous).equals(withoutUntil(next));
+            if (target[0].equals("workspace") && (next.opt("exportAllowed") != Boolean.TRUE || previous != null && !Objects.equals(previous.opt("exportAllowed"), next.opt("exportAllowed")))) discardPreparedExport();
             maxAccess=Math.max(maxAccess,access);maxData=Math.max(maxData,data);proofs.put(key,next);if(changed)authorityVersion++;
             long bytes=0;for(JSONObject proof:proofs.values())bytes+=proof.toString().getBytes(StandardCharsets.UTF_8).length;
             if(proofs.size()>1000||bytes>FILE_LIMIT){proofs.clear();authorityVersion++;throw new Failure("RECOVERY_ACCESS_REQUIRED");}
-        }catch(Exception invalid){proofs.remove(key);authorityVersion++;throw new Failure("RECOVERY_ACCESS_REQUIRED");}
+        }catch(Exception invalid){if(invalid instanceof Failure && "RECOVERY_STALE".equals(((Failure)invalid).code))throw invalid;proofs.remove(key);authorityVersion++;Failure rejected=new Failure("RECOVERY_ACCESS_REQUIRED");rejected.initCause(invalid);throw rejected;}
+    }
+    private void discardPreparedExport() { if (prepared != null) { prepared.delete(); prepared = null; } }
+    private void exportPolicy(Authority authority, boolean force) throws Exception {
+        current(authority);
+        if (force) { JSONObject workspace = authority.get("/api/workspace"); current(authority); observe("GET", "/api/workspace", 200, workspace); }
+        JSONObject workspace = proof("workspace", "workspace", 1, authority);
+        if (workspace.opt("exportAllowed") != Boolean.TRUE) { discardPreparedExport(); throw new Failure("RECOVERY_ACCESS_REQUIRED"); }
     }
     private static String withoutUntil(JSONObject object) throws Exception {
         TreeSet<String> keys=new TreeSet<>();Iterator<String> names=object.keys();while(names.hasNext()){String key=names.next();if(!key.equals("until"))keys.add(key);}
@@ -257,7 +416,7 @@ final class NativeRecovery implements AutoCloseable {
     private JSONObject proof(String kind,String id,int needed,Authority authority) throws Exception {
         current(authority);String key=resource(kind,id);JSONObject proof=proofs.get(key);
         if(proof==null||proof.getLong("access")<maxAccess||proof.getLong("data")<maxData||proof.getLong("until")<=System.currentTimeMillis()) {
-            String path=kind.equals("page")?"/api/pages/"+OutboxPolicy.encode(id)+"/collaboration":"/api/databases/"+OutboxPolicy.encode(id);
+            String path=kind.equals("workspace")?"/api/workspace":kind.equals("page")?"/api/pages/"+OutboxPolicy.encode(id)+"/collaboration":"/api/databases/"+OutboxPolicy.encode(id);
             JSONObject body=authority.get(path);current(authority);observe("GET",path,200,body);proof=proofs.get(key);
         }
         if(proof==null||proof.getLong("access")<maxAccess||proof.getLong("data")<maxData||proof.getLong("until")<=System.currentTimeMillis()||denied.contains(key)||denied.contains("workspace:workspace")
@@ -353,7 +512,7 @@ final class NativeRecovery implements AutoCloseable {
         if(field.equals("attachment_id")){if(value==JSONObject.NULL)return value;String identity=id(value);attachment(identity,authority);return identity;}
         throw new Failure("RECOVERY_ACCESS_REQUIRED");
     }
-    private JSONObject marks(JSONObject source)throws Exception {
+    static JSONObject marks(JSONObject source)throws Exception {
         JSONObject result=new JSONObject();Iterator<String> names=source.keys();
         while(names.hasNext()){String name=names.next();Object value=source.get(name);
             if(Arrays.asList("bold","italic","underline","strike","code").contains(name)){if(!(value instanceof Boolean))throw new Failure("RECOVERY_ACCESS_REQUIRED");}
@@ -405,11 +564,21 @@ final class NativeRecovery implements AutoCloseable {
         for(int offset=0;offset<raw.length();){int end=OutboxPolicy.recoverySlice(raw,offset,90000);String text=raw.substring(offset,end);blocks.put(new JSONObject().put("id","native-code-"+digest+"-"+offset).put("type","code").put("language","json").put("parent_id",JSONObject.NULL).put("text",text));offset=end;}
     }
     private JSONObject projection(Row row,Item item,Authority authority) throws Exception {
+        if(row.sha.startsWith("blocked:"))throw new Failure("RECOVERY_ACCESS_REQUIRED");
         current(authority);JSONObject original=read(row.id,row.size,authority);
         if(!OutboxPolicy.hash(original.toString()).equals(row.sha)||!sourceIdentity(original,item.profile,item.resource,row.bucket,row.key))throw new Failure("RECOVERY_STALE");
+        boolean local = localPermission(row, authority);
+        if (item.category.equals("local_page") || item.category.equals("typed") && local) {
+            String page = java.net.URLDecoder.decode(item.resource.substring(item.resource.lastIndexOf('|') + 1).replace("+", "%2B"), "UTF-8");
+            if (!local) proof("page", page, authority);
+            JSONObject safe;
+            if (item.category.equals("local_page")) safe = allow(original.getJSONObject("metadata").getJSONObject("page"), "id", "title", "icon", "cover", "parent_id", "teamspace_id");
+            else { JSONObject operation = original.getJSONObject("operation"); if (!Arrays.asList("page.create", "page.patch").contains(operation.opt("kind"))) throw new Failure("RECOVERY_ACCESS_REQUIRED"); safe = new JSONObject().put("kind", operation.getString("kind")).put("body", allow(operation.getJSONObject("body"), "id", "title", "icon", "cover", "parent_id", "teamspace_id", "favorite")); }
+            JSONArray visible = new JSONArray(); code(visible, safe.toString()); item.readableOnly = true;
+            return exportValue(new JSONObject().put("page_id", page).put("draft", new JSONObject().put("blocks", visible).put("reason", "imported_native_recovery")));
+        }
         if(item.category.equals("typed")){JSONObject operation=safeOperation(original.getJSONObject("operation"),item,authority);return exportValue(new JSONObject().put("profileId",item.profile).put("resourceKey",item.resource).put("status","paused").put("operation",operation));}
-        if(item.category.equals("local_page"))throw new Failure("RECOVERY_ACCESS_REQUIRED");
-        String id=java.net.URLDecoder.decode(item.resource.substring(item.resource.lastIndexOf('|')+1).replace("+","%2B"),"UTF-8");proof("page",id,authority);
+        String id=java.net.URLDecoder.decode(item.resource.substring(item.resource.lastIndexOf('|')+1).replace("+","%2B"),"UTF-8");if(!local)proof("page",id,authority);else item.readableOnly=true;
         if(!item.resource.equals(item.profile+"|"+OutboxPolicy.encode(id)))throw new Failure("RECOVERY_ACCESS_REQUIRED");
         JSONObject draft=new JSONObject();JSONArray visible=new JSONArray();
         if(row.bucket.equals("drafts")){JSONObject source=original.getJSONObject("draft");if(source.has("blocks"))visible=blocks(source.getJSONArray("blocks"),authority);
@@ -454,6 +623,7 @@ final class NativeRecovery implements AutoCloseable {
         return new JSONObject().put("format","fountain-recovery-v2").put("origin",session.origin).put("workspace_id",session.workspace).put("member_id",session.member).put("source_binding",source[2]);
     }
     private boolean normal(List<Item> group,Prepared result,Authority authority)throws Exception {
+        for (Item item : group) if (item.readableOnly) return false;
         File file=temporary();boolean complete=false;
         try(Output output=new Output(file,result)) {
             String profile=group.get(0).profile,prefix=header(profile).toString();output.write(prefix.substring(0,prefix.length()-1)+",\"localPages\":[],\"records\":[");int records=0,drafts=0,blocks=0;
@@ -486,11 +656,11 @@ final class NativeRecovery implements AutoCloseable {
     }
     JSObject prepare(String token,JSONArray handles,long generation,Authority authority)throws Exception {
         unchanged(authority);if(!inventoryToken.equals(token))throw new Failure("RECOVERY_STALE");String selected=selection(handles);
-        if(prepared!=null){prepared.delete();prepared=null;}proofs.clear();attachments.clear();authorityVersion++;List<Item> ready=new ArrayList<>();int blocked=0;
+        if(prepared!=null){prepared.delete();prepared=null;}proofs.clear();attachments.clear();authorityVersion++;exportPolicy(authority,true);List<Item> ready=new ArrayList<>();int blocked=0;
         Map<String,Set<String>> edges=new HashMap<>();Map<String,Item> owners=new HashMap<>();
         for(int i=0;i<handles.length();i++) {
-            Item item=items.get(handles.getString(i));if(item==null)throw new Failure("RECOVERY_STALE");if(item.category.equals("local_page")){blocked++;continue;}
-            try {for(Row row:item.rows){JSONObject value=projection(row,item,authority);if(item.category.equals("typed")){JSONObject operation=value.getJSONObject("operation");String id=text(operation.opt("id"));if(owners.containsKey(id))throw new Failure("RECOVERY_ACCESS_REQUIRED");Set<String> dependencies=new HashSet<>();JSONArray source=operation.getJSONArray("depends_on");for(int j=0;j<source.length();j++)dependencies.add(text(source.get(j)));if(operation.has("base_rows")){JSONObject bases=operation.getJSONObject("base_rows");Iterator<String> ids=bases.keys();while(ids.hasNext()){JSONObject base=bases.getJSONObject(ids.next());if(!base.isNull("after_operation"))dependencies.add(text(base.opt("after_operation")));}}edges.put(id,dependencies);owners.put(id,item);}}ready.add(item);}
+            Item item=items.get(handles.getString(i));if(item==null)throw new Failure("RECOVERY_STALE");
+            try {for(Row row:item.rows){JSONObject value=projection(row,item,authority);if(item.category.equals("typed")&&!item.readableOnly){JSONObject operation=value.getJSONObject("operation");String id=text(operation.opt("id"));if(owners.containsKey(id))throw new Failure("RECOVERY_ACCESS_REQUIRED");Set<String> dependencies=new HashSet<>();JSONArray source=operation.getJSONArray("depends_on");for(int j=0;j<source.length();j++)dependencies.add(text(source.get(j)));if(operation.has("base_rows")){JSONObject bases=operation.getJSONObject("base_rows");Iterator<String> ids=bases.keys();while(ids.hasNext()){JSONObject base=bases.getJSONObject(ids.next());if(!base.isNull("after_operation"))dependencies.add(text(base.opt("after_operation")));}}edges.put(id,dependencies);owners.put(id,item);}}ready.add(item);}
             catch(Failure failure){if(!failure.code.equals("RECOVERY_ACCESS_REQUIRED"))throw failure;blocked++;}
             catch(org.json.JSONException|IllegalArgumentException unsupported){blocked++;}
         }
@@ -499,6 +669,7 @@ final class NativeRecovery implements AutoCloseable {
         for(Item item:new ArrayList<>(ready))if(item.category.equals("typed")){boolean cycle=false;for(String id:owners.keySet())if(owners.get(id)==item&&!complete.contains(id))cycle=true;if(cycle){ready.remove(item);blocked++;}}
         JSONArray warnings=new JSONArray().put("가져오기 전 현재 권한을 다시 확인합니다. 원본 기기 자료는 변경하거나 삭제하지 않습니다.").put("본문 상태·작업 위치를 확정할 수 없는 내용은 읽을 수 있는 코드로 함께 보존합니다.");
         boolean stable=false;for(int attempt=0;attempt<3&&!stable;attempt++){long before=authorityVersion;for(Item item:ready)for(Row row:item.rows)projection(row,item,authority);stable=before==authorityVersion;}if(!stable)throw new Failure("RECOVERY_STALE");
+        exportPolicy(authority,false);
         long until=Math.min(session.validUntil,System.currentTimeMillis()+AUTHORITY_TTL);for(JSONObject proof:proofs.values())until=Math.min(until,proof.getLong("until"));
         int readyRows=0,totalRows=0;for(Item item:ready)readyRows+=item.rows.size();for(int i=0;i<handles.length();i++)totalRows+=items.get(handles.getString(i)).rows.size();
         Prepared result=new Prepared(token,selected,session.scope,fingerprint,until,authorityVersion,readyRows,totalRows-readyRows,warnings);
@@ -514,13 +685,15 @@ final class NativeRecovery implements AutoCloseable {
         JSObject answer=new JSObject();answer.put("generation",generation);answer.put("exportToken",result.token);answer.put("readyCount",result.ready);answer.put("blockedCount",result.blocked);answer.put("files",files);answer.put("warnings",result.warnings);return answer;
     }
     Prepared saving(String inventory,String token,JSONArray handles,Authority authority)throws Exception {
-        unchanged(authority);if(prepared==null||!prepared.inventory.equals(inventory)||!prepared.token.equals(token)||!prepared.selection.equals(selection(handles)))throw new Failure("RECOVERY_STALE");checkPrepared(prepared,authority);return prepared;
+        unchanged(authority);if(prepared==null||!prepared.inventory.equals(inventory)||!prepared.token.equals(token)||!prepared.selection.equals(selection(handles)))throw new Failure("RECOVERY_STALE");checkPrepared(prepared,authority);exportPolicy(authority,true);checkPrepared(prepared,authority);return prepared;
     }
     void checkPrepared(Prepared value,Authority authority)throws Exception {
-        current(authority);Session current=session;if(current==null||value!=prepared||!value.scope.equals(current.scope)||value.authorityVersion!=authorityVersion||System.currentTimeMillis()>=value.deadline)throw new Failure("RECOVERY_STALE");
+        current(authority);JSONObject policy=proofs.get("workspace:workspace");
+        if(policy==null||policy.opt("exportAllowed")!=Boolean.TRUE||policy.getLong("until")<=System.currentTimeMillis()||policy.getLong("access")<maxAccess||policy.getLong("data")<maxData){discardPreparedExport();throw new Failure("RECOVERY_ACCESS_REQUIRED");}
+        Session current=session;if(current==null||value!=prepared||!value.scope.equals(current.scope)||value.authorityVersion!=authorityVersion||System.currentTimeMillis()>=value.deadline)throw new Failure("RECOVERY_STALE");
     }
     void checkResponse(JSObject result,Authority authority)throws Exception {current(authority);if(result.has("inventoryToken")&&!Objects.equals(inventoryToken,result.opt("inventoryToken")))throw new Failure("RECOVERY_STALE");if(result.has("exportToken")){Prepared value=prepared;if(value==null||!value.token.equals(result.opt("exportToken")))throw new Failure("RECOVERY_STALE");checkPrepared(value,authority);}}
-    void checkSavedSource(Prepared value,Authority authority)throws Exception {checkPrepared(value,authority);unchanged(authority);}
+    void checkSavedSource(Prepared value,Authority authority)throws Exception {checkPrepared(value,authority);exportPolicy(authority,true);checkPrepared(value,authority);unchanged(authority);}
     void finished(Prepared value){if(prepared==value){value.delete();prepared=null;}}
 
     // Structural bounds precede the platform JSON parser; quoted document text

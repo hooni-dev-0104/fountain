@@ -66,6 +66,14 @@ public class OperationReplyProofDeviceTest {
             return new JSONObject().put("generation", 1).put("lease", opened.getString("lease"))
                 .put("head", opened.getLong("head")).put("proofEpoch", opened.getLong("proofEpoch")).put("byteLimit", 1024).put("cursor", JSONObject.NULL);
         }
+        void seed(JSONArray changes) throws Exception {
+            JSONObject opened = outbox.open(1, null, false, "native-owner");
+            byte[] raw = new JSONObject().put("version", 1).put("origin", origin).put("mode", "active").put("changes", changes).toString().getBytes(StandardCharsets.UTF_8);
+            JSONObject intent = new JSONObject().put("generation", 1).put("lease", opened.getString("lease")).put("head", opened.getLong("head"))
+                .put("proofEpoch", opened.getLong("proofEpoch")).put("txId", UUID.randomUUID().toString()).put("part", 0).put("baseHead", opened.getLong("head"))
+                .put("bytesBase64", OutboxPolicy.base64(raw)).put("digest", OutboxPolicy.hash(raw));
+            outbox.stage(intent, 1); outbox.commit(intent, 1, null, false);
+        }
         public void close() {
             db.close(); outbox.close(); assertTrue(source.delete());
         }
@@ -118,9 +126,9 @@ public class OperationReplyProofDeviceTest {
             String resource = profile + "|page";
             byte[] original = new JSONObject().put("profileId", profile).put("key", resource).put("clientId", "client")
                 .put("draft", new JSONObject().put("epoch", "epoch").put("text", "last unsent input 🏠")).toString().getBytes(StandardCharsets.UTF_8);
-            f.db.execSQL("INSERT INTO records VALUES(?,?,?,?,?,?)", new Object[]{"active", "drafts", new JSONArray().put(resource).put("client").toString(), profile, resource, original});
-            f.db.execSQL("INSERT INTO records VALUES(?,?,?,?,?,?)", new Object[]{"active", "snapshots", JSONObject.quote(resource), profile, resource,
-                new JSONObject().put("profileId", profile).put("key", resource).put("snapshot", f.page(10, 0)).toString().getBytes(StandardCharsets.UTF_8)});
+            f.seed(new JSONArray().put(new JSONObject().put("bucket", "snapshots").put("op", "put").put("key", resource)
+                .put("value", new JSONObject().put("profileId", profile).put("key", resource).put("snapshot", f.page(10, 0))))
+                .put(new JSONObject().put("bucket", "drafts").put("op", "put").put("key", new JSONArray().put(resource).put("client")).put("value", new JSONObject(OutboxPolicy.utf8(original)))));
             assertEquals("ready", f.outbox.open(1, null, false, "native-owner").getString("resourceAccess"));
             for (Object ack : new Object[]{JSONObject.NULL, true, "client:1", new JSONObject(), new JSONArray().put(1), new JSONArray().put("client:01"), new JSONArray().put("client:9007199254740992"), oversized}) {
                 denied(() -> f.observe("POST", "/api/pages/page/operations", 200, f.page(11, 1).put("ack", ack)));

@@ -19,6 +19,7 @@ import org.junit.runner.RunWith;
 public class AuthRetentionDeviceTest {
     interface Action {void run()throws Exception;}
     private static void recovery(Action action)throws Exception {try{action.run();fail("Suspended native binding was reactivated");}catch(NativeOutbox.RecoveryRequired expected){}}
+    private static void denied(Action action)throws Exception {try{action.run();fail("Stale native capability was accepted");}catch(NativeOutbox.AccessRequired|IllegalArgumentException expected){}}
     private static void access(Action action)throws Exception {try{action.run();fail("Missing native authority was accepted");}catch(NativeOutbox.AccessRequired expected){}}
     private static String control(SQLiteDatabase db,String key){try(Cursor c=db.rawQuery("SELECT value FROM control WHERE key=?",new String[]{key})){return c.moveToFirst()?c.getString(0):null;}}
     private static void set(SQLiteDatabase db,String key,String value){db.execSQL("INSERT OR REPLACE INTO control VALUES(?,?)",new Object[]{key,value});}
@@ -36,6 +37,12 @@ public class AuthRetentionDeviceTest {
     }
     private static int count(SQLiteDatabase db,String table){try(Cursor c=db.rawQuery("SELECT count(*) FROM "+table,null)){assertTrue(c.moveToFirst());return c.getInt(0);}}
     private static JSONObject session(String binding)throws Exception{return new JSONObject().put("authenticated",true).put("required",false).put("mode","local").put("workspace_id","retention-workspace").put("cache_binding",binding).put("member",new JSONObject().put("id","retention-member").put("role","owner").put("active",true));}
+    private static void qualifiedSeed(Fixture fixture,String binding,String label)throws Exception{
+        fixture.outbox.grant(session(binding),null);String profile=fixture.profile(binding),resource=profile+"|page";fixture.open();
+        JSONObject value=new JSONObject().put("profileId",profile).put("key",resource).put("clientId",label).put("draft",new JSONObject().put("epoch","fixture-epoch").put("text","private "+label));
+        JSONObject delta=new JSONObject().put("version",1).put("origin",fixture.origin).put("mode","quarantine").put("changes",new JSONArray().put(new JSONObject().put("bucket","drafts").put("op","put").put("key",new JSONArray().put(resource).put(label)).put("value",value)));
+        JSONObject intent=stage(fixture.open(),"qualified-"+label,delta);fixture.outbox.stage(intent,1);fixture.outbox.commit(intent,1,null,false);
+    }
     @Test public void passiveSuspensionPreservesEverySourceRow()throws Exception {
         Context context=InstrumentationRegistry.getInstrumentation().getTargetContext();String origin="https://retention-"+UUID.randomUUID()+".invalid";
         File source=new File(context.getNoBackupFilesDir(),"durable_outbox/"+OutboxPolicy.hash(origin)+".sqlite");
@@ -51,16 +58,16 @@ public class AuthRetentionDeviceTest {
             assertEquals(1,count(inspector,"recovery"));assertEquals(1,count(inspector,"tx_receipts"));assertEquals(1,count(inspector,"staging"));
         } finally {outbox.close();assertTrue(source.delete());}
     }
-    @Test public void suspendedAndExpiredBindingsNeverReactivateButFreshBindingDoes()throws Exception {
+    @Test public void explicitSuspensionNeverReactivatesButFreshBindingDoes()throws Exception {
         try(Fixture f=new Fixture()){
             f.outbox.grant(session("a"),null);JSONObject initial=f.open();long until=initial.getLong("validUntil");
             f.outbox.grant(session("a"),null);JSONObject stable=f.open();assertEquals(initial.getString("lease"),stable.getString("lease"));assertEquals(initial.getLong("head"),stable.getLong("head"));assertEquals(initial.getLong("proofEpoch"),stable.getLong("proofEpoch"));assertEquals(until,stable.getLong("validUntil"));
             access(()->f.outbox.read(scope(stable),1,null,false));f.anchor("a");assertEquals(0,f.outbox.read(scope(f.open()),1,null,false).getJSONArray("fragments").length());
             seed(f.db,f.profile("a"),"old-a");String oldHead=control(f.db,"head"),oldProof=control(f.db,"proof_epoch"),oldLease=control(f.db,"lease");
             f.outbox.revoke();assertEquals(1,count(f.db,"records"));assertNotEquals(oldHead,control(f.db,"head"));assertNotEquals(oldProof,control(f.db,"proof_epoch"));assertNotEquals(oldLease,control(f.db,"lease"));
-            assertEquals("1",control(f.db,"suspended:"+f.profile("a")));recovery(()->f.open());recovery(()->f.outbox.grant(session("a"),null));recovery(()->f.outbox.read(scope(stable),1,null,false));recovery(()->f.outbox.stage(scope(stable),1));recovery(()->f.outbox.commit(scope(stable),1,null,false));
+            assertEquals("1",control(f.db,"suspended:"+f.profile("a")));assertEquals("blocked",f.open().getString("identityState"));recovery(()->f.outbox.grant(session("a"),null));String suspendedHead=control(f.db,"head"),suspendedProof=control(f.db,"proof_epoch"),suspendedLease=control(f.db,"lease"),suspendedGrant=control(f.db,"grant");denied(()->f.outbox.read(scope(stable),1,null,false));denied(()->f.outbox.stage(scope(stable),1));denied(()->f.outbox.commit(scope(stable),1,null,false));assertEquals(suspendedHead,control(f.db,"head"));assertEquals(suspendedProof,control(f.db,"proof_epoch"));assertEquals(suspendedLease,control(f.db,"lease"));assertEquals(suspendedGrant,control(f.db,"grant"));assertEquals(1,count(f.db,"records"));
             f.outbox.grant(session("b"),null);JSONObject fresh=f.open();assertEquals(f.profile("b"),fresh.getString("profileId"));assertEquals("required",fresh.getString("resourceAccess"));access(()->f.outbox.read(scope(fresh),1,null,false));f.anchor("b");assertEquals(0,f.outbox.read(scope(f.open()),1,null,false).getJSONArray("fragments").length());assertEquals(1,count(f.db,"records"));
-            JSONObject expired=new JSONObject(control(f.db,"grant")).put("validUntil",System.currentTimeMillis()-1);set(f.db,"grant",expired.toString());recovery(()->f.outbox.grant(session("b"),null));assertEquals("1",control(f.db,"suspended:"+f.profile("b")));assertEquals("blocked",control(f.db,"identity_state"));recovery(()->f.open());assertEquals(1,count(f.db,"records"));
+            JSONObject expired=new JSONObject(control(f.db,"grant")).put("validUntil",System.currentTimeMillis()-1);set(f.db,"grant",expired.toString());f.outbox.revoke();recovery(()->f.outbox.grant(session("b"),null));assertEquals("1",control(f.db,"suspended:"+f.profile("b")));assertEquals("blocked",control(f.db,"identity_state"));assertEquals("blocked",f.open().getString("identityState"));assertEquals(1,count(f.db,"records"));
         }
     }
     @Test public void jsProfileCleanupPreservesArchiveAndUnknownParts()throws Exception {
@@ -82,29 +89,31 @@ public class AuthRetentionDeviceTest {
             String oldResource=f.profile("a")+"|page";JSONArray oldKey=new JSONArray().put(oldResource).put("old-client");byte[] oldInput="old active unsent last copy".getBytes(StandardCharsets.UTF_8);
             f.db.execSQL("INSERT INTO records VALUES(?,?,?,?,?,?)",new Object[]{"active","drafts",oldKey.toString(),f.profile("a"),oldResource,oldInput});
             JSONObject revoke=new JSONObject().put("version",1).put("origin",f.origin).put("mode","active").put("changes",new JSONArray().put(new JSONObject().put("bucket","meta").put("op","put").put("key","revoked:"+f.profile("a")).put("value",new JSONObject().put("id","revoked:"+f.profile("a")))));
-            JSONObject invalidation=stage(f.open(),"renderer-revoked",revoke);f.outbox.stage(invalidation,1);f.outbox.commit(invalidation,1,null,false);assertEquals(2,count(f.db,"records"));recovery(()->f.open());
+            JSONObject invalidation=stage(f.open(),"renderer-revoked",revoke);f.outbox.stage(invalidation,1);f.outbox.commit(invalidation,1,null,false);assertEquals(2,count(f.db,"records"));assertEquals("blocked",f.open().getString("identityState"));
             f.outbox.grant(session("b"),null);f.open();f.anchor("b");String resource=f.profile("b")+"|page";JSONArray key=new JSONArray().put(resource).put("client");
             JSONObject oldDelete=new JSONObject().put("version",1).put("origin",f.origin).put("mode","active").put("changes",new JSONArray().put(new JSONObject().put("bucket","drafts").put("op","delete").put("key",oldKey)));JSONObject removal=stage(f.open(),"old-active-delete",oldDelete);f.outbox.stage(removal,1);f.outbox.commit(removal,1,null,false);assertEquals("Renderer DELETE cannot erase suspended active records",2,count(f.db,"records"));
             JSONObject oldRevoke=new JSONObject().put("version",1).put("origin",f.origin).put("mode","active").put("changes",new JSONArray().put(new JSONObject().put("bucket","meta").put("op","put").put("key","revoked-resource:"+oldResource).put("value",new JSONObject().put("id","revoked-resource:"+oldResource))));JSONObject resourceCleanup=stage(f.open(),"old-resource-revoke",oldRevoke);f.outbox.stage(resourceCleanup,1);recovery(()->f.outbox.commit(resourceCleanup,1,null,false));assertEquals(2,count(f.db,"records"));
             JSONObject original=new JSONObject().put("profileId",f.profile("b")).put("key",resource).put("clientId","client").put("draft",new JSONObject().put("blocks",new JSONArray().put(new JSONObject().put("id","p").put("type","paragraph").put("text","last exact input"))));
             f.db.execSQL("INSERT INTO records VALUES(?,?,?,?,?,?)",new Object[]{"quarantine","drafts",key.toString(),f.profile("b"),resource,original.toString().getBytes(StandardCharsets.UTF_8)});
             JSONObject edited=new JSONObject(original.toString());edited.getJSONObject("draft").getJSONArray("blocks").getJSONObject(0).put("text","must not overwrite original");
-            JSONObject overwrite=new JSONObject().put("version",1).put("origin",f.origin).put("mode","quarantine").put("changes",new JSONArray().put(new JSONObject().put("bucket","drafts").put("op","put").put("key",key).put("value",edited)));JSONObject intent=stage(f.open(),"archive-overwrite",overwrite);f.outbox.stage(intent,1);String head=control(f.db,"head");int receipts=count(f.db,"tx_receipts");recovery(()->f.outbox.commit(intent,1,null,false));
-            assertEquals(head,control(f.db,"head"));assertEquals(receipts,count(f.db,"tx_receipts"));assertEquals(2,count(f.db,"staging"));
+            JSONObject overwrite=new JSONObject().put("version",1).put("origin",f.origin).put("mode","quarantine").put("changes",new JSONArray().put(new JSONObject().put("bucket","drafts").put("op","put").put("key",key).put("value",edited)));JSONObject intent=stage(f.open(),"archive-overwrite",overwrite);f.outbox.stage(intent,1);long head=Long.parseLong(control(f.db,"head"));int receipts=count(f.db,"tx_receipts");f.outbox.commit(intent,1,null,false);
+            assertEquals(head+1,Long.parseLong(control(f.db,"head")));assertEquals(receipts+1,count(f.db,"tx_receipts"));assertEquals(1,count(f.db,"staging"));
             try(Cursor row=f.db.rawQuery("SELECT payload FROM records WHERE profile_id=?",new String[]{f.profile("b")})){assertTrue(row.moveToFirst());assertArrayEquals(original.toString().getBytes(StandardCharsets.UTF_8),row.getBlob(0));}
+            try(Cursor row=f.db.rawQuery("SELECT r.payload FROM recovery r JOIN native_recovery_records a ON a.id=r.id WHERE a.profile_id=?",new String[]{f.profile("b")})){assertTrue(row.moveToFirst());assertArrayEquals(edited.toString().getBytes(StandardCharsets.UTF_8),row.getBlob(0));assertFalse(row.moveToNext());}
         }
     }
     @Test public void explicitActorEraseIsExactAndPreservesForeignAndUnattributedRows()throws Exception {
         try(Fixture f=new Fixture()){
-            f.outbox.grant(session("a"),null);String a=f.profile("a"),b=f.profile("b"),foreign=OutboxPolicy.profile(f.origin,"retention-workspace","foreign-member","a"),otherWorkspace=OutboxPolicy.profile(f.origin,"other-workspace","retention-member","a");
-            for(String profile:new String[]{a,b,foreign,otherWorkspace})seed(f.db,profile,profile);
+            String a=f.profile("a"),b=f.profile("b"),foreign=OutboxPolicy.profile(f.origin,"retention-workspace","foreign-member","a"),otherWorkspace=OutboxPolicy.profile(f.origin,"other-workspace","retention-member","a");
+            qualifiedSeed(f,"a","known-a");qualifiedSeed(f,"b","known-b");
+            for(String profile:new String[]{foreign,otherWorkspace})seed(f.db,profile,profile);seed(f.db,a,"unknown-claimed-same-actor");
             f.db.execSQL("INSERT INTO recovery VALUES('owned','fixture',?)",new Object[]{new byte[]{1,2}});f.db.execSQL("INSERT INTO recovery VALUES('legacy','unknown',?)",new Object[]{new byte[]{3,4}});set(f.db,"recovery-owner:owned",b);
             f.db.execSQL("INSERT INTO staging VALUES('owned-stage',0,0,'lease',?)",new Object[]{new byte[]{5,6}});set(f.db,"staging-owner:owned-stage",a);f.db.execSQL("INSERT INTO staging VALUES('unknown-stage',0,0,'lease',?)",new Object[]{new byte[]{7,8}});
             f.db.execSQL("INSERT INTO tx_receipts VALUES('owned-receipt','digest',1)");set(f.db,"receipt-owner:owned-receipt",b);f.db.execSQL("INSERT INTO tx_receipts VALUES('foreign-receipt','digest',1)");set(f.db,"receipt-owner:foreign-receipt",foreign);
-            assertNull(f.outbox.nativeActor("unrelated-cookie"));try{f.outbox.eraseActor(foreign);fail("Unknown actor erased archives");}catch(IllegalArgumentException expected){}assertEquals(4,count(f.db,"records"));
+            assertNull(f.outbox.nativeActor("unrelated-cookie"));try{f.outbox.eraseActor(foreign);fail("Unknown actor erased archives");}catch(IllegalArgumentException expected){}assertEquals(5,count(f.db,"records"));
             String actor=f.outbox.nativeActor(null);f.outbox.revoke();assertEquals(actor,f.outbox.nativeActor(null));f.outbox.eraseActor(actor);
-            assertEquals(2,count(f.db,"records"));assertEquals(1,count(f.db,"recovery"));assertEquals(1,count(f.db,"staging"));assertEquals(1,count(f.db,"tx_receipts"));
-            recovery(()->f.outbox.grant(session("b"),null));f.outbox.grant(session("fresh-c"),null);assertEquals(f.profile("fresh-c"),f.open().getString("profileId"));assertEquals(2,count(f.db,"records"));
+            assertEquals(3,count(f.db,"records"));assertEquals(2,count(f.db,"recovery"));assertEquals(2,count(f.db,"staging"));assertEquals(1,count(f.db,"tx_receipts"));
+            recovery(()->f.outbox.grant(session("b"),null));f.outbox.grant(session("fresh-c"),null);assertEquals(f.profile("fresh-c"),f.open().getString("profileId"));assertEquals(3,count(f.db,"records"));
         }
     }
 }

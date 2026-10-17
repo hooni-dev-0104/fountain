@@ -1,0 +1,107 @@
+{
+  "verifiedAt": "2026-10-17T03:21:40.267837+00:00",
+  "sourceCommit": "0b27a3c81174d827cceb1bc46503c46eee9b947e",
+  "artifactDirectory": ".data/installables-20261017-0b27a3c",
+  "artifacts": [
+    {
+      "filename": "Fountain-macOS-arm64.zip",
+      "bytes": 127604562,
+      "sha256": "6e51c21f7b3a28dad5dc60da31510885f45648871899e0260ae7efc05fd10c07",
+      "zipCRC": "passed",
+      "entries": 1453,
+      "currentDBCredentialsAndSetupCodeMatches": 0
+    },
+    {
+      "filename": "Fountain-Windows-x64.zip",
+      "bytes": 158671750,
+      "sha256": "48c0a6a77c5dea97c3eb495605d181386044e4199e52352215709a80a0f6bb14",
+      "zipCRC": "passed",
+      "entries": 183,
+      "currentDBCredentialsAndSetupCodeMatches": 0
+    },
+    {
+      "filename": "Fountain-iOS-Simulator-Release.zip",
+      "bytes": 3119907,
+      "sha256": "3c6b6d86f76db8d23ff1d25cc2859dfbd0184e5331c7675a3503a5c6065b6f8c",
+      "zipCRC": "passed",
+      "entries": 121,
+      "currentDBCredentialsAndSetupCodeMatches": 0
+    },
+    {
+      "filename": "Fountain-Android-debug.apk",
+      "bytes": 4770320,
+      "sha256": "088b4ae939cdfc770eefc6c1c6beca94041c488fc8943618a3930295c04de7cd",
+      "signature": "apksigner verified; local QA debug certificate",
+      "currentDBCredentialsAndSetupCodeMatches": 0
+    }
+  ],
+  "desktopPackage": [
+    {
+      "platform": "macOS-arm64",
+      "exactRuntimeSourceFiles": 8,
+      "publicAssets": 14,
+      "privateEntries": 0,
+      "archiveEntries": 18,
+      "onlyAdditionalNPMMetadata": "node_modules/.package-lock.json",
+      "packageFieldsPruned": [
+        "private",
+        "scripts",
+        "devDependencies"
+      ],
+      "appASARSHA256": "9e0b2c4f772c1d7518a291fe33a1d1eb2a0b0693073ff88546b8878a19f9d429",
+      "windowsExecution": false
+    },
+    {
+      "platform": "Windows-x64",
+      "exactRuntimeSourceFiles": 8,
+      "publicAssets": 14,
+      "privateEntries": 0,
+      "archiveEntries": 18,
+      "onlyAdditionalNPMMetadata": "node_modules/.package-lock.json",
+      "packageFieldsPruned": [
+        "private",
+        "scripts",
+        "devDependencies"
+      ],
+      "appASARSHA256": "9e0b2c4f772c1d7518a291fe33a1d1eb2a0b0693073ff88546b8878a19f9d429",
+      "windowsExecution": false
+    }
+  ],
+  "mobilePackage": {
+    "androidExactTested021": true,
+    "androidSHA256": "088b4ae939cdfc770eefc6c1c6beca94041c488fc8943618a3930295c04de7cd",
+    "iosConfiguration": "Release",
+    "iosPlatform": "Simulator",
+    "iosTestBundleAbsent": true,
+    "iosActivationQALiteralsAbsent": true,
+    "iosPrivateValuesAbsent": true,
+    "iosMinimumOS": "15.5",
+    "iosExecutableSHA256": "d942417ab872b2169ce19d5ddff67b32648654eea5e19c3e9f7d7876bf76c77e"
+  },
+  "runtime": {
+    "macOSPackagedLocalHTTPChecks": 14,
+    "macOSPackagedSecurityChecks": 5,
+    "macOSPackagedRealAnonymousSupabaseRounds": 2,
+    "macOSAnonymousWrites": 0,
+    "iOSReleaseSimulatorLaunch": {
+      "ownedSimulator": true,
+      "configuration": "Release",
+      "testBundleInstalled": false,
+      "actualLaunchSucceeded": true,
+      "pid": 97377,
+      "activationOverrideUsed": false,
+      "originalAppDataReset": false,
+      "installedExecutableSHA256": "d942417ab872b2169ce19d5ddff67b32648654eea5e19c3e9f7d7876bf76c77e",
+      "screenshotSHA256": "9353757ec3820c846160f910f68fc5039401d10272fce2d9466ead2b68cbf0fa",
+      "observedScreen": "Anonymous native authentication entry gate with login button",
+      "fullReleaseAuthenticatedLifecycleVerified": false
+    },
+    "androidRuntimeEvidence": "native-outbox-activation-verification.json",
+    "WindowsOSRuntimeVerified": false,
+    "physicalIPhoneVerified": false
+  },
+  "scope": "Local standalone artifacts only; not signed public installers, App Store release or completed family/cloud cutover",
+  "originalPreviewAndHumanDesktopSessionPreserved": true,
+  "newDependencies": false,
+  "publicReleaseOrGitPushPerformed": false
+}

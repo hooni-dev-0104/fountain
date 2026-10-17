@@ -28,6 +28,8 @@ node --check static/app.js
 
 모바일은 기본 활성화된 SQLite 저장소에 확인된 미전송 편집을 보관합니다. iOS Simulator·Android Emulator에서 별도 활성화 옵션 없이 저장·오프라인 재시작·캐시 제거 뒤 복구를 검증했습니다. [기기 저장과 복구 범위](docs/NATIVE_OUTBOX.md)를 확인하세요.
 
+현재 작업폴더에 생성한 macOS·Windows·Android 파일과 iOS 시뮬레이터 앱의 사용 방법은 [설치 안내](docs/INSTALL.md)에 있습니다. 플랫폼별 실제 실행과 배포 서명의 확인 범위를 구분합니다.
+
 설치된 Notion Desktop 7.39.0의 번들에서도 SQLite·저장소 마이그레이션·클립보드 연결을 정적으로 조사하고 REA로 분석했습니다. 범위·해시·재현 명령은 [Desktop 조사 기록](docs/research/notion-desktop.md)에 있으며, 계정 데이터와 개인 문서는 읽지 않았습니다.
 
 가족 공용 비밀번호를 설정하려면 `FOUNTAIN_ACCESS_TOKEN`에 16자 이상 값을 지정하고 실행합니다. 세션은 HttpOnly 쿠키로 관리하며, 가족은 같은 신뢰 영역을 공유합니다. 기본 접속은 이 PC로 제한됩니다.

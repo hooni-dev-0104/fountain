@@ -153,7 +153,7 @@ class ContentIndex:
             if previous[1] != digest or raw_changed:
                 self.store.db.execute('UPDATE content_provenance SET editor_id=?,edited_at=?,editor_cause=? WHERE kind=? AND id=?',(actor,value.get('updated_at') if actor else None,cause,kind,identity))
             else:
-                self.store.db.execute('UPDATE content_provenance SET manager_id=?,manager_at=? WHERE kind=? AND id=?',(actor,value.get('updated_at'),kind,identity))
+                self.store.db.execute('UPDATE content_provenance SET manager_id=?,manager_at=? WHERE kind=? AND id=?',(actor,value.get('updated_at') if actor else None,kind,identity))
 
     def manage_target(self,kind,identity):
         if self.postgres or kind not in ('page','database') or not isinstance(identity,str):return

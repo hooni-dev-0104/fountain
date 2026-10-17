@@ -7,7 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from fountain.backup import BackupError, create_backup, inspect_backup, main, restore_backup
+from fountain.backup import BackupError, create_backup, inspect_backup, main, restore_backup, PROVENANCE_COLUMNS
+from fountain.content_index import INDEX_DEFINITIONS
 from fountain.core import Store, Workspace
 
 
@@ -75,6 +76,22 @@ class BackupTests(unittest.TestCase):
         finally:
             memory.close()
 
+    def test_unknown_management_actor_keeps_full_backup_restorable(self):
+        page = self.store.put('page', {'id': 'unknown-manager', 'title': '가족 기록'})
+        page['permissions'] = {'default': 'private', 'inherit': False, 'members': {}, 'groups': {}}
+        self.store.put('page', page)
+        history = self.store.db.execute(
+            'SELECT manager_id,manager_at FROM content_provenance WHERE kind=? AND id=?',
+            ('page', page['id'])).fetchone()
+        self.assertEqual(history, (None, None))
+        backup, restored = self.root / 'unknown-manager.db', self.root / 'unknown-manager-restored.db'
+        create_backup(self.source, backup)
+        restore_backup(backup, restored)
+        with sqlite3.connect(restored) as connection:
+            self.assertEqual(connection.execute(
+                'SELECT manager_id,manager_at FROM content_provenance WHERE kind=? AND id=?',
+                ('page', page['id'])).fetchone(), history)
+
     def test_live_wal_snapshot_contains_recent_uncheckpointed_commit(self):
         self.store.db.execute("PRAGMA wal_autocheckpoint=0")
         self.store.put("page", {"id": "wal-only", "title": "새 가족 기록"})
@@ -141,6 +158,83 @@ class BackupTests(unittest.TestCase):
         self.assertIn("entities", json.loads(output.getvalue()))
         self.assertIn("Destination already exists", errors.getvalue())
         self.assertNotIn("Traceback", errors.getvalue())
+
+    def history_fixture(self):
+        self.store.put('page', {'id': 'history/가족😀', 'title': '보존할 작성 기록'})
+        self.store.db.execute("UPDATE content_provenance SET creator_id=?,creator_cause='human',editor_id=?,"
+                              "edited_at=?,editor_cause='automation',manager_id=?,manager_at=? WHERE id=?",
+                              ('deleted-author', 'inactive-editor', '2026-10-17T12:00:00.123456+09:00',
+                               'deleted-manager', '2026-10-17T04:00:00Z', 'history/가족😀'))
+        self.store.db.commit()
+        return self.store.db.execute('SELECT '+','.join(PROVENANCE_COLUMNS)+' FROM content_provenance ORDER BY kind,id').fetchall()
+
+    def test_trusted_full_history_survives_create_restore_and_index_rebuild(self):
+        expected = self.history_fixture()
+        before = self.store.db.execute('SELECT cursor_secret FROM content_search_state').fetchone()[0]
+        backup, restored = self.root / 'history.db', self.root / 'restored-history.db'
+        create_backup(self.source, backup)
+        restore_backup(backup, restored)
+        for path in (backup, restored):
+            with sqlite3.connect(path) as connection:
+                self.assertEqual(connection.execute('SELECT * FROM content_provenance ORDER BY kind,id').fetchall(), expected)
+                self.assertFalse(connection.execute("SELECT 1 FROM sqlite_schema WHERE name='content_search_state'").fetchall())
+            self.assertNotIn(before.encode(), path.read_bytes())
+        rebuilt = Store(restored)
+        try:
+            self.assertEqual(rebuilt.db.execute('SELECT * FROM content_provenance ORDER BY kind,id').fetchall(), expected)
+            self.assertNotEqual(rebuilt.db.execute('SELECT cursor_secret FROM content_search_state').fetchone()[0], before)
+        finally:
+            rebuilt.close()
+
+    def test_legacy_snapshot_without_history_remains_supported(self):
+        self.history_fixture()
+        path = self.root / 'legacy.db'
+        create_backup(self.source, path)
+        with sqlite3.connect(path) as connection:
+            connection.execute('DROP TABLE content_provenance')
+        target = self.root / 'legacy-restored.db'
+        restore_backup(path, target)
+        rebuilt = Store(target)
+        try:
+            self.assertEqual(rebuilt.db.execute("SELECT creator_id,creator_cause FROM content_provenance WHERE id=?",
+                             ('history/가족😀',)).fetchone(), (None, 'unknown'))
+        finally:
+            rebuilt.close()
+
+    def test_malformed_history_and_partial_indexes_are_rejected_without_output(self):
+        self.history_fixture()
+        cases = [('kind', 'comment'), ('id', 'missing'), ('generation', 'A'*32),
+                 ('creator_id', ''), ('creator_id', 'x'*161), ('creator_id', 'nul\0actor'),
+                 ('creator_cause', None), ('creator_cause', 'forged'), ('editor_cause', 'scim'),
+                 ('edited_at', '2026-02-30T01:00:00Z'), ('edited_at', '2026-10-17T01:00:00+01:99'),
+                 ('edited_at', '2026-10-17'), ('manager_at', '0000-01-01T00:00:00Z'),
+                 ('manager_id', None), ('manager_at', None), ('editor_id', None)]
+        for index, (column, value) in enumerate(cases):
+            with self.subTest(column=column, value=value):
+                path, target = self.root / f'bad-{index}.db', self.root / f'rejected-{index}.db'
+                create_backup(self.source, path)
+                with sqlite3.connect(path) as connection:
+                    connection.execute('UPDATE content_provenance SET '+column+'=? WHERE id=?', (value, 'history/가족😀'))
+                with self.assertRaises(BackupError):
+                    restore_backup(path, target)
+                self.assertFalse(target.exists())
+                self.assertFalse(list(self.root.glob('.fountain-backup-*')))
+        partial = self.root / 'partial.db'
+        create_backup(self.source, partial)
+        with sqlite3.connect(partial) as connection:
+            connection.execute(INDEX_DEFINITIONS['content_search_documents'])
+        with self.assertRaises(BackupError):
+            inspect_backup(partial)
+
+    def test_full_index_generation_mismatch_is_rejected_and_source_stays_intact(self):
+        self.history_fixture()
+        self.store.db.execute("UPDATE content_provenance SET generation=? WHERE id=?", ('0'*32, 'history/가족😀'))
+        self.store.db.commit()
+        with self.assertRaisesRegex(BackupError, 'generation'):
+            create_backup(self.source, self.root / 'bad-generation.db')
+        self.assertEqual(self.store.db.execute('SELECT generation FROM content_provenance WHERE id=?',
+                         ('history/가족😀',)).fetchone()[0], '0'*32)
+        self.assertFalse((self.root / 'bad-generation.db').exists())
 
 
 if __name__ == "__main__": unittest.main()

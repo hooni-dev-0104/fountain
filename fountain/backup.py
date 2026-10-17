@@ -10,7 +10,10 @@ import sqlite3
 import sys
 import tempfile
 from contextlib import closing, nullcontext
+from datetime import datetime, timezone
 from pathlib import Path
+
+from .content_index import INDEX_DEFINITIONS
 
 
 class BackupError(ValueError):
@@ -32,6 +35,71 @@ PRIVATE_KINDS = ("session", "clipboard", "upload", "presence")
 CHUNK_SIZE = 4 * 1024 * 1024
 HASH_READ_SIZE = 64 * 1024
 MAX_ATTACHMENT_SIZE = 5_000_000_000
+PROVENANCE_COLUMNS = ('kind', 'id', 'generation', 'creator_id', 'creator_cause',
+                      'editor_id', 'edited_at', 'editor_cause', 'manager_id', 'manager_at')
+PROVENANCE_CAUSES = {'unknown', 'human', 'automation', 'import', 'public_form', 'system'}
+
+
+def _history_id(value):
+    if not isinstance(value, str) or not 1 <= len(value) <= 160 or '\0' in value:
+        return False
+    try:
+        value.encode('utf-8')
+    except UnicodeError:
+        return False
+    return True
+
+
+def _history_time(value):
+    if value is None:
+        return True
+    if not isinstance(value, str) or not re.fullmatch(
+            r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)', value):
+        return False
+    try:
+        datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone(timezone.utc)
+    except (ValueError, OverflowError):
+        return False
+    return True
+
+
+def _inspect_provenance(connection, tables):
+    if 'content_provenance' not in tables:
+        return
+    columns = ','.join(PROVENANCE_COLUMNS)
+    for row in connection.execute('SELECT '+columns+' FROM content_provenance ORDER BY kind,id'):
+        kind, identity, generation, creator, creator_cause, editor, edited_at, editor_cause, manager, manager_at = row
+        if (kind not in ('page', 'database', 'row') or not _history_id(identity)
+                or not isinstance(generation, str) or re.fullmatch('[a-f0-9]{32}', generation) is None
+                or any(actor is not None and not _history_id(actor) for actor in (creator, editor, manager))
+                or creator_cause not in PROVENANCE_CAUSES or editor_cause not in PROVENANCE_CAUSES
+                or not _history_time(edited_at) or not _history_time(manager_at)
+                or (manager is None) != (manager_at is None)
+                or (editor is None and edited_at is not None)):
+            raise BackupError('Source contains invalid content provenance')
+        if connection.execute('SELECT 1 FROM entities WHERE kind=? AND id=?', (kind, identity)).fetchone() is None:
+            raise BackupError('Content provenance has no matching source resource')
+        if 'content_search_documents' in tables:
+            indexed = connection.execute('SELECT generation FROM content_search_documents WHERE kind=? AND id=?',
+                                         (kind, identity)).fetchone()
+            if indexed != (generation,):
+                raise BackupError('Content provenance generation does not match its resource index')
+
+
+def _provenance_digest(rows):
+    digest, count = hashlib.sha256(), 0
+    for row in rows:
+        raw = json.dumps(list(row), ensure_ascii=False, allow_nan=False, separators=(',', ':')).encode('utf-8')
+        digest.update(len(raw).to_bytes(8, 'big'))
+        digest.update(raw)
+        count += 1
+    return count, digest.hexdigest()
+
+
+def _provenance_provisioned(store):
+    return store._execute("SELECT to_regclass('fountain_private.content_provenance') IS NOT NULL "
+                          "AND to_regclass('fountain_private.content_search_documents') IS NOT NULL",
+                          fetch='one')[0] is True
 
 
 def _open_source(path):
@@ -113,15 +181,22 @@ def _prune_chunks(connection):
 def _inspect(connection, *, validate_attachments=True, complete_only=False):
     objects = connection.execute("SELECT type,name,tbl_name,sql FROM sqlite_schema").fetchall()
     tables = {name for kind, name, _, _ in objects if kind == "table"}
-    if tables not in ({"entities", "meta"}, set(SCHEMA)):
+    derivative = set(INDEX_DEFINITIONS)
+    ordinary = tables - derivative
+    if ordinary not in ({"entities", "meta"}, set(SCHEMA)) or tables & derivative not in (set(), {'content_provenance'}, derivative):
         raise BackupError("Source must contain exactly the Fountain tables")
     for kind, name, table, definition in objects:
-        implicit_index = (kind == "index" and table in SCHEMA
+        implicit_index = (kind == "index" and table in set(SCHEMA) | derivative
                           and name == f"sqlite_autoindex_{table}_1" and definition is None)
-        if not (kind == "table" and name in SCHEMA) and not implicit_index:
+        if not (kind == "table" and name in set(SCHEMA) | derivative) and not implicit_index:
             raise BackupError("Source contains unsupported database objects")
         if kind == "table" and (not definition or "VIRTUAL" in definition.upper()):
             raise BackupError("Virtual tables are not permitted")
+    normalize = lambda sql: re.sub(r"\s+", "", sql).casefold()
+    for table in tables & derivative:
+        definition = next(sql for kind, name, _, sql in objects if kind == "table" and name == table)
+        if normalize(definition) != normalize(INDEX_DEFINITIONS[table]):
+            raise BackupError(f"Unsupported {table} table definition")
     for table, expected in SCHEMA.items():
         if table not in tables:
             continue
@@ -146,6 +221,7 @@ def _inspect(connection, *, validate_attachments=True, complete_only=False):
             _strict_json(data)
     except (ValueError, TypeError, RecursionError) as error:
         raise BackupError("Source contains invalid JSON entity or metadata records") from error
+    _inspect_provenance(connection, tables)
     if validate_attachments:
         _inspect_chunks(connection, tables, complete_only)
     return counts
@@ -179,6 +255,10 @@ def _copy(source_path, destination_path):
                 # Recheck SQL objects before any mutation; validate final bytes after pruning.
                 _inspect(target, validate_attachments=False)
                 target.execute("PRAGMA secure_delete=ON")
+                # Trusted full snapshots preserve non-derivable attribution;
+                # rebuild only search data and regenerate cursor credentials.
+                for table in ('content_search_chunks','content_search_documents','content_search_state'):
+                    target.execute('DROP TABLE IF EXISTS '+table)
                 placeholders = ",".join("?" for _ in PRIVATE_KINDS)
                 target.execute(f"DELETE FROM entities WHERE kind IN ({placeholders})", PRIVATE_KINDS)
                 _prune_chunks(target)

@@ -1,0 +1,22 @@
+{
+  "target": "Notion 유료 플랜의 개인·가족용 독립 앱 Fountain",
+  "source": "https://www.notion.com/pricing",
+  "objective": "Notion의 모든 유료 플랜 상당 기능을 개인과 가족용 독립 Fountain 앱에 구현하고 웹·macOS·Windows·iOS·Android에서 같은 계정과 데이터를 Supabase 전체 백엔드로 사용한다. 작은 단위의 간결한 한 줄 한국어 커밋을 만든다.",
+  "inventory_complete": false,
+  "unresolved_areas": [
+    "유료 Notion 실제 계정의 전체 동작과 비공개 서버 기능은 미관찰",
+    "FEATURES.md의 남은 차이 및 이 목록의 모든 미검증 acceptance",
+    "실제 소유자·가족 계정 연결과 공개 무료 웹 호스트",
+    "Windows 실제 실행·물리 iOS/Android·서명 배포 및 다섯 플랫폼 전체 계정 동기화",
+    "외부 AI·IdP·OAuth·메일/푸시·SIEM/DLP 제공자와 계약",
+    "원본 전체 제품 영역의 인벤토리 완전성 미확인"
+  ],
+  "scope": "기존 FEATURES.md의 구현/차이와 공식 문서에서 확인한 미구현 영역을 보존한 초기 구조화 목록. implemented는 코드 존재이며 전체 영역 검증 완료가 아니다. 단일 비율로 전체 제품 완성도를 주장하지 않는다.",
+  "goal_thread_id": "01a141db-4cca-7571-9023-fe95dd6b7d8a",
+  "original_artifact": {
+    "platform": "macOS",
+    "version": "7.39.0",
+    "evidence": "../research/notion-desktop.md"
+  },
+  "updated_at": "2026-10-17"
+}

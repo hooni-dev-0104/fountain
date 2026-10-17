@@ -1,0 +1,590 @@
+[
+  {
+    "id": "AREA-platforms",
+    "name": "플랫폼",
+    "priority": "P0",
+    "weight": 5,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: 웹·macOS arm64 실제 실행, Windows x64 portable 생성·검사, iOS Simulator·Android Emulator의 기본 활성 SQLite와 실제 로그인·편집·오프라인 재시작·IndexedDB 제거 뒤 복원·로그아웃",
+      "Resolve: Windows 실행, 물리 기기·전원 차단·릴리스 서명/배포, 다섯 플랫폼 전체 동기화; [플랫폼 안내](PLATFORMS.md)"
+    ],
+    "verification": [],
+    "limitations": [
+      "Windows 실행, 물리 기기·전원 차단·릴리스 서명/배포, 다섯 플랫폼 전체 동기화; [플랫폼 안내](PLATFORMS.md)"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "AREA-cloud",
+    "name": "클라우드",
+    "priority": "P0",
+    "weight": 5,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: Supabase Auth·Edge·Postgres·비공개 Storage·Realtime, 서비스 권한·예약 Cron·SCIM·파일/백업 정리의 구현과 격리된 실제 QA; API 13의 초기 소유자 연결 경로 준비",
+      "Resolve: 실제 소유자 연결·공개 웹 호스트·원본 예약/정리 등록·전체 운영 전환; [전환 범위](supabase-backend.md). Python 호환 경로의 5GB 검증은 클라우드 5GB 전송 증거가 아님"
+    ],
+    "verification": [],
+    "limitations": [
+      "실제 소유자 연결·공개 웹 호스트·원본 예약/정리 등록·전체 운영 전환; [전환 범위](supabase-backend.md). Python 호환 경로의 5GB 검증은 클라우드 5GB 전송 증거가 아님"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "AREA-documents",
+    "name": "문서",
+    "priority": "P0",
+    "weight": 5,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: 중첩 페이지·블록, 굵게·기울임·밑줄·취소선·코드·링크·색상, 문자 단위 공동 편집, 접속자·원격 커서·선택 영역, 내 작업 실행 취소·다시 실행, 자동 저장, 잠금·즐겨찾기·검색·휴지통",
+      "Resolve: 열·동기화 블록·모든 Notion 고급 블록"
+    ],
+    "verification": [],
+    "limitations": [
+      "열·동기화 블록·모든 Notion 고급 블록"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "AREA-search",
+    "name": "검색",
+    "priority": "P1",
+    "weight": 3,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: 현재 권한에 따른 페이지·DB·행 통합 문자열 검색, 구절·유형·소유자·공간·상위 페이지·날짜 필터와 정렬·페이지 나눔; [검색 안내](SEARCH.md)",
+      "Resolve: AI 의미 검색·외부 연결 앱 색인; 오프라인은 보관된 제목만"
+    ],
+    "verification": [],
+    "limitations": [
+      "AI 의미 검색·외부 연결 앱 색인; 오프라인은 보관된 제목만"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "AREA-history",
+    "name": "이력",
+    "priority": "P1",
+    "weight": 3,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: 기한 없는 저장 버전, 제목·본문 변경 비교·읽기 전용 미리보기, 현재 revision 확인 후 원자적 복원",
+      "Resolve: 버전 이름·북마크·작성자 정밀 정보·DB 전체 복원·이력 페이지 나누기; [안내](VERSION_HISTORY.md)"
+    ],
+    "verification": [],
+    "limitations": [
+      "버전 이름·북마크·작성자 정밀 정보·DB 전체 복원·이력 페이지 나누기; [안내](VERSION_HISTORY.md)"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "AREA-databases",
+    "name": "DB",
+    "priority": "P1",
+    "weight": 3,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: 속성·행 편집·필터·정렬, 테이블·보드·달력·갤러리·차트·목록·타임라인, 하위 작업과 의존관계, 전체 하위 항목 복제·삭제",
+      "Resolve: 타임라인 직접 끌기·시간/월/년 확대, 날짜·시간 편집 UI, 분리된 시작/종료 속성, 상세 하위 항목 표시·필터, 복잡한 대시보드"
+    ],
+    "verification": [],
+    "limitations": [
+      "타임라인 직접 끌기·시간/월/년 확대, 날짜·시간 편집 UI, 분리된 시작/종료 속성, 상세 하위 항목 표시·필터, 복잡한 대시보드"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "AREA-formulas",
+    "name": "계산",
+    "priority": "P1",
+    "weight": 3,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: 안전한 수식 AST, 관계 검증, 합·개수·평균·최솟값·최댓값 롤업, 오류 표시",
+      "Resolve: Notion 수식 언어 전체, 복잡한 함수 라이브러리"
+    ],
+    "verification": [],
+    "limitations": [
+      "Notion 수식 언어 전체, 복잡한 함수 라이브러리"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "AREA-automations",
+    "name": "자동화",
+    "priority": "P1",
+    "weight": 3,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: 수동·행 생성·수정·시간대별 반복 예약, 조건, 속성 변경·행/페이지 생성, 실행 기록·중복 방지·실패 롤백, Supabase Cron/worker의 현재 작성자 권한 재검사",
+      "Resolve: 원본 작업공간 예약 등록, 여러 트리거 조합·동적 변수·외부 액션·웹훅 전송"
+    ],
+    "verification": [],
+    "limitations": [
+      "원본 작업공간 예약 등록, 여러 트리거 조합·동적 변수·외부 액션·웹훅 전송"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "AREA-forms",
+    "name": "양식",
+    "priority": "P1",
+    "weight": 3,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: 질문·필수 값·조건부 표시, 응답 검증, DB 행 생성과 게시 HTML(현재 가족 로그인 필요)",
+      "Resolve: 공개 웹 호스트 연결, 파일 질문, 모든 Notion 스타일 옵션"
+    ],
+    "verification": [],
+    "limitations": [
+      "공개 웹 호스트 연결, 파일 질문, 모든 Notion 스타일 옵션"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "AREA-sites",
+    "name": "사이트",
+    "priority": "P1",
+    "weight": 3,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: 페이지 HTML, 게시/해제, 주소·SEO 제목·설명, XSS 이스케이프와 게시 권한 검사(현재 가족 로그인 필요)",
+      "Resolve: 공개 웹 호스트·외부 DNS·사용자 도메인 운영, Notion 호스팅"
+    ],
+    "verification": [],
+    "limitations": [
+      "공개 웹 호스트·외부 DNS·사용자 도메인 운영, Notion 호스팅"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "AREA-accounts",
+    "name": "가족 접근",
+    "priority": "P0",
+    "weight": 5,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: 클라우드 Supabase Auth·비공개 세션 Vault·기존 멤버 ID 연결·계정 관리·세션 철회; Python 호환 모드의 공용 로그인·scrypt 계정과 로컬 암호 복구도 보존",
+      "Resolve: 실제 소유자·가족 계정 연결, 외부 SSO·MFA"
+    ],
+    "verification": [],
+    "limitations": [
+      "실제 소유자·가족 계정 연결, 외부 SSO·MFA"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "AREA-membership",
+    "name": "멤버·팀스페이스",
+    "priority": "P0",
+    "weight": 5,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: 소유자·멤버 관리자·멤버·게스트, 비공개 팀스페이스, 그룹·상속 ACL, 보기·댓글·편집·공유 관리, 담당 행 제한",
+      "Resolve: 초대 메일, 외부 디렉터리 동기화"
+    ],
+    "verification": [],
+    "limitations": [
+      "초대 메일, 외부 디렉터리 동기화"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "AREA-verification",
+    "name": "검증",
+    "priority": "P1",
+    "weight": 3,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: 여러 담당자·만료일/무기한·갱신/해제 화면, 검증/만료 상태, 현재 권한·문서 revision 검사; [안내](PAGE_VERIFICATION.md)",
+      "Resolve: 만료 알림, 위키·DB 검증 속성"
+    ],
+    "verification": [],
+    "limitations": [
+      "만료 알림, 위키·DB 검증 속성"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "AREA-ai",
+    "name": "AI",
+    "priority": "P1",
+    "weight": 3,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: 호환 HTTP 공급자 어댑터와 문서 권한 재검사, 생성·요약·번역·질의·대화록 정리, Python 호환 모드의 로컬 모델 연결 경로",
+      "Resolve: 실제 클라우드 공급자·키·모델 설정과 품질 검증, 로컬 모델 설치·다운로드, 음성 전사·자율 에이전트·웹 리서치"
+    ],
+    "verification": [],
+    "limitations": [
+      "실제 클라우드 공급자·키·모델 설정과 품질 검증, 로컬 모델 설치·다운로드, 음성 전사·자율 에이전트·웹 리서치"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "AREA-gemini-pro",
+    "name": "Gemini Pro",
+    "priority": "P1",
+    "weight": 3,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: 공식 CLI 설치·무결성·실제 서비스 응답 조사, Antigravity 공식 경로·약관 확인",
+      "Resolve: 구독 연결 미제공: Gemini CLI 서비스 거절·Antigravity 타사 접근 제한; [AI 안내](AI.md)"
+    ],
+    "verification": [],
+    "limitations": [
+      "구독 연결 미제공: Gemini CLI 서비스 거절·Antigravity 타사 접근 제한; [AI 안내](AI.md)"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "AREA-administration",
+    "name": "관리",
+    "priority": "P1",
+    "weight": 3,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: 실제 변경/조회/검색 이벤트 감사 로그·집계, 게스트/게시/내보내기 제한",
+      "Resolve: 외부 SIEM/DLP, 조직 분석, 관리자 역할 분리"
+    ],
+    "verification": [],
+    "limitations": [
+      "외부 SIEM/DLP, 조직 분석, 관리자 역할 분리"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "AREA-scim",
+    "name": "SCIM",
+    "priority": "P1",
+    "weight": 3,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: Bearer Users/Groups CRUD·일부 PATCH·페이지 나누기, 소유자의 토큰 발급·명시적 활성화·철회, 실제 클라우드 QA의 비활성화/삭제와 ACL 정리",
+      "Resolve: 선택한 외부 IdP 연결, SCIM 필터·전체 적합성 검증"
+    ],
+    "verification": [],
+    "limitations": [
+      "선택한 외부 IdP 연결, SCIM 필터·전체 적합성 검증"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "AREA-retention",
+    "name": "보존",
+    "priority": "P1",
+    "weight": 3,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: 휴지통·대화록 보존 설정과 정리 API, 별도 Supabase Cron의 첨부/백업 물리 정리 구현·검증",
+      "Resolve: 원본 파일 정리 등록, 휴지통·대화록의 정기 실행 연결, 불변 감사 저장소"
+    ],
+    "verification": [],
+    "limitations": [
+      "원본 파일 정리 등록, 휴지통·대화록의 정기 실행 연결, 불변 감사 저장소"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "AREA-backup",
+    "name": "백업",
+    "priority": "P1",
+    "weight": 3,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: 댓글·이력·첨부·설정까지 전체 SQLite 백업·복원, JSON 페이지·DB·행/관계 복원, Markdown·CSV 가져오기·내보내기",
+      "Resolve: PDF 일괄 출력, 자동 예약 백업"
+    ],
+    "verification": [],
+    "limitations": [
+      "PDF 일괄 출력, 자동 예약 백업"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "AREA-attachments",
+    "name": "첨부",
+    "priority": "P1",
+    "weight": 3,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: 앱의 파일당 5GB 청크 계약·재개·취소·권한/해시/참조 보호·구간 다운로드, 비공개 Supabase Storage와 기존 inline 읽기, 실제 클라우드 9MiB+123바이트 검증",
+      "Resolve: 클라우드 실제 5GB 전송·용량 확보, 미디어 미리보기·썸네일·DB 파일 속성 업로드 UI·자동 예약 백업"
+    ],
+    "verification": [],
+    "limitations": [
+      "클라우드 실제 5GB 전송·용량 확보, 미디어 미리보기·썸네일·DB 파일 속성 업로드 UI·자동 예약 백업"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "AREA-integrations",
+    "name": "외부 연결",
+    "priority": "P1",
+    "weight": 3,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: 연결 정보와 SAML 메타데이터 설정 저장",
+      "Resolve: OAuth, SAML 서명 검증 로그인, 외부 앱 색인·동기화"
+    ],
+    "verification": [],
+    "limitations": [
+      "OAuth, SAML 서명 검증 로그인, 외부 앱 색인·동기화"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "AREA-offline",
+    "name": "오프라인",
+    "priority": "P0",
+    "weight": 5,
+    "status": "implemented",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Complete and verify: 보관한 문서·DB와 행/페이지 편집, 재접속 병합·충돌 복구·의존 작업 재적용/폐기, 웹 IndexedDB·정적 서비스 워커, 모바일 기본 SQLite outbox·확인된 대기 편집 복원·명시적 복구 가져오기",
+      "Resolve: DB 구조·권한·설정·첨부의 오프라인 작업, 전체 다운로드 관리 UI, 일반 LAN HTTP의 서버 없는 새로고침"
+    ],
+    "verification": [],
+    "limitations": [
+      "DB 구조·권한·설정·첨부의 오프라인 작업, 전체 다운로드 관리 UI, 일반 LAN HTTP의 서버 없는 새로고침"
+    ],
+    "implementation_inventory": "../FEATURES.md"
+  },
+  {
+    "id": "FEATURE-inbox",
+    "name": "검증 만료 알림함·기기 간 읽음/보관",
+    "priority": "P1",
+    "weight": 3,
+    "status": "specified",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "검증 담당자의 현재 권한에 따른 알림과 수신자별 상태를 실제 API·두 클라이언트로 검증한다"
+    ],
+    "verification": [],
+    "limitations": [
+      "구현·실제 연결·원본 비교 증거가 아직 전체 요구를 충족하지 않는다."
+    ]
+  },
+  {
+    "id": "FEATURE-notifications-delivery",
+    "name": "검증 만료의 이메일·기기 푸시·배경 전달",
+    "priority": "P1",
+    "weight": 3,
+    "status": "discovered",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "앱이 닫혀 있어도 실제 만료 시점에 지정한 알림 채널로 발송하고 중복·철회·권한을 검증한다"
+    ],
+    "verification": [],
+    "limitations": [
+      "구현·실제 연결·원본 비교 증거가 아직 전체 요구를 충족하지 않는다."
+    ]
+  },
+  {
+    "id": "FEATURE-wiki",
+    "name": "위키 전환·해제와 기본 보기",
+    "priority": "P1",
+    "weight": 3,
+    "status": "discovered",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Home, All pages, Pages I own과 현재 권한·소유자·검증 동작을 제공한다"
+    ],
+    "verification": [],
+    "limitations": [
+      "구현·실제 연결·원본 비교 증거가 아직 전체 요구를 충족하지 않는다."
+    ]
+  },
+  {
+    "id": "FEATURE-verification-database",
+    "name": "DB의 검증·담당자 속성",
+    "priority": "P1",
+    "weight": 3,
+    "status": "discovered",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "Verification 속성 생성 시 Owner 속성과 생성자 기본값·인원 제한·검증 UI를 제공한다"
+    ],
+    "verification": [],
+    "limitations": [
+      "구현·실제 연결·원본 비교 증거가 아직 전체 요구를 충족하지 않는다."
+    ]
+  },
+  {
+    "id": "FEATURE-verified-pages-management",
+    "name": "검증 페이지 관리·필터",
+    "priority": "P1",
+    "weight": 3,
+    "status": "discovered",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "설정에서 검증 페이지를 소유자·팀스페이스와 검색으로 관리한다"
+    ],
+    "verification": [],
+    "limitations": [
+      "구현·실제 연결·원본 비교 증거가 아직 전체 요구를 충족하지 않는다."
+    ]
+  },
+  {
+    "id": "FEATURE-domain-verification",
+    "name": "조직 도메인 검증·관리",
+    "priority": "P1",
+    "weight": 3,
+    "status": "discovered",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "실제 DNS 소유권 검증과 조직 보안 정책을 적용한다"
+    ],
+    "verification": [],
+    "limitations": [
+      "구현·실제 연결·원본 비교 증거가 아직 전체 요구를 충족하지 않는다."
+    ]
+  },
+  {
+    "id": "FEATURE-admin-content-search",
+    "name": "관리자 콘텐츠 검색·세분화 역할",
+    "priority": "P1",
+    "weight": 3,
+    "status": "discovered",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "역할별 권한과 감사 기록을 갖춘 관리자 기능을 검증한다"
+    ],
+    "verification": [],
+    "limitations": [
+      "구현·실제 연결·원본 비교 증거가 아직 전체 요구를 충족하지 않는다."
+    ]
+  },
+  {
+    "id": "FEATURE-siem-dlp",
+    "name": "외부 SIEM·DLP 연결",
+    "priority": "P1",
+    "weight": 3,
+    "status": "discovered",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "사용자가 지정한 실제 외부 공급자와 전송·인증·철회를 검증한다"
+    ],
+    "verification": [],
+    "limitations": [
+      "구현·실제 연결·원본 비교 증거가 아직 전체 요구를 충족하지 않는다."
+    ]
+  },
+  {
+    "id": "FEATURE-provider-zero-retention",
+    "name": "AI 공급자의 무보관 보증",
+    "priority": "P1",
+    "weight": 3,
+    "status": "discovered",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "실제 공급자 계약과 운영 설정을 확인한다"
+    ],
+    "verification": [],
+    "limitations": [
+      "구현·실제 연결·원본 비교 증거가 아직 전체 요구를 충족하지 않는다."
+    ]
+  },
+  {
+    "id": "FEATURE-support-service",
+    "name": "전담 고객 성공·지원",
+    "priority": "P2",
+    "weight": 1,
+    "status": "discovered",
+    "original_evidence": [
+      "evidence/original-boundaries.md"
+    ],
+    "acceptance": [
+      "인적 서비스 제공 가능 여부를 확인한다; 코드 구현으로 대체 완료하지 않는다"
+    ],
+    "verification": [],
+    "limitations": [
+      "구현·실제 연결·원본 비교 증거가 아직 전체 요구를 충족하지 않는다."
+    ]
+  }
+]

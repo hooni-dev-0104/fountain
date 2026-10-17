@@ -1,0 +1,514 @@
+{
+  "version": 1,
+  "scope": "Private retained-content storage and portable v3 foundation; full Notion paid-plan parity remains incomplete",
+  "createdAt": "2026-10-17T13:15:42.742581+00:00",
+  "fullGoalComplete": false,
+  "sourceFiles": {
+    "fountain/backup.py": {
+      "sha256": "097c839c1c51730cf9e0c31089279c020d643ee64381d3a1ec9a3af8ab4f7942",
+      "bytes": 32303
+    },
+    "fountain/core.py": {
+      "sha256": "9586e2a9371d0ea155925899fe1b947d3701723af8aa3f670a099b96f3643a99",
+      "bytes": 52066
+    },
+    "fountain/file_chunks.py": {
+      "sha256": "c44042c79ca8d673c833c87e4bb3ce5bbd7db8f4f734e5c6180c6f7b49b9e867",
+      "bytes": 24535
+    },
+    "fountain/migrate.py": {
+      "sha256": "c436b9ac0f16f0a7fed9aced266bc0b5f473c1190082b4d530d07cd1c13f82e8",
+      "bytes": 20543
+    },
+    "fountain/postgres.py": {
+      "sha256": "d7ea943a3ea3a2ddb64a49e27623423665755b1f861882d7b8645e3d589f2714",
+      "bytes": 19824
+    },
+    "fountain/postgres_backup.py": {
+      "sha256": "e4bdc4dbf2a226c43b51ca4b7e1fa51ef93e31e9c46d09984f33d0ed95411774",
+      "bytes": 8148
+    },
+    "fountain/retention_vault.py": {
+      "sha256": "89c629cdf7dd19e4b443f902c613cd6c07cee52c2838e918325922da43d588e8",
+      "bytes": 40853
+    },
+    "supabase/functions/_shared/backup-jobs.ts": {
+      "sha256": "a9f7e8bce02d42f5f5377fb1df2af109de47f83f2ec9ccf70d874a101bfd8ea0",
+      "bytes": 27846
+    },
+    "supabase/functions/_shared/backup.ts": {
+      "sha256": "42e7dfbde5b51b9a2799b0a5842f368f31de0e55bae2bd9398e3da5b4d364fa0",
+      "bytes": 32763
+    },
+    "supabase/functions/_shared/sqlite-backup-resumable.ts": {
+      "sha256": "54a2ba6bfc5fb5fa1af8953edd87c7ca2554c88b2bcb2d701a3935f0f4b3f29c",
+      "bytes": 38762
+    },
+    "supabase/functions/_shared/sqlite-backup.ts": {
+      "sha256": "b5d9c99f5d7be98ce7bfdb119b103789b43c0990d15560c92a5c898499337695",
+      "bytes": 49376
+    },
+    "supabase/migrations/20261017121124_fountain_retention_vault.sql": {
+      "sha256": "e73a90203ef0eb0c89dd02a86db2bf64a8835ab0dbe8e86e764951cc03df504a",
+      "bytes": 84127
+    },
+    "supabase/migrations/20261017121125_fountain_retention_backup_v3.sql": {
+      "sha256": "a2dd58ef0c62fa0844dd54a84d44916ffffb908067494f2fb02b92df2c16e69e",
+      "bytes": 52696
+    },
+    "supabase/migrations/20261017130102_fountain_backup_source_range_offset.sql": {
+      "sha256": "52bf903926bb901bfc943b6f70084ece4f904abff514cc53bd3de7d9b0b9554e",
+      "bytes": 1024
+    },
+    "supabase/tests/backup-source-range.sql": {
+      "sha256": "626693e7e0a93c9b061c3b75d832be792a27c1d0aa45a4bd3047af2571389e79",
+      "bytes": 2159
+    },
+    "supabase/tests/backup-v3.mjs": {
+      "sha256": "a4052f1785c06afeec5065ca6d949b9596516fa7e47285f974338c16684d1cb5",
+      "bytes": 15227
+    },
+    "supabase/tests/retention-backup-v3.sql": {
+      "sha256": "598f05872ebe16ead52c60be8942018c8b22d5be570e4d790dccfb83fa72e8a9",
+      "bytes": 9075
+    },
+    "supabase/tests/retention-vault-inline-overlay.sql": {
+      "sha256": "9d21b6469f55c2b427e41023a870edb8757fa4fc703ec228bd8ae9f7c8b4ccbe",
+      "bytes": 3685
+    },
+    "supabase/tests/retention-vault-integrity.sql": {
+      "sha256": "eb40eeac91ee40cdfe16f7470c16c9a6af9792e8f86e135827e6b0791bdc4609",
+      "bytes": 5933
+    },
+    "supabase/tests/retention-vault-kernel.sql": {
+      "sha256": "26aa1ffec88be3d95b915d2ab04022eae1cb92a3c36e00e5fd177f19dd8bfc28",
+      "bytes": 13956
+    },
+    "supabase/tests/retention-vault-links.sql": {
+      "sha256": "3ca235cf33e2beb98b1b49ecb0ff6b8db57d601f2e65275bf7f44238a7be8828",
+      "bytes": 4977
+    },
+    "supabase/tests/retention-vault-storage.sql": {
+      "sha256": "ab6f086151d962609ec61f50f6f2a11ceba24193ed4007acee040b340b32ceaa",
+      "bytes": 7309
+    },
+    "supabase/tests/retention-vault-top-import.sql": {
+      "sha256": "6d9ee1dd1ccbc5507ef49a2d46b863ef42c03fd8f5e320e721871ecaf5ff8f64",
+      "bytes": 6576
+    },
+    "supabase/tests/retention-vault-transports.sql": {
+      "sha256": "88119ba69c8e080aedf9d27b36ee4ea07c02db4bcf7805b1184aa634e86acc00",
+      "bytes": 6472
+    },
+    "tests/test_file_chunks.py": {
+      "sha256": "7915c61171671208d46358017e6243f31a9693e8e090cdeeece7dfbad55afc17",
+      "bytes": 22645
+    },
+    "tests/test_retention_backup_v3.py": {
+      "sha256": "45e8f261152bf334c71358de0cac8ffa40e3571630cfb08e8b0b8a9a061b6d54",
+      "bytes": 16790
+    },
+    "tests/test_retention_vault.py": {
+      "sha256": "8fd02c6a14edba0148b694fc461f3a0bf8e294d68bf5abe6e6a4eea870321277",
+      "bytes": 24482
+    },
+    "tests/test_retention_vault_postgres.py": {
+      "sha256": "971f2ea1cd014f7f0ddcc8ded08fbf8b6834e919209083072d14c94d02f32a84",
+      "bytes": 12858
+    }
+  },
+  "deployment": {
+    "mainVersion": 25,
+    "mainFiles": 48,
+    "sharedWithActualAuthQA": 46,
+    "exactRemoteSource": true,
+    "migrations": [
+      {
+        "version": "20261017124841",
+        "name": "fountain_retention_vault"
+      },
+      {
+        "version": "20261017124846",
+        "name": "fountain_retention_backup_v3"
+      },
+      {
+        "version": "20261017130341",
+        "name": "fountain_backup_source_range_offset"
+      }
+    ],
+    "retiredVerifierVersion": 99,
+    "retiredSingleUnconditional404File": true,
+    "webAssetChange": false,
+    "newInstallersBuilt": false
+  },
+  "verification": {
+    "python": {
+      "actualPostgresConfigured": true,
+      "tests": 744,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": true
+    },
+    "node": {
+      "scripts": 7,
+      "checks": 146,
+      "allPassed": true
+    },
+    "kernelDriver": {
+      "tests": 8,
+      "actualDatabaseCases": 6,
+      "mockProvisioningCases": 2,
+      "skipped": 0,
+      "passed": true
+    },
+    "backupDriver": {
+      "tests": 5,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "seconds": 23.733,
+      "successful": true,
+      "schemaAppliedByTest": false,
+      "realDriver": true,
+      "realAuth": false,
+      "edgeDeployment": false
+    },
+    "legacyBackupMigrationModules": {
+      "actualTests": 27,
+      "skipped": 0,
+      "passed": true
+    },
+    "fileCasesIncludedInWholeSuite": {
+      "existing": 17,
+      "newRetention": 4
+    },
+    "sql": {
+      "componentFiles": 6,
+      "topImportGroups": 3,
+      "largeClosure": {
+        "entities": 1004,
+        "provenance": 1003,
+        "archiveSeconds": 3.784456,
+        "importSeconds": 1.170368
+      },
+      "oldStorageBugsReproducedThenFixed": 4,
+      "actualPythonOriginV3Import": true,
+      "authStubForComponentOnly": true
+    },
+    "actualAuth": {
+      "users": 2,
+      "sessions": 2,
+      "syncQaVersion": 96,
+      "resumeQaVersion": 97,
+      "ordinaryRetainedAPI404": true,
+      "memberBackup403": true,
+      "ownerSyncBackup200": true,
+      "artifact": {
+        "bytes": 241664,
+        "sha256": "663389a82786a99cab925094511fca5af19106adac47c3446ba4bd1e3c249e0e",
+        "oracle": {
+          "actualArtifactOracle": true,
+          "vaultTables": 6,
+          "trustedRestore": true,
+          "rawSnapshotHashesPreserved": true,
+          "retainedProvenanceRows": 4,
+          "releasedOriginalGeneration": true,
+          "rootRemainsTrash": true,
+          "relatedPublicationAndAutomationRemainOff": true,
+          "dependencyJournalRestored": true,
+          "attachmentByteExact": true,
+          "inlineAttachmentByteExact": true,
+          "attachmentBytes": 131072,
+          "attachmentSHA256": "b69da8e73ec235683ce1a1d6190ad6be3ebe62bee5e020360da5337a58934296",
+          "knownActiveCredentialsAbsent": true,
+          "cursorSecretTableAbsent": true,
+          "bytes": 241664,
+          "sha256": "663389a82786a99cab925094511fca5af19106adac47c3446ba4bd1e3c249e0e"
+        }
+      },
+      "resumable": {
+        "executed": true,
+        "actualStorageArtifact": true,
+        "ready": true,
+        "resumedExistingJob": true,
+        "steps": 4,
+        "bytes": 241664,
+        "sha256": "663389a82786a99cab925094511fca5af19106adac47c3446ba4bd1e3c249e0e",
+        "oracle": {
+          "actualArtifactOracle": true,
+          "vaultTables": 6,
+          "trustedRestore": true,
+          "rawSnapshotHashesPreserved": true,
+          "retainedProvenanceRows": 4,
+          "releasedOriginalGeneration": true,
+          "rootRemainsTrash": true,
+          "relatedPublicationAndAutomationRemainOff": true,
+          "dependencyJournalRestored": true,
+          "attachmentByteExact": true,
+          "inlineAttachmentByteExact": true,
+          "attachmentBytes": 131072,
+          "attachmentSHA256": "b69da8e73ec235683ce1a1d6190ad6be3ebe62bee5e020360da5337a58934296",
+          "knownActiveCredentialsAbsent": true,
+          "cursorSecretTableAbsent": true,
+          "bytes": 241664,
+          "sha256": "663389a82786a99cab925094511fca5af19106adac47c3446ba4bd1e3c249e0e"
+        },
+        "maxStepMs": 3556.9172500000004,
+        "stepCount": 4
+      },
+      "syncAndResumableBytesEqual": true,
+      "resumedAfterRangeBug": true,
+      "performance": {
+        "actualExecution": true,
+        "qaVersion": 97,
+        "existingJobResumed": true,
+        "newAccountsOrJobsCreated": false,
+        "storageCleanupPerformed": false,
+        "steps": [
+          {
+            "step": 1,
+            "phase": "building",
+            "elapsedMs": 3556.917,
+            "rpcCount": 17,
+            "traceTruncated": false,
+            "actions": {
+              "gate": 2,
+              "claim": 1,
+              "publication": 1,
+              "read": 12,
+              "commit": 1
+            },
+            "statuses": {
+              "200": 17
+            },
+            "maxRPCMs": 168
+          },
+          {
+            "step": 2,
+            "phase": "building",
+            "elapsedMs": 977.975,
+            "rpcCount": 11,
+            "traceTruncated": false,
+            "actions": {
+              "gate": 2,
+              "claim": 1,
+              "publication": 1,
+              "read": 6,
+              "commit": 1
+            },
+            "statuses": {
+              "200": 11
+            },
+            "maxRPCMs": 52
+          },
+          {
+            "step": 3,
+            "phase": "building",
+            "elapsedMs": 3515.176,
+            "rpcCount": 32,
+            "traceTruncated": false,
+            "actions": {
+              "gate": 15,
+              "claim": 1,
+              "publication": 1,
+              "lease": 14,
+              "published": 1
+            },
+            "statuses": {
+              "200": 32
+            },
+            "maxRPCMs": 72
+          },
+          {
+            "step": 4,
+            "phase": "ready",
+            "elapsedMs": 1575.519,
+            "rpcCount": 23,
+            "traceTruncated": false,
+            "actions": {
+              "gate": 9,
+              "claim": 1,
+              "publication": 1,
+              "output": 4,
+              "lease": 7,
+              "commit": 1
+            },
+            "statuses": {
+              "200": 23
+            },
+            "maxRPCMs": 38
+          }
+        ],
+        "allUnder90Seconds": true,
+        "maxStepMs": 3556.917,
+        "maxRPCCount": 32,
+        "allRPCTracesComplete": true
+      }
+    },
+    "publicHTTP": {
+      "passed": true,
+      "checks": [
+        {
+          "path": "/functions/v1/fountain-api/api/admin/content/restore",
+          "method": "GET",
+          "status": 401
+        },
+        {
+          "path": "/functions/v1/fountain-api/api/admin/content/restore",
+          "method": "HEAD",
+          "status": 401
+        },
+        {
+          "path": "/functions/v1/fountain-api/api/admin/content/restore",
+          "method": "POST",
+          "status": 401
+        },
+        {
+          "path": "/functions/v1/fountain-api/api/backup",
+          "method": "GET",
+          "status": 401
+        },
+        {
+          "path": "/functions/v1/fountain-api/api/backup",
+          "method": "HEAD",
+          "status": 401
+        },
+        {
+          "path": "/functions/v1/fountain-api/api/backup/jobs",
+          "method": "GET",
+          "status": 401
+        },
+        {
+          "path": "/functions/v1/fountain-api/api/backup/jobs",
+          "method": "POST",
+          "status": 401
+        },
+        {
+          "path": "/functions/v1/fountain-api/api/workspace",
+          "method": "GET",
+          "status": 401
+        },
+        {
+          "path": "/functions/v1/fountain-verify/wire",
+          "method": "POST",
+          "status": 404
+        },
+        {
+          "path": "/functions/v1/fountain-verify/cleanup",
+          "method": "POST",
+          "status": 404
+        },
+        {
+          "path": "/functions/v1/fountain-verify/cleanup-check",
+          "method": "POST",
+          "status": 404
+        },
+        {
+          "path": "/functions/v1/fountain-verify/cleanup-sessions",
+          "method": "POST",
+          "status": 404
+        },
+        {
+          "path": "/functions/v1/fountain-verify/health",
+          "method": "POST",
+          "status": 404
+        },
+        {
+          "path": "/app.js",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/app.js",
+          "method": "GET",
+          "status": 200
+        },
+        {
+          "path": "/api/health",
+          "method": "GET",
+          "status": 200
+        }
+      ],
+      "mainVersion": 25,
+      "verifierVersion": 99,
+      "publicAppSHA256": "4fbeffd63bdb19dfbcf857a6a18a92770cd89bebbb19e535b70ea00614452206",
+      "frozen8787AppSHA256": "82e8d9faa6219da972bfb902d5c20efe33f51d367884429a4983fe1347fe6d1f",
+      "newBrowserOrNativeLaunch": false,
+      "secretsPrinted": false
+    }
+  },
+  "security": {
+    "privateForcedRLSTables": 6,
+    "noAnonAuthenticatedServiceTableGrant": true,
+    "retentionFunctions": 14,
+    "backendOnlyEntryFunctions": true,
+    "sourceWholePrivateStateMutationGuards": true,
+    "currentKnownPrivateValueScan": {
+      "workingFiles": 699,
+      "historyBlobs": 1456,
+      "privateValuesScanned": 7,
+      "privateMatches": 0,
+      "valuesPrinted": false,
+      "passed": true
+    },
+    "existingAdvisors": [
+      {
+        "name": "rls_enabled_no_policy",
+        "count": 24,
+        "scope": "existing internal RPC-only tables; default deny intentionally retained"
+      },
+      {
+        "name": "extension_in_public",
+        "count": 1,
+        "extension": "pg_net",
+        "introducedByThisChange": false,
+        "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0014_extension_in_public"
+      }
+    ]
+  },
+  "preservation": {
+    "originalWorkspaceFingerprintEqual": true,
+    "originalCounts": {
+      "entities": 153,
+      "meta": 6,
+      "identity_mapping": 0
+    },
+    "publicAndFrozenAppBytesUnchanged": true,
+    "finalCloudCounts": {
+      "auth_users": 0,
+      "auth_sessions": 0,
+      "refresh_tokens": 0,
+      "retained_records": 0,
+      "other_entities": 0,
+      "other_meta": 0,
+      "other_index_states": 0,
+      "physical_objects": 0
+    },
+    "ownedArtifactCleanup": {
+      "physical_objects": 0,
+      "job_source_rows": 0,
+      "job_parts": 1,
+      "reserved_bytes": "0",
+      "retained_records": 1,
+      "retained_entities": 14,
+      "retained_pins": 1,
+      "removedPartRows": 1,
+      "activePartRows": 0
+    }
+  },
+  "activation": {
+    "automaticArchive": false,
+    "automaticPurge": false,
+    "publicVaultAPI": false,
+    "legalHold": false
+  },
+  "limitations": [
+    "Internal closure recovery releases independently shared active descendants and is not invisible staging. Public use requires whole-closure review and atomic root activation.",
+    "No policy scheduler, retained admin UI, legal hold, organization/row lifecycle or five-platform human/family whole journey completed in this change.",
+    "SQL native cloud checks canonical path/size metadata, not provider byte hashing.",
+    "No new browser/native journey or 5GB retained backup in this change.",
+    "No TypeScript static compiler or new dependency installed.",
+    "Small QA resumable timing is not a large-workspace concurrency SLA."
+  ]
+}

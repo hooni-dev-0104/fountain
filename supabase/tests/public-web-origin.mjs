@@ -21,7 +21,14 @@ function assertNoSecrets(text){for(const value of [secret,publishable,'private-p
 test('default, omitted, undefined and null preserve the original session JSON exactly',async()=>{
  const baseline=fixture(),expected=await (await baseline.request()).text();assert.equal(JSON.parse(expected).authenticated,false);assert(!expected.includes('public_web_origin'));
  for(const extra of [{},{publicWebOrigin:undefined},{publicWebOrigin:null}]){const f=fixture(extra);assert.equal(await (await f.request()).text(),expected);assert.equal(f.calls.length,0);}
- assert.equal(deployment.publicWebOrigin,null);assert.equal(baseline.calls.length,0);assertNoSecrets(expected);
+ assert.equal(baseline.calls.length,0);assertNoSecrets(expected);
+});
+test('production installation exposes its exact allowlisted canonical web origin',async()=>{
+ assert.equal(deployment.publicWebOrigin,'https://fountain-hoonis-projects-1ccfd37e.vercel.app');
+ assert(deployment.webOrigins.includes(deployment.publicWebOrigin));
+ const f=fixture({origins:deployment.webOrigins,publicWebOrigin:deployment.publicWebOrigin});
+ const response=await f.request('/api/session',{headers:{Origin:deployment.publicWebOrigin}});
+ assert.equal(response.status,200);const text=await response.text();assert.equal(JSON.parse(text).public_web_origin,deployment.publicWebOrigin);assertNoSecrets(text);assert.equal(f.calls.length,0);
 });
 test('only explicitly configured HTTPS origin appears in real anonymous GET and HEAD stays bodyless',async()=>{
  const f=fixture({publicWebOrigin:web,setupEnabled:true});const response=await f.request();assert.equal(response.status,200);assert.equal(response.headers.get('Cache-Control'),'no-store');assert.equal(response.headers.has('Set-Cookie'),false);

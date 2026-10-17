@@ -13,6 +13,7 @@ CATALOG = (
     ('groups.read', '그룹 조회'), ('groups.membership.manage', '기존 그룹 멤버 관리'),
     ('content.search.read', '관리자 콘텐츠 검색'), ('content.search.export', '관리자 검색 CSV 내보내기'),
     ('content.permissions.manage', '콘텐츠 공유 권한 관리'), ('content.publish.manage', '콘텐츠 게시 해제'),
+    ('content.restore.manage', '휴지통 페이지 복원'),
 )
 ACTIONS = frozenset(action for action, _ in CATALOG)
 MEMBERSHIP_ACTIONS = frozenset({'members.read', 'members.manage', 'groups.read', 'groups.membership.manage'})
@@ -51,7 +52,7 @@ def _actions(value):
             and len(set(value)) == len(value)
             and ('members.manage' not in value or 'members.read' in value)
             and ('groups.membership.manage' not in value or 'groups.read' in value)
-            and (not any(action in value for action in ('content.search.export', 'content.permissions.manage', 'content.publish.manage'))
+            and (not any(action in value for action in ('content.search.export', 'content.permissions.manage', 'content.publish.manage', 'content.restore.manage'))
                  or 'content.search.read' in value))
 
 

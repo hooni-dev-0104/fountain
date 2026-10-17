@@ -247,13 +247,14 @@ class Application:
     def _dispatch(self, method, path, body, query, access):
         w, s = self.workspace, self.store
         parts = path.strip("/").split("/")
-        if path in {'/api/admin/content', '/api/admin/content/access', '/api/admin/content/export', '/api/admin/content/permissions', '/api/admin/content/unpublish', '/api/admin/content/options'}:
+        if path in {'/api/admin/content', '/api/admin/content/access', '/api/admin/content/export', '/api/admin/content/permissions', '/api/admin/content/unpublish', '/api/admin/content/options', '/api/admin/content/restore'}:
             from .admin_content import AdminContent
             service = AdminContent(s, access)
-            if path in {'/api/admin/content', '/api/admin/content/access', '/api/admin/content/export', '/api/admin/content/options'} or path == '/api/admin/content/permissions' and method in {'GET','HEAD'}:
+            if path in {'/api/admin/content', '/api/admin/content/access', '/api/admin/content/export', '/api/admin/content/options'} or path in {'/api/admin/content/permissions','/api/admin/content/restore'} and method in {'GET','HEAD'}:
                 require(method in {'GET','HEAD'}, 'Unsupported content method', 405)
                 if path.endswith('/access'): return 200, service.access(query)
                 if path.endswith('/permissions'): return 200, service.permissions(query)
+                if path.endswith('/restore'): return 200, service.permissions(query,restore=True)
                 if path.endswith('/options'): return 200, service.options(query)
                 if path.endswith('/export'):
                     require(isinstance(query,dict), 'Invalid content export query')
@@ -264,6 +265,7 @@ class Application:
                 return 200, service.search(query)
             require(method == 'POST', 'Unsupported content method', 405)
             require(not query, 'Content mutations do not accept query parameters')
+            if path.endswith('/restore'):return 200, service.restore(body)
             return 200, service.change(body, unpublish=path.endswith('/unpublish'))
         if parts[:2] == ['api', 'admin']:
             from .admin_roles import AdminAuthority

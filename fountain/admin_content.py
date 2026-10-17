@@ -14,7 +14,7 @@ from functools import cmp_to_key
 
 from .access import Access, LEVELS
 from .admin_roles import AdminAuthority
-from .content_index import ContentIndex, IndexHeaderReader, canonical, _valid_text
+from .content_index import ContentIndex, IndexHeaderReader, canonical, _valid_text, trusted_actor
 from .core import require
 from .search import _fold, _id, _terms
 
@@ -266,7 +266,8 @@ class AdminContent:
         result=[];seen=set();links=0
         while True:
             token=(doc['kind'],doc['id'])
-            if token in seen or not doc['validity'] or any(doc['header'].get(k) for k in ('archived','deleted','deleted_at')):return None
+            trashed_leaf=not seen and doc['kind']=='page' and doc['header'].get('archived') is True
+            if token in seen or not doc['validity'] or not trashed_leaf and any(doc['header'].get(k) for k in ('archived','deleted','deleted_at')):return None
             seen.add(token);value=doc['header']
             if doc['kind']=='row':
                 kind,identity='database',value.get('database_id')
@@ -388,13 +389,15 @@ class AdminContent:
             return {'kind':kind,'id':identity,'items':selected,'next_cursor':self._cursor('access',scope,{'kind':'member','id':selected[-1]['id']}) if len(values)>len(selected) else None,
                     'review_revision':self._review(doc),'content_revision':self.state['revision']}
 
-    def permissions(self,query):
+    def permissions(self,query,restore=False):
         require(isinstance(query,dict) and set(query)=={'kind','id'} and all(isinstance(v,list) and len(v)==1 and isinstance(v[0],str) for v in query.values()),'Invalid content permissions query')
         kind,identity=query['kind'][0],query['id'][0]
         require(kind in ('page','database','row') and _id(identity),'Invalid content target')
+        require(not restore or kind=='page','Only pages can be restored')
         with self.store.transaction():
-            self._pin('content.permissions.manage')
+            self._pin('content.restore.manage' if restore else 'content.permissions.manage')
             doc=self.by_key.get((kind,identity));require(doc is not None,'Content not found',404)
+            if restore:require(doc['header'].get('archived') is True,'Page is not in trash',409)
             acl=doc['header'].get('permissions')
             invalid=False
             if acl is not None:
@@ -404,6 +407,75 @@ class AdminContent:
                 if invalid:acl=None
             require(len(canonical(acl).encode())<=1048576,'Permissions metadata limit exceeded',413)
             return {'kind':kind,'id':identity,'permissions':copy.deepcopy(acl),'source_invalid':invalid,'review_revision':self._review(doc)}
+
+    def _restore_location(self,page):
+        """Validate every original ancestor and configured space before any write."""
+        seen={page['id']}
+        current=page
+        while True:
+            require('is_wiki' not in current or type(current['is_wiki']) is bool,'Invalid wiki lifecycle',409)
+            require(current.get('is_wiki') is not True or current.get('parent_id') is None,
+                    'Wiki must be restored at the root',409)
+            space_id=current.get('teamspace_id')
+            if space_id is not None:
+                require(_id(space_id),'Invalid original teamspace',409)
+                space=self.spaces.get(space_id)
+                require(isinstance(space,dict) and space.get('active',True) is True and
+                        space.get('archived',False) is False and space.get('deleted',False) is False and
+                        space.get('deleted_at') is None,'Original teamspace is unavailable',409)
+            parent_id=current.get('parent_id')
+            if parent_id is None:return
+            require(_id(parent_id) and parent_id not in seen,'Invalid original page hierarchy',409)
+            seen.add(parent_id)
+            current=self.store.get('page',parent_id)
+            require(isinstance(current,dict) and current.get('active',True) is True and current.get('archived',False) is False and
+                    current.get('deleted',False) is False and current.get('deleted_at') is None,
+                    'Original parent is unavailable',409)
+
+    def restore(self,body):
+        require(isinstance(body,dict) and set(body)=={'kind','id','review_revision','mode'} and
+                body.get('kind')=='page' and _id(body.get('id')) and body.get('mode') in ('original','private') and
+                isinstance(body.get('review_revision'),str) and HASH.fullmatch(body['review_revision']) is not None,
+                'Invalid content restore')
+        with self.store.transaction():
+            self._pin('content.restore.manage')
+            doc=self.by_key.get(('page',body['id']));require(doc is not None,'Content not found',404)
+            require(hmac.compare_digest(body['review_revision'],self._review(doc)),'Content changed; review again',409)
+            page=self.store.get('page',body['id'])
+            require(isinstance(page,dict) and page.get('archived') is True,'Page is not in trash',409)
+            require(all(key not in page or type(page[key]) is bool for key in ('archived','deleted','active','locked','is_wiki')) and
+                    page.get('active',True) is True,
+                    'Invalid page lifecycle',409)
+            require(type(page.get('revision')) is int and 0<=page['revision']<9007199254740991,'Invalid page revision',409)
+            require(not page.get('locked'),'Page is locked',423)
+            if body['mode']=='original':self._restore_location(page)
+            else:page.update(owner_id=self.principal['id'],parent_id=None,teamspace_id=None,
+                             permissions={'default':'private','inherit':False,'members':{},'groups':{}})
+            # Location changes normally count as edits. Restoration is a management
+            # action: retain the trusted history exactly, including deleted actors.
+            columns='generation,creator_id,creator_cause,editor_id,edited_at,editor_cause'
+            if self.index.postgres:
+                history=self.store._execute('SELECT '+columns+' FROM fountain_private.content_provenance WHERE workspace_id=%s AND kind=%s AND id=%s',
+                                            (self.store.workspace_id,'page',body['id']),fetch='one')
+            else:history=self.store.db.execute('SELECT '+columns+' FROM content_provenance WHERE kind=? AND id=?',('page',body['id'])).fetchone()
+            require(history is not None,'Content history is unavailable',503)
+            page.update(archived=False,deleted=False,revision=page['revision']+1)
+            page.pop('deleted_at',None)
+            saved=self.store.put('page',page)
+            for site in self.sites:
+                if site.get('page_id')==body['id'] and bool(site.get('published')):
+                    site['published']=False;self.store.put('site',site)
+            actor=trusted_actor(self.store)
+            values=(*history,actor,saved['updated_at'] if actor is not None else None)
+            if self.index.postgres:
+                self.store._execute('UPDATE fountain_private.content_provenance SET generation=%s,creator_id=%s,creator_cause=%s,editor_id=%s,edited_at=%s,editor_cause=%s,manager_id=%s,manager_at=%s WHERE workspace_id=%s AND kind=%s AND id=%s',
+                                    (*values,self.store.workspace_id,'page',body['id']))
+            else:self.store.db.execute('UPDATE content_provenance SET generation=?,creator_id=?,creator_cause=?,editor_id=?,edited_at=?,editor_cause=?,manager_id=?,manager_at=? WHERE kind=? AND id=?',(*values,'page',body['id']))
+            revision=self.store.meta('access_revision',0)
+            require(type(revision) is int and 0<=revision<9007199254740991,'Invalid access revision',503)
+            self.store.set_meta('access_revision',revision+1)
+            self.store.audit('admin.content.restore_'+body['mode'],{'kind':'page','id':body['id']},self.principal.get('id'))
+            return {'applied':True}
 
     def options(self,query):
         require(isinstance(query,dict) and set(query)<={'kind','q','limit','cursor'} and all(isinstance(v,list) and len(v)==1 and isinstance(v[0],str) and _valid_text(v[0]) for v in query.values()),'Invalid content options')

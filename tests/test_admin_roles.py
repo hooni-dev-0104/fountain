@@ -67,7 +67,7 @@ class AdminRolesTests(unittest.TestCase):
         self.error(403, lambda: self.authority().require_action('members.manage'))
 
     def test_content_actions_require_explicit_grants_and_the_read_dependency(self):
-        added = {'content.search.read', 'content.search.export', 'content.permissions.manage', 'content.publish.manage'}
+        added = {'content.search.read', 'content.search.export', 'content.permissions.manage', 'content.publish.manage', 'content.restore.manage'}
         for actor in ['alice', 'admin', 'bob', 'guest']:
             self.assertFalse(added.intersection(self.authority(actor).actions()))
         self.assertTrue(added <= set(self.owner.actions()))

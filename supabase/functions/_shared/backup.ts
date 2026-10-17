@@ -12,8 +12,8 @@ import type {StoreContext} from './store.ts';
 import {storeContext} from './transaction.ts';
 import {IncrementalSHA256,CHUNK_SIZE,MAX_FILE_SIZE} from './storage.ts';
 import type {ChunkManifest} from './storage.ts';
-import {SQLiteBackupWriter,SQLiteBackupError,validateBackupProvenance} from './sqlite-backup.ts';
-import type {BackupEntity,BackupMeta,BackupChunk,BackupProvenance,SQLiteBackupSource} from './sqlite-backup.ts';
+import {SQLiteBackupWriter,SQLiteBackupError,validateBackupProvenance,VAULT_COLUMNS,validateBackupVaultRow} from './sqlite-backup.ts';
+import type {BackupEntity,BackupMeta,BackupChunk,BackupProvenance,SQLiteBackupSource,BackupVaultRow,VaultTable} from './sqlite-backup.ts';
 
 const READ=65536,PAGE_LIMIT=8*1024*1024,ROW_LIMIT=16*1024*1024,HASH=/^[a-f0-9]{64}$/;
 const PRIVATE=new Set(['session','clipboard','upload','presence','attachment_chunk','cloud_chunk','upload_gc','upload_migration']);
@@ -64,8 +64,8 @@ export function createDenoTemporaryStore(runtime:Runtime=(globalThis as any).Den
   }};
 }
 function cursor(value:unknown):void{
-  check(is_object(value));exact(value,Object.hasOwn(value,'contentRevision')?['phase','kind','id','offset','part','scope','contentRevision']:['phase','kind','id','offset','part','scope']);if(Object.hasOwn(value,'contentRevision'))check(integer(value.contentRevision));check(integer(value.phase)&&value.phase<=3&&typeof value.kind==='string'&&value.kind.length<=64&&integer(value.offset)&&value.offset<=MAX_FILE_SIZE&&integer(value.part)&&value.part<=128&&typeof value.scope==='string'&&HASH.test(value.scope));id(value.id);
-  check((value.phase===0||value.phase===3)?/^[a-z][a-z0-9_]{0,63}$/.test(value.kind)&&value.offset===0:value.kind===''&&(value.phase===1?value.offset===0:value.part===0));
+  check(is_object(value));exact(value,Object.hasOwn(value,'contentRevision')?['phase','kind','id','offset','part','scope','contentRevision']:['phase','kind','id','offset','part','scope']);if(Object.hasOwn(value,'contentRevision'))check(integer(value.contentRevision));check(integer(value.phase)&&value.phase<=9&&typeof value.kind==='string'&&value.kind.length<=64&&integer(value.offset)&&value.offset<=MAX_FILE_SIZE&&integer(value.part)&&value.part<=(value.phase>=4?256:128)&&typeof value.scope==='string'&&HASH.test(value.scope));id(value.id,value.phase>=4?2048:160);
+  check(value.phase>=4?value.kind===''&&value.offset===0:(value.phase===0||value.phase===3)?/^[a-z][a-z0-9_]{0,63}$/.test(value.kind)&&value.offset===0:value.kind===''&&(value.phase===1?value.offset===0:value.part===0));
 }
 function authority(value:unknown,expected:StoreContext):asserts value is BackupAuthority{exact(value,['context','revision']);check(integer(value.revision)&&canonicalJSON(validateContext(value.context))===canonicalJSON(expected));}
 
@@ -95,9 +95,9 @@ function decodeBase64(value:unknown,size:number,maximum=CHUNK_SIZE):Uint8Array{
   const alphabet='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';for(let i=0;i<end;i++)check(alphabet.includes(value[i]));for(let i=end;i<value.length;i++)check(value[i]==='=');if(padding)check(alphabet.indexOf(value[end-1])%(padding===2?16:4)===0);
   let raw:string;try{raw=atob(value);}catch{throw new BackupError();}check(raw.length===size);const bytes=new Uint8Array(size);for(let i=0;i<size;i++)bytes[i]=raw.charCodeAt(i);return bytes;
 }
-type Collected={entities:BackupEntity[];meta:BackupMeta[];chunks:Map<string,Uint8Array>;provenance?:BackupProvenance[];revision:number};
+type Collected={entities:BackupEntity[];meta:BackupMeta[];chunks:Map<string,Uint8Array>;provenance?:BackupProvenance[];vault?:Record<VaultTable,BackupVaultRow[]>;revision:number};
 async function collect(provider:BackupProvider,context:StoreContext,gate:()=>Promise<void>,maximum:number,signal:AbortSignal):Promise<Collected>{
-  const entities:BackupEntity[]=[],meta:BackupMeta[]=[],chunks=new Map<string,Uint8Array>(),seen=new Set<string>(),cursors=new Set<string>();let revision:number|undefined,contentRevision:number|undefined,provenance:BackupProvenance[]|undefined,c:unknown=undefined,size=0,assembly:{header:Entity;parts:string[];bytes:number;next:number}|null=null,previous:string|null=null;
+  const entities:BackupEntity[]=[],meta:BackupMeta[]=[],chunks=new Map<string,Uint8Array>(),seen=new Set<string>(),cursors=new Set<string>();let revision:number|undefined,contentRevision:number|undefined,provenance:BackupProvenance[]|undefined,vault:Record<VaultTable,BackupVaultRow[]>|undefined,c:unknown=undefined,size=0,assembly:{header:Entity;parts:string[];bytes:number;next:number}|null=null,previous:string|null=null;
   for(let pages=0;pages<4096;pages++){
     await gate();const page=await provider.exportPage(context,revision,c,signal);exact(page,Object.hasOwn(page,'contentRevision')?['context','revision','contentRevision','items','nextCursor']:['context','revision','items','nextCursor']);if(Object.hasOwn(page,'contentRevision')){check(integer(page.contentRevision));check(contentRevision===undefined||contentRevision===page.contentRevision,409);contentRevision=page.contentRevision;provenance??=[];}else check(contentRevision===undefined,409);authority({context:page.context,revision:page.revision},context);check(revision===undefined||page.revision===revision,409);revision=page.revision;check(Array.isArray(page.items)&&page.items.length<=256&&enc.encode(JSON.stringify(page)).length<=PAGE_LIMIT,413);
     for(const item of page.items){
@@ -106,15 +106,17 @@ async function collect(provider:BackupProvider,context:StoreContext,gate:()=>Pro
       if(item.type==='chunk'){
         check(assembly===null);exact(item,['type','attachmentId','offset','size','base64']);id(item.attachmentId);check(integer(item.offset)&&item.offset<MAX_FILE_SIZE&&item.offset%CHUNK_SIZE===0&&integer(item.size)&&item.size>0&&item.size<=CHUNK_SIZE);const key=canonicalJSON([item.attachmentId,item.offset]);check(!chunks.has(key));chunks.set(key,decodeBase64(item.base64,item.size));continue;
       }
-      const entity=item.type==='entity';check(entity||item.type==='meta');exact(item,entity?['type','kind','id','createdAt','updatedAt','part','parts','dataPart']:['type','key','part','parts','dataPart']);
-      if(entity){check(typeof item.kind==='string'&&/^[a-z][a-z0-9_]{0,63}$/.test(item.kind));id(item.id);check(typeof item.createdAt==='string'&&item.createdAt.length>0&&item.createdAt.length<=64&&typeof item.updatedAt==='string'&&item.updatedAt.length>0&&item.updatedAt.length<=64);}else id(item.key);
-      check(integer(item.part)&&integer(item.parts)&&item.parts>=1&&item.parts<=128&&item.part<item.parts&&typeof item.dataPart==='string'&&enc.encode(item.dataPart).length<=1048576);
-      const header=Object.fromEntries(Object.entries(item).filter(([key])=>!['part','dataPart'].includes(key))),key=canonicalJSON(entity?['entity',item.kind,item.id]:['meta',item.key]);
+      const retained=item.type==='vault';
+      if(retained){check(contentRevision!==undefined);exact(item,['type','table','key','value','part','parts','dataPart']);check(typeof item.table==='string'&&Object.hasOwn(VAULT_COLUMNS,item.table)&&Array.isArray(item.key)&&item.key.length>=1&&item.key.length<=5&&is_object(item.value)&&!Object.hasOwn(item.value,'data')&&enc.encode(JSON.stringify(item.value)).length<=8192);vault??=Object.fromEntries(Object.keys(VAULT_COLUMNS).map(name=>[name,[]])) as Record<VaultTable,BackupVaultRow[]>;}
+      const entity=item.type==='entity';check(entity||retained||item.type==='meta');if(!retained)exact(item,entity?['type','kind','id','createdAt','updatedAt','part','parts','dataPart']:['type','key','part','parts','dataPart']);
+      if(entity){check(typeof item.kind==='string'&&/^[a-z][a-z0-9_]{0,63}$/.test(item.kind));id(item.id);check(typeof item.createdAt==='string'&&item.createdAt.length>0&&item.createdAt.length<=64&&typeof item.updatedAt==='string'&&item.updatedAt.length>0&&item.updatedAt.length<=64);}else if(!retained)id(item.key);
+      check(integer(item.part)&&integer(item.parts)&&item.parts>=1&&item.parts<=(retained?256:128)&&item.part<item.parts&&typeof item.dataPart==='string'&&enc.encode(item.dataPart).length<=1048576);
+      const header=Object.fromEntries(Object.entries(item).filter(([key])=>!['part','dataPart'].includes(key))),key=canonicalJSON(retained?['vault',item.table,item.key]:entity?['entity',item.kind,item.id]:['meta',item.key]);
       if(item.part===0){check(assembly===null&&!seen.has(key));assembly={header,parts:[],bytes:0,next:0};previous=key;}
       check(assembly!==null&&previous===key&&canonicalJSON(assembly.header)===canonicalJSON(header)&&item.part===assembly.next);assembly.parts.push(item.dataPart);assembly.bytes+=enc.encode(item.dataPart).length;assembly.next++;check(assembly.bytes<=ROW_LIMIT,413);
-      if(assembly.next===item.parts){const data=assembly.parts.join('');let parsed:any;try{parsed=JSON.parse(data);}catch{throw new BackupError();}if(entity){check(is_object(parsed)&&parsed.id===item.id);if(!PRIVATE.has(item.kind))entities.push({kind:item.kind,id:item.id,data,created_at:item.createdAt,updated_at:item.updatedAt});}else if(!PRIVATE_META.has(item.key))meta.push({key:item.key,data});seen.add(key);assembly=null;}
+      if(assembly.next===item.parts){const data=assembly.parts.join('');let parsed:any;try{parsed=retained?VAULT_COLUMNS[item.table as VaultTable].includes('data' as never)?{...item.value,data}:item.value:JSON.parse(data);}catch{throw new BackupError();}if(retained){check(VAULT_COLUMNS[item.table as VaultTable].includes('data' as never)||data==='');validateBackupVaultRow(item.table,parsed);if(typeof parsed.data==='string')check(enc.encode(parsed.data).length<=ROW_LIMIT,413);vault![item.table as VaultTable].push(parsed);}else if(entity){check(is_object(parsed)&&parsed.id===item.id);if(!PRIVATE.has(item.kind))entities.push({kind:item.kind,id:item.id,data,created_at:item.createdAt,updated_at:item.updatedAt});}else if(!PRIVATE_META.has(item.key))meta.push({key:item.key,data});seen.add(key);assembly=null;}
     }
-    if(page.nextCursor===null){check(assembly===null);return {entities,meta,chunks,provenance,revision};}
+    if(page.nextCursor===null){check(assembly===null);return {entities,meta,chunks,provenance,vault,revision};}
     check(page.items.length>0);cursor(page.nextCursor);const next=canonicalJSON(page.nextCursor);check(!cursors.has(next));cursors.add(next);c=clone(page.nextCursor);
   }
   throw new BackupError(413);
@@ -155,7 +157,7 @@ async function portable(snapshot:Collected,storage:{readChunk(item:ChunkManifest
     check(!Object.hasOwn(file,'cloud_chunks')||Array.isArray(file.cloud_chunks));
     if(Array.isArray(file.cloud_chunks)){
       check(file.storage==='chunks'&&typeof file.sha256==='string'&&HASH.test(file.sha256));const physical=file.storage_id??file.id;id(physical);const items=manifests(file,physical);row.data=patchJSON(row.data as string,['cloud_chunks','storage_id','source_fingerprint','data'],{storage:'chunks',sha256:file.sha256,size:file.size});minimum+=file.size+enc.encode(row.data).length;
-      for(const item of items)chunks.push({attachment_id:row.id,offset:item.offset,data:{size:item.size,async *open(){await gate();const bytes=await storage.readChunk(clone(item),gate,signal);check(bytes instanceof Uint8Array&&bytes.length===item.size&&await sha(bytes)===item.sha256);for(let offset=0;offset<bytes.length;offset+=READ)yield bytes.subarray(offset,Math.min(offset+READ,bytes.length));}}});
+      for(const item of items){const portableBytes=snapshot.chunks.get(canonicalJSON([row.id,item.offset]));if(portableBytes!==undefined)check(portableBytes.length===item.size&&await sha(portableBytes)===item.sha256);chunks.push({attachment_id:row.id,offset:item.offset,data:{size:item.size,async *open(){await gate();const bytes=portableBytes??await storage.readChunk(clone(item),gate,signal);check(bytes instanceof Uint8Array&&bytes.length===item.size&&await sha(bytes)===item.sha256);for(let offset=0;offset<bytes.length;offset+=READ)yield bytes.subarray(offset,Math.min(offset+READ,bytes.length));}}});}
     }else if((original.storage??'inline')==='inline'){
       check(overlay===undefined&&typeof original.data==='string',503,'BACKUP_MIGRATION_REQUIRED');const bytes=decodeBase64(original.data,original.size,5_000_000);if(original.sha256!==undefined)check(await sha(bytes)===original.sha256);minimum+=enc.encode(row.data as string).length;
     }else{
@@ -165,8 +167,19 @@ async function portable(snapshot:Collected,storage:{readChunk(item:ChunkManifest
   }
   for(const item of snapshot.provenance??[])minimum+=enc.encode(JSON.stringify(item)).length;
   for(const item of meta)minimum+=enc.encode(item.data as string).length;check(minimum<=maximum,413);
+  if(snapshot.vault){
+    const recordIds=new Set(snapshot.vault.retention_entities.filter(row=>['attachment','attachment_cloud'].includes(row.kind as string)).map(row=>row.record_id));
+    const known=new Set(chunks.map(row=>canonicalJSON([row.attachment_id,row.offset])));
+    for(const recordId of recordIds){
+      const archived=snapshot.vault.retention_entities.filter(row=>row.record_id===recordId&&['attachment','attachment_cloud'].includes(row.kind as string)).map(row=>({kind:row.kind as string,id:row.id as string,data:row.data as string,created_at:row.created_at as string,updated_at:row.updated_at as string}));
+      const child=await portable({entities:archived,meta:[],chunks:snapshot.chunks,revision:snapshot.revision},storage,gate,maximum,signal);
+      for await(const row of child.chunks()){const key=canonicalJSON([row.attachment_id,row.offset]);if(!known.has(key)){known.add(key);chunks.push(row);minimum+=row.data instanceof Uint8Array?row.data.length:row.data.size;}}
+    }
+    for(const values of Object.values(snapshot.vault))for(const row of values)minimum+=enc.encode(JSON.stringify(row)).length;
+    check(minimum<=maximum,413);
+  }
   rows.sort((a,b)=>compare(a.kind,b.kind)||compare(a.id,b.id));meta.sort((a,b)=>compare(a.key,b.key));chunks.sort((a,b)=>compare(a.attachment_id,b.attachment_id)||a.offset-b.offset);
-  return {entities:()=>rows,meta:()=>meta,chunks:()=>chunks,...(snapshot.provenance?{provenance:()=>snapshot.provenance!.toSorted((a,b)=>compare(a.kind,b.kind)||compare(a.id,b.id))}:{})};
+  return {entities:()=>rows,meta:()=>meta,chunks:()=>chunks,...(snapshot.vault?{vault:Object.fromEntries(Object.entries(snapshot.vault).map(([name,values])=>[name,()=>values])) as Record<VaultTable,()=>BackupVaultRow[]>}:{}),...(snapshot.provenance?{provenance:()=>snapshot.provenance!.toSorted((a,b)=>compare(a.kind,b.kind)||compare(a.id,b.id))}:{})};
 }
 function range(value:string|null,size:number):{start:number;end:number;partial:boolean}{
   if(!value||value.split('=',1)[0].toLowerCase()!=='bytes')return {start:0,end:size,partial:false};const parts=/^bytes=(\d*)-(\d*)$/.exec(value);if(!parts||!parts[1]&&!parts[2]||!size||parts[1].length>20||parts[2].length>20)throw new BackupError(416);

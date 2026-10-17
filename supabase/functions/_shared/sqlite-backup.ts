@@ -5,8 +5,14 @@
  * partial output if the second pass differs, fails, or loses authorization.
  */
 import {IncrementalSHA256} from './storage.ts';
+import {canonicalJSON} from './store.ts';
 
+export const VAULT_COLUMNS={"retention_records":["id","data","created_at","updated_at"],"retention_entities":["record_id","kind","id","data","created_at","updated_at","generation","ownership"],"retention_provenance":["record_id","kind","id","generation","creator_id","creator_cause","editor_id","edited_at","editor_cause","manager_id","manager_at"],"retention_attachment_refs":["record_id","attachment_id","storage_kind","physical_id","offset","size","sha256"],"retention_identity_reservations":["kind","id","record_id","generation"],"retention_links":["record_id","kind","id","data"]} as const;
+export type VaultTable=keyof typeof VAULT_COLUMNS;
+export type BackupVaultRow=Record<string,string|number|null>;
+export const VAULT_DEFINITIONS={"retention_records":"CREATE TABLE retention_records (id TEXT NOT NULL PRIMARY KEY,data TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)","retention_entities":"CREATE TABLE retention_entities (record_id TEXT NOT NULL,kind TEXT NOT NULL,id TEXT NOT NULL,data TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,generation TEXT,ownership TEXT NOT NULL,PRIMARY KEY(record_id,kind,id))","retention_provenance":"CREATE TABLE retention_provenance (record_id TEXT NOT NULL,kind TEXT NOT NULL,id TEXT NOT NULL,generation TEXT NOT NULL,creator_id TEXT,creator_cause TEXT NOT NULL,editor_id TEXT,edited_at TEXT,editor_cause TEXT NOT NULL,manager_id TEXT,manager_at TEXT,PRIMARY KEY(record_id,kind,id))","retention_attachment_refs":"CREATE TABLE retention_attachment_refs (record_id TEXT NOT NULL,attachment_id TEXT NOT NULL,storage_kind TEXT NOT NULL,physical_id TEXT NOT NULL,offset INTEGER NOT NULL,size INTEGER NOT NULL,sha256 TEXT NOT NULL,PRIMARY KEY(record_id,attachment_id,storage_kind,physical_id,offset))","retention_identity_reservations":"CREATE TABLE retention_identity_reservations (kind TEXT NOT NULL,id TEXT NOT NULL,record_id TEXT NOT NULL,generation TEXT NOT NULL,PRIMARY KEY(kind,id))","retention_links":"CREATE TABLE retention_links (record_id TEXT NOT NULL,kind TEXT NOT NULL,id TEXT NOT NULL,data TEXT NOT NULL,PRIMARY KEY(record_id,kind,id))"} as const;
 export const SQLITE_DEFINITIONS={
+  ...VAULT_DEFINITIONS,
   entities:'CREATE TABLE entities (kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(kind,id))',
   meta:'CREATE TABLE meta (key TEXT PRIMARY KEY, data TEXT NOT NULL)',
   attachment_chunks:'CREATE TABLE attachment_chunks (attachment_id TEXT NOT NULL, offset INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(attachment_id,offset))',
@@ -32,8 +38,8 @@ export function validateBackupProvenance(value:unknown):asserts value is BackupP
   const date=(item:unknown)=>{if(item===null)return true;if(typeof item!=='string')return false;const m=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|([+-])(\d{2}):(\d{2}))$/.exec(item);if(!m)return false;const [y,mo,d,h,mi,se]=m.slice(1,7).map(Number),v=new Date(0);v.setUTCFullYear(y,mo-1,d);v.setUTCHours(h,mi,se,0);if(y<1||mo<1||mo>12||d<1||v.getUTCFullYear()!==y||v.getUTCMonth()+1!==mo||v.getUTCDate()!==d||h>23||mi>59||se>59||Number(m[10]??0)>23||Number(m[11]??0)>59)return false;const offset=(Number(m[10]??0)*60+Number(m[11]??0))*60000*(m[9]==='-'?-1:1);const year=new Date(v.getTime()-offset).getUTCFullYear();return year>=1&&year<=9999;};
   check(date(row.edited_at)&&date(row.manager_at)&&(row.editor_id!==null||row.edited_at===null)&&((row.manager_id===null)===(row.manager_at===null)));
 }
-export type SQLiteBackupSource={entities:Rows<BackupEntity>;meta:Rows<BackupMeta>;chunks:Rows<BackupChunk>;provenance?:Rows<BackupProvenance>};
-export type SQLiteBackupSummary={pageSize:number;pages:number;byteLength:number;sourceSHA256:string;counts:{entities:number;meta:number;attachment_chunks:number;content_provenance?:number};entityKinds:Record<string,number>};
+export type SQLiteBackupSource={entities:Rows<BackupEntity>;meta:Rows<BackupMeta>;chunks:Rows<BackupChunk>;provenance?:Rows<BackupProvenance>;vault?:Record<VaultTable,Rows<BackupVaultRow>>};
+export type SQLiteBackupSummary={pageSize:number;pages:number;byteLength:number;sourceSHA256:string;counts:{entities:number;meta:number;attachment_chunks:number;content_provenance?:number;retention_records?:number;retention_entities?:number;retention_provenance?:number;retention_attachment_refs?:number;retention_identity_reservations?:number;retention_links?:number};entityKinds:Record<string,number>};
 export type SQLiteBackupSink={write(bytes:Uint8Array):void|Promise<void>;close?(summary:SQLiteBackupSummary):void|Promise<void>;abort?(error:SQLiteBackupError):void|Promise<void>};
 export type SQLiteBackupOptions={pageSize?:4096|65536;maxPlanBytes?:number};
 export class SQLiteBackupError extends Error{constructor(message:string){super(message);this.name='SQLiteBackupError';}}
@@ -84,13 +90,14 @@ function jsonText(value:unknown):string{
 }
 type Manifest={size:number;sha256:string;offset:number;hash:IncrementalSHA256};
 type NormalizedRow={key:Key;record:RecordSource;attachment?:Manifest;kind?:string};
-type NormalizedSnapshot={manifests:Map<string,Manifest>;kinds:Record<string,number>;resources:Set<string>};
+type NormalizedSnapshot={manifests:Map<string,Manifest>;kinds:Record<string,number>;resources:Set<string>;live:Set<string>;liveAttachments:Map<string,string>;vault:VaultValidationState};
 async function* entities(source:SQLiteBackupSource,state:NormalizedSnapshot):AsyncGenerator<NormalizedRow>{
   for await(const row of source.entities()){
     check(row&&typeof row==='object'&&Object.keys(row).length===5&&['kind','id','data','created_at','updated_at'].every(key=>Object.hasOwn(row,key)));validText(row.kind);if(SQLITE_PRIVATE_KINDS.has(row.kind)||row.kind==='attachment_chunk')continue;
     check(/^[a-z][a-z0-9_]{0,63}$/.test(row.kind));validText(row.id);check(Array.from(row.id).length>0&&Array.from(row.id).length<=160);validText(row.created_at);validText(row.updated_at);
     const data=jsonText(row.data);let parsed:any;try{parsed=JSON.parse(data);}catch{throw new SQLiteBackupError('Invalid JSON entity');}check(parsed&&typeof parsed==='object'&&!Array.isArray(parsed)&&parsed.id===row.id,'Entity identity mismatch');
     if(row.kind==='attachment'&&parsed.storage==='chunks'){check(Number.isSafeInteger(parsed.size)&&parsed.size>=0&&parsed.size<=MAX_ATTACHMENT&&typeof parsed.sha256==='string'&&/^[a-f0-9]{64}$/.test(parsed.sha256),'Invalid finalized attachment manifest');check(!state.manifests.has(row.id),'Duplicate attachment');state.manifests.set(row.id,{size:parsed.size,sha256:parsed.sha256,offset:0,hash:new IncrementalSHA256()});}
+    state.live.add(JSON.stringify([row.kind,row.id]));if(['attachment','attachment_cloud','attachment_chunk'].includes(row.kind))state.liveAttachments.set(JSON.stringify([row.kind,row.id]),attachmentFingerprint(row.kind,parsed,row.created_at,row.updated_at));
     if(['page','database','row'].includes(row.kind))state.resources.add(JSON.stringify([row.kind,row.id]));
     Object.defineProperty(state.kinds,row.kind,{value:(Object.hasOwn(state.kinds,row.kind)?state.kinds[row.kind]:0)+1,writable:true,enumerable:true,configurable:true});yield {key:[row.kind,row.id],record:record([row.kind,row.id,data,row.created_at,row.updated_at]),kind:row.kind};
   }
@@ -101,7 +108,9 @@ async function* chunks(source:SQLiteBackupSource,state:NormalizedSnapshot):Async
     check(row&&typeof row==='object'&&Object.keys(row).length===3&&['attachment_id','offset','data'].every(key=>Object.hasOwn(row,key)));validText(row.attachment_id);const manifest=state.manifests.get(row.attachment_id);if(!manifest)continue;
     check(Number.isSafeInteger(row.offset)&&row.offset===manifest.offset&&row.offset<manifest.size,'Attachment chunks are noncontiguous');const size=row.data instanceof Uint8Array?row.data.length:row.data?.size;
     check(size===Math.min(CHUNK_SIZE,manifest.size-row.offset),'Attachment chunk has incorrect size');manifest.offset+=size;
-    yield {key:[row.attachment_id,row.offset],record:record([row.attachment_id,row.offset,row.data]),attachment:manifest};
+    const pin=state.vault.pins.get(JSON.stringify([row.attachment_id,row.offset]));let data=row.data;
+    if(pin){check(pin.size===size,'Retained chunk pin size mismatch');if(data instanceof Uint8Array){const hash=new IncrementalSHA256();hash.update(data);check(hash.hex()===pin.sha256,'Retained chunk pin hash mismatch');}else{const original=data;data={size:original.size,async *open(){const hash=new IncrementalSHA256();for await(const bytes of original.open()){hash.update(bytes);yield bytes;}check(hash.hex()===pin.sha256,'Retained chunk pin hash mismatch');}};}}
+    yield {key:[row.attachment_id,row.offset],record:record([row.attachment_id,row.offset,data]),attachment:manifest};
   }
   for(const manifest of state.manifests.values())check(manifest.offset===manifest.size&&manifest.hash.hex()===manifest.sha256,'Finalized attachment size or SHA-256 does not match its chunks');
 }
@@ -109,6 +118,89 @@ type Overflow={first:number;count:number};
 async function* provenance(source:SQLiteBackupSource,state:NormalizedSnapshot):AsyncGenerator<NormalizedRow>{
   for await(const row of source.provenance?.()??[]){validateBackupProvenance(row);check(state.resources.has(JSON.stringify([row.kind,row.id])),'Provenance resource is missing');yield {key:[row.kind,row.id],record:record(PROVENANCE_COLUMNS.map(key=>row[key]))};}
 }
+function typedAttachmentIds(kind:string,value:any,files:string[]):string[]{const ids=new Set<string>(),add=(item:any)=>{if(item===null||item===undefined)return;check(typeof item==='string'&&Array.from(item).length>0&&Array.from(item).length<=160&&!item.includes('\0'));ids.add(item);};if(['page','version'].includes(kind)&&Array.isArray(value.blocks)){for(const block of value.blocks)if(block&&typeof block==='object'&&!Array.isArray(block))add(block.attachment_id);}else if(kind==='collaboration'){const state=value.state;if(state&&typeof state==='object'&&!Array.isArray(state)){for(const document of [state,state.history?.baseline])if(document&&document.blocks&&typeof document.blocks==='object'&&!Array.isArray(document.blocks))for(const block of Object.values(document.blocks) as any[])if(block&&typeof block==='object')add(block.fields?.attachment_id?.value);const ops=state.history?.ops;if(ops&&typeof ops==='object'&&!Array.isArray(ops))for(const operation of Object.values(ops) as any[])if(operation&&operation.type==='block.set'&&operation.field==='attachment_id')add(operation.value);}}else if(kind==='row'){for(const key of files)for(const item of value.properties?.[key]??[])add(typeof item==='string'?item:item?.id);}return [...ids];}
+function attachmentFingerprint(kind:string,value:any,created:string,updated:string):string{const keys=Object.keys(value).filter(key=>kind!=='attachment'||!['cloud_chunks','storage_id'].includes(key)).sort();const hash=new IncrementalSHA256();hash.update(new TextEncoder().encode(JSON.stringify([created,updated,keys.map(key=>[key,value[key]])])));return hash.hex();}
+type VaultValidationState={records:Map<string,{root:string;generation:string;header:unknown;counts:Record<string,number>}>;counts:Map<string,Record<string,number>>;entities:Map<string,{generation:string|null;ownership:string;kind:string;id:string;parent:string|null;database:string|null;row:string|null;files:string[];attachments:string[]}>;reservations:Map<string,{record:string;generation:string}>;history:Map<string,string>;pins:Map<string,{size:number;sha256:string}>;roots:Map<string,{generation:string|null;archived:boolean;header:unknown}>;links:Array<{record:string;removed:string[]}>;refs:Array<{record:string;attachment:string;storage:string;physical:string;offset:number;size:number;sha256:string}>;fileManifests:Set<string>;cloudManifests:Set<string>;recordManifests:Map<string,{size:number;sha256:string}>};
+function newSnapshot():NormalizedSnapshot{return {manifests:new Map(),kinds:{},resources:new Set(),live:new Set(),liveAttachments:new Map(),vault:{records:new Map(),counts:new Map(),entities:new Map(),reservations:new Map(),history:new Map(),pins:new Map(),roots:new Map(),links:[],refs:[],fileManifests:new Set(),cloudManifests:new Set(),recordManifests:new Map()}};}
+function rememberVault(table:VaultTable,row:BackupVaultRow,state:NormalizedSnapshot){
+ const v=state.vault,record=String(table==='retention_records'?row.id:row.record_id),countKey=({retention_entities:'entities',retention_provenance:'provenance',retention_attachment_refs:'refs',retention_identity_reservations:'reservations',retention_links:'links'} as Partial<Record<VaultTable,string>>)[table];
+ if(table==='retention_records'){const data=privateJSON(row.data as string);check(!v.records.has(record));v.records.set(record,{root:data.root_id,generation:data.generation,header:data.header,counts:data.counts});return;}
+ check(v.records.has(record)&&countKey!==undefined,'Orphan private retention row');const counts=v.counts.get(record)??{entities:0,provenance:0,refs:0,reservations:0,links:0};counts[countKey]++;v.counts.set(record,counts);
+ const key=JSON.stringify([record,row.kind,row.id]);
+ if(table==='retention_entities'){
+  check(!v.entities.has(key));const payload=privateJSON(row.data as string);v.entities.set(key,{generation:row.generation as string|null,ownership:String(row.ownership),kind:String(row.kind),id:String(row.id),parent:payload.page_id??payload.parent_id??null,database:payload.database_id??null,row:payload.row_id??null,files:row.kind==='database'&&Array.isArray(payload.properties)?payload.properties.filter((p:any)=>p&&p.type==='files'&&typeof p.id==='string').map((p:any)=>p.id):[],attachments:typedAttachmentIds(String(row.kind),payload,row.kind==='row'?v.entities.get(JSON.stringify([record,'database',payload.database_id]))?.files??[]:[])});if(state.live.has(JSON.stringify([row.kind,row.id]))){check(['attachment','attachment_cloud','attachment_chunk'].includes(String(row.kind))&&state.liveAttachments.get(JSON.stringify([row.kind,row.id]))===attachmentFingerprint(String(row.kind),privateJSON(row.data as string),String(row.created_at),String(row.updated_at)),'Retained identity conflicts with live source');}
+  if(row.kind==='attachment_chunk')v.fileManifests.add(JSON.stringify([record,payload.attachment_id,payload.offset,payload.size,payload.sha256]));
+  if(['attachment','attachment_cloud'].includes(String(row.kind))&&payload.storage==='chunks'){
+   const mk=JSON.stringify([record,row.id]),old=v.recordManifests.get(mk);check(!old||old.size===payload.size&&old.sha256===payload.sha256,'Retained attachment manifest conflict');v.recordManifests.set(mk,{size:payload.size,sha256:payload.sha256});
+   if(Object.hasOwn(payload,'cloud_chunks')){check(Array.isArray(payload.cloud_chunks));let offset=0;for(const item of payload.cloud_chunks){check(item&&Object.keys(item).sort().join(',')==='attachmentId,offset,sha256,size,version'&&item.version===1&&item.attachmentId===(payload.storage_id??payload.id)&&item.offset===offset&&item.size===Math.min(CHUNK_SIZE,payload.size-offset)&&item.size>0&&typeof item.sha256==='string'&&/^[a-f0-9]{64}$/.test(item.sha256),'Invalid retained cloud manifest');v.cloudManifests.add(JSON.stringify([record,row.id,item.attachmentId,item.offset,item.size,item.sha256]));offset+=item.size;}check(offset===payload.size);}
+  }
+  if(row.kind==='page'){const data=privateJSON(row.data as string);v.roots.set(key,{generation:row.generation as string|null,archived:data.archived===true||data.deleted===true,header:Object.fromEntries(['id','owner_id','parent_id','teamspace_id','permissions','archived','deleted','deleted_at','locked','revision'].filter(k=>Object.hasOwn(data,k)).map(k=>[k,data[k]]))});}
+ }else if(table==='retention_provenance'){check(!v.history.has(key));v.history.set(key,String(row.generation));}
+ else if(table==='retention_identity_reservations'){const identity=JSON.stringify([row.kind,row.id]);check(!v.reservations.has(identity));v.reservations.set(identity,{record,generation:String(row.generation)});}
+ else if(table==='retention_attachment_refs'){
+  v.refs.push({record,attachment:String(row.attachment_id),storage:String(row.storage_kind),physical:String(row.physical_id),offset:Number(row.offset),size:Number(row.size),sha256:String(row.sha256)});
+  const pinKey=JSON.stringify([row.attachment_id,row.offset]),previous=v.pins.get(pinKey);check(!previous||previous.size===row.size&&previous.sha256===row.sha256,'Conflicting retained physical pin');v.pins.set(pinKey,{size:Number(row.size),sha256:String(row.sha256)});
+  check(v.entities.has(JSON.stringify([record,'attachment',row.attachment_id])),'Retained pin has no attachment');if(row.storage_kind==='blob')check(row.physical_id===row.attachment_id);
+ }else if(table==='retention_links'){const data=privateJSON(row.data as string);v.links.push({record,removed:data.before.filter((id:string)=>!data.after.includes(id))});}
+}
+function verifyVault(state:NormalizedSnapshot){
+ const v=state.vault;
+ for(const [record,r]of v.records){const counts=v.counts.get(record)??{entities:0,provenance:0,refs:0,reservations:0,links:0};for(const key of Object.keys(counts))check(r.counts[key]===counts[key],'Retained row count mismatch');const root=v.roots.get(JSON.stringify([record,'page',r.root]));check(root&&root.archived&&root.generation===r.generation&&canonicalJSON(root.header)===canonicalJSON(r.header),'Retained root mismatch');}
+ for(const [key,value]of v.entities){const [record,kind,id]=JSON.parse(key);if(value.ownership==='owned'){const r=v.reservations.get(JSON.stringify([kind,id]));check(r&&r.record===record&&(value.generation===null||r.generation===value.generation),'Owned retained reservation mismatch');}if(['page','database','row'].includes(kind))check(v.history.get(key)===value.generation,'Retained provenance missing');const owned=(kind:string,id:string|null)=>id!==null&&v.entities.get(JSON.stringify([record,kind,id]))?.ownership==='owned';for(const attachment of value.attachments)check(v.entities.has(JSON.stringify([record,'attachment',attachment])),'Typed retained attachment reference is missing');
+ if(kind==='page'&&id!==v.records.get(record)!.root){let parent=value.parent;const seen=new Set([id]);while(parent!==v.records.get(record)!.root){check(parent!==null&&!seen.has(parent)&&owned('page',parent),'Retained page ownership cycle or gap');seen.add(parent);parent=v.entities.get(JSON.stringify([record,'page',parent]))!.parent;}check(owned('page',parent),'Retained page parent missing');}
+ else if(kind==='database')check(owned('page',value.parent),'Retained database parent missing');else if(kind==='row')check(owned('database',value.database),'Retained row database missing');else if(['version','comment','site','transcript'].includes(kind))check(owned('page',value.parent),'Retained page owner missing');else if(['collaboration','wiki_page'].includes(kind))check(owned('page',value.parent??id),'Retained collaboration owner missing');else if(kind==='form')check(owned('database',value.database),'Retained form database missing');else if(kind==='automation')check(owned('database',value.database)||owned('row',value.row),'Retained automation owner missing');}
+ for(const [key,r]of v.reservations){const [kind,id]=JSON.parse(key),e=v.entities.get(JSON.stringify([r.record,kind,id]));check(e&&e.ownership==='owned','Orphan reservation');}
+ for(const [key,generation]of v.history)check(v.entities.get(key)?.generation===generation,'Retained provenance mismatch');
+ for(const ref of v.refs){if(ref.storage==='file')check(v.fileManifests.has(JSON.stringify([ref.record,ref.attachment,ref.offset,ref.size,ref.sha256])),'Retained file pin has no immutable manifest');if(ref.storage==='cloud')check(v.cloudManifests.has(JSON.stringify([ref.record,ref.attachment,ref.physical,ref.offset,ref.size,ref.sha256])),'Retained cloud pin has no immutable manifest');}
+ for(const [key,manifest]of v.recordManifests){const [record,attachment]=JSON.parse(key),refs=v.refs.filter(ref=>ref.record===record&&ref.attachment===attachment);for(let offset=0;offset<manifest.size;offset+=CHUNK_SIZE)check(refs.some(ref=>ref.offset===offset&&ref.size===Math.min(CHUNK_SIZE,manifest.size-offset)),'Retained physical pin coverage is incomplete');check(new Set(refs.map(ref=>ref.offset)).size===Math.ceil(manifest.size/CHUNK_SIZE),'Retained physical pin coverage is invalid');}
+ for(const link of v.links)for(const id of link.removed)check(v.entities.get(JSON.stringify([link.record,'row',id]))?.ownership==='owned','Invalid retained dependency link');
+}
+function privateJSON(source:string):any{let result:any;try{result=JSON.parse(source);}catch{throw new SQLiteBackupError('Invalid private retention JSON');}const stack:Array<{object:boolean;keys:Set<string>}>=[];for(let at=0;at<source.length;at++){const char=source[at];if(char==='{'||char==='['){stack.push({object:char==='{',keys:new Set()});continue;}if(char==='}'||char===']'){stack.pop();continue;}if(char!=='"')continue;const start=at;for(at++;at<source.length;at++){if(source[at]==='\\'){at++;continue;}if(source[at]==='"')break;}let next=at+1;while(/[\t\n\r ]/.test(source[next]??'!'))next++;if(source[next]===':'){const key=JSON.parse(source.slice(start,at+1)),frame=stack.at(-1);check(frame?.object&&!frame.keys.has(key),'Duplicate private retention JSON key');frame.keys.add(key);}}return result;}
+export function backupDate(value:unknown):boolean{if(typeof value!=='string')return false;const match=/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|([+-])(\d{2}):(\d{2}))$/.exec(value);if(!match)return false;const [year,month,day,hour,minute,second]=match.slice(1,7).map(Number),date=new Date(0);date.setUTCFullYear(year,month-1,day);date.setUTCHours(hour,minute,second,0);if(year<1||year>9999||month<1||month>12||day<1||date.getUTCFullYear()!==year||date.getUTCMonth()+1!==month||date.getUTCDate()!==day||hour>23||minute>59||second>59||Number(match[10]??0)>23||Number(match[11]??0)>59)return false;const offset=(Number(match[10]??0)*60+Number(match[11]??0))*60000*(match[9]==='-'?-1:1),adjusted=new Date(date.getTime()-offset);return adjusted.getUTCFullYear()>=1&&adjusted.getUTCFullYear()<=9999;}
+export function validateBackupVaultRow(table:VaultTable,row:unknown):asserts row is BackupVaultRow{
+  check(row!==null&&typeof row==='object'&&!Array.isArray(row));const value=row as Record<string,unknown>,columns=VAULT_COLUMNS[table];
+  check(Object.keys(value).length===columns.length&&columns.every(key=>Object.hasOwn(value,key)));
+  const identity=(item:unknown)=>{validText(item);check(Array.from(item).length>0&&Array.from(item).length<=160);};
+  const generation=(item:unknown)=>check(typeof item==='string'&&/^[a-f0-9]{32}$/.test(item));
+  for(const [key,item]of Object.entries(value)){
+    if(['offset','size'].includes(key)){check(Number.isSafeInteger(item)&&(item as number)>=0);continue;}
+    if(item===null){check(['generation','creator_id','editor_id','edited_at','manager_id','manager_at'].includes(key));continue;}validText(item);
+    if(['created_at','updated_at','edited_at','manager_at'].includes(key))check(backupDate(item));
+    if(['id','record_id','attachment_id','physical_id','creator_id','editor_id','manager_id'].includes(key))identity(item);
+  }
+  if('record_id'in value)generation(value.record_id);
+  if(table==='retention_records'){
+    generation(value.id);let data:any;try{data=privateJSON(value.data as string);}catch{check(false);}
+    check(data&&typeof data==='object'&&!Array.isArray(data)&&Object.keys(data).sort().join(',')==='actor_id,cause,counts,deleted_at,generation,header,purge_after,record_revision,retained_at,retention_days,root_id,root_kind,source_revision,state,version');
+    for(const key of ['deleted_at','retained_at','purge_after'])check(backupDate(data[key]));check(new Date(data.purge_after).getTime()>=new Date(data.retained_at).getTime());
+    check(data.version===1&&data.root_kind==='page'&&data.state==='retained'&&['manual','policy'].includes(data.cause));identity(data.root_id);generation(data.generation);if(data.actor_id!==null)identity(data.actor_id);
+    check(Number.isSafeInteger(data.retention_days)&&data.retention_days>=1&&data.retention_days<=3650&&new Date(data.purge_after).getTime()-new Date(data.retained_at).getTime()===data.retention_days*86400000&&Number.isSafeInteger(data.source_revision)&&data.source_revision>=0&&Number.isSafeInteger(data.record_revision)&&data.record_revision>=1);
+    check(data.counts&&Object.keys(data.counts).sort().join(',')==='entities,links,provenance,refs,reservations'&&Object.values(data.counts).every(v=>Number.isSafeInteger(v)&&(v as number)>=0)&&data.header&&typeof data.header==='object'&&!Array.isArray(data.header));
+  }else if(table==='retention_entities'){
+    check(['page','database','row','version','comment','collaboration','wiki_page','site','form','automation','transcript','attachment','attachment_cloud','attachment_chunk'].includes(value.kind as string)&&['owned','shared'].includes(value.ownership as string));
+    check(value.ownership!=='shared'||['attachment','attachment_cloud','attachment_chunk'].includes(value.kind as string));
+    if(value.generation!==null)generation(value.generation);if(['page','database','row'].includes(value.kind as string))generation(value.generation);
+    let data:any;try{data=privateJSON(value.data as string);}catch{check(false);}check(data&&typeof data==='object'&&!Array.isArray(data)&&data.id===value.id);
+  }else if(table==='retention_provenance'){
+    const {record_id,...history}=value;validateBackupProvenance(history);
+  }else if(table==='retention_attachment_refs'){
+    check(['blob','file','cloud'].includes(value.storage_kind as string)&&typeof value.sha256==='string'&&/^[a-f0-9]{64}$/.test(value.sha256)&&Number(value.offset)%CHUNK_SIZE===0&&Number(value.size)>0&&Number(value.size)<=CHUNK_SIZE);if(value.storage_kind==='file')check(value.physical_id===value.sha256);
+  }else if(table==='retention_identity_reservations'){generation(value.generation);check(['page','database','row','version','comment','collaboration','wiki_page','site','form','automation','transcript','attachment','attachment_cloud','attachment_chunk'].includes(value.kind as string));}
+  else {check(value.kind==='row');let data:any;try{data=privateJSON(value.data as string);}catch{check(false);}check(data&&Object.keys(data).sort().join(',')==='after,before,generation');generation(data.generation);for(const key of ['before','after']){check(Array.isArray(data[key])&&new Set(data[key]).size===data[key].length);for(const id of data[key])identity(id);}check(data.after.every((id:string)=>data.before.includes(id)));}
+}
+export const VAULT_KEYS:Record<VaultTable,string[]>={retention_records:['id'],retention_entities:['record_id','kind','id'],retention_provenance:['record_id','kind','id'],retention_attachment_refs:['record_id','attachment_id','storage_kind','physical_id','offset'],retention_identity_reservations:['kind','id'],retention_links:['record_id','kind','id']};
+async function* vaultRows(table:VaultTable,source:SQLiteBackupSource,state:NormalizedSnapshot):AsyncGenerator<NormalizedRow>{
+  for await(const row of source.vault?.[table]()??[]){validateBackupVaultRow(table,row);rememberVault(table,row,state);
+    if(table==='retention_entities'&&['attachment','attachment_cloud'].includes(row.kind as string)){
+      const item=privateJSON(row.data as string);if(item.storage==='chunks'){
+        check(Number.isSafeInteger(item.size)&&item.size>=0&&item.size<=MAX_ATTACHMENT&&typeof item.sha256==='string'&&/^[a-f0-9]{64}$/.test(item.sha256));
+        const old=state.manifests.get(row.id as string);check(!old||old.size===item.size&&old.sha256===item.sha256,'Retained attachment bytes conflict');if(!old)state.manifests.set(row.id as string,{size:item.size,sha256:item.sha256,offset:0,hash:new IncrementalSHA256()});
+      }
+    }
+    yield {key:VAULT_KEYS[table].map(key=>row[key] as string|number),record:record(VAULT_COLUMNS[table].map(key=>row[key]))};
+  }
+}
+
 type RowPlan={rowid:number;size:number;local:number;overflow:Overflow|null;cellSize:number};
 type Leaf={page:number;start:number;end:number;maxRowid:number};
 type TableNode={page:number;children:TableTree[];maxRowid:number};
@@ -163,9 +255,11 @@ export class SQLiteBackupWriter{
   async write(source:SQLiteBackupSource,sink:SQLiteBackupSink):Promise<SQLiteBackupSummary>{
     let closed=false;
     try{
-      const allocate=new Allocator(this.pageSize),firstHash=new IncrementalSHA256(),firstState:NormalizedSnapshot={manifests:new Map(),kinds:{},resources:new Set()},plans:TablePlan[]=[];let planBytes=0;
-      const names=source.provenance?['entities','meta','attachment_chunks','content_provenance']:['entities','meta','attachment_chunks'];
-      const readers=source.provenance?[entities,metadata,chunks,provenance]:[entities,metadata,chunks];
+      const allocate=new Allocator(this.pageSize),firstHash=new IncrementalSHA256(),firstState:NormalizedSnapshot=newSnapshot(),plans:TablePlan[]=[];let planBytes=0;
+      const vaultNames=Object.keys(VAULT_COLUMNS) as VaultTable[];
+      if(source.vault)check(vaultNames.every(name=>typeof source.vault![name]==='function'),'Incomplete retention vault source');
+      const names=source.vault?['entities','meta','content_provenance',...vaultNames,'attachment_chunks']:source.provenance?['entities','meta','attachment_chunks','content_provenance']:['entities','meta','attachment_chunks'];
+      const readers=source.vault?[entities,metadata,provenance,...vaultNames.map(name=>(s:SQLiteBackupSource,v:NormalizedSnapshot)=>vaultRows(name,s,v)),chunks]:source.provenance?[entities,metadata,chunks,provenance]:[entities,metadata,chunks];
       for(let table=0;table<readers.length;table++){
         firstHash.update(Uint8Array.of(table));const rows:RowPlan[]=[],leaves:Leaf[]=[],keys:Uint8Array[]=[];let previous:Key|null=null,start=0,used=8;
         for await(const row of readers[table](source,firstState)){
@@ -177,10 +271,11 @@ export class SQLiteBackupWriter{
         }
         leaves.push({page:allocate.reserve(),start,end:rows.length,maxRowid:rows.length});const tree=tableParents(leaves,allocate),index=indexTree(keys,allocate);plans.push({rows,leaves,parents:tree.parents,root:tree.root,keys,index});
       }
-      const pages=allocate.next-1,summary:SQLiteBackupSummary={pageSize:this.pageSize,pages,byteLength:pages*this.pageSize,sourceSHA256:firstHash.hex(),counts:{entities:plans[0].rows.length,meta:plans[1].rows.length,attachment_chunks:plans[2].rows.length,...(source.provenance?{content_provenance:plans[3].rows.length}:{})},entityKinds:firstState.kinds};
+      if(source.vault)verifyVault(firstState);
+      const pages=allocate.next-1,summary:SQLiteBackupSummary={pageSize:this.pageSize,pages,byteLength:pages*this.pageSize,sourceSHA256:firstHash.hex(),counts:{entities:plans[0].rows.length,meta:plans[1].rows.length,attachment_chunks:plans[source.vault?9:2].rows.length,...(source.vault?{content_provenance:plans[2].rows.length,...Object.fromEntries(vaultNames.map((name,i)=>[name,plans[3+i].rows.length]))}:source.provenance?{content_provenance:plans[3].rows.length}:{})},entityKinds:firstState.kinds};
       let emitted=1;const write=async(number:number,bytes:Uint8Array)=>{if(emitted===allocate.lockPage&&number===emitted+1){await sink.write(new Uint8Array(this.pageSize));emitted++;}check(number===emitted&&bytes.length===this.pageSize,'SQLite page plan changed');await sink.write(bytes);emitted++;};
       await write(1,headerPage(this.pageSize,pages,names.map((name,index)=>[name,plans[index].root,plans[index].index.page])));
-      const secondHash=new IncrementalSHA256(),secondState:NormalizedSnapshot={manifests:new Map(),kinds:{},resources:new Set()};
+      const secondHash=new IncrementalSHA256(),secondState:NormalizedSnapshot=newSnapshot();
       for(let table=0;table<readers.length;table++){
         const plan=plans[table];secondHash.update(Uint8Array.of(table));let index=0,leafIndex=0,cells:Uint8Array[]=[],previous:Key|null=null;
         for await(const row of readers[table](source,secondState)){
@@ -199,6 +294,7 @@ export class SQLiteBackupWriter{
         for(const node of plan.parents){const childCells=node.children.slice(0,-1).map(child=>{const pointer=new Uint8Array(4);put32(pointer,0,child.page);return join([pointer,varint(child.maxRowid)]);});await write(node.page,page(5,this.pageSize,childCells,node.children.at(-1)!.page));}
         const outputIndex=async(node:IndexNode):Promise<void>=>{for(const child of node.children)await outputIndex(child);const encoded=node.entries.map((entry,i)=>{const content=join([varint(entry.length),entry]);if(!node.children.length)return content;const pointer=new Uint8Array(4);put32(pointer,0,node.children[i].page);return join([pointer,content]);});await write(node.page,page(node.children.length?2:10,this.pageSize,encoded,node.children.at(-1)?.page));};await outputIndex(plan.index);
       }
+      if(source.vault)verifyVault(secondState);
       check(emitted===pages+1&&secondHash.hex()===summary.sourceSHA256,'Snapshot content changed during export');await sink.close?.(summary);closed=true;return summary;
     }catch(error){const safe=error instanceof SQLiteBackupError?error:new SQLiteBackupError('Portable SQLite backup could not complete');if(!closed)try{await sink.abort?.(safe);}catch{}throw safe;}
   }

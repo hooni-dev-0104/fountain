@@ -35,7 +35,7 @@ Recorded inventory only; evidence quality requires review.
 | FEATURE-inbox | 검증 만료 알림함·기기 간 읽음/보관 | P1 | implemented | 3 |
 | FEATURE-notifications-delivery | 검증 만료의 이메일·기기 푸시·배경 전달 | P1 | discovered | 3 |
 | FEATURE-wiki | 위키 전환·해제와 기본 보기 | P1 | implemented | 3 |
-| FEATURE-verification-database | DB의 검증·담당자 속성 | P1 | discovered | 3 |
+| FEATURE-verification-database | DB의 검증·담당자 속성 | P1 | implemented | 3 |
 | FEATURE-verified-pages-management | 검증 페이지 관리·필터 | P1 | discovered | 3 |
 | FEATURE-domain-verification | 조직 도메인 검증·관리 | P1 | discovered | 3 |
 | FEATURE-admin-content-search | 관리자 콘텐츠 검색·세분화 역할 | P1 | discovered | 3 |

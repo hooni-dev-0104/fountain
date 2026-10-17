@@ -28,7 +28,7 @@
       "evidence/original-boundaries.md"
     ],
     "acceptance": [
-      "Complete and verify: Supabase Auth·Edge·Postgres·비공개 Storage·Realtime, 서비스 권한·예약 Cron·SCIM·파일/백업 정리의 구현과 격리된 실제 QA; API 13의 초기 소유자 연결 경로 준비",
+      "Complete and verify: Supabase Auth·Edge·Postgres·비공개 Storage·Realtime, 서비스 권한·예약 Cron·SCIM·파일/백업 정리의 구현과 격리된 실제 QA; API 19의 초기 소유자 연결·기본 위키·DB 검증 경로",
       "Resolve: 실제 소유자 연결·공개 웹 호스트·원본 예약/정리 등록·전체 운영 전환; [전환 범위](supabase-backend.md). Python 호환 경로의 5GB 검증은 클라우드 5GB 전송 증거가 아님"
     ],
     "verification": [],
@@ -238,11 +238,11 @@
     ],
     "acceptance": [
       "Complete and verify: 여러 담당자·만료일/무기한·갱신/해제 화면, 검증/만료 상태, 현재 권한·문서 revision 검사; [안내](PAGE_VERIFICATION.md)",
-      "Resolve: 배경 만료 전달·이메일/푸시, 전체 위키·DB 검증 속성"
+      "Resolve: 배경 만료 전달·이메일/푸시, 위키 사용자 지정 보기와 전체 원본 비교"
     ],
     "verification": [],
     "limitations": [
-      "배경 만료 전달·이메일/푸시, 위키 사용자 지정 보기·DB 검증 속성"
+      "배경 만료 전달·이메일/푸시, 위키 사용자 지정 보기와 전체 원본 비교"
     ],
     "implementation_inventory": "../FEATURES.md"
   },
@@ -485,16 +485,22 @@
     "name": "DB의 검증·담당자 속성",
     "priority": "P1",
     "weight": 3,
-    "status": "discovered",
+    "status": "implemented",
     "original_evidence": [
       "evidence/original-boundaries.md"
     ],
     "acceptance": [
       "Verification 속성 생성 시 Owner 속성과 생성자 기본값·인원 제한·검증 UI를 제공한다"
     ],
-    "verification": [],
+    "verification": [
+      {
+        "command": "Python579actualPG + Node62scripts/1651access + actualChrome + actualSupabaseQA75/worker4/main19",
+        "evidence": "evidence/database-verification-increment.json",
+        "passed": true
+      }
+    ],
     "limitations": [
-      "구현·실제 연결·원본 비교 증거가 아직 전체 요구를 충족하지 않는다."
+      "구현과 격리된 실제 클라우드는 검사했으나 유료 원본 전체 정책 비교·실계정 다섯 플랫폼 전체 여정은 남아 있다."
     ]
   },
   {

@@ -1,0 +1,13 @@
+{
+  "date": "2026-10-17",
+  "scope": "DB Owner and Verification increment; not whole-product parity",
+  "details": "../../research/database-verification-evidence.json",
+  "actualChecks": {
+    "basic": 10,
+    "inboxAndLogout": 3,
+    "scheduledJobs": 2,
+    "mainBoundaries": 12,
+    "backgroundBoundaries": 16
+  },
+  "limitationsPreserved": true
+}

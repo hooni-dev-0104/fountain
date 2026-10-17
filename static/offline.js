@@ -243,6 +243,10 @@
       const previousAccess = Number.isSafeInteger(previous.access_revision) ? previous.access_revision : 0;
       const nextAccess = Number.isSafeInteger(value.access_revision) ? value.access_revision : 0;
       if (nextAccess < previousAccess) return previous;
+      // A native reconciliation may have installed a newer envelope while the
+      // same document response was waiting to persist. Keep that canonical floor.
+      if (Number.isSafeInteger(previous.data_revision)
+          && (!Number.isSafeInteger(value.data_revision) || value.data_revision < previous.data_revision)) return previous;
       if (previous.epoch === value.epoch && Number.isSafeInteger(previous.seq)
           && Number.isSafeInteger(value.seq) && value.seq < previous.seq) return previous;
       if (Number.isSafeInteger(previous.page?.revision) && Number.isSafeInteger(value.page?.revision)

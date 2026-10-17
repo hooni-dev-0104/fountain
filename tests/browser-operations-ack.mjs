@@ -114,6 +114,19 @@ try{
   const revisionOnly={...older,access_revision:5,seq:100};
   committed=await commit(staleFixture,revisionOnly,[]);assert.equal(committed.snapshot.seq,8);assert.equal(committed.snapshot.page.revision,12);
 
+  stage='delayed same-document snapshot cannot downgrade the persisted global data revision';
+  const dataFixture=await setup('data-revision'),dataOps=await queue(dataFixture,3),dataFresh=await canonical(dataFixture,dataOps.slice(0,2),{data_revision:10}),dataOld={...dataFresh,data_revision:9};
+  await page.evaluate(({key,snapshot})=>FountainOffline.saveSnapshot(key,snapshot),{key:dataFixture.key,snapshot:dataFresh});
+  await page.evaluate(()=>{const put=IDBObjectStore.prototype.put;globalThis.snapshotPuts=0;IDBObjectStore.prototype.put=function(...args){if(this.name==='snapshots')snapshotPuts++;return put.apply(this,args);};globalThis.restoreDataPut=()=>IDBObjectStore.prototype.put=put;});
+  const selected=await page.evaluate(({key,snapshot})=>FountainOffline.saveSnapshot(key,snapshot),{key:dataFixture.key,snapshot:dataOld});
+  assert.deepEqual(selected,dataFresh);assert.equal(await page.evaluate(()=>snapshotPuts),0,'an older data revision never becomes an active native snapshot delta');
+  assert.equal(await page.evaluate(async({key,snapshot})=>{for(const value of [undefined,null,'9',9.5,NaN,Infinity]){const input={...snapshot,data_revision:value};if(value===undefined)delete input.data_revision;const selected=await FountainOffline.saveSnapshot(key,input);if(selected.data_revision!==snapshot.data_revision)return false;}return true;},{key:dataFixture.key,snapshot:dataFresh}),true,'a known persisted data floor is also preserved against unversioned or malformed late input');
+  const pendingBefore=(await inspect(dataFixture)).pending;
+  committed=await commit(dataFixture,dataOld,dataOps.map(value=>value.id));assert.deepEqual(committed.snapshot,dataFresh);assert.deepEqual(committed.acknowledged,dataOps.slice(0,2).map(value=>value.id));
+  assert.deepEqual((await inspect(dataFixture)).pending,pendingBefore.slice(2),'only the persisted canonical own-seen operations are removed, without rewriting the unconfirmed input');
+  committed=await commit(dataFixture,{...dataOld,epoch:'different-epoch'},[dataOps[2].id]);assert.deepEqual(committed.acknowledged,[]);assert.deepEqual((await inspect(dataFixture)).pending,pendingBefore.slice(2));
+  assert.equal(await page.evaluate(()=>snapshotPuts),0);await page.evaluate(()=>restoreDataPut());
+
   stage='epoch mismatch cannot ACK an operation using the replacement epoch';
   const epochFixture=await setup('epoch-proof'),epochOps=await queue(epochFixture),oldEpochAck=await canonical(epochFixture,epochOps),replacement={...oldEpochAck,epoch:'replacement',seq:0,page:{...oldEpochAck.page,revision:20}};
   await page.evaluate(({key,snapshot})=>FountainOffline.saveSnapshot(key,snapshot),{key:epochFixture.key,snapshot:replacement});

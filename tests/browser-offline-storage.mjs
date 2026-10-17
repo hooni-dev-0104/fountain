@@ -179,7 +179,10 @@ try {
   }, { profile: fixture.profile, key: localKey, metadata: local.metadata, snapshot: local.snapshot });
   assert.equal((await page.evaluate(key => FountainOffline.getLocalPage(key), localKey)).localOnly, false, 'late tab cannot restore local-only state after create ACK');
   await page.evaluate(async ({ profile, key, local }) => {
-    await FountainOffline.saveSnapshot(key, { ...local.snapshot, seq: 5, page: { ...local.snapshot.page, revision: 5 } });
+    const current=await FountainOffline.getSnapshot(key),next={...local.snapshot,seq:5,page:{...local.snapshot.page,revision:5}};
+    const selected=await FountainOffline.saveSnapshot(key,next);
+    if(selected.seq!==current.seq||selected.data_revision!==current.data_revision)throw new Error('An unversioned local response cannot replace the known canonical data floor');
+    await FountainOffline.saveSnapshot(key,{...next,data_revision:current.data_revision});
     await FountainOffline.stageLocalPage(profile, key, local);
   }, { profile: fixture.profile, key: localKey, local });
   assert.equal((await page.evaluate(key => FountainOffline.getSnapshot(key), localKey)).seq, 5, 'repeated staging cannot replace a newer document snapshot');

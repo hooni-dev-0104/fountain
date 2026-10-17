@@ -187,6 +187,39 @@ function execute(test) {
   if (['project','filter_workspace','filter_database'].includes(test.method)) assert.equal(JSON.stringify(args),originalArgs,test.name + ': mutated input');
   return result;
 }
+// Independent security outcomes: a matching Python port must not bless the
+// same membership-administrator privilege escalation in both implementations.
+const membershipOutcomes = [];
+const membership = (principal, method, identity, body, status = null) => {
+  const path = '/api/members' + (identity === null ? '' : '/' + identity);
+  for (const [operation, args] of [['member_change', [method, identity, body]], ['prepare', [method, path, body]]]) {
+    membershipOutcomes.push({name: `membership:${principal}:${operation}:${method}:${identity}:${JSON.stringify(body)}`,
+      method: operation, args, principal: find('member', principal), expectedStatus: status,
+      append: [{kind: 'member', record: {id: 'other-admin', role: 'admin', active: true}}]});
+  }
+};
+for (const role of ['owner', 'admin']) {
+  membership('admin', 'POST', null, {role}, 403);
+  for (const id of ['alice', 'guest']) membership('admin', 'PATCH', id, {role}, 403);
+}
+for (const id of ['local', 'admin', 'other-admin']) {
+  membership('admin', 'DELETE', id, {}, 403);
+  for (const body of [{}, {name: '변경'}, {active: false}, {role: 'member'}, {role: 'guest'}]) membership('admin', 'PATCH', id, body, 403);
+}
+for (const body of [{}, {role: 'member'}, {role: 'guest'}]) membership('admin', 'POST', null, body);
+for (const [id, body] of [['alice', {role: 'guest'}], ['guest', {role: 'member'}], ['alice', {active: false}], ['guest', {name: '변경'}]]) membership('admin', 'PATCH', id, body);
+for (const id of ['alice', 'guest']) membership('admin', 'DELETE', id, {});
+membership('local', 'POST', null, {role: 'admin'});
+membership('local', 'PATCH', 'alice', {role: 'admin'});
+for (const body of [{}, {name: '변경'}, {role: 'member'}, {active: false}]) membership('local', 'PATCH', 'admin', body);
+membership('local', 'DELETE', 'admin', {});
+membership('local', 'DELETE', 'local', {}, 409);
+for (const body of [{role: 'admin'}, {active: false}]) membership('local', 'PATCH', 'local', body, 409);
+for (const test of membershipOutcomes) {
+  const result = execute(test);
+  if (test.expectedStatus === null) assert.equal(result.value, null, test.name + ': expected permission');
+  else assert.equal(result.error?.status, test.expectedStatus, test.name + ': expected denial');
+}
 const oracle = String.raw`
 import sys,json,copy,unicodedata
 from fountain.access import Access
@@ -238,4 +271,4 @@ const inheritedACL = Object.create({members:{alice:'full'},default:'private'});
 assert.equal(new Access(new MemoryStore({}),find('member','alice')).level('page',{id:'p',permissions:inheritedACL}),3);
 assert.equal(get(JSON.parse('{"__proto__":"data"}'),'__proto__'),'data');
 assert.equal(is_object([]),false);
-console.log(JSON.stringify({ok:true,oracle:'actual Python Access/Authorization',cases:cases.length,unicodeCasefoldMappings:golden.casefold.length,unicodeVersion:golden.unicode,storeAndProjectionInputsUnchanged:true}));
+console.log(JSON.stringify({ok:true,oracle:'actual Python Access/Authorization',cases:cases.length,membershipSecurityOutcomes:membershipOutcomes.length,unicodeCasefoldMappings:golden.casefold.length,unicodeVersion:golden.unicode,storeAndProjectionInputsUnchanged:true}));

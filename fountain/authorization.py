@@ -78,7 +78,8 @@ class Authorization:
         existing = self.store.get('member', identity) if identity else None
         role = body.get('role', (existing or {}).get('role', 'member'))
         if not a.owner:
-            require(role != 'owner' and (not existing or existing.get('role') != 'owner'), 'Only owners can manage owner membership', 403)
+            require(role not in ('owner', 'admin') and (not existing or existing.get('role') not in ('owner', 'admin')),
+                    'Only owners can manage owner or admin membership', 403)
         if existing and existing.get('role') == 'owner' and (method == 'DELETE' or role != 'owner' or body.get('active') is False):
             required = self.store.meta('auth_accounts_required', False)
             other = [m for m in self.store.list('member') if m['id'] != identity and m.get('role') == 'owner'

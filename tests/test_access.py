@@ -2,6 +2,7 @@ import copy
 import unittest
 
 from fountain.access import Access
+from fountain.authorization import Authorization
 from fountain.core import APIError, Store
 
 
@@ -56,6 +57,57 @@ class AccessTests(unittest.TestCase):
         self.assert_status(403, lambda: self.access("admin").require_admin(owner_only=True))
         self.assert_status(403, lambda: self.access().require_admin())
         self.access("local").require_admin(owner_only=True)
+
+    def test_membership_admin_cannot_create_or_promote_privileged_members(self):
+        authority = Authorization(self.access("admin"))
+        for role in ("owner", "admin"):
+            for method, path, identity in (("POST", "/api/members", None),
+                                           ("PATCH", "/api/members/alice", "alice"),
+                                           ("PATCH", "/api/members/guest", "guest")):
+                with self.subTest(role=role, method=method, path=path):
+                    self.assert_status(403, lambda: authority.member_change(method, identity, {"role": role}))
+                    self.assert_status(403, lambda: authority.prepare(method, path, {"role": role}))
+
+    def test_membership_admin_cannot_change_existing_privileged_members_even_itself(self):
+        self.store.put("member", {"id": "other-admin", "role": "admin", "active": True})
+        authority = Authorization(self.access("admin"))
+        for identity in ("local", "admin", "other-admin"):
+            for method, body in (("DELETE", {}), ("PATCH", {}),
+                                 ("PATCH", {"name": "변경"}), ("PATCH", {"active": False}),
+                                 ("PATCH", {"role": "member"}), ("PATCH", {"role": "guest"})):
+                with self.subTest(identity=identity, method=method, body=body):
+                    self.assert_status(403, lambda: authority.member_change(method, identity, dict(body)))
+                    self.assert_status(403, lambda: authority.prepare(method, "/api/members/" + identity, dict(body)))
+
+    def test_membership_admin_can_manage_members_and_guests(self):
+        authority = Authorization(self.access("admin"))
+        for method, path, body in (("POST", "/api/members", {}),
+                                   ("POST", "/api/members", {"role": "member"}),
+                                   ("POST", "/api/members", {"role": "guest"}),
+                                   ("PATCH", "/api/members/alice", {"role": "guest"}),
+                                   ("PATCH", "/api/members/guest", {"role": "member"}),
+                                   ("PATCH", "/api/members/alice", {"active": False}),
+                                   ("PATCH", "/api/members/guest", {"name": "변경"}),
+                                   ("DELETE", "/api/members/alice", {}),
+                                   ("DELETE", "/api/members/guest", {})):
+            with self.subTest(method=method, path=path, body=body):
+                authority.prepare(method, path, dict(body))
+
+    def test_owner_can_manage_admin_membership_and_last_owner_remains_protected(self):
+        authority = Authorization(self.access("local"))
+        for method, path, body in (("POST", "/api/members", {"role": "admin"}),
+                                   ("PATCH", "/api/members/alice", {"role": "admin"}),
+                                   ("PATCH", "/api/members/admin", {}),
+                                   ("PATCH", "/api/members/admin", {"name": "변경"}),
+                                   ("PATCH", "/api/members/admin", {"role": "member"}),
+                                   ("PATCH", "/api/members/admin", {"active": False}),
+                                   ("DELETE", "/api/members/admin", {})):
+            with self.subTest(method=method, path=path, body=body):
+                authority.prepare(method, path, dict(body))
+        for method, body in (("DELETE", {}), ("PATCH", {"role": "admin"}),
+                             ("PATCH", {"active": False})):
+            with self.subTest(method=method, body=body):
+                self.assert_status(409, lambda: authority.prepare(method, "/api/members/local", dict(body)))
 
     def test_explicit_member_deny_and_group_override_default(self):
         access = self.access()

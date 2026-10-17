@@ -68,7 +68,7 @@ export class Authorization {
     a.require_admin();
     const existing = truth(identity) ? this.store.get('member', identity) : null;
     const role = get(body, 'role', get(existing, 'role', 'member'));
-    if (!a.owner) require(role !== 'owner' && (!existing || get(existing, 'role') !== 'owner'), 'Only owners can manage owner membership', 403);
+    if (!a.owner) require(!['owner', 'admin'].includes(role) && (!existing || !['owner', 'admin'].includes(get(existing, 'role'))), 'Only owners can manage owner or admin membership', 403);
     if (existing && get(existing, 'role') === 'owner' && (method === 'DELETE' || role !== 'owner' || get(body, 'active') === false)) {
       // CloudStore never reads password hashes. Its SQL commit checks the final
       // owner set against actual mapped, active Supabase Auth accounts atomically.

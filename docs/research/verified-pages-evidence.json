@@ -1,0 +1,677 @@
+{
+  "date": "2026-10-17",
+  "feature": "Unified verified-pages management; independent implementation",
+  "original": {
+    "date": "2026-10-17",
+    "officialURL": "https://www.notion.com/help/wikis-and-verified-pages",
+    "observedOfficial": [
+      "Settings Verified pages directory",
+      "Search specific page",
+      "Filter by owner or teamspace"
+    ],
+    "notObserved": [
+      "Additional exact columns/actions/options",
+      "Role-specific whole-workspace management privileges",
+      "Private server implementation/live paid account behavior"
+    ],
+    "clientVersion": "7.39.0",
+    "asarSHA256": "889137431e69a9e8795b88cb071d451f5592797dcfe4ca13499dcb23ddc8d8ac",
+    "reaEvidenceReused": "docs/research/rea-desktop-evidence.json selected3JS; no same-artifact rerun",
+    "FountainPolicy": "Current-resource ACL projected directory for all active roles, own visible owners/teamspaces; verified/expired unified page/wiki/typed-row list"
+  },
+  "sourceSHA256": {
+    "fountain/authorization.py": "bafa5bcd8e6c1fda7ce51b3fa3608412660ee59c9d87e93ed976450b0f45dc3f",
+    "fountain/server.py": "6044be5d60909a2ef9961c7b15d55167e916ade200bc4e469ff8131e8642ab53",
+    "fountain/verified_pages.py": "57a06cb48298c87583f51631324161b29d7cb819bc9a5179201eaf975ce17eac",
+    "static/app.js": "da0aa3b05cd653fdf7ea94bdadf037d8f380723bdf86ab6afbe541b32d795bf4",
+    "static/style.css": "f528289aa74c49de050a4f3eef0669378f6e00f0617a9eb76dd00ebe85bc9c98",
+    "static/sw.js": "ccd5aaef017b606969c7c08f16926cb82d1da9120941975b95368d675418f223",
+    "supabase/functions/_shared/advanced.ts": "96227fea94de1671af271822ac459bf937e03a1be57db48accf025720bdd7f0b",
+    "supabase/functions/_shared/authorization.ts": "6e6654f867e8ad98ce0e36ca0429511886f34ce53e9ac144361daf15357ebea2",
+    "supabase/functions/_shared/verified-pages.ts": "dc44700e19cb07dae6086ab7b68730111054eb0c8f6f09ea5e57c39095dff02e",
+    "supabase/tests/route-inventory.json": "cbc03d365b8d0b6f5df360e0070b5ff77f3285d059d0405b84163ffeca836eff",
+    "supabase/tests/route-inventory.mjs": "00b7475289de03db33277ff923b6e1e89a7d4ce7784a2d6d6bbdfcea323fce9b",
+    "supabase/tests/verified-pages.mjs": "5f358303a9854b51979f27ad2f21b64efb4b1fafcf968b69b0c78835adf91001",
+    "tests/browser-verified-pages.mjs": "7bcb6984a87cdd3b04b990dbea66a3cd71055e3e449a306406408d128700b8e0",
+    "tests/test_verified_pages.py": "cbdc214ddbc7822fd83cd7f9146513d88f0e59d92ac12a48e829ec0b1f1359d4"
+  },
+  "main": {
+    "version": 20,
+    "files": 46,
+    "exactReadback": true,
+    "originalWorkspaceAndSetupOriginsUnchanged": true,
+    "bundleSHA256": "ce29aae91ed1223af99bb9c06c67035f75238acef13473b445ae124d4079bd6c",
+    "metadata": {
+      "mode": "main",
+      "characters": 695118,
+      "sha256": "4739bd204fda1e49ff0daeff4c75232611c10af06ecf2506b15f715dc31cb2f5",
+      "files": 46,
+      "sourceHashes": {
+        "fountain-api/index.ts": "a0cdab7c410766064118e2e754dc30e4647c280d65fa02830d856613e3f33894",
+        "_shared/access.ts": "b007542ffa4c8950046f85a071fca2bbe2a8d5200a9fd11606a8d3a2de721d23",
+        "_shared/accounts.ts": "16f02ad2f92b610ac1ceaa38dce47b841132b41099100ac38274f3a5a6b5722e",
+        "_shared/activity.ts": "638ebe8df5d3354bf0e5fd7de09580ee5528d5341e247c3ac075c86b01214b49",
+        "_shared/advanced.ts": "96227fea94de1671af271822ac459bf937e03a1be57db48accf025720bdd7f0b",
+        "_shared/ai.ts": "373be5efd6f8e7ebbb7bb48af1630ce32d1e8a6916b94601adfabf2ecaf96c07",
+        "_shared/application.ts": "21648cbfef5d9a9e566c381459b5c3a3bb2fa006d722bb0e5728c35934e7c2fb",
+        "_shared/auth.ts": "d6057256f6944c8e45ec46e56e3cbba4576f24d2845aca20d51d7af89c29d978",
+        "_shared/authorization.ts": "6e6654f867e8ad98ce0e36ca0429511886f34ce53e9ac144361daf15357ebea2",
+        "_shared/backend.ts": "9cb2c86f26bdcab840f9d215191dc4c956ac2ff7d3b91d5a39e7e9f79844736d",
+        "_shared/backup-jobs.ts": "be37c60cfd765abed418fc5fbb1cc1db3ca9a2908b44e9ec5f21ad42bdd9d657",
+        "_shared/backup.ts": "bf0fa673ab73cd1fa6546d661175d0454cf0a3be8a2d533bc972502b27ab02e9",
+        "_shared/collaboration.ts": "d5484872723c7f81912e5a75b93432ea90c39303c7dec97836930ed5a1c7c27a",
+        "_shared/core.ts": "1761a47fcf4925d98e5540e9f7b0c4a9af478a41bbe64d7a4611bdef05f888ee",
+        "_shared/crdt.ts": "428c6fd508b9244ae8e15caa2dee218380affa3ab3d27a4f0199809b12692487",
+        "_shared/database-verification.ts": "c92f0e27a26c3c629631c3b86cf38e99e30c8a5377714d800b35a7e792173586",
+        "_shared/datetime.ts": "fc82935fb250b571c27fb0fda4f505989ccb035d34175f0242853898d8c4ee7f",
+        "_shared/domain.ts": "dd183e2cca911575ddc82e0d830fd152d14d399d51087d48f40ee1af3ee8c001",
+        "_shared/events.ts": "d4fef9eef4a378cf7a3269db6ced20c0b21ba72bf9ee0f5536e15b23d6e0d940",
+        "_shared/files.ts": "ecc8a1ff91e30af51c854b0bbcfd5f4c79d5d382abc815f47984f66bc6e07b82",
+        "_shared/gc-fence.ts": "e2bf7ab3075fc5f42273c9c3265c25c5425fda431d188ab8e1a85706fb56e5d7",
+        "_shared/grant-admin.ts": "81404437efd77e7ad1d36898cc9fbb1f3aa482d8fb493791916c54787ea599bb",
+        "_shared/http.ts": "476ea9cee5938ce7a27b414149acb905323fd127aab8433ad98798fe7bb89303",
+        "_shared/inbox.ts": "7462eb0b47e3bedfbae98e512894e9d98884e1ae5f681c7e726e0996f737cb77",
+        "_shared/inline-attachments.ts": "06e1be1b44bb83e9b58fbc8584fb0694c5a17a34c074eb7b6546e02587cc268d",
+        "_shared/onboarding.ts": "646588c79d737d6f65686cff01d3e60b9085cbb332607c8dc5567180c547f597",
+        "_shared/page-headers.ts": "c167af83d26be209c592593bcc94aa89e8e6ce522b58e793c4e2e8a9c4407a9e",
+        "_shared/presence.ts": "fbb96b11f3ba6d55089264ffd2449ec1375ce8717b026c18c3507228d68526e7",
+        "_shared/publishing.ts": "ce89ac8e1f3b2a8f35da64301f57c2b84839702b4f4ea4aa16b9dec206ba7068",
+        "_shared/realtime.ts": "e208e912ea641bbfb656045fb136553f341687c2bedb4d07be344bfae633b1ef",
+        "_shared/scheduler.ts": "a784ecb68f174f874ad0b87a43147929989bc0caa81a8fc7e9d10267507c8a18",
+        "_shared/scim-http.ts": "47e09c8868261ddb023d48cc7c0fe4422f0d9c14f8d52891d1d5d71e2b4f18bb",
+        "_shared/scim.ts": "50ec923f7ff4fa99ea1e382bfdfa282a539c8e2785be8628a8d57daafcefbbef",
+        "_shared/search.ts": "7303f5356a8228479c98cfc9059acb5e053275cddae3f7f4943772069f79c8e2",
+        "_shared/sqlite-backup-resumable.ts": "282f9b471f17f8f5488836a4c6af8924d100fb60df36769425c7c10c00f149a2",
+        "_shared/sqlite-backup.ts": "530d73639027d66a330fd1134df1e985b3f876146880fc8b068e7dccaa3b7a1b",
+        "_shared/storage.ts": "c7b284d0cd7be79597fb7ae2c29f15bdd353ace7dbdac082eeff408208976dd2",
+        "_shared/store.ts": "9c265a69f5fcd80940b4c01dd0fc5da4bdd0aaeff986975629af504a73657c90",
+        "_shared/sync.ts": "85d8cc2b11279e09e219acf7e9a113f095bcf85a9b453b82a70e7535a86f1445",
+        "_shared/tasks.ts": "0a710e3ef824aa14b990ed57148f4a69948113b9378a175a148883d52f1e47f4",
+        "_shared/transaction.ts": "3a921b2471ee0a8bed764393baaaa412d8a90ef77a9c002f83b5a962e7e24a10",
+        "_shared/vault.ts": "9adad6cfa58e0498ca284c8d26650bc7fcd7afd3261bc0405db7e45c3ed9100a",
+        "_shared/verification-index.ts": "162b3d5ab39c9cc79885b4c66a56a9e144ed0a3c6f40ac711b286b88f86a132a",
+        "_shared/verified-pages.ts": "dc44700e19cb07dae6086ab7b68730111054eb0c8f6f09ea5e57c39095dff02e",
+        "_shared/wiki.ts": "38a4ad408a20250405e1b27b8be45031d5f9ee8774b1347b93aa7bc5366de7e7",
+        "fountain-api/deployment.ts": "9433b0ee859250bb37835b4066b7511ee9acf1535ec962f80ca8e8182ba917a5"
+      }
+    }
+  },
+  "migrations": {
+    "count": 28,
+    "newThisIncrement": 0,
+    "reusedMeta": [
+      "wiki_page_headers_v1",
+      "database_verification_rows_v1"
+    ],
+    "newPublicRPCsOrGrants": false
+  },
+  "backgroundFunctions": {
+    "workerVersion": 4,
+    "maintenanceVersion": 4,
+    "redeployed": false,
+    "scope": "Directory route/import only changed Advanced extension; scheduled action methods and maintenance source unchanged. No new background workflow claim."
+  },
+  "actualCloud": {
+    "project": "ehnovtfadpkwtubmwltl",
+    "scope": "fountain-qa-cloud-management-daad4dfe258189a5",
+    "qaVersion": 78,
+    "qaFiles": 45,
+    "qaExactReadback": true,
+    "authUsers": 2,
+    "initialConcurrentSessions": 3,
+    "additionalBrowserSessions": 3,
+    "basic": {
+      "checks": [
+        "actual_two_accounts_three_current_sessions",
+        "actual_existing_page_wiki_and_typed_row_verification_with_1000_eligible_owners",
+        "actual_directory_unifies_three_sources_acl_before_filter_options_counts_and_structural_teamspace",
+        "actual_deterministic_pagination_strict_queries_head_and_unsupported_method",
+        "actual_guest_visible_owner_projection_precedes_all_filters_and_private_association"
+      ],
+      "passed": true
+    },
+    "largeHTTP": {
+      "checks": [
+        "actual_163MB_logical_sources_1000owners_two_large_verified_resources_directory_without_source_bodies_or_writes",
+        "actual_large_directory_guest_status_filters_stable_pagination_and_private_virtual_metadata_forgery_ignored",
+        "actual_network_head_has_no_body_and_no_domain_writes"
+      ],
+      "passed": true
+    },
+    "largeSQL": {
+      "actualSQL": true,
+      "scope": "fountain-qa-cloud-management-daad4dfe258189a5",
+      "sourceBodyBytes": 163499508,
+      "rowCount": 1602,
+      "pageCount": 70,
+      "typedDatabaseCount": 1,
+      "stampedTypedRows": 2,
+      "persistedVirtualForgeryIgnored": true,
+      "noSourceEntitiesSelected": true,
+      "sourceDigest": "8104e11b16df607aeb5f529929bec1072b7c706d7b98db1f9cebb10f5b47b4c9",
+      "metaDigest": "948183fa76865eec1fc9b52fd446f085452091b3122c8f4e237323c378577afb",
+      "largeStampAndPastExpiry": "operator_fixture_not_app_large_verification_or_real_elapsed_day",
+      "sourceAndMetaPreserved": true,
+      "passed": true,
+      "compactMetadataUTF8Bytes": 56589,
+      "metadataUTF16CodeUnits": 56579
+    },
+    "maximumDirectorySnapshotBytes": 139220,
+    "actualBrowser": {
+      "actualChrome": true,
+      "actualSupabaseAuth": true,
+      "actualPostgres": true,
+      "qaVersion": 78,
+      "temporaryPresentationProxy": true,
+      "certificateTrust": "fixture SPKI only",
+      "largeFixturesRemovedBeforeUI": true,
+      "checks": [
+        "actual_browser_password_login_secure_opaque_cookie_and_guest_profile",
+        "actual_cloud_guest_directory_no_admin_request_and_no_hidden_owner_or_teamspace",
+        "actual_cloud_title_status_kind_filters_and_existing_typed_row_real_context",
+        "actual_cloud_readonly_page_keeps_verification_actions_disabled_and_390px_directory_renders",
+        "actual_browser_session_logged_out"
+      ],
+      "telemetry": [
+        {
+          "status": 200,
+          "snapshots": 25,
+          "maxBytes": 100952,
+          "pageKind": false,
+          "bodyIds": [],
+          "rowBodyIds": [],
+          "databaseBodyIds": [],
+          "domainWrites": 0
+        },
+        {
+          "status": 200,
+          "snapshots": 25,
+          "maxBytes": 100952,
+          "pageKind": false,
+          "bodyIds": [],
+          "rowBodyIds": [],
+          "databaseBodyIds": [],
+          "domainWrites": 0
+        },
+        {
+          "status": 200,
+          "snapshots": 25,
+          "maxBytes": 100952,
+          "pageKind": false,
+          "bodyIds": [],
+          "rowBodyIds": [],
+          "databaseBodyIds": [],
+          "domainWrites": 0
+        },
+        {
+          "status": 200,
+          "snapshots": 25,
+          "maxBytes": 100952,
+          "pageKind": false,
+          "bodyIds": [],
+          "rowBodyIds": [],
+          "databaseBodyIds": [],
+          "domainWrites": 0
+        },
+        {
+          "status": 200,
+          "snapshots": 25,
+          "maxBytes": 100952,
+          "pageKind": false,
+          "bodyIds": [],
+          "rowBodyIds": [],
+          "databaseBodyIds": [],
+          "domainWrites": 0
+        },
+        {
+          "status": 200,
+          "snapshots": 25,
+          "maxBytes": 100952,
+          "pageKind": false,
+          "bodyIds": [],
+          "rowBodyIds": [],
+          "databaseBodyIds": [],
+          "domainWrites": 0
+        },
+        {
+          "status": 200,
+          "snapshots": 25,
+          "maxBytes": 100952,
+          "pageKind": false,
+          "bodyIds": [],
+          "rowBodyIds": [],
+          "databaseBodyIds": [],
+          "domainWrites": 0
+        },
+        {
+          "status": 200,
+          "snapshots": 25,
+          "maxBytes": 100952,
+          "pageKind": false,
+          "bodyIds": [],
+          "rowBodyIds": [],
+          "databaseBodyIds": [],
+          "domainWrites": 0
+        },
+        {
+          "status": 200,
+          "snapshots": 29,
+          "maxBytes": 100952,
+          "pageKind": false,
+          "bodyIds": [],
+          "rowBodyIds": [],
+          "databaseBodyIds": [],
+          "domainWrites": 0
+        }
+      ],
+      "passed": true
+    },
+    "mainAnonymousBoundaries": {
+      "actualSupabaseHTTPS": true,
+      "version": 20,
+      "passed": true,
+      "checks": [
+        {
+          "method": "GET",
+          "path": "/api/verified-pages",
+          "status": 401,
+          "passed": true
+        },
+        {
+          "method": "HEAD",
+          "path": "/api/verified-pages",
+          "status": 401,
+          "emptyBody": true,
+          "passed": true
+        },
+        {
+          "method": "GET",
+          "path": "/api/databases/qa-db-verification/rows/qa-row-legacy/verification",
+          "status": 401,
+          "passed": true
+        },
+        {
+          "method": "POST",
+          "path": "/api/databases/qa-db-verification/rows/qa-row-legacy/verification",
+          "status": 401,
+          "passed": true
+        },
+        {
+          "method": "DELETE",
+          "path": "/api/databases/qa-db-verification/rows/qa-row-legacy/verification",
+          "status": 401,
+          "passed": true
+        },
+        {
+          "method": "GET",
+          "path": "/health",
+          "status": 200,
+          "passed": true
+        },
+        {
+          "method": "GET",
+          "path": "/api/session",
+          "status": 200,
+          "passed": true
+        },
+        {
+          "method": "GET",
+          "path": "/api/pages/welcome/wiki-owner",
+          "status": 401,
+          "passed": true
+        },
+        {
+          "method": "GET",
+          "path": "/api/pages/welcome/wiki",
+          "status": 401,
+          "passed": true
+        },
+        {
+          "method": "POST",
+          "path": "/api/pages/welcome/wiki",
+          "status": 401,
+          "passed": true
+        },
+        {
+          "method": "GET",
+          "path": "/api/inbox",
+          "status": 401,
+          "passed": true
+        },
+        {
+          "method": "POST",
+          "path": "/api/session",
+          "status": 403,
+          "passed": true
+        },
+        {
+          "method": "GET",
+          "path": "/api/pages/welcome/wiki",
+          "status": 403,
+          "passed": true
+        },
+        {
+          "method": "GET",
+          "path": "/api/pages/welcome",
+          "status": 401,
+          "passed": true
+        }
+      ]
+    },
+    "cleanup": {
+      "protectedAuthUsersDeleted": 2,
+      "ownedTables": 29,
+      "total_qa_rows_remaining": 0,
+      "storage_objects": 0,
+      "cron_jobs": 0,
+      "auth_users": 0,
+      "auth_sessions": 0,
+      "refresh_tokens": 0,
+      "original_mappings": 0,
+      "original_entities": 153,
+      "original_meta": 6,
+      "migrations": 28,
+      "allSourceBusinessSessionFingerprintsUnchanged": true,
+      "failedHarnessSessionsRemotelyLoggedOut": 2,
+      "tokensReturnedToClient": false,
+      "originalSessionLogoutProof": true,
+      "retiredVersion": 80,
+      "oldNoncePaths404": 4
+    }
+  },
+  "regressions": {
+    "pythonActualPostgres": {
+      "actualPostgresConfigured": true,
+      "tests": 588,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "passed": true
+    },
+    "nodeScripts": {
+      "scripts": 63,
+      "allPassed": true,
+      "accessOracleSeparate": 1651,
+      "unicodeCasefoldVectors": 1530
+    },
+    "newDirectory": {
+      "python_focused": 9,
+      "python_focused_and_existing": 65,
+      "node_directory_checks": 37,
+      "python_sqlite_typescript_protocols": 73,
+      "default_cloud_store": {
+        "realCloud": false,
+        "initialGetSnapshots": 25,
+        "maxSnapshotBytes": 87690,
+        "writes": 0,
+        "rawBodyKinds": [],
+        "ownerCount": 1000,
+        "unrelatedBodyBytes": 80000000,
+        "largeVerifiedRowBytes": 5242880
+      },
+      "existing_database_verification": {
+        "checks": 45,
+        "protocols": 32
+      },
+      "existing_row_inbox": {
+        "checks": 9,
+        "protocols": 8
+      },
+      "existing_wiki": {
+        "checks": 82,
+        "protocols": 28
+      },
+      "python_compile": true,
+      "node_check": true,
+      "diff_check": true
+    },
+    "sourceAndModelNotCloud": true,
+    "trueTypeScriptCompiler": false
+  },
+  "ui": {
+    "actualSQLiteHTTPChrome": true,
+    "actualAuthenticatedSupabaseChrome": true,
+    "sourceEvidence": ".data/verified-pages-ui/final-evidence.json",
+    "sourceSHA256": {
+      "static/app.js": "da0aa3b05cd653fdf7ea94bdadf037d8f380723bdf86ab6afbe541b32d795bf4",
+      "static/style.css": "f528289aa74c49de050a4f3eef0669378f6e00f0617a9eb76dd00ebe85bc9c98",
+      "static/sw.js": "ccd5aaef017b606969c7c08f16926cb82d1da9120941975b95368d675418f223",
+      "tests/browser-verified-pages.mjs": "7bcb6984a87cdd3b04b990dbea66a3cd71055e3e449a306406408d128700b8e0"
+    },
+    "visualScore": 94,
+    "reference": "Existing Fountain Settings/cards; no Notion pixel parity",
+    "viewports": [
+      "1440x1050",
+      "390x844"
+    ],
+    "races": [
+      "Mounted before first GET and no advanced request",
+      "Late query cannot replace newer result",
+      "Page2 failure clears source items/counts/filter identities; stale403 cannot replace new query",
+      "Tab/modal/navigation/account/profile/offline/native-pause fences",
+      "Old Features response writes only detached content",
+      "Login/profile-clear closes private directory overlay",
+      "Deleted row never opens new-row form",
+      "Existing page/row canonical context and draft save rules retained"
+    ],
+    "nativePause": "Production listener JS model, not new native SDK lifecycle proof",
+    "regressionScope": "Final app new directory+DB verification+projects; search/Inbox/pageverification passed before narrow directory boundary fixes; independent final loader/source review passed"
+  },
+  "installers": {
+    "builtAt": "2026-10-17T07:34:29.787534+00:00",
+    "sourceSHA256": {
+      "app.js": "da0aa3b05cd653fdf7ea94bdadf037d8f380723bdf86ab6afbe541b32d795bf4",
+      "style.css": "f528289aa74c49de050a4f3eef0669378f6e00f0617a9eb76dd00ebe85bc9c98",
+      "mutations.js": "34b8fc10b06f59ef407cd642e1ae77ee636f0ad3c802c044966201340cdf9077",
+      "recovery-import.js": "cdef00846362e1591cfc9de1ecd186c06e5abbf1f19be0f25c55d259d20a275d",
+      "sw.js": "ccd5aaef017b606969c7c08f16926cb82d1da9120941975b95368d675418f223"
+    },
+    "archives": [
+      {
+        "name": "Fountain-macOS-arm64.zip",
+        "bytes": 127626401,
+        "sha256": "5e028f2a74c95d74485fdec6f32c45d505bc7ef81e80a3fff14466e5f1da2062",
+        "zipCRC": true,
+        "testBundlesAbsent": true,
+        "currentUIAssets": {
+          "app.js": 1,
+          "style.css": 1,
+          "mutations.js": 1,
+          "recovery-import.js": 1,
+          "sw.js": 1
+        }
+      },
+      {
+        "name": "Fountain-Windows-x64.zip",
+        "bytes": 158693589,
+        "sha256": "fb67d102289c8b8fe753027d03b44e393e36aaea531aaacad39786ec3b0dbaf7",
+        "zipCRC": true,
+        "testBundlesAbsent": true,
+        "currentUIAssets": {
+          "app.js": 1,
+          "style.css": 1,
+          "mutations.js": 1,
+          "recovery-import.js": 1,
+          "sw.js": 1
+        }
+      },
+      {
+        "name": "Fountain-iOS-Simulator-Release.zip",
+        "bytes": 3141757,
+        "sha256": "b0ce5de293d48f4508ee1fdf1851617629d82d0a99647a406649ab103569da41",
+        "zipCRC": true,
+        "testBundlesAbsent": true,
+        "currentUIAssets": {
+          "app.js": 1,
+          "style.css": 1,
+          "mutations.js": 1,
+          "recovery-import.js": 1,
+          "sw.js": 1
+        }
+      },
+      {
+        "name": "Fountain-Android-debug.apk",
+        "bytes": 4722676,
+        "sha256": "f6282988d50e692433acbc9c23f31b8f42d25405641b5566a22a2de81abf1f90",
+        "zipCRC": true,
+        "testBundlesAbsent": true,
+        "currentUIAssets": {
+          "app.js": 1,
+          "style.css": 1,
+          "mutations.js": 1,
+          "recovery-import.js": 1,
+          "sw.js": 1
+        }
+      }
+    ],
+    "limits": [
+      "No Windows OS launch",
+      "No Electron GUI or browser launch by build worker",
+      "No simulator or physical device launch by build worker",
+      "iOS artifact is a simulator Release app, not a physical-device IPA",
+      "No public signing, notarization, app store release or deployment",
+      "Known real-secret scanning is a separate Root check"
+    ],
+    "androidDEX": {
+      "count": 6,
+      "unchangedFromPriorDatabaseVerificationPackage": true
+    },
+    "processHandles": {
+      "desktopBuild": {
+        "session": 36201,
+        "exit": 0
+      },
+      "androidBuild": {
+        "session": 63047,
+        "exit": 0
+      },
+      "iosBuild": {
+        "session": 88905,
+        "exit": 0
+      },
+      "macArchive": {
+        "session": 56954,
+        "exit": 0
+      },
+      "windowsArchive": {
+        "session": 85461,
+        "exit": 0
+      }
+    },
+    "commands": [
+      {
+        "command": "node apps/web/build.mjs",
+        "exit": 0,
+        "publicFiles": 16
+      },
+      {
+        "command": "node apps/mobile/scripts/build.mjs",
+        "exit": 0,
+        "publicFiles": 19
+      },
+      {
+        "command": "apps/mobile/node_modules/.bin/cap copy ios; cap copy android",
+        "exit": 0,
+        "note": "Copy only, no sync or dependency changes"
+      },
+      {
+        "command": "node .data/verified-pages-management/package-desktop.mjs",
+        "exit": 0,
+        "note": "Production builder and approved packager options, unique output, existing local Electron ZIP only"
+      },
+      {
+        "command": "env ANDROID_HOME=/opt/homebrew/share/android-commandlinetools JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-21.jdk/Contents/Home ./gradlew --offline -Pandroid.builder.sdkDownload=false :app:assembleDebug :app:lintDebug",
+        "exit": 0
+      },
+      {
+        "command": "apksigner verify --verbose Fountain-Android-debug.apk",
+        "exit": 0
+      },
+      {
+        "command": "xcodebuild -project apps/mobile/ios/App/App.xcodeproj -scheme FountainQA -configuration Release -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath .data/ios-verified-pages-release CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- build",
+        "exit": 0
+      },
+      {
+        "command": "codesign --verify --deep --strict .data/ios-verified-pages-release/Build/Products/Release-iphonesimulator/App.app",
+        "exit": 0
+      }
+    ]
+  },
+  "privateArchiveScan": {
+    "archives": [
+      {
+        "name": "Fountain-Windows-x64.zip",
+        "entriesScanned": 179,
+        "sha256": "fb67d102289c8b8fe753027d03b44e393e36aaea531aaacad39786ec3b0dbaf7"
+      },
+      {
+        "name": "Fountain-iOS-Simulator-Release.zip",
+        "entriesScanned": 98,
+        "sha256": "b0ce5de293d48f4508ee1fdf1851617629d82d0a99647a406649ab103569da41"
+      },
+      {
+        "name": "Fountain-macOS-arm64.zip",
+        "entriesScanned": 883,
+        "sha256": "5e028f2a74c95d74485fdec6f32c45d505bc7ef81e80a3fff14466e5f1da2062"
+      },
+      {
+        "name": "Fountain-Android-debug.apk",
+        "entriesScanned": 461,
+        "sha256": "f6282988d50e692433acbc9c23f31b8f42d25405641b5566a22a2de81abf1f90"
+      }
+    ],
+    "privateValuesScanned": 13,
+    "trackedFilesScanned": 625,
+    "privateMatches": 0,
+    "passed": true,
+    "valuesPrinted": false
+  },
+  "nativeExecution": {
+    "packagedMacActual14Checks": true,
+    "packagedMacAnonymousSupabaseTwoRounds": true,
+    "ios": {
+      "ownedSimulator": "AA8931A4-B783-47B8-AA7D-243B8DB5A448",
+      "bundleId": "dev.fountain.workspace",
+      "terminatedPreviousProcess": true,
+      "newLaunchPID": 17494,
+      "actualInstallLaunch": true,
+      "installedAssetsExact": {
+        "app.js": "da0aa3b05cd653fdf7ea94bdadf037d8f380723bdf86ab6afbe541b32d795bf4",
+        "style.css": "f528289aa74c49de050a4f3eef0669378f6e00f0617a9eb76dd00ebe85bc9c98",
+        "sw.js": "ccd5aaef017b606969c7c08f16926cb82d1da9120941975b95368d675418f223",
+        "mutations.js": "34b8fc10b06f59ef407cd642e1ae77ee636f0ad3c802c044966201340cdf9077",
+        "recovery-import.js": "cdef00846362e1591cfc9de1ecd186c06e5abbf1f19be0f25c55d259d20a275d"
+      },
+      "anonymousEntryOnly": true,
+      "authenticatedVerifiedDirectoryNotClaimed": true
+    },
+    "newAndroidBuildLintSignature": true,
+    "newAndroidEmulatorLaunch": false,
+    "windowsOSLaunch": false,
+    "newNativeAuthenticatedDirectoryJourney": false
+  },
+  "verificationNotes": [
+    "Two initial operator ACL fixtures used unsupported read instead of workspace/view. Existing access checks rejected/filtered them; fixture corrected without changing product authorization.",
+    "Browser harness empty-q expectation and mobile-hidden desktop logout target were corrected. Final actual UI5checks passed.",
+    "Two failed-harness browser sessions were remotely signed out using a sealed operator helper reusing original vault crypto/revoke/provider logout functions before Auth API deletion; shipping auth source unchanged.",
+    "Large source/header proof completed before scoped removal of only large operator fixtures. Browser UI proof used remaining baseline resources; no163MB whole-workspace snapshot/UI claim.",
+    "Compact metadata UTF8byte measurement is distinct from SQL logical source bytes and actual wire snapshot ceiling."
+  ],
+  "simplifications": [
+    "Reuse existing readonly page/database/row metadata adapters and verification eligibility projectors; no newSQL/RPC/grants",
+    "One directory query/projection implementation per engine; filters/options/counts follow authorization",
+    "Separate mounted directory controller and content node isolate old administrator callbacks; existing canonical editors perform mutations"
+  ],
+  "limitations": [
+    "Full paid-plan inventory and original paid-account comparison remain incomplete",
+    "Original additional management controls and role-specific global admin policy unknown; Fountain policy documented",
+    "No bulk directory mutations, background expiry email/push or historical event delivery",
+    "Original owner/family linking and free public web host unfinished",
+    "No Windows OS launch, physical iOS/Android signing/distribution or full five-platform family journey",
+    "Current native package execution does not prove authenticated native directory flow",
+    "Existing16MiB response/64MiB aggregate/1000changes/64round and ACL traversal limits remain",
+    "Actual TypeScript compiler not installed or run"
+  ],
+  "goal": "active; whole product not complete",
+  "pushed": false
+}

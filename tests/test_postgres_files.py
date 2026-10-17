@@ -36,6 +36,12 @@ class PostgresFileTests(unittest.TestCase):
                 with store.transaction():
                     for table in ("attachment_chunks", "entities", "meta"):
                         store._execute(f"DELETE FROM fountain_private.{table} WHERE workspace_id=%s", (self.namespace,))
+                    # Invalidation triggers can recreate state during source deletion.
+                    from fountain.backup import _provenance_provisioned
+                    if _provenance_provisioned(store):
+                        for table in ('content_search_chunks', 'content_provenance',
+                                      'content_search_documents', 'content_search_state'):
+                            store._execute('DELETE FROM fountain_private.'+table+' WHERE workspace_id=%s', (self.namespace,))
         finally:
             for store in self.stores:
                 store.close()

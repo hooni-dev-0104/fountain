@@ -18,6 +18,7 @@ root=Path(sys.argv[1]); manifest=json.load(sys.stdin)
 targets={
  'fountain/server.py':['Application.dispatch','Application._dispatch','handler_for.Handler.handle_request'],
  'fountain/advanced.py':['Advanced.dispatch'],
+ 'fountain/wiki.py':['Wiki.route'],
  'fountain/scim.py':['scim_resource'],
  'fountain/publishing.py':['render_public'],
  'fountain/authorization.py':['Authorization.prepare','Authorization.project']}
@@ -34,6 +35,11 @@ if len(sys.argv)>2 and sys.argv[2]=='simulate-added-route':
  node=functions['fountain/server.py:Application._dispatch']
  node.body.insert(0,ast.parse("if path == '/api/__inventory_added__' and method == 'GET':\n return 200, {}\n").body[0])
  ast.fix_missing_locations(node)
+if len(sys.argv)>2 and sys.argv[2]=='simulate-added-wiki-method':
+ node=functions['fountain/wiki.py:Wiki.route']
+ # Add PUT only to the wiki conversion method guard, without editing source.
+ guard=node.body[0].body[0].value.args[0].comparators[0]
+ guard.elts.append(ast.Constant(value='PUT'));ast.fix_missing_locations(node)
 def stable_ast(node):
  if isinstance(node,ast.AST):
   # Python 3.12 adds empty type_params to function/class AST nodes. Ignore only
@@ -98,6 +104,15 @@ def walk(nodes,env,key):
    return [terminal(node,key)],[]
  if isinstance(node,ast.Return):
   if node.value is None or isinstance(node.value,ast.Constant) and node.value.value is None:return [],[]
+  # The outer wiki branch accepts every verb syntactically; the dedicated
+  # router's require guards decide which methods really reach a response.
+  if isinstance(node.value,ast.Tuple) and len(node.value.elts)==2:
+   call=node.value.elts[1]
+   if (isinstance(call,ast.Call) and isinstance(call.func,ast.Attribute) and call.func.attr=='route'
+       and isinstance(call.func.value,ast.Call) and isinstance(call.func.value.func,ast.Name) and call.func.value.func.id=='Wiki'):
+    delegated=dict(env);delegated['kind']=evaluate(call.args[2],env)
+    done,_=walk(functions['fountain/wiki.py:Wiki.route'].body,delegated,'fountain/wiki.py:Wiki.route')
+    return ([terminal(node,key),*done] if done else []),[]
   return [terminal(node,key)],[]
  if isinstance(node,ast.Raise):return [],[]
  return walk(tail,env,key)
@@ -170,6 +185,12 @@ assert.equal(changed.status,0,changed.stderr);
 const added=JSON.parse(changed.stdout);
 assert.notDeepEqual(added.sources,inventory.sourceFingerprints,'AST parser failed to detect a newly added route.');
 assert(added.terminals.some(entry=>!observed.has(site(entry))&&!nonRoutes.has(site(entry))),'New route terminal must require an inventory entry.');
+const changedWiki=spawnSync(process.env.FOUNTAIN_PYTHON||'python3',['-c',parser,root,'simulate-added-wiki-method'],{input:JSON.stringify(inventory),encoding:'utf8',maxBuffer:16*1024*1024});
+assert.equal(changedWiki.status,0,changedWiki.stderr);
+const addedWiki=JSON.parse(changedWiki.stdout);
+assert.notDeepEqual(addedWiki.sources,inventory.sourceFingerprints,'An added delegated wiki method must change its AST fingerprint.');
+assert(addedWiki.matrix.some(row=>row.source==='fountain/server.py:Application._dispatch'&&row.probe==='/api/pages/sample-page/wiki'&&row.method==='PUT'&&row.evidence.length>0),'Method audit must follow the delegated wiki guard.');
+assert(!parsed.matrix.some(row=>row.source==='fountain/server.py:Application._dispatch'&&row.probe==='/api/pages/sample-page/wiki'&&['PUT','PATCH','OPTIONS'].includes(row.method)&&row.evidence.length>0),'Unsupported wiki methods must not be counted as implemented routes.');
 function matches(route,path){
  if(route.kind==='static-pattern'&&inventory.staticExcludedPrefixes.some(prefix=>path.startsWith(prefix)))return false;
  const pattern=route.path.split('/').map(segment=>/^\{[^}]+\+\}$/.test(segment)?'.+':/^\{[^}]+\}$/.test(segment)?'[^/]+':segment.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')).join('/');
@@ -182,7 +203,7 @@ for(const row of parsed.matrix){
 }
 // The AST fingerprints make additions/changes fail even if their path has not yet
 // been entered. These presence checks also prevent accidentally deleting a family.
-for(const family of ['session','workspace','pages','databases','uploads','attachments','accounts','sync','ai','publishing','scim','advanced','static'])assert(inventory.routes.some(route=>route.domain===family),'Missing route family '+family);
+for(const family of ['session','workspace','pages','wiki','inbox','databases','uploads','attachments','accounts','sync','ai','publishing','scim','advanced','static'])assert(inventory.routes.some(route=>route.domain===family),'Missing route family '+family);
 for(const collection of parsed.collections)for(const [method,path] of [['GET','/api/'+collection],['POST','/api/'+collection],['GET','/api/'+collection+'/{id}'],['PATCH','/api/'+collection+'/{id}'],['DELETE','/api/'+collection+'/{id}']])assert(routes.has(method+' '+path),'Missing Advanced collection method '+method+' '+path);
 // A real in-process Edge boundary invocation: staged health/auth plumbing must
 // continue to refuse all domain paths rather than being counted as parity.
@@ -197,4 +218,4 @@ for(const route of inventory.routes.filter(route=>route.cloud.status==='pending'
 const health=await candidate(new Request('https://fixture.invalid/functions/v1/fountain-api/health'));
 assert.equal((await health.json()).ready,false);
 assert(!inventory.routes.some(route=>route.path==='/health'),'New health surface is not legacy route coverage.');
-console.log(JSON.stringify({ok:true,routes:inventory.routes.length,sourceFunctions:Object.keys(parsed.sources).length,pendingBoundaryChecks:pendingChecks,cloudProductionParityVerified:0,parser:'Python AST; server never imported; no database access'}));
+console.log(JSON.stringify({ok:true,routes:inventory.routes.length,sourceFunctions:Object.keys(parsed.sources).length,methodMatrixChecks:parsed.matrix.length,delegatedWikiMethodChecks:2,pendingBoundaryChecks:pendingChecks,cloudProductionParityVerified:0,parser:'Python AST including delegated wiki method guards; server never imported; no database access'}));

@@ -3,6 +3,10 @@ import copy
 import unittest
 from fountain.core import Store, APIError, AUDIT_ACTOR
 from fountain.server import Application
+from fountain.wiki import PAGE_HEADER_FIELDS, page_header_reader
+from fountain.access import Access
+from fountain.authorization import Authorization
+from fountain.wiki import Wiki
 
 class WikiTests(unittest.TestCase):
     def setUp(self):
@@ -41,9 +45,10 @@ class WikiTests(unittest.TestCase):
         for body in [{},{'revision':True},{'revision':-1},{'revision':0,'is_wiki':True}]:self.denied(400,'POST','wiki-root/wiki',body)
         self.denied(409,'POST','wiki-root/wiki',{'revision':9});self.denied(409,'POST','child/wiki',{'revision':0})
         self.store.put('page',{**self.root,'locked':True});self.denied(423,'POST','wiki-root/wiki',{'revision':0})
-    def test_creator_sidecar_owner_changes_and_verify_permissions(self):
+    def test_creator_owner_fallback_changes_and_verify_permissions(self):
         self.convert();_,page=self.app.dispatch('POST','/api/pages',{'title':'새 문서','parent_id':'wiki-root'}, {},principal=self.store.get('member','alice'))
-        self.assertEqual(self.store.get('wiki_page',page['id'])['owner_id'],'alice');self.assertEqual(page['owner_id'],'alice')
+        self.assertIsNone(self.store.get('wiki_page',page['id']));self.assertEqual(page['owner_id'],'alice')
+        self.assertEqual(self.call('GET',page['id']+'/wiki-owner',actor='alice')[1]['owner']['id'],'alice')
         self.denied(403,'POST',page['id']+'/verify',{},'local')
         verified=self.call('POST',page['id']+'/verify',{'owners':['alice']},'alice')[1]
         self.denied(400,'POST',page['id']+'/verify',{'owners':['alice','bob']},'alice')
@@ -54,6 +59,20 @@ class WikiTests(unittest.TestCase):
         self.assertEqual(after['verification']['owners'],['bob'])
         for key in ['verified_at','expires_at','verified_by','cycle_revision']:self.assertEqual(after['verification'][key],raw['verification'][key])
         self.denied(403,'DELETE',page['id']+'/verify',{},'alice');self.call('DELETE',page['id']+'/verify',{},'bob')
+
+    def test_trusted_internal_owner_mismatch_keeps_creator_private_until_adoption(self):
+        self.convert();token=AUDIT_ACTOR.set('alice')
+        try:
+            page=self.app.workspace.create_page({'id':'internal-owner-mismatch','title':'Trusted internal','parent_id':None,'owner_id':'bob',
+                'permissions':{'default':'private','inherit':False,'members':{'alice':'edit'},'groups':{}}})
+        finally:AUDIT_ACTOR.reset(token)
+        self.assertEqual(page['owner_id'],'bob');self.assertEqual(self.store.get('wiki_page',page['id'])['owner_id'],'alice')
+        ordinary=self.call('GET',page['id']+'/wiki-owner',actor='alice')[1]
+        self.assertFalse(ordinary['in_wiki']);self.assertIsNone(ordinary['owner']);self.assertEqual(ordinary['members'],[])
+        self.call('PATCH',page['id'],{'parent_id':'wiki-root','revision':0})
+        member=self.call('GET',page['id']+'/wiki-owner',actor='alice')[1]
+        self.assertEqual(member['owner']['id'],'alice');self.assertTrue(member['can_verify'])
+        self.denied(403,'POST',page['id']+'/verify',{},'bob')
     def test_view_projection_query_and_hidden_root_owner(self):
         self.convert();view=self.call('GET','wiki-root/wiki',actor='alice')[1];self.assertEqual(view['total'],1)
         item=view['items'][0];self.assertNotIn('blocks',item);self.assertEqual(item['owner'],{'id':'local','name':'나'})
@@ -86,6 +105,43 @@ class WikiTests(unittest.TestCase):
         rows=list(self.store.db.execute('SELECT kind,id,data FROM entities ORDER BY kind,id'));revision=self.store.meta('_entity_revision')
         self.call('GET','wiki-root/wiki');self.assertEqual(list(self.store.db.execute('SELECT kind,id,data FROM entities ORDER BY kind,id')),rows);self.assertEqual(self.store.meta('_entity_revision'),revision);self.assertIsNone(self.app.advanced)
         self.call('GET','child/wiki-owner');self.assertIsNone(self.store.get('settings','workspace'))
+
+    def test_page_headers_preserve_absence_null_and_omit_body_fields(self):
+        source={**self.child,'icon':None,'cover':'private cover','unknown':{'secret':True}}
+        self.store.put('page',source);stored=self.store.get('page','child')
+        header=page_header_reader(self.store).get('page','child')
+        self.assertEqual(header,{key:stored[key] for key in PAGE_HEADER_FIELDS if key in stored})
+        self.assertIsNone(header['icon']);self.assertNotIn('verification',header)
+        for key in ['blocks','cover','unknown']:self.assertNotIn(key,header)
+        self.assertEqual(self.store.get('page','child'),stored)
+
+    def test_header_scope_is_shared_only_for_dedicated_routes(self):
+        access=Access(self.store,self.store.get('member','local'));authority=Authorization(access)
+        authority.prepare('GET','/api/pages/child/wiki-owner',{})
+        wiki=Wiki(self.store,access);self.assertIs(wiki.headers,access.store);self.assertIs(authority.store,access.store)
+        ordinary=Access(self.store,self.store.get('member','local'));Authorization(ordinary).prepare('PATCH','/api/pages/child',{'title':'no mutation'})
+        self.assertIs(ordinary.store,self.store)
+
+    def test_same_header_reader_refreshes_after_rollback_alternate_same_revision(self):
+        reader=page_header_reader(self.store)
+        with self.assertRaises(ValueError):
+            with self.store.transaction():
+                self.store.put('page',{**self.child,'parent_id':'first-branch'})
+                revision=self.store.meta('_entity_revision');self.assertEqual(reader.get('page','child')['parent_id'],'first-branch')
+                raise ValueError('rollback fixture')
+        with self.store.transaction():
+            self.store.put('page',{**self.child,'parent_id':None})
+            self.assertEqual(self.store.meta('_entity_revision'),revision)
+            self.assertIsNone(reader.get('page','child')['parent_id'])
+
+    def test_header_authorized_mutations_keep_full_target_fields(self):
+        for source in [self.root,self.child]:self.store.put('page',{**source,'cover':'keep cover','unknown':{'secret':'keep'},'blocks':[{'id':'b','type':'paragraph','text':'keep body'}]})
+        before={identity:self.store.get('page',identity) for identity in ['wiki-root','child']}
+        self.convert();self.call('PATCH','child/wiki-owner',{'owner_id':'alice','revision':0})
+        self.call('POST','child/verify',{'owners':['alice'],'revision':1},'alice')
+        self.call('DELETE','child/verify',{'revision':2},'alice');self.call('DELETE','wiki-root/wiki',{'revision':1})
+        for identity,original in before.items():
+            for key in ['blocks','cover','unknown','owner_id','permissions']:self.assertEqual(self.store.get('page',identity)[key],original[key])
 
     def test_malformed_nested_parent_is_skipped_without_source_repair(self):
         for parent in [[],{},['wiki-root'],{'id':'wiki-root'},False,3]:

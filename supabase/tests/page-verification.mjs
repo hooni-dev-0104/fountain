@@ -1,6 +1,7 @@
 /** Production synchronous verification/Access/Authorization on a staged memory Store.
  * No provider, SQL, HTTP or actual cloud execution is claimed by this test. */
 import assert from 'node:assert/strict';
+import {PAGE_HEADER_META_KEY,projectPageHeader} from '../functions/_shared/page-headers.ts';
 import {Advanced,createAdvancedExtension} from '../functions/_shared/advanced.ts';
 import {Access,APIError,clone} from '../functions/_shared/access.ts';
 import {Authorization} from '../functions/_shared/authorization.ts';
@@ -118,7 +119,7 @@ for(const count of [100,1000]){
   const auth={hash:'a'.repeat(64),userId:'11111111-1111-4111-8111-111111111111',authSessionId:'22222222-2222-4222-8222-222222222222',cacheBinding:'c'.repeat(32),expiresAt:Date.parse(time)+60000,profile:{workspaceId:'verification-fixture',authSessionActive:true,member:f.store.get('member','local')}};
   const provider={async snapshot(request){snapshots++;assert.equal(request.context.workspaceId,auth.profile.workspaceId);if(request.selection.kinds.includes('member'))memberKindRequests++;
     const all=[...f.store.records].flatMap(([kind,rows])=>[...rows.values()].filter(data=>request.selection.kinds.includes(kind)||request.selection.ids[kind]?.includes(data.id)).map(data=>({kind,id:data.id,data,createdAt:data.created_at,updatedAt:data.updated_at}))),offset=request.cursor?.offset??0,size=request.selection.pageSize;
-    return{workspaceId:auth.profile.workspaceId,memberId:request.context.memberId,revision,accessRevision:0,principal:f.store.get('member',request.context.memberId),entities:clone(all.slice(offset,offset+size)),meta:request.selection.metaKeys.map(key=>({key,value:f.store.meta(key),present:f.store.metadata.has(key)})),nextCursor:offset+size<all.length?{offset:offset+size}:null};},
+    return{workspaceId:auth.profile.workspaceId,memberId:request.context.memberId,revision,accessRevision:0,principal:f.store.get('member',request.context.memberId),entities:clone(all.slice(offset,offset+size)),meta:request.selection.metaKeys.map(key=>key===PAGE_HEADER_META_KEY?{key,value:f.store.list('page').map(projectPageHeader).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0),present:true}:{key,value:f.store.meta(key),present:f.store.metadata.has(key)}),nextCursor:offset+size<all.length?{offset:offset+size}:null};},
     async commit(request){commits++;assert.equal(request.expectedRevision,revision);for(const change of request.changes){if(change.op==='put')f.store.put(change.kind,change.data);else if(change.op==='delete')f.store.delete(change.kind,change.id);else f.store.set_meta(change.key,change.value);revision++;}return{revision};}};
   const domain=createDomain({provider,extensions:[createAdvancedExtension({cloud:true})],authorize:async()=>clone(auth),clock:()=>Date.parse(time)});
   await assert.rejects(()=>domain(new Request('https://fixture.example'+path,{method:'POST',body:JSON.stringify({owners:[ids[0],3]})}),path,auth),error=>error.status===400);assert.equal(memberKindRequests,0,'invalid shape must not request private member kind');assert.equal(commits,0);snapshots=0;

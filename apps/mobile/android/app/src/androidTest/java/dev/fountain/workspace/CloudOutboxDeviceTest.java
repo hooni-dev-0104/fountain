@@ -35,7 +35,7 @@ public class CloudOutboxDeviceTest {
     private MainActivity activity;
     private String diagnosticPage;
     private static final class Gate {
-        final AtomicReference<String> nonce;final AtomicBoolean offline=new AtomicBoolean();final AtomicInteger forwarded=new AtomicInteger(),blocked=new AtomicInteger();
+        final AtomicReference<String> nonce;final AtomicBoolean offline=new AtomicBoolean(),sessionOnly=new AtomicBoolean();final AtomicInteger forwarded=new AtomicInteger(),blocked=new AtomicInteger();
         final List<HttpsURLConnection> sessionConnections=Collections.synchronizedList(new ArrayList<>());
         Gate(String nonce,boolean offline){this.nonce=new AtomicReference<>(nonce);this.offline.set(offline);}
         void install()throws Exception{
@@ -45,6 +45,7 @@ public class CloudOutboxDeviceTest {
                     String secret=nonce.get(),path;
                     try{if(secret==null||offline.get()||!"https".equals(original.getProtocol())||!"ehnovtfadpkwtubmwltl.supabase.co".equals(original.getHost())||original.getUserInfo()!=null||original.getRef()!=null||original.getPort()!=-1&&original.getPort()!=443||!original.getPath().startsWith(PREFIX+"/api/"))throw new IOException();
                         path=NativePolicy.path(original.getPath().substring(PREFIX.length())+(original.getQuery()==null?"":"?"+original.getQuery()),false);
+                        if(sessionOnly.get()&&!path.equals("/api/session"))throw new IOException();
                     }catch(Exception denied){blocked.incrementAndGet();throw new IOException("Disposable QA private transport denied");}
                     HttpsURLConnection connection=(HttpsURLConnection)wire.openConnection();connection.setRequestProperty("X-Fountain-Verify",secret);connection.setRequestProperty("X-Fountain-Test-Path",path);if(path.equals("/api/session")){synchronized(sessionConnections){if(sessionConnections.size()>=256)throw new IOException("Disposable QA session bound exceeded");sessionConnections.add(connection);}}forwarded.incrementAndGet();return connection;
                 }
@@ -201,7 +202,14 @@ public class CloudOutboxDeviceTest {
         JSONObject result=new JSONObject().put("diagnosticOnly",true).put("pid",android.os.Process.myPid()).put("noHTTPS",true);
         assertTrue(Build.HARDWARE.contains("ranchu")||Build.HARDWARE.contains("goldfish"));assertNull(System.getProperty("dev.fountain.outbox.qa"));System.setProperty("dev.fountain.outbox.qa","1");
         try{
-            JSONObject shape=nativeState(context,input.getString("workspaceId"),diagnosticPage,input.getString("expectedText"));result.put("native",shape);gate.install();
+            JSONObject shape=nativeState(context,input.getString("workspaceId"),diagnosticPage,input.getString("expectedText"));result.put("native",shape);
+            String privateBindingHash;
+            try(SQLiteDatabase db=SQLiteDatabase.openDatabase(database(context).getPath(),null,SQLiteDatabase.OPEN_READONLY|SQLiteDatabase.NO_LOCALIZED_COLLATORS);
+                Cursor cursor=db.rawQuery("SELECT value FROM control WHERE key='grant'",null)){
+                assertTrue(cursor.moveToFirst());JSONObject session=new JSONObject(cursor.getString(0)).getJSONObject("session");
+                privateBindingHash=OutboxPolicy.hash(session.getString("cache_binding"));
+            }
+            gate.install();
             try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(MainActivity.class)){
                 scenario.onActivity(value->activity=value);until("globalThis.FountainTransport&&globalThis.Capacitor?.nativePromise","Bundled diagnostic view appeared",30000);
                 result.put("journals",promise("""
@@ -213,8 +221,15 @@ public class CloudOutboxDeviceTest {
                     const counts={checkpoint:0,quarantined:0,quarantine:0,reconcile:0,other:0,currentProfile:0,otherProfile:0,missingProfile:0,originMatches:0,headAhead:0};
                     for(const row of rows.values){counts[['checkpoint','quarantined','quarantine','reconcile'].includes(row.kind)?row.kind:'other']++;if(typeof row.profileId==='string'){counts[(await hash(row.profileId))===PROFILE_HASH?'currentProfile':'otherProfile']++;}else counts.missingProfile++;if(row.origin===ORIGIN)counts.originMatches++;if(Number.isSafeInteger(row.head)&&row.head>NATIVE_HEAD)counts.headAhead++;}
                     databases.push({name,present:true,journalPresent:true,total:rows.total,capped:rows.total>rows.values.length,counts});}finally{db.close();}}
-                    return {databases};
-                    """.replace("PROFILE_HASH",JSONObject.quote(shape.getString("profileSHA256"))).replace("NATIVE_HEAD",Long.toString(shape.getLong("head"))).replace("ORIGIN",JSONObject.quote(ORIGIN))));
+                    const raw=localStorage.getItem('fountain-logout-pending:'+encodeURIComponent(ORIGIN));
+                    const logoutMarker={markerPresent:raw!==null,exactAllowedKeys:false,hasNonemptyBinding:false,bindingSHAEqualsCurrentPrivateGrantBinding:false};
+                    if(raw!==null)try{const marker=JSON.parse(raw);if(marker&&typeof marker==='object'&&!Array.isArray(marker)){
+                      const keys=Object.keys(marker);logoutMarker.exactAllowedKeys=keys.length===3&&['mode','binding','nonce'].every(key=>Object.hasOwn(marker,key));
+                      logoutMarker.hasNonemptyBinding=typeof marker.binding==='string'&&marker.binding.length>0;
+                      if(logoutMarker.hasNonemptyBinding)logoutMarker.bindingSHAEqualsCurrentPrivateGrantBinding=(await hash(marker.binding))===PRIVATE_BINDING_HASH;
+                    }}catch{/* Report only malformed shape; never return original bytes. */}
+                    return {databases,logoutMarker};
+                    """.replace("PROFILE_HASH",JSONObject.quote(shape.getString("profileSHA256"))).replace("PRIVATE_BINDING_HASH",JSONObject.quote(privateBindingHash)).replace("NATIVE_HEAD",Long.toString(shape.getLong("head"))).replace("ORIGIN",JSONObject.quote(ORIGIN))));
             }
             assertEquals("Diagnostic performs no remote request",0,gate.forwarded.get());result.put("passed",true);
         }finally{gate.close();System.clearProperty("dev.fountain.outbox.qa");result.put("forwardedHTTPS",gate.forwarded.get());File output=new File(context.getFilesDir(),"fountain-cloud-outbox-journal-diagnostic.json");try(OutputStream out=new FileOutputStream(Os.open(output.getPath(),OsConstants.O_WRONLY|OsConstants.O_CREAT|OsConstants.O_TRUNC|OsConstants.O_NOFOLLOW,0600))){Os.chmod(output.getPath(),0600);out.write(result.toString().getBytes(StandardCharsets.UTF_8));}}
@@ -235,6 +250,63 @@ public class CloudOutboxDeviceTest {
         }finally{
             input.remove("password");input.remove("email");input.remove("nonce");File output=new File(context.getFilesDir(),"fountain-cloud-outbox-probe.json");try(OutputStream out=new FileOutputStream(Os.open(output.getPath(),OsConstants.O_WRONLY|OsConstants.O_CREAT|OsConstants.O_TRUNC|OsConstants.O_NOFOLLOW,0600))){Os.chmod(output.getPath(),0600);out.write(result.toString().getBytes(StandardCharsets.UTF_8));}
         }
+    }
+
+    private String rawSessionBoundaryFingerprint(Context context)throws Exception{
+        Object plugin=activity.getBridge().getPlugin("FountainNative").getInstance();java.lang.reflect.Field field=FountainNativePlugin.class.getDeclaredField("lock");field.setAccessible(true);Object scopeLock=field.get(plugin);
+        synchronized(scopeLock){
+            JSONArray state=new JSONArray();
+            for(String name:Arrays.asList("origin","activeCookie","revokeCookie","revokeOrigin","generation","authGeneration","recoveryEpoch","recoveryMode","broken")){
+                field=FountainNativePlugin.class.getDeclaredField(name);field.setAccessible(true);state.put(new JSONArray().put(name).put(field.get(plugin)));
+            }
+            state.put(new CookieVault(context).read());
+            try(SQLiteDatabase db=SQLiteDatabase.openDatabase(database(context).getPath(),null,SQLiteDatabase.OPEN_READONLY|SQLiteDatabase.NO_LOCALIZED_COLLATORS)){
+                List<String> tables=new ArrayList<>();try(Cursor c=db.rawQuery("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",null)){while(c.moveToNext()){String table=c.getString(0);assertTrue(table.matches("[a-z_][a-z_0-9]*"));tables.add(table);}}
+                for(String table:tables){List<String> rows=new ArrayList<>();try(Cursor c=db.rawQuery("SELECT * FROM "+table,null)){while(c.moveToNext()){JSONArray row=new JSONArray();for(int i=0;i<c.getColumnCount();i++)row.put(c.getType(i)==Cursor.FIELD_TYPE_BLOB?OutboxPolicy.hash(c.getBlob(i)):c.getString(i));rows.add(row.toString());assertTrue("Bounded private test snapshot",rows.size()<=100000);}}Collections.sort(rows);state.put(new JSONArray().put(table).put(new JSONArray(rows)));}
+            }
+            return OutboxPolicy.hash(state.toString());
+        }
+    }
+    private int rawNativeOperationCount()throws Exception{
+        Object plugin=activity.getBridge().getPlugin("FountainNative").getInstance();java.lang.reflect.Field field=FountainNativePlugin.class.getDeclaredField("lock");field.setAccessible(true);Object scopeLock=field.get(plugin);
+        synchronized(scopeLock){field=FountainNativePlugin.class.getDeclaredField("operations");field.setAccessible(true);return ((Map<?,?>)field.get(plugin)).size();}
+    }
+    @Test public void actualRawSessionBindingPreventsOldLogoutFromRevokingNewLogin()throws Exception{
+        Context context=instrumentation.getTargetContext();JSONObject input=consume(context),evidence=new JSONObject().put("passed",false).put("actualPrivateHTTPS",true).put("directProductionEndpoint",false).put("uiLifecycleClaim",false).put("pid",android.os.Process.myPid());
+        Gate gate=new Gate(input.getString("nonce"),true);gate.sessionOnly.set(true);input.remove("nonce");Throwable failure=null;
+        assertTrue(Build.HARDWARE.contains("ranchu")||Build.HARDWARE.contains("goldfish"));assertNull(System.getProperty("dev.fountain.outbox.qa"));System.setProperty("dev.fountain.outbox.qa","1");
+        try{
+            gate.install();
+            try(ActivityScenario<MainActivity> scenario=ActivityScenario.launch(MainActivity.class)){
+                scenario.onActivity(value->activity=value);until("globalThis.Capacitor?.nativePromise&&globalThis.FountainTransport","Installed private native bridge appeared",30000);
+                evidence.put("businessUiPaused",Boolean.parseBoolean(evaluate("(()=>{if(typeof state==='object'){state.nativeRecoveryPaused=true;return true;}return false;})()")));
+                long deadline=SystemClock.elapsedRealtime()+10000;int quiet=0;while(quiet<5&&SystemClock.elapsedRealtime()<deadline){quiet=rawNativeOperationCount()==0?quiet+1:0;Thread.sleep(100);}assertEquals("Initial offline calls settled before real raw session requests",5,quiet);
+                JSONObject setup=promise("""
+                    const configuration=await Capacitor.nativePromise('FountainNative','getConfiguration',{});
+                    globalThis.__rawSessionBindingQA={generation:configuration.generation,sequence:0};const q=__rawSessionBindingQA;
+                    q.request=async(method,payload)=>{const bytes=payload===undefined?new Uint8Array():new TextEncoder().encode(JSON.stringify(payload));let binary='';for(const byte of bytes)binary+=String.fromCharCode(byte);
+                      try{const result=await Capacitor.nativePromise('FountainNative','request',{generation:q.generation,id:'raw-session-'+(++q.sequence),path:'/api/session',method,headers:{'Content-Type':'application/json'},bodyBase64:btoa(binary),timeoutMs:45000});
+                        return {status:result.status,body:JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(result.bodyBase64),c=>c.charCodeAt(0))))};
+                      }catch(error){return {status:null,code:error?.code||'unknown'};}};
+                    return {originMatches:configuration.origin===EXPECTED_ORIGIN};
+                    """.replace("EXPECTED_ORIGIN",JSONObject.quote(ORIGIN)));
+                assertTrue("Existing configured origin remains fixed",setup.getBoolean("originMatches"));gate.offline.set(false);
+                String credentials=new JSONObject().put("email",input.getString("email")).put("password",input.getString("password")).toString();
+                JSONObject first=promise("const q=__rawSessionBindingQA,p=await q.request('POST',"+credentials+"),s=await q.request('GET');q.a=s.body?.cache_binding;return {login:p.status===200,observed:s.status===200&&s.body?.authenticated===true&&typeof q.a==='string'&&q.a.length>0,workspace:s.body?.workspace_id==="+JSONObject.quote(input.getString("workspaceId"))+"};");evidence.put("first",first);assertTrue(first.getBoolean("login")&&first.getBoolean("observed")&&first.getBoolean("workspace"));
+                JSONObject second=promise("const q=__rawSessionBindingQA,p=await q.request('POST',"+credentials+"),s=await q.request('GET');q.b=s.body?.cache_binding;q.member=s.body?.member?.id;return {login:p.status===200,observed:s.status===200&&s.body?.authenticated===true&&typeof q.b==='string'&&q.b.length>0,newBinding:q.b!==q.a,workspace:s.body?.workspace_id==="+JSONObject.quote(input.getString("workspaceId"))+"};");credentials=null;input.remove("email");input.remove("password");evidence.put("second",second);assertTrue(second.getBoolean("login")&&second.getBoolean("observed")&&second.getBoolean("newBinding")&&second.getBoolean("workspace"));
+                String before=rawSessionBoundaryFingerprint(context);int deletes=gate.sessionDeleteConnections();
+                JSONObject attempt=promise("const q=__rawSessionBindingQA,r=await q.request('DELETE',{cache_binding:q.a});return {nativeRejected:r.status===null,conflict:r.code==='NATIVE_SESSION_CONFLICT',httpReply:r.status!==null};");
+                boolean unchanged=before.equals(rawSessionBoundaryFingerprint(context));int extraDeletes=gate.sessionDeleteConnections()-deletes;
+                JSONObject current=promise("const q=__rawSessionBindingQA,s=await q.request('GET');return {authenticated:s.status===200&&s.body?.authenticated===true,sameBinding:s.body?.cache_binding===q.b,sameMember:s.body?.member?.id===q.member};");
+                evidence.put("staleAttempt",attempt).put("staleDeleteConnections",extraDeletes).put("privateCookieAuthVaultLedgerSourceUnchanged",unchanged).put("currentAfterStale",current);
+                assertTrue("Stale public binding must be rejected by actual native admission",attempt.getBoolean("nativeRejected")&&attempt.getBoolean("conflict"));assertEquals("Rejected stale binding must start zero DELETE connections",0,extraDeletes);assertTrue("Actual private auth/vault/SQLite state remains exact",unchanged);assertTrue("Actual current server session remains authenticated and identical",current.getBoolean("authenticated")&&current.getBoolean("sameBinding")&&current.getBoolean("sameMember"));
+                deletes=gate.sessionDeleteConnections();JSONObject matching=promise("const q=__rawSessionBindingQA,r=await q.request('DELETE',{cache_binding:q.b}),s=await q.request('GET');return {deleted:r.status===200,anonymous:s.status===200&&s.body?.authenticated===false};");
+                evidence.put("matching",matching).put("matchingDeleteConnections",gate.sessionDeleteConnections()-deletes);assertTrue(matching.getBoolean("deleted")&&matching.getBoolean("anonymous"));assertEquals("Public matching DELETE carries its selected cookie and original binding exactly once",1,gate.sessionDeleteConnections()-deletes);
+                evaluate("delete globalThis.__rawSessionBindingQA;true");
+            }
+        }catch(Throwable problem){failure=problem;evidence.put("failureClass",problem.getClass().getSimpleName());}
+        finally{gate.close();System.clearProperty("dev.fountain.outbox.qa");input.remove("password");input.remove("email");evidence.put("passed",failure==null).put("forwardedHTTPS",gate.forwarded.get()).put("blockedHTTPS",gate.blocked.get()).put("sessionDELETEConnections",gate.sessionDeleteConnections()).put("privateQAOptInCleared",System.getProperty("dev.fountain.outbox.qa")==null);File output=new File(context.getFilesDir(),"fountain-cloud-session-binding-result.json");try(OutputStream out=new FileOutputStream(Os.open(output.getPath(),OsConstants.O_WRONLY|OsConstants.O_CREAT|OsConstants.O_TRUNC|OsConstants.O_NOFOLLOW,0600))){Os.chmod(output.getPath(),0600);out.write(evidence.toString().getBytes(StandardCharsets.UTF_8));}}
+        if(failure!=null)throw new AssertionError("Raw private session binding admission did not complete",failure);
     }
 
 }

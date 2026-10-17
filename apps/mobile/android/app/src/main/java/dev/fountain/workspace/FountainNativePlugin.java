@@ -53,9 +53,10 @@ public class FountainNativePlugin extends Plugin {
     private final ScheduledExecutorService deadlines = Executors.newSingleThreadScheduledExecutor();
     private final Map<String, Operation> operations = new HashMap<>();
     private final NativePolicy.PublicWebTrust publicWeb = new NativePolicy.PublicWebTrust();
+    private final NativeSessionBinding sessionBinding = new NativeSessionBinding();
     private long generation, authGeneration, ownerBoundaryEpoch;
     private final Runnable boundaryInvalidated = () -> {
-        synchronized (lock) { invalidateRecovery(); authGeneration++; cancelAll(null, "STALE_SESSION"); }
+        synchronized (lock) { sessionBinding.clear(); invalidateRecovery(); authGeneration++; cancelAll(null, "STALE_SESSION"); }
     };
     private CookieVault vault;
     private static final boolean OUTBOX_ENABLED = false; // Enable only after SDK/device and recovery-UI verification.
@@ -205,7 +206,7 @@ public class FountainNativePlugin extends Plugin {
         return invalidateSession(null);
     }
     private NativePolicy.SessionInvalidation invalidateSession(String explicitNativeActor) {
-        publicWeb.clear();
+        sessionBinding.clear(); publicWeb.clear();
         if (outboxEnabled() && !recoveryMode) try { NativeOutbox storage=durableOutbox();storage.revoke();if(explicitNativeActor!=null)storage.eraseActor(explicitNativeActor); }
         catch (Exception failure) { broken = true; }
         NativePolicy.SessionInvalidation result = NativePolicy.invalidateSession(origin, activeCookie, revokeCookie, sessionStorage());
@@ -272,7 +273,7 @@ public class FountainNativePlugin extends Plugin {
                 }
                 try {
                     invalidateRecovery();
-                    publicWeb.clear();
+                    sessionBinding.clear(); publicWeb.clear();
                     if (outboxEnabled() && !recoveryMode && origin != null) durableOutbox().revoke();
                     persist(next, generation + 1, null, null, null);
                     if (outbox != null) { outbox.close(); outbox = null; }
@@ -419,7 +420,12 @@ public class FountainNativePlugin extends Plugin {
             String path = NativePolicy.path(call.getString("path"), false);
             String method = call.getString("method");
             NativePolicy.require(NativePolicy.METHODS.contains(method));
-            byte[] body = decodeBody(call, NativePolicy.MAX_REQUEST);
+            byte[] body;
+            try { body = decodeBody(call, NativePolicy.MAX_REQUEST); }
+            catch (IllegalArgumentException malformed) {
+                if (method.equals("DELETE") && NativePolicy.sessionPath(path)) { call.reject("Native session deletion body is invalid", "NATIVE_SESSION_INVALID"); return; }
+                throw malformed;
+            }
             NativePolicy.require(!method.equals("GET") || body.length == 0);
             Map<String, String> headers = requestHeaders(call);
             int timeout = (int) integer(call, "timeoutMs", 1, 45000);
@@ -431,6 +437,11 @@ public class FountainNativePlugin extends Plugin {
             NativePolicy.require(origin != null && integer(call, "generation", 0, 9_007_199_254_740_990L) == generation);
             String id = call.getString("id");
             NativePolicy.require(id != null && id.matches("[A-Za-z0-9_.:-]{1,160}") && !operations.containsKey(id));
+            NativeSessionBinding.Admission publicLogout = null;
+            if (session && method.equals("DELETE")) {
+                try { publicLogout = sessionBinding.admit(origin, activeCookie, body); }
+                catch (NativeSessionBinding.Failure denied) { call.reject("Native session deletion was not admitted", denied.code); return; }
+            }
             if (mutation) {
                 String explicitNativeActor=null;
                 if(method.equals("DELETE")&&outboxEnabled()&&!recoveryMode)try{explicitNativeActor=durableOutbox().nativeActor(activeCookie!=null?activeCookie:revokeCookie);}catch(Exception unavailable){broken=true;}
@@ -445,6 +456,7 @@ public class FountainNativePlugin extends Plugin {
                     return;
                 }
             }
+            final NativeSessionBinding.Admission admittedLogout = publicLogout;
             Operation operation = begin(call, session && method.equals("DELETE"), timeout, session && !method.equals("DELETE"));
             try {
                 if (outboxEnabled() && !recoveryMode && !session) {
@@ -459,12 +471,15 @@ public class FountainNativePlugin extends Plugin {
             catch (Exception invalid) { fail(operation, "Native request input was rejected", "NATIVE_INPUT"); return; }
             Runnable work = () -> {
                 try {
-                    if (session) revokePending(); // Never attaches the caller's cancellable connection.
+                    if (session && !operation.logout) revokePending(); // Public logout must retain its original binding fence.
                     check(operation);
                     if (operation.logout) {
-                        Response response = exchange(operation, operation.origin, path, "DELETE", headers, body, null, null);
-                        if (response.status >= 200 && response.status < 300 || response.status == 401 || response.status == 403) {
-                            synchronized (lock) { check(operation); persist(origin, generation, null, null, null); }
+                        Response response = exchange(operation, admittedLogout.origin, path, "DELETE", headers, admittedLogout.body, admittedLogout.cookie, null);
+                        synchronized (lock) {
+                            check(operation);
+                            NativeSessionBinding.finishPublicLogout(admittedLogout, origin, activeCookie, revokeCookie, revokeOrigin, response.status, () -> {
+                                persist(origin, generation, null, null, null); revokeCookie = null; revokeOrigin = null;
+                            });
                         }
                         deliverResponse(operation, response);
                     } else {
@@ -654,6 +669,11 @@ public class FountainNativePlugin extends Plugin {
                 catch(Exception unauthenticated){invalidateRecovery();}
             }
             if (session) {
+                if (response.status == 200) {
+                    sessionBinding.clear();
+                    try { sessionBinding.observe(origin, activeCookie, operation.origin, sentCookie, response.cookie, login, new JSONObject(OutboxPolicy.utf8(response.body))); }
+                    catch (org.json.JSONException | IllegalArgumentException malformed) { sessionBinding.clear(); }
+                }
                 if (outboxEnabled()) { operation.sessionDeliveryStore = durableOutbox(); operation.sessionDeliveryLease = operation.sessionDeliveryStore.get("lease"); }
                 check(operation);
                 Object primary = null;
@@ -745,7 +765,7 @@ public class FountainNativePlugin extends Plugin {
         if(!sessions.isShutdown())sessions.execute(() -> { if(recovery!=null)recovery.invalidate(); });
     }
 
-    private NativeRecovery.Authority recoveryAuthority(Operation operation,long epoch,String cookie) {
+    private NativeRecovery.Authority recoveryAuthority(Operation operation,long epoch,String cookie,String[] returnedSessionCookie) {
         return new NativeRecovery.Authority() {
             public void check() throws Exception {
                 FountainNativePlugin.this.check(operation);
@@ -758,6 +778,7 @@ public class FountainNativePlugin extends Plugin {
                     throw new NativeRecovery.Failure(response.status==401?"RECOVERY_AUTH_REQUIRED":"RECOVERY_ACCESS_REQUIRED");
                 }
                 if(response.status!=200)throw new NativeRecovery.Failure("RECOVERY_ACCESS_REQUIRED");
+                if(NativePolicy.sessionPath(path))returnedSessionCookie[0]=response.cookie;
                 return new JSONObject(OutboxPolicy.utf8(response.body));
             }
         };
@@ -768,15 +789,17 @@ public class FountainNativePlugin extends Plugin {
     }
     private NativeRecovery.Authority refreshRecovery(Operation operation,long epoch)throws Exception {
         String cookie;synchronized(lock){check(operation);cookie=activeCookie;if(revokeCookie!=null||vault.invalidated(origin))throw new NativeRecovery.Failure("RECOVERY_AUTH_REQUIRED");}
-        NativeRecovery.Authority authority=recoveryAuthority(operation,epoch,cookie);
+        String[] returnedSessionCookie=new String[1];
+        NativeRecovery.Authority authority=recoveryAuthority(operation,epoch,cookie,returnedSessionCookie);
         JSONObject description;
         try{description=authority.get("/api/session");authority.check();}
-        catch(NativeRecovery.Failure failure){if("RECOVERY_AUTH_REQUIRED".equals(failure.code))publishRecoveryAuthority(lock,authority,()->{if(recovery!=null)recovery.invalidate();recoveryEpoch++;});throw failure;}
+        catch(NativeRecovery.Failure failure){if("RECOVERY_AUTH_REQUIRED".equals(failure.code))publishRecoveryAuthority(lock,authority,()->{sessionBinding.clear();if(recovery!=null)recovery.invalidate();recoveryEpoch++;});throw failure;}
         NativeRecovery.Session identity;
         try {identity=new NativeRecovery.Session(operation.origin,description,cookie,operation.generation+":"+operation.authGeneration+":"+operation.boundaryEpoch);}
-        catch(Exception unauthenticated){publishRecoveryAuthority(lock,authority,()->{if(recovery!=null)recovery.invalidate();recoveryEpoch++;});throw new NativeRecovery.Failure("RECOVERY_AUTH_REQUIRED");}
+        catch(Exception unauthenticated){publishRecoveryAuthority(lock,authority,()->{sessionBinding.clear();if(recovery!=null)recovery.invalidate();recoveryEpoch++;});throw new NativeRecovery.Failure("RECOVERY_AUTH_REQUIRED");}
         publishRecoveryAuthority(lock,authority,()->{
             if(recovery==null)recovery=new NativeRecovery(getContext());recovery.refresh(identity);
+            sessionBinding.observe(origin,activeCookie,operation.origin,cookie,returnedSessionCookie[0],false,description);
             if(outboxEnabled())try{durableOutbox().grant(description,cookie);}catch(NativeOutbox.AccessRequired requiresFreshBinding){/* Dedicated recovery authority still refreshes while the Outbox binding is suspended. */}
         });
         return authority;

@@ -36,3 +36,9 @@
 .native-recovery-login input{width:100%;margin-top:7px;padding:11px;background:white}
 .native-recovery-login .solid-btn{margin-top:5px}
 @media(max-width:480px){.native-recovery-dialog{width:calc(100% - 20px);max-height:calc(100dvh - 20px);border-radius:13px}.native-recovery-body{padding:21px 18px}.native-recovery-body h2{font-size:20px}.native-recovery-description{font-size:13px}.native-recovery-actions{align-items:stretch;flex-direction:column;gap:9px}.native-recovery-actions>span{align-self:flex-start}.native-recovery-item{padding:13px}.native-recovery-summary{padding:16px}}
+
+.native-reconcile-counts{display:grid;grid-template-columns:1fr auto;gap:11px 20px;padding:18px;background:#f2f5ef;border-radius:9px;font-size:14px}
+.native-reconcile-counts dt,.native-reconcile-counts dd{margin:0}.native-reconcile-counts dd{font-variant-numeric:tabular-nums;font-weight:600}
+.native-reconcile-reason{font-size:13px;line-height:1.8;color:#62665c}
+.native-outbox-blocked{position:fixed;right:20px;bottom:24px;z-index:1800;max-width:calc(100% - 40px);padding:13px 18px;background:#4c6e56;color:#fff;border-radius:9px}
+.native-recovery-setup{padding:10px 0;border-top:1px solid #e1e5d9}.native-recovery-setup summary{cursor:pointer;font-size:13px;font-weight:600}.native-recovery-setup p{font-size:12px;line-height:1.7;color:#62665c}.native-recovery-setup label{display:block;margin-top:12px}.native-recovery-setup label:has(input[type=checkbox]){display:flex;align-items:center;gap:9px}.native-recovery-setup input[type=checkbox]{margin:0;flex:none}

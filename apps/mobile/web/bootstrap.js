@@ -2,8 +2,10 @@
 (async function () {
   'use strict';
   const assets=(document.currentScript?.dataset.assets||'').split(',').filter(Boolean);
-  const main=document.getElementById('main');let recovery=null;
-  function error(message){main.replaceChildren();const paragraph=document.createElement('p');paragraph.className='empty';paragraph.textContent=message;main.append(paragraph);if(recovery?.available){const action=document.createElement('button');action.type='button';action.className='solid-btn native-recovery-entry';action.textContent='보관된 기록 복구';action.addEventListener('click',()=>recovery.open());main.append(action);}}
+  const main=document.getElementById('main');let recovery=null,started=false;
+  const startApplication=async()=>{if(started)return;started=true;await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='/app.js';script.onload=resolve;script.onerror=()=>{started=false;reject(new Error('앱 파일을 열지 못했습니다.'));};document.body.append(script);});};
+  globalThis.addEventListener('fountain-native-outbox-ready',()=>{if(!started)startApplication().catch(failure=>error(failure.message));});
+  function error(message,code){main.replaceChildren();const paragraph=document.createElement('p');paragraph.className='empty';paragraph.textContent=message;main.append(paragraph);if(recovery?.available){const action=document.createElement('button');action.type='button';action.className='solid-btn native-recovery-entry';action.textContent=code==='OUTBOX_IDENTITY_REQUIRED'?'로그인하고 시작하기':'보관된 기록 복구';action.addEventListener('click',()=>recovery.open());main.append(action);}}
   try {
     if(!globalThis.Capacitor?.isNativePlatform()||!Capacitor.isPluginAvailable('FountainNative'))throw new Error('이 번들은 Fountain 네이티브 앱에서 열어 주세요.');
     const bridge=Capacitor.registerPlugin('FountainNative'),transport=FountainNativeTransport.create(bridge);
@@ -26,9 +28,9 @@
     if(transport.outboxEnabled===true&&transport.outboxVersion===1){
       // A real native request verifies the private grant; offline startup can use only an existing native grant.
       try{const session=await transport.request('/api/session');await session.json();}catch(failure){if(failure.name!=='TypeError'&&failure.name!=='NetworkError'&&failure.name!=='TimeoutError')throw failure;}
-      const storage=FountainNativeOutbox.create(bridge,{origin:transport.origin,generation:transport.generation});
-      await storage.initialize();globalThis.FountainNativeStorage=storage;
+      const storage=FountainNativeOutbox.create(bridge,{origin:transport.origin,generation:transport.generation,driver:transport.outboxDriver(),confirm:summary=>recovery?.confirmReconciliation(summary)??Promise.resolve(false)});
+      globalThis.FountainNativeStorage=storage;await storage.initialize();
     }
-    await load('app.js');
-  }catch(failure){error(/^(OUTBOX_|RECOVERY_)/.test(failure.code||'')?'기기 저장 기록을 아직 열지 못했습니다. 현재 계정과 접근 권한을 확인해 복구할 수 있습니다.':failure.message||'앱을 시작하지 못했습니다.');}
+    await startApplication();
+  }catch(failure){error(failure.code==='OUTBOX_IDENTITY_REQUIRED'?'가족 작업공간에 로그인한 뒤 기기 저장을 준비합니다.':/^(OUTBOX_|RECOVERY_)/.test(failure.code||'')?'기기 저장 기록을 아직 열지 못했습니다. 현재 계정과 접근 권한을 확인해 복구할 수 있습니다.':failure.message||'앱을 시작하지 못했습니다.',failure.code);}
 })();

@@ -100,6 +100,8 @@
           const safe=new Headers();for(const [name,value]of Object.entries(result.headers))if(['content-type','content-length'].includes(name.toLowerCase())){
             if(typeof value!=='string'||value.length>8192||/[\u0000-\u001f\u007f]/.test(value))invalid();safe.set(name,value);
           }
+          const directory=Object.entries(result.headers).filter(([name])=>name.toLowerCase()==='x-fountain-account-directory');
+          if(value==='/api/account/session'&&method==='GET'&&directory.length===1&&directory[0][1]==='absent')safe.set('X-Fountain-Account-Directory','absent');
           const decoded=decode(result.bodyBase64),length=safe.get('content-length');if(length!==null&&(!/^(0|[1-9][0-9]*)$/.test(length)||Number(length)!==decoded.length))invalid();
           if([204,205].includes(result.status)&&decoded.length)invalid();
           // This epoch belongs only to account calls. No workspace scope event is emitted.

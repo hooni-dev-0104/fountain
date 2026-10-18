@@ -317,7 +317,10 @@
       if(!input||Object.keys(input).join(',')!=='accountDirectoryAbsent'||input.accountDirectoryAbsent!==true||workspace||scopedUsed)invalid();
       if(configuration.workspaceVersion!==1)return null;
       await parkWorkspace();legacyMode=true;
-      await exchange('/api/session',{},true);
+      try{const response=await exchange('/api/session',{},true);if(!response.ok){await response.body?.cancel();throw Object.assign(new Error('작업공간 로그인 상태를 확인하지 못했습니다.'),{status:response.status});}}
+      catch(error){if(!isNetworkUnavailable(error))throw error;}
+      // Unreachable HTTP cannot invent a session. Existing native storage below
+      // still validates its private retained grant before cached data is opened.
       if(configuration.outboxEnabled&&root.FountainNativeOutbox){const storage=root.FountainNativeOutbox.create(bridge,{origin:configuration.origin,generation:configuration.generation,driver:outboxDriver(),confirm:summary=>root.FountainNativeRecovery?.confirmReconciliation(summary)??Promise.resolve(false)});root.FountainNativeStorage=storage;try{await storage.initialize();}catch(error){if(error?.code!=='OUTBOX_IDENTITY_REQUIRED')throw error;}}
       return null;
     }

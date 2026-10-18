@@ -14,7 +14,7 @@ const require=createRequire(import.meta.url),{chromium}=require(process.env.FOUN
 const C=require('../../../static/collaboration.js');
 const root=resolve(dirname(fileURLToPath(import.meta.url)),'../../..'),temporary=await mkdtemp(join(tmpdir(),'fountain-mobile-browser-')),output=join(temporary,'www');
 const python=process.env.FOUNTAIN_PYTHON||join(homedir(),'.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3');
-let processServer,staticServer,browser,backend,local,configuredOrigin=null,generation=1;
+let processServer,staticServer,browser,backend,local,configuredOrigin=null,generation=1,accountFault=null;
 const jar=new Map(),active=new Map(),calls=[],exports=[],pageErrors=[];
 const remote='https://family.native.test',otherRemote='https://other.native.test';
 async function startBackend(){
@@ -27,21 +27,23 @@ async function backendRequest(path,body,method='GET',cookie=jar.get(configuredOr
 }
 async function until(predicate){const deadline=Date.now()+15000;while(!predicate()){if(Date.now()>deadline)throw new Error('Native fixture condition timed out');await new Promise(resolve=>setTimeout(resolve,10));}}
 async function bridgeCall(method,args={}){
-  if(method==='getConfiguration')return{origin:configuredOrigin,generation};
-  if(method==='configure'){assert.ok(!jar.get(configuredOrigin),'Fixture refuses origin change before logout');configuredOrigin=args.origin;generation++;return{origin:configuredOrigin,generation};}
-  if(method==='cancel'){active.get(args.id)?.abort();return{cancelled:true};}
+  if(method==='getConfiguration')return{origin:configuredOrigin,generation,workspaceVersion:1,outboxVersion:0,outboxEnabled:false};
+  if(method==='configure'){assert.ok(!jar.get(configuredOrigin),'Fixture refuses origin change before logout');configuredOrigin=args.origin;generation++;return{origin:configuredOrigin,generation,workspaceVersion:1,outboxVersion:0,outboxEnabled:false};}
+  if(method==='cancel'||method==='accountCancel'){active.get(args.id)?.abort();return{cancelled:true};}
   assert.equal(args.generation,generation);
   calls.push({method,path:args.path,bodyBytes:args.bodyBase64?Buffer.from(args.bodyBase64,'base64').length:0,headers:Object.keys(args.headers||{})});
   if(method==='saveData'){exports.push({filename:args.filename,bytes:Buffer.from(args.bodyBase64,'base64'),kind:'data'});return{saved:true,generation};}
   const abort=new AbortController();active.set(args.id,abort);
   try{
-    const fixture=args.path.startsWith('/api/native-fixture/'),url=fixture?local+args.path:backend+args.path;
-    const headers={...args.headers,'X-Fountain-Request':'1'},cookie=jar.get(configuredOrigin);if(cookie)headers.Cookie=cookie;
+    const fixture=args.path.startsWith('/api/native-fixture/'),url=method==='accountRequest'&&accountFault==='unmarked503'?local+'/api/native-fixture/account503':fixture?local+args.path:backend+args.path;
+    const headers={...args.headers,'X-Fountain-Request':'1'},cookie=method==='accountRequest'?null:jar.get(configuredOrigin);if(cookie)headers.Cookie=cookie;if(method==='accountRequest')assert.ok(args.path.startsWith('/api/account/'),'dedicated account bridge keeps its own namespace');
     if(args.path==='/api/session'&&args.method==='DELETE')jar.delete(configuredOrigin);
     const response=await fetch(url,{method:method==='download'?'GET':args.method,headers,redirect:'error',signal:abort.signal,...(args.bodyBase64?{body:Buffer.from(args.bodyBase64,'base64')}:{})});
     if(method==='download'){assert.ok(response.ok,'Native fixture export response');exports.push({filename:args.filename,bytes:Buffer.from(await response.arrayBuffer()),kind:'download',path:args.path});return{saved:true,generation};}
     const setCookie=response.headers.get('set-cookie');if(setCookie&&args.path==='/api/session'&&args.method==='POST'){const cookie=setCookie.match(/(?:^|,\s*)(fountain_session=[^;]+)/)?.[1];if(cookie)jar.set(configuredOrigin,cookie);}
     const safe={};for(const [key,val] of response.headers)if(['content-type','content-length','content-range','accept-ranges','etag','content-disposition'].includes(key))safe[key]=val;
+    // Mirror the current OS allowlist: only an explicit backend capability marker on this exact account GET is public.
+    if(method==='accountRequest'&&args.method==='GET'&&args.path==='/api/account/session'&&accountFault!=='unmarked401'&&response.headers.get('x-fountain-account-directory')==='absent')safe['x-fountain-account-directory']='absent';
     return{status:response.status,headers:safe,bodyBase64:Buffer.from(await response.arrayBuffer()).toString('base64'),generation};
   }finally{active.delete(args.id);}
 }
@@ -50,6 +52,7 @@ try{
   const accounts=await backendRequest('/accounts'),owner=accounts.accounts.find(member=>member.role==='owner'),password='Native-bridge-isolated-2026';
   await backendRequest('/accounts',{member_id:owner.id,password},'POST');await backendRequest('/accounts/enable',{},'POST');
   staticServer=createServer(async(req,res)=>{
+    if(req.url==='/api/native-fixture/account503'){res.writeHead(503,{'Content-Type':'application/json'});res.end('{"error":"Temporary account service failure"}');return;}
     const binarySize={'/api/native-fixture/binary4':4*1024*1024,'/api/native-fixture/binary16':16*1024*1024}[req.url];
     if(binarySize){const body=Buffer.alloc(binarySize);for(let index=0;index<binarySize;index++)body[index]=index%251;res.writeHead(200,{'Content-Type':'application/octet-stream','Content-Length':binarySize});res.end(body);return;}
     if(req.url==='/api/native-fixture/redirect'){res.writeHead(302,{Location:'https://blocked.invalid/'});res.end();return;}
@@ -57,14 +60,23 @@ try{
     try{const path=new URL(req.url,'http://localhost').pathname,name=path==='/'?'index.html':path.slice(1);if(!/^[a-z][a-z0-9.-]*\.(?:html|js|css)$/.test(name)){res.writeHead(404);res.end();return;}const bytes=await readFile(join(output,name));res.writeHead(200,{'Content-Type':name.endsWith('.js')?'application/javascript':name.endsWith('.css')?'text/css':'text/html','Cache-Control':'no-store'});res.end(bytes);}catch{res.writeHead(404);res.end();}
   });await new Promise(resolve=>staticServer.listen(0,'127.0.0.1',resolve));local='http://127.0.0.1:'+staticServer.address().port;
   browser=await chromium.launch({channel:'chrome',headless:true});const context=await browser.newContext();await context.exposeBinding('nativeFixtureCall',(_,method,args)=>bridgeCall(method,args));
-  await context.addInitScript(()=>{window.CapacitorCustomPlatform={name:'mock-native'};window.Capacitor={PluginHeaders:[{name:'FountainNative',methods:['getConfiguration','configure','request','cancel','download','saveData'].map(name=>({name,rtype:'promise'}))}],nativePromise:(_,method,args)=>{const code=method==='request'?localStorage.getItem('native-fixture-error'):null;return code?Promise.reject(Object.assign(new Error('native fixture failure'),{code})):window.nativeFixtureCall(method,args);}};});
+  await context.addInitScript(()=>{window.CapacitorCustomPlatform={name:'mock-native'};window.Capacitor={PluginHeaders:[{name:'FountainNative',methods:['getConfiguration','configure','request','cancel','accountRequest','accountCancel','download','saveData'].map(name=>({name,rtype:'promise'}))}],nativePromise:(_,method,args)=>{const code=method==='accountRequest'?window.nativeFixtureAccountError:method==='request'?localStorage.getItem('native-fixture-error'):null;return code?Promise.reject(Object.assign(new Error('native fixture failure'),{code})):window.nativeFixtureCall(method,args);}};});
   const page=await context.newPage();page.on('pageerror',error=>pageErrors.push(error.message));await page.goto(local);await page.waitForSelector('#native-configuration-form');await page.setViewportSize({width:390,height:844});await page.screenshot({path:'/tmp/fountain-native-configuration-mobile.png',fullPage:true,animations:'disabled'});
   assert.equal(await page.evaluate(()=>typeof state),'undefined','app does not boot before native server configuration');
   await page.locator('#native-configuration-form input').fill('http://untrusted.example');await page.locator('#native-configuration-form button').click();await page.waitForFunction(()=>document.querySelector('#native-configuration-form [role="status"]').textContent.length>0);assert.equal(configuredOrigin,null);
   await page.locator('#native-configuration-form input').fill(remote);await page.locator('#native-configuration-form button').click();await page.waitForSelector('#login-form');assert.equal(await page.evaluate(()=>FountainTransport.origin),remote);
+  assert.ok(calls.some(call=>call.method==='accountRequest'&&call.path==='/api/account/session'),'current account bridge observes actual Python capability before legacy login');
+  assert.equal(await page.evaluate(()=>state.accountMode),false,'actual explicit absence marker selects legacy login');
   await page.locator('#login-form [name="email"]').fill(owner.email);await page.locator('#login-form [name="password"]').fill(password);await page.locator('#login-form .solid-btn').click();await page.waitForSelector('.recent-grid');
   assert.ok(jar.get(remote),'native fixture owns the server cookie');assert.equal(await page.evaluate(()=>document.cookie),'');assert.equal((await context.cookies()).length,0);
   await waitForAsync(page,async()=>!!await FountainOffline.getProfile());const profile=await page.evaluate(async()=>{const profile=await FountainOffline.getProfile();return{id:profile.id,origin:profile.origin};});assert.ok(profile.id.startsWith(remote+'|'));assert.equal(profile.origin,remote);
+  const accountFailures=[{fault:'unmarked401',offline:false},{fault:'unmarked503',offline:false},{fault:'unmarked401',offline:true},{fault:'unmarked503',offline:true},{code:'NATIVE_TLS',offline:true},{code:'NATIVE_STORAGE',offline:true},{code:'NATIVE_TIMEOUT',offline:true}];
+  for(const scenario of accountFailures){
+    accountFault=scenario.fault||null;const cookieBeforeProbe=jar.get(remote),before=calls.length,probe=await context.newPage();await probe.addInitScript(({offline,code})=>{Object.defineProperty(navigator,'onLine',{configurable:true,get:()=>!offline});window.nativeFixtureAccountError=code;},scenario);await probe.goto(local);await probe.waitForFunction(()=>document.querySelector('#main .empty h2')||(typeof state!=='undefined'&&state.loaded));assert.equal(await probe.locator('#main .empty h2').count(),1,'known account failure does not consume cached legacy absence: '+JSON.stringify(scenario));assert.match(await probe.locator('#main').innerText(),/계정에 연결하지 못했습니다/);assert.equal(await probe.locator('#login-form').count(),0,'unmarked account failure cannot select legacy login');assert.equal(await probe.locator('.block-content').count(),0,'existing cached private content is not rendered');assert.equal(await probe.evaluate(()=>state.loaded),false);assert.ok(jar.get(remote)===cookieBeforeProbe,'anonymous account capability probe preserves the independent legacy cookie');assert.equal(await probe.evaluate(()=>state.accountMode===false),false);assert.equal(calls.slice(before).some(call=>call.method==='request'&&call.path==='/api/session'),false,'known account failure does not issue a successful legacy-session probe even when navigator is offline');await probe.close();
+  }
+  accountFault=null;
+  const unreachableProbe=await context.newPage(),unreachableBefore=calls.length;await unreachableProbe.addInitScript(()=>{Object.defineProperty(navigator,'onLine',{configurable:true,get:()=>false});window.nativeFixtureAccountError='NATIVE_NETWORK_UNREACHABLE';});await unreachableProbe.goto(local);await unreachableProbe.waitForSelector('.recent-grid');assert.equal(await unreachableProbe.evaluate(()=>state.accountMode),false,'strictly unreachable account request can use only previously observed legacy absence');assert.ok(calls.slice(unreachableBefore).some(call=>call.method==='request'&&call.path==='/api/session'),'allowed cache capability still requires the actual successful private legacy session probe');await unreachableProbe.close();
+
   assert.equal(await page.evaluate(async()=>navigator.serviceWorker?(await navigator.serviceWorker.getRegistrations()).length:0),0,'native bundle does not register a service worker');
   for(const size of [4*1024*1024,16*1024*1024]){
     const expected=Buffer.alloc(size);for(let index=0;index<size;index++)expected[index]=index%251;
@@ -73,7 +85,7 @@ try{
   }
   const record=await page.evaluate(()=>api('/pages',{title:'네이티브 번들 문서',blocks:[{id:'native-text',type:'paragraph',text:'모바일'}]}));await page.evaluate(id=>navigate('page',id),record.id);await page.waitForSelector('.block[data-id="native-text"] .block-content[contenteditable="true"]');
   await page.locator('.block-content').click();await page.keyboard.press('End');await page.keyboard.insertText(' 앱🙂');await waitForAsync(page,()=>state.channel.pending.size===0&&state.channel.status==='synced');assert.equal((await backendRequest('/pages/'+record.id)).blocks[0].text,'모바일 앱🙂');
-  assert.equal(await page.evaluate(()=>FountainTransport.outboxEnabled),false,'durability foundation is dormant by default');
+  assert.equal(await page.evaluate(()=>FountainTransport.outboxEnabled),false,'this isolated legacy bridge fixture explicitly disables native durability');
   assert.equal(await page.evaluate(()=>!!globalThis.FountainNativeStorage),false);
   await context.setOffline(true);await page.keyboard.insertText(' 캐시');await waitForAsync(page,()=>state.channel.durable!==false&&state.channel.pending.size>0);assert.match(await page.locator('#save-status').innerText(),/앱 캐시에 보관/);assert.match(await page.locator('#offline-state').innerText(),/캐시|유실/);await page.screenshot({path:'/tmp/fountain-native-cache-offline-mobile.png',fullPage:false,animations:'disabled'});await context.setOffline(false);await waitForAsync(page,()=>state.channel.pending.size===0&&state.channel.status==='synced');
   const snapshot=await backendRequest('/pages/'+record.id+'/collaboration'),chars=C.visibleChars(snapshot.state,'native-text'),clock=snapshot.state.max_clock+1;
@@ -86,7 +98,7 @@ try{
   await page.evaluate(()=>doAction({dataset:{action:'backup'}}));await until(()=>exports.some(item=>item.filename==='fountain-backup.sqlite'));assert.equal(exports.find(item=>item.filename==='fountain-backup.sqlite').bytes.subarray(0,16).toString(),'SQLite format 3\0');
   await page.evaluate(()=>download('native-export.json',JSON.stringify({문서:'가족'}),'application/json'));await until(()=>exports.some(item=>item.filename==='native-export.json'));assert.equal(exports.find(item=>item.filename==='native-export.json').bytes.toString(),JSON.stringify({문서:'가족'}));
   // Model the Error+code shape emitted by real Capacitor, rather than fetch's TypeError.
-  await page.evaluate(async()=>{await state.channel.persistence;localStorage.setItem('native-fixture-error','NETWORK_ERROR');});await page.reload();
+  await page.evaluate(async()=>{await state.channel.persistence;localStorage.setItem('native-fixture-error','NATIVE_NETWORK_UNREACHABLE');});await page.reload();
   await waitForAsync(page,()=>typeof state!=='undefined'&&state.loaded&&state.offline);await page.waitForSelector('.block[data-id="native-text"] .block-content[contenteditable="true"]');
   await page.locator('.block[data-id="native-text"] .block-content').fill('모바일 앱🙂 원격 · 오프라인 편집');await waitForAsync(page,()=>state.channel.pending.size>0);await page.evaluate(()=>state.channel.persistence);
   await page.evaluate(()=>localStorage.removeItem('native-fixture-error'));await page.reload();await waitForAsync(page,()=>typeof state!=='undefined'&&state.loaded&&!state.offline&&state.channel?.pending.size===0&&state.channel?.status==='synced');assert.ok((await backendRequest('/pages/'+record.id)).blocks[0].text.includes('오프라인 편집'));

@@ -3,7 +3,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path'),http=require('node:http'),{once}=require('node:events'),{createHash}=require('node:crypto');
 const {UI_ORIGIN,isCloudServer,cloudPartitions,networkAllowed,createCloudClient}=require('../../apps/desktop/src/cloud.cjs');
 const SERVER='https://abcdefghijklmnopqrst.supabase.co',PREFIX='/functions/v1/fountain-api';
-const names=['app.js','backup.js','collaboration.js','index.html','mutations.js','offline.js','presence.js','public.js','recovery-import.js','style.css','sw.js','transport.js','uploads.js','version-diff.js'];
+const names=['app.js','backup.js','collaboration.js','index.html','mutations.js','offline.js','organization.html','organization.js','organization.css','presence.js','public.js','recovery-import.js','style.css','sw.js','transport.js','uploads.js','version-diff.js'];
 const hash=value=>createHash('sha256').update(value).digest('hex');
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function fixture(t){const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'fountain-cloud-test-'))),files=[];
@@ -33,7 +33,8 @@ test('manifest hash/shape/mime/symlink validation fails before transport and byt
 });
 test('initial suspension, exact local aliases, HEAD and opaque cache queries never hit the backend',async t=>{
  let sends=0;const c=await client(t,async()=>{sends++;return Response.json({});});assert.equal((await c.handle(req('/'))).status,503);c.resume();
- for(const route of ['/','/index.html','/static/app.js','/app.js?v=%25tag','/sw.js']){const r=await c.handle(req(route));assert.equal(r.status,200);assert.match(r.headers.get('content-security-policy'),/worker-src 'self'/);await r.body.cancel();}
+ for(const route of ['/','/index.html','/static/app.js','/app.js?v=%25tag','/sw.js','/organization.html','/organization.js','/organization.css']){const r=await c.handle(req(route));assert.equal(r.status,200);assert.match(r.headers.get('content-security-policy'),/worker-src 'self'/);await r.body.cancel();}
+ assert.equal((await c.handle(req('/organization.html'))).headers.get('content-type'),'text/html; charset=utf-8');
  const head=await c.handle(req('/style.css',{method:'HEAD'}));assert.equal(head.body,null);assert.equal(head.headers.get('content-type'),'text/css; charset=utf-8');assert.equal((await c.handle(req('/sw.js'))).headers.get('service-worker-allowed'),'/');
  for(const route of ['/secret.env','/static/../secret','/__fountain_backup_stream/abc','/app.js?'+('a'.repeat(1025))])assert((await c.handle(req(route))).status>=400);assert.equal(sends,0);assert.equal(c.activeCount(),0);
 });

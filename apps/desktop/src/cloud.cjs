@@ -2,7 +2,7 @@
 const fs=require('node:fs/promises'),{constants}=require('node:fs'),path=require('node:path'),{createHash}=require('node:crypto');
 const {normalizeServer}=require('./security.cjs');
 const UI_ORIGIN='https://fountain.desktop.invalid',PREFIX='/functions/v1/fountain-api',READ=65536;
-const ASSETS=Object.freeze(['app.js','backup.js','collaboration.js','index.html','mutations.js','offline.js','presence.js','public.js','recovery-import.js','style.css','sw.js','transport.js','uploads.js','version-diff.js']);
+const ASSETS=Object.freeze(['app.js','backup.js','collaboration.js','index.html','mutations.js','offline.js','organization.html','organization.js','organization.css','presence.js','public.js','recovery-import.js','style.css','sw.js','transport.js','uploads.js','version-diff.js']);
 const MIME={'.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.html':'text/html; charset=utf-8'};
 const CSP="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'";
 const SAFE_HEADERS=['content-type','content-disposition','content-length','content-range','accept-ranges','etag'];

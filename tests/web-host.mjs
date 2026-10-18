@@ -120,7 +120,7 @@ test('real loopback HTTP upstream streams unchanged bytes and closes after cance
 test('allowlisted artifact includes static shell and one relay, while uploads/SSE keep direct external rewrites',async()=>{
   const result=await build(),actual=[];
   async function walk(dir,prefix=''){for(const name of await readdir(dir)){const path=join(dir,name),info=await lstat(path);assert(!info.isSymbolicLink());if(info.isDirectory())await walk(path,prefix+name+'/');else actual.push(prefix+name);}}
-  await walk(result.destination);assert.deepEqual(actual.sort(),[...ASSETS,'api/public-relay.mjs','vercel.json'].sort());assert.equal(result.files.length,16);
+  await walk(result.destination);assert.deepEqual(actual.sort(),[...ASSETS,'api/public-relay.mjs','vercel.json'].sort());assert.equal(result.files.length,19);
   assert.equal(await readFile(join(result.destination,'api/public-relay.mjs'),'utf8'),await readFile(new URL('../apps/web/api/public-relay.mjs',import.meta.url),'utf8'));
   const config=JSON.parse(await readFile(join(result.destination,'vercel.json'),'utf8'));
   assert(!config.outputDirectory&&!config.buildCommand&&!config.installCommand);assert.equal(config.framework,null);

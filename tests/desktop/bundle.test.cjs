@@ -4,7 +4,7 @@ const fs=require('node:fs'),os=require('node:os'),path=require('node:path'),cryp
 const {spawnSync}=require('node:child_process');
 const builder=import('../../apps/desktop/build.mjs');
 const assets=import('../../apps/web/build.mjs');
-const expected=['app.js','backup.js','collaboration.js','index.html','mutations.js','offline.js','presence.js','public.js','recovery-import.js','style.css','sw.js','transport.js','uploads.js','version-diff.js'];
+const expected=['app.js','backup.js','collaboration.js','index.html','mutations.js','offline.js','organization.html','organization.js','organization.css','presence.js','public.js','recovery-import.js','style.css','sw.js','transport.js','uploads.js','version-diff.js'];
 async function fixture(t){
   const root=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'fountain-desktop-bundle-')));
   t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
@@ -66,7 +66,7 @@ test('output symlinks, regular files and linked parents are refused without dele
   }
 });
 test('total input limit rejects otherwise valid files before touching an old bundle',async t=>{
-  const f=await fixture(t),bytes=Buffer.alloc(Math.floor(16*1024*1024/14)+1,120);
+  const f=await fixture(t),bytes=Buffer.alloc(Math.floor(16*1024*1024/17)+1,120);
   for(const name of expected)fs.writeFileSync(path.join(f.source,name),bytes);
   await assert.rejects(f.build(),/too large/);preserved(f);
 });

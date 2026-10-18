@@ -2,6 +2,7 @@ import {createApplication} from '../_shared/application.ts';
 import {errorResponse} from '../_shared/http.ts';
 import {deployment} from './deployment.ts';
 declare const Deno:{env:{get(name:string):string|undefined};serve(handler:(request:Request)=>Promise<Response>):unknown};
+declare const EdgeRuntime:undefined|{waitUntil(task:Promise<unknown>):void};
 function keys(name:string,fallback:string):string[]{
   const value=Deno.env.get(name);
   if(value){const parsed=JSON.parse(value);if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw Error('Invalid backend configuration');const values=Object.values(parsed);if(values.some(key=>typeof key!=='string'||!key))throw Error('Invalid backend configuration');return [...new Set([parsed.default,...values].filter(key=>typeof key==='string'))] as string[];}
@@ -17,7 +18,7 @@ async function application(){
     for(const name of ['FOUNTAIN_AI_PROVIDER','FOUNTAIN_AI_URL','FOUNTAIN_AI_MODEL','FOUNTAIN_AI_KEY']){
       const value=Deno.env.get(name);if(value!==undefined)env[name]=value;
     }
-    return createApplication({supabaseUrl,publishableKey,serviceKey:secretKeys[0],cryptoKeys,workspaceId:deployment.workspaceId,origins:deployment.webOrigins,...(deployment.publicWebOrigin==null?{}:{publicWebOrigin:deployment.publicWebOrigin}),setupEnabled:deployment.setupEnabled,env});
+    return createApplication({supabaseUrl,publishableKey,serviceKey:secretKeys[0],cryptoKeys,workspaceId:deployment.workspaceId,origins:deployment.webOrigins,...(deployment.publicWebOrigin==null?{}:{publicWebOrigin:deployment.publicWebOrigin}),setupEnabled:deployment.setupEnabled,env,...(typeof EdgeRuntime!=='undefined'?{background:(task:Promise<unknown>)=>{if(typeof EdgeRuntime!=='undefined')EdgeRuntime.waitUntil(task);}}:{})});
   })().catch(error=>{loading=undefined;throw error;});
   return loading;
 }

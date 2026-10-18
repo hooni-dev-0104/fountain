@@ -4,6 +4,9 @@
  */
 import {createAuth} from './auth.ts';
 import {createSessionVault} from './vault.ts';
+import {createOrganizationAuth} from './organization-auth.ts';
+import {createOrganizationSessionVault} from './organization-vault.ts';
+import {createOrganizationPortal} from './organization-portal.ts';
 import {createStoreProvider} from './store.ts';
 import {createStorage,CHUNK_SIZE} from './storage.ts';
 import {createOnboarding} from './onboarding.ts';
@@ -23,11 +26,13 @@ import {createBackup,createBackupProvider} from './backup.ts';
 import {createBackupJobs,createBackupJobProvider,createBackupSourceRangeReader,collectBackupJobGarbage} from './backup-jobs.ts';
 import {HttpError,jsonResponse,readJSON} from './http.ts';
 import {createInlineAttachmentSource} from './inline-attachments.ts';
-type Config={supabaseUrl:string;publishableKey:string;serviceKey:string;cryptoKeys:Array<{id:string;secret:string|Uint8Array}>;workspaceId:string;origins:string[];publicWebOrigin?:string|null;fetch?:typeof fetch;env?:Record<string,string|undefined>;setupEnabled?:boolean};
+type Config={supabaseUrl:string;publishableKey:string;serviceKey:string;cryptoKeys:Array<{id:string;secret:string|Uint8Array}>;workspaceId:string;origins:string[];publicWebOrigin?:string|null;fetch?:typeof fetch;env?:Record<string,string|undefined>;setupEnabled?:boolean;background?:(task:Promise<unknown>)=>void};
 export function createApplication(config:Config):(request:Request)=>Promise<Response>{
   const connection={supabaseUrl:config.supabaseUrl,serviceKey:config.serviceKey,workspaceId:config.workspaceId,fetch:config.fetch};
   const onboarding=createOnboarding({...connection,publishableKey:config.publishableKey});
   const auth=createAuth({...connection,publishableKey:config.publishableKey,cryptoKeys:config.cryptoKeys,vault:createSessionVault(connection),...(config.setupEnabled?{setupClaim:onboarding.claim}:{})});
+  const organizationAuth=createOrganizationAuth({...connection,publishableKey:config.publishableKey,cryptoKeys:config.cryptoKeys,vault:createOrganizationSessionVault(connection)});
+  const organization=createOrganizationPortal({...connection,auth:organizationAuth,workspaceAuthorize:cookie=>auth.authorize(cookie)});
   const provider=createStoreProvider(connection),storage=createStorage({...connection,bucket:'fountain-files',maxObjectBytes:CHUNK_SIZE}),backupProvider=createBackupProvider(connection),inlineSource=createInlineAttachmentSource(connection);
   const backupJobProvider=createBackupJobProvider(connection),readSourceRange=createBackupSourceRangeReader({...connection,bucket:'fountain-files'});
   const env={...config.env};
@@ -37,6 +42,12 @@ export function createApplication(config:Config):(request:Request)=>Promise<Resp
   const scim=createScimHTTP(connection);
   return async request=>createBackend({
     origins:config.origins,publicWebOrigin:config.publicWebOrigin,auth:async()=>auth,setupEnabled:config.setupEnabled,scim,
+    organization:async(current,path)=>{
+      const response=await organization.handle(current,path);
+      // Provider retries run outside database locks and never delay a response.
+      if(response&&config.background){const task=organizationAuth.maintain(2).catch(()=>undefined);try{config.background(task);}catch{/* A rejected background scheduler cannot replace an acknowledged response. */}}
+      return response;
+    },
     setupCreate:(body,cookie)=>onboarding.bootstrapCreate(body,input=>auth.setup(input,cookie)),
     domain:async(current,path,context)=>{
       const authorize=()=>auth.authorize(current.headers.get('Cookie'));

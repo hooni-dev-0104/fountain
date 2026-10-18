@@ -56,7 +56,7 @@ public class FountainNativePlugin extends Plugin {
     private final NativeSessionBinding sessionBinding = new NativeSessionBinding();
     private long generation, authGeneration, ownerBoundaryEpoch;
     private final Runnable boundaryInvalidated = () -> {
-        synchronized (lock) { sessionBinding.clear(); invalidateRecovery(); authGeneration++; cancelAll(null, "STALE_SESSION"); this.organizationEpoch++; cancelOrganizations(null, "STALE_SESSION"); }
+        synchronized (lock) { sessionBinding.clear(); invalidateRecovery(); authGeneration++; cancelAll(null, "STALE_SESSION"); this.organizationEpoch++; cancelOrganizations(null, "STALE_SESSION"); this.accountEpoch++; cancelAccounts(null,"STALE_SESSION"); try {closeAccountWorkspaces();} catch(Exception unavailable){accountBroken=true;} }
     };
     private CookieVault vault;
     private CookieVault organizationVault;
@@ -72,10 +72,35 @@ public class FountainNativePlugin extends Plugin {
         final boolean login, logout;
         final AtomicBoolean closed = new AtomicBoolean();
         long epoch, deadline, workspaceEpoch;
-        boolean crossWorkspace;
+        boolean crossWorkspace, accountWorkspace;
         volatile HttpsURLConnection connection;
         ScheduledFuture<?> timeout;
         OrganizationOperation(String id, String origin, long generation, long epoch, PluginCall call, boolean login, boolean logout) {
+            this.id = id; this.origin = origin; this.generation = generation; this.epoch = epoch;
+            this.call = call; this.login = login; this.logout = logout; this.boundaryEpoch = NativeCookieBoundary.epoch();
+        }
+    }
+    private CookieVault accountVault;
+    private final ExecutorService accountWorkers = Executors.newSingleThreadExecutor();
+    private final Map<String, AccountOperation> accountOperations = new HashMap<>();
+    private String accountOrigin, accountActive, accountRevoke, accountActiveBinding, accountRevokeBinding;
+    private long accountGeneration, accountEpoch, workspaceEpoch;
+    private boolean accountBroken, accountWorkspaceMode;
+    private JSONObject workspaceScope, lastWorkspaceSnapshot;
+    private JSONObject sealedWorkspaceScopes = new JSONObject(); private long accountExpiresAt, workspaceObservationSequence;
+    private final Map<String,Long> workspaceObservationOrder=new HashMap<>();
+    private static final class AccountOperation {
+        final String id, origin;
+        final long generation, boundaryEpoch;
+        final PluginCall call;
+        final boolean login, logout;
+        final AtomicBoolean closed = new AtomicBoolean();
+        long epoch, deadline, workspaceEpoch;
+        boolean crossWorkspace;
+        String targetWorkspace, expectedChild, targetParent; long observationOrder;
+        volatile HttpsURLConnection connection;
+        ScheduledFuture<?> timeout;
+        AccountOperation(String id, String origin, long generation, long epoch, PluginCall call, boolean login, boolean logout) {
             this.id = id; this.origin = origin; this.generation = generation; this.epoch = epoch;
             this.call = call; this.login = login; this.logout = logout; this.boundaryEpoch = NativeCookieBoundary.epoch();
         }
@@ -117,6 +142,7 @@ public class FountainNativePlugin extends Plugin {
         NativeSyncReceipts.Admission syncAdmission;
         volatile NativeRecovery.Prepared recoveryExport;
         String undeliveredRecoveryInventory, undeliveredRecoveryExport;
+        long workspaceEpoch = -1, observationOrder; String workspacePrefix, observationWorkspace; boolean sessionObservationAdmitted;
         volatile NativeRecovery.Authority recoveryAuthority;
         int recoveryFileIndex, filesSaved;
         Operation(String id, String origin, long generation, long authGeneration, PluginCall call, boolean logout, boolean publicSession) {
@@ -155,6 +181,7 @@ public class FountainNativePlugin extends Plugin {
             cleanAbandonedExports();
         } catch (Exception error) { broken = true; }
         loadOrganization();
+        loadAccount();
         NativeCookieBoundary.register(boundaryInvalidated);
         // Capacitor's plugin URL hook omits isForMainFrame. Keep it closed to
         // external loads and authorize OS opening only at this request boundary.
@@ -276,6 +303,19 @@ public class FountainNativePlugin extends Plugin {
         JSObject result = new JSObject();
         result.put("origin", origin == null ? JSONObject.NULL : origin);
         result.put("generation", generation);
+        JSONArray retained=new JSONArray(); boolean truncated=false;
+        try {
+            if(accountActive!=null&&accountRevoke==null&&!accountBroken&&accountVault!=null&&!accountVault.invalidated(origin)&&accountExpiresAt>System.currentTimeMillis()) {
+                Iterator<String> names=sealedWorkspaceScopes.keys();int examined=0;
+                while(names.hasNext()&&examined++<128) { JSONObject scope=sealedWorkspaceScopes.getJSONObject(names.next());
+                    if(!accountActiveBinding.equals(scope.optString("accountBinding"))||scope.optLong("expiresAt",0)<=System.currentTimeMillis()||!durableOutbox().retainedScopeAllowed(scope,accountActive))continue;
+                    if(retained.length()==100){truncated=true;break;}JSONObject visible=new JSONObject(scope.toString());visible.remove("session");retained.put(visible);
+                }
+                if(names.hasNext())truncated=true;
+            }
+        } catch(Exception unavailable) { retained=new JSONArray(); }
+        result.put("retainedWorkspaceScopes",retained);result.put("retainedWorkspaceScopesTruncated",truncated);
+        result.put("workspaceEpoch",workspaceEpoch); result.put("workspaceVersion", 1); result.put("workspace", lastWorkspaceSnapshot == null ? JSONObject.NULL : lastWorkspaceSnapshot);
         result.put("outboxVersion", 1); result.put("outboxEnabled", outboxEnabled());
         result.put("recoveryVersion", 1); result.put("recoveryEnabled", true);
         return result;
@@ -392,6 +432,21 @@ public class FountainNativePlugin extends Plugin {
                 operation.deadline = SystemClock.elapsedRealtime() + timeout;
                 operation.crossWorkspace = NativeOrganizationPolicy.workspace(path, method);
                 operation.workspaceEpoch = authGeneration;
+                if(operation.crossWorkspace) {
+                    String selectedWorkspace=null, selectedBinding=null;
+                    if(method.equals("GET")) {
+                        Map<String,String> query=NativeOrganizationPolicy.query(path);
+                        selectedWorkspace=query.get("workspace_id"); selectedBinding=query.get("workspace_binding");
+                    } else if(json!=null && json.has("workspace_id")) {
+                        NativePolicy.require(json.opt("workspace_id") instanceof String&&json.opt("workspace_binding") instanceof String);
+                        selectedWorkspace=json.getString("workspace_id");selectedBinding=json.getString("workspace_binding");
+                    }
+                    NativePolicy.require((selectedWorkspace==null)==(selectedBinding==null));
+                    if(selectedWorkspace!=null) {
+                        NativePolicy.require(workspaceScope!=null&&!workspaceBlocked()&&selectedWorkspace.equals(workspaceScope.getString("workspaceId"))&&selectedBinding.equals(workspaceScope.getString("binding")));
+                        operation.accountWorkspace=true;
+                    }
+                }
                 organizationOperations.put(id, operation);
                 operation.timeout = deadlines.schedule(() -> failOrganization(operation, "Organization request timed out", "TIMEOUT"), timeout, TimeUnit.MILLISECONDS);
                 organizationWorkers.execute(() -> {
@@ -401,7 +456,7 @@ public class FountainNativePlugin extends Plugin {
                         String cookie, workspaceCookie;
                         synchronized (lock) {
                             checkOrganization(operation); cookie = organizationActive;
-                            workspaceCookie = operation.crossWorkspace && !broken && revokeCookie == null && !vault.invalidated(origin) ? activeCookie : null;
+                            workspaceCookie = operation.accountWorkspace ? accountActive : operation.crossWorkspace && !broken && revokeCookie == null && !vault.invalidated(origin) ? activeCookie : null;
                         }
                         Response response;
                         if (logout) {
@@ -487,7 +542,7 @@ public class FountainNativePlugin extends Plugin {
             (int)Math.max(1, operation.deadline - SystemClock.elapsedRealtime()), operation.boundaryEpoch);
         if (cookie != null || workspaceCookie != null) connection.setRequestProperty("Cookie",
             (cookie == null ? "" : NativeOrganizationPolicy.COOKIE + "=" + cookie)
-                + (workspaceCookie == null ? "" : (cookie == null ? "" : "; ") + "fountain_session=" + workspaceCookie));
+                + (workspaceCookie == null ? "" : (cookie == null ? "" : "; ") + (operation.accountWorkspace ? "fountain_account_session=" : "fountain_session=") + workspaceCookie));
         try {
             synchronized (lock) { operation.connection = connection; checkOrganization(operation); }
             if (connection.getDoOutput()) try (OutputStream output = connection.getOutputStream()) { checkOrganization(operation); output.write(body); }
@@ -547,6 +602,433 @@ public class FountainNativePlugin extends Plugin {
             if (operation != except) failOrganization(operation, "Organization operation was superseded", reason);
     }
 
+    private void loadAccount() {
+        try {
+            accountVault = new CookieVault(getContext(), "fountain_account_native_v1", "dev.fountain.account.native.v1", 524288);
+            JSONObject saved = accountVault.read();
+            accountOrigin = nullable(saved, "origin");
+            if (accountOrigin != null) accountOrigin = NativePolicy.origin(accountOrigin);
+            accountGeneration = saved.optLong("generation", 0);
+            NativePolicy.require(accountGeneration >= 0 && accountGeneration < 9_007_199_254_740_991L);
+            JSONObject retained=saved.optJSONObject("workspace_scopes"); if(retained!=null)sealedWorkspaceScopes=retained;
+            accountExpiresAt=saved.optLong("expires_at",0);
+            lastWorkspaceSnapshot = saved.optJSONObject("workspace"); // A UI hint only; workspaceScope stays null until native HTTPS activation.
+            accountActive = nullable(saved, "active"); accountRevoke = nullable(saved, "revoke");
+            accountActiveBinding = nullable(saved, "active_binding"); accountRevokeBinding = nullable(saved, "revoke_binding");
+            NativePolicy.require((accountActive == null) == (accountActiveBinding == null)
+                && (accountRevoke == null) == (accountRevokeBinding == null)
+                && (accountActive == null || accountRevoke == null)
+                && (accountActive == null && accountRevoke == null || accountOrigin != null));
+            if (accountActive != null) { NativeAccountPolicy.token(accountActive); NativeAccountPolicy.binding(accountActiveBinding); }
+            if (accountRevoke != null) { NativeAccountPolicy.token(accountRevoke); NativeAccountPolicy.binding(accountRevokeBinding); }
+            // An unreadable workspace config is not evidence that its origin was replaced.
+            if (broken && origin == null) return;
+            if (!Objects.equals(origin, accountOrigin) || generation != accountGeneration) accountConfigurationChanged();
+            else if (accountActive != null && accountVault.invalidated(accountOrigin)) {
+                accountRevoke = accountActive; accountRevokeBinding = accountActiveBinding;
+                accountActive = null; accountActiveBinding = null;
+                persistAccount();
+            }
+        } catch (Exception unavailable) { accountBroken = true; }
+    }
+
+    private NativePolicy.SessionStorage accountStorage() {
+        return new NativePolicy.SessionStorage() {
+            public boolean markInvalidated(String server) { return accountVault.markInvalidated(server); }
+            public boolean saveRevokeOnly(String server, String token) { return false; }
+            public boolean eraseEncryptedState() { return accountVault.eraseEncryptedState(); }
+            public boolean destroyEncryptionKey() { return accountVault.destroyEncryptionKey(); }
+        };
+    }
+    private void persistAccount() throws Exception {
+        NativePolicy.require(!destroyed && NativeCookieBoundary.permits(ownerBoundaryEpoch));
+        NativePolicy.SessionInvalidation before = NativePolicy.fenceSession(accountOrigin, accountRevoke, accountStorage());
+        if (!before.journaled) { accountBroken = true; throw new NativePolicy.SessionStorageFailure(before.durable); }
+        try {
+            JSONObject saved = record(accountOrigin, accountGeneration, accountActive, accountRevoke,
+                accountRevoke == null ? null : accountOrigin);
+            saved.put("active_binding", accountActiveBinding == null ? JSONObject.NULL : accountActiveBinding);
+            saved.put("revoke_binding", accountRevokeBinding == null ? JSONObject.NULL : accountRevokeBinding);
+            saved.put("expires_at",accountExpiresAt); saved.put("workspace_scopes",sealedWorkspaceScopes);
+            saved.put("workspace", lastWorkspaceSnapshot == null ? JSONObject.NULL : lastWorkspaceSnapshot);
+            accountVault.write(saved);
+            accountVault.clearInvalidated(accountOrigin);
+        } catch (Exception unavailable) {
+            NativePolicy.SessionInvalidation after = NativePolicy.fenceSession(accountOrigin, accountRevoke, accountStorage());
+            accountBroken = true; throw new NativePolicy.SessionStorageFailure(after.durable);
+        }
+    }
+    private void quarantineAccount() throws Exception {
+        if (accountActive != null) {
+            accountRevoke = accountActive; accountRevokeBinding = accountActiveBinding;
+            accountActive = null; accountActiveBinding = null; accountExpiresAt=0;
+        }
+        persistAccount();
+    }
+    private void accountConfigurationChanged() {
+        accountEpoch++; cancelAccounts(null, "CONFIGURATION_CHANGED");
+        // Config changes drop previous-origin credentials, never send them to the replacement host.
+        accountOrigin = origin; accountGeneration = generation; lastWorkspaceSnapshot = null; accountWorkspaceMode=false; sealedWorkspaceScopes=new JSONObject(); accountExpiresAt=0;
+        accountActive = null; accountActiveBinding = null; accountRevoke = null; accountRevokeBinding = null;
+        if (accountVault != null) try { persistAccount(); } catch (Exception unavailable) { accountBroken = true; }
+    }
+    private void accountEntry(PluginCall call, Runnable action) {
+        getActivity().runOnUiThread(() -> { synchronized (lock) {
+            if (!bundleAllowed()) { call.reject("Bundled main frame required", "FORBIDDEN_FRAME"); return; }
+            if (destroyed || accountBroken || !NativeCookieBoundary.permits(ownerBoundaryEpoch)) {
+                call.reject("Secure account transport unavailable", "UNAVAILABLE"); return;
+            }
+            try { action.run(); } catch (Exception invalid) { call.reject("Invalid account transport input", "NATIVE_INPUT"); }
+        } });
+    }
+
+    @PluginMethod public void accountRequest(PluginCall call) {
+        accountEntry(call, () -> {
+            try {
+                JSONObject wire = call.getData();
+                NativePolicy.require(wire.length() == 7);
+                for (String key : Arrays.asList("id", "generation", "path", "method", "headers", "bodyBase64", "timeoutMs")) NativePolicy.require(wire.has(key));
+                NativePolicy.require(wire.opt("id") instanceof String && wire.opt("path") instanceof String
+                    && wire.opt("method") instanceof String && wire.opt("headers") instanceof JSONObject && wire.opt("bodyBase64") instanceof String);
+                String method = call.getString("method"), path = NativeAccountPolicy.path(call.getString("path"), method);
+                String id = call.getString("id");
+                NativePolicy.require(id.matches("[A-Za-z0-9_.:-]{1,160}") && !accountOperations.containsKey(id)
+                    && accountOperations.size() < 32 && origin != null && Objects.equals(origin, accountOrigin)
+                    && integer(call, "generation", 0, 9_007_199_254_740_990L) == generation && generation == accountGeneration);
+                byte[] body = decodeBody(call, NativeAccountPolicy.MAX_REQUEST);
+                Map<String, String> headers = requestHeaders(call);
+                Iterator<String> headerNames = ((JSONObject)wire.opt("headers")).keys();
+                while (headerNames.hasNext()) NativePolicy.require(((JSONObject)wire.opt("headers")).opt(headerNames.next()) instanceof String);
+                NativePolicy.require(body.length == 0 && method.equals("GET") || body.length > 0 && !method.equals("GET")
+                    && "application/json".equals(headers.get("content-type")));
+                JSONObject json = body.length == 0 ? null : new JSONObject(OutboxPolicy.utf8(body));
+                int timeout = (int) integer(call, "timeoutMs", 1, 45000);
+                boolean session = NativeAccountPolicy.session(path), login = session && method.equals("POST"), logout = session && method.equals("DELETE");
+                if (logout) {
+                    NativePolicy.require(json != null && json.length() == 1 && json.has("session_binding"));
+                    Object supplied = json.opt("session_binding");
+                    String expected = accountActive != null ? accountActiveBinding : accountRevokeBinding;
+                    NativePolicy.require(expected == null ? supplied == JSONObject.NULL : expected.equals(supplied));
+                }
+                if (login || logout) {
+                    accountEpoch++; cancelAccounts(null, "SESSION_CHANGED");
+                    closeAccountWorkspaces();
+                    quarantineAccount(); // The old account session is durably unusable before I/O.
+                }
+                AccountOperation operation = new AccountOperation(id, origin, generation, accountEpoch, call, login, logout);
+                operation.deadline = SystemClock.elapsedRealtime() + timeout;
+                operation.crossWorkspace = false;
+                operation.workspaceEpoch = authGeneration;
+                if(method.equals("POST")&&path.matches("/api/account/workspaces/[A-Za-z0-9_-]{1,160}/open")&&json!=null
+                    &&json.opt("session_binding") instanceof String&&Objects.equals(accountActiveBinding,json.getString("session_binding"))) {
+                    operation.targetWorkspace=path.split("/")[4];operation.targetParent=json.getString("session_binding");operation.observationOrder=nextWorkspaceObservation();
+                    if(json.opt("expected_binding") instanceof String&&json.getString("expected_binding").matches("[a-f0-9]{32}"))operation.expectedChild=json.getString("expected_binding");
+                }
+                accountOperations.put(id, operation);
+                operation.timeout = deadlines.schedule(() -> failAccount(operation, "Account request timed out", "TIMEOUT"), timeout, TimeUnit.MILLISECONDS);
+                accountWorkers.execute(() -> {
+                    try {
+                        // One queue owns the realm, including retry-only revocation. It does not use workspace admission.
+                        if (session) revokeAccountPending(operation);
+                        String cookie, workspaceCookie;
+                        synchronized (lock) {
+                            checkAccount(operation); cookie = accountActive;
+                            workspaceCookie = null;
+                        }
+                        Response response;
+                        if (logout) {
+                            // The retry used exactly the quarantined cookie/binding; a subsequent anonymous DELETE is harmless.
+                            response = exchangeAccount(operation, path, method, headers, body, null, null);
+                        } else response = exchangeAccount(operation, path, method, headers, body, cookie, workspaceCookie);
+                        synchronized (lock) {
+                            checkAccount(operation);
+                            applyAccountResponse(operation, response, session, cookie);
+                        }
+                        deliverAccount(operation, response);
+                    } catch (Exception failure) {
+                        failAccount(operation, "Account request failed or was superseded", "ORGANIZATION_REQUEST_FAILED");
+                    }
+                });
+            } catch (Exception invalid) { call.reject("Invalid account input or secure storage unavailable", "NATIVE_INPUT"); }
+        });
+    }
+    @PluginMethod public void accountCancel(PluginCall call) {
+        accountEntry(call, () -> {
+            NativePolicy.require(call.getData().length() == 2 && call.getData().opt("id") instanceof String
+                && call.getData().has("generation") && integer(call, "generation", 0, 9_007_199_254_740_990L) == generation);
+            AccountOperation operation = accountOperations.get(call.getString("id"));
+            boolean cancelled = operation != null && operation.generation == generation && !operation.closed.get();
+            if (cancelled) failAccount(operation, "Account operation cancelled", "CANCELLED");
+            JSObject result = new JSObject(); result.put("cancelled", cancelled); call.resolve(result);
+        });
+    }
+    private void revokeAccountPending(AccountOperation operation) throws Exception {
+        String token, binding;
+        synchronized (lock) { checkAccount(operation); token = accountRevoke; binding = accountRevokeBinding; }
+        if (token == null) return;
+        JSONObject body = new JSONObject(); body.put("session_binding", NativeAccountPolicy.binding(binding));
+        Map<String, String> headers = new HashMap<>(); headers.put("content-type", "application/json");
+        Response response = exchangeAccount(operation, "/api/account/session", "DELETE", headers,
+            body.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8), token, null);
+        synchronized (lock) {
+            checkAccount(operation);
+            NativePolicy.require(response.status == 200 && (response.cookie == null || "".equals(response.cookie)) && Objects.equals(token, accountRevoke)
+                && Objects.equals(binding, accountRevokeBinding));
+            JSONObject result = new JSONObject(OutboxPolicy.utf8(response.body));
+            NativePolicy.require(Boolean.FALSE.equals(result.opt("authenticated")) && "account".equals(result.opt("mode")));
+            accountRevoke = null; accountRevokeBinding = null; persistAccount();
+        }
+    }
+    private void applyAccountResponse(AccountOperation operation, Response response, boolean session, String sentCookie) throws Exception {
+        if(operation.targetWorkspace!=null) {
+            if(response.status==200)applyAccountOpenEvidence(operation.targetWorkspace,operation.targetParent,sentCookie,response.body,operation.observationOrder);
+            else if(operation.expectedChild!=null)applyAccountOpenDenial(operation.targetWorkspace,operation.targetParent,operation.expectedChild,sentCookie,response.status,response.body);
+        }
+        if (operation.login && response.status == 200) {
+            NativePolicy.require(response.cookie != null && !response.cookie.isEmpty());
+            JSONObject result = new JSONObject(OutboxPolicy.utf8(response.body));
+            String binding = NativeAccountPolicy.binding(result.getString("cache_binding"));
+            NativePolicy.require(Boolean.TRUE.equals(result.opt("authenticated")) && "account".equals(result.opt("mode")));
+            // Retain a retry-only record before attempting activation; uncertain writes never resurrect it.
+            accountExpiresAt=OutboxPolicy.expiry(result.getString("expires_at")); NativePolicy.require(accountExpiresAt>System.currentTimeMillis());
+            accountRevoke = response.cookie; accountRevokeBinding = binding; persistAccount();
+            accountActive = response.cookie; accountActiveBinding = binding;
+            accountRevoke = null; accountRevokeBinding = null; persistAccount();
+        } else if (response.status == 401 || "".equals(response.cookie)) {
+            if (sentCookie != null && Objects.equals(sentCookie, accountActive)) {
+                accountEpoch++; operation.epoch = accountEpoch; cancelAccounts(operation, "SESSION_CHANGED");
+                closeAccountWorkspaces(); quarantineAccount();
+            }
+        } else if (response.cookie != null) {
+            NativePolicy.require(session && !operation.logout && Objects.equals(sentCookie, accountActive)
+                && response.cookie.equals(accountActive));
+        }
+        if (session && !operation.login && !operation.logout && response.status == 200) {
+            JSONObject result = new JSONObject(OutboxPolicy.utf8(response.body));
+            NativePolicy.require("account".equals(result.opt("mode")));
+            if (Boolean.TRUE.equals(result.opt("authenticated"))) {
+                NativePolicy.require(sentCookie != null && Objects.equals(sentCookie, accountActive) && accountActiveBinding.equals(result.opt("cache_binding")));
+                accountExpiresAt=OutboxPolicy.expiry(result.getString("expires_at"));NativePolicy.require(accountExpiresAt>System.currentTimeMillis());persistAccount();
+            }
+            else {
+                NativePolicy.require(Boolean.FALSE.equals(result.opt("authenticated")));
+                if (sentCookie != null && Objects.equals(sentCookie, accountActive)) {
+                    accountEpoch++; operation.epoch = accountEpoch; cancelAccounts(operation, "SESSION_CHANGED");
+                    closeAccountWorkspaces(); quarantineAccount();
+                }
+            }
+        }
+    }
+    private long nextWorkspaceObservation() {NativePolicy.require(workspaceObservationSequence<OutboxPolicy.SAFE-1);return ++workspaceObservationSequence;}
+    private void commitWorkspaceObservation(String workspace,long order) {workspaceObservationOrder.put(workspace,Math.max(order,workspaceObservationOrder.getOrDefault(workspace,0L)));}
+    private void applyAccountOpenEvidence(String workspace,String parent,String sentCookie,byte[] bytes,long order)throws Exception {
+        if(!Objects.equals(parent,accountActiveBinding)||!Objects.equals(sentCookie,accountActive)||order<workspaceObservationOrder.getOrDefault(workspace,0L))return;
+        JSONObject body=new JSONObject(OutboxPolicy.utf8(bytes));JSONObject session=body.optJSONObject("session");
+        NativePolicy.require(body.length()==3&&workspace.equals(body.optString("workspace_id"))&&parent.equals(body.optString("account_binding"))&&session!=null
+            &&session.opt("authenticated")==Boolean.TRUE&&"accounts".equals(session.optString("mode"))&&workspace.equals(session.optString("workspace_id"))&&parent.equals(session.optString("account_binding")));
+        String child=NativeAccountPolicy.binding(session.getString("cache_binding"));JSONObject member=session.getJSONObject("member");String memberId=OutboxPolicy.text(member.opt("id"),160),role=member.getString("role");
+        NativePolicy.require(member.opt("active")==Boolean.TRUE&&memberId.matches("[A-Za-z0-9_-]{1,160}")&&Arrays.asList("owner","admin","member","guest").contains(role)&&OutboxPolicy.expiry(session.getString("expires_at"))>System.currentTimeMillis());
+        boolean changed=durableOutbox().observeWorkspaceDirectorySession(session,sentCookie);commitWorkspaceObservation(workspace,order);
+        if(!changed)return;
+        JSONObject sealed=sealedWorkspaceScopes.optJSONObject(workspace);if(sealed!=null)sealedWorkspaceScopes.remove(workspace);
+        if(workspaceScope!=null&&workspace.equals(workspaceScope.optString("workspaceId"))&&parent.equals(workspaceScope.optString("accountBinding"))) {
+            workspaceEpoch++;authGeneration++;cancelAll(null,"WORKSPACE_SESSION_CHANGED");cancelOrganizationCrossJobs();workspaceScope=null;
+        }
+        if(lastWorkspaceSnapshot!=null&&workspace.equals(lastWorkspaceSnapshot.optString("workspaceId"))&&parent.equals(lastWorkspaceSnapshot.optString("accountBinding")))lastWorkspaceSnapshot=null;
+        persistAccount(); // Negative observation only: the new session is never installed as a grant or sealed proof here.
+    }
+    private void applyAccountOpenDenial(String workspace,String parent,String child,String sentCookie,int status,byte[] bytes)throws Exception {
+        if(status!=403&&status!=409||!Objects.equals(parent,accountActiveBinding)||!Objects.equals(sentCookie,accountActive))return;
+        JSONObject body=new JSONObject(OutboxPolicy.utf8(bytes));String code=body.optString("code");
+        if(!(status==403&&code.equals("WORKSPACE_ACCESS_REQUIRED"))&&!code.equals("WORKSPACE_GRANT_CHANGED"))return;
+        if(!durableOutbox().retireWorkspaceScope(workspace,parent,child,sentCookie))return;
+        JSONObject sealed=sealedWorkspaceScopes.optJSONObject(workspace);
+        if(sealed!=null&&parent.equals(sealed.optString("accountBinding"))&&child.equals(sealed.optString("binding")))sealedWorkspaceScopes.remove(workspace);
+        if(workspaceScope!=null&&workspace.equals(workspaceScope.optString("workspaceId"))&&parent.equals(workspaceScope.optString("accountBinding"))&&child.equals(workspaceScope.optString("binding"))) {
+            workspaceEpoch++;authGeneration++;cancelAll(null,"WORKSPACE_SESSION_CHANGED");cancelOrganizationCrossJobs();workspaceScope=null;
+        }
+        if(lastWorkspaceSnapshot!=null&&workspace.equals(lastWorkspaceSnapshot.optString("workspaceId"))&&parent.equals(lastWorkspaceSnapshot.optString("accountBinding"))&&child.equals(lastWorkspaceSnapshot.optString("binding")))lastWorkspaceSnapshot=null;
+        persistAccount();
+    }
+    private Response exchangeAccount(AccountOperation operation, String path, String method, Map<String, String> headers,
+                                         byte[] body, String cookie, String workspaceCookie) throws Exception {
+        checkAccount(operation);
+        HttpsURLConnection connection = open(operation.origin, path, method, headers, body, null,
+            (int)Math.max(1, operation.deadline - SystemClock.elapsedRealtime()), operation.boundaryEpoch);
+        if (cookie != null || workspaceCookie != null) connection.setRequestProperty("Cookie",
+            (cookie == null ? "" : NativeAccountPolicy.COOKIE + "=" + cookie)
+                + (workspaceCookie == null ? "" : (cookie == null ? "" : "; ") + "fountain_session=" + workspaceCookie));
+        try {
+            synchronized (lock) { operation.connection = connection; checkAccount(operation); }
+            if (connection.getDoOutput()) try (OutputStream output = connection.getOutputStream()) { checkAccount(operation); output.write(body); }
+            checkAccount(operation);
+            Response response = new Response(); response.status = connection.getResponseCode();
+            NativePolicy.require(response.status >= 200 && response.status <= 599 && (response.status < 300 || response.status >= 400));
+            response.headers = safeHeaders(connection.getHeaderFields());
+            response.cookie = NativeAccountPolicy.cookie(connection.getHeaderFields(), operation.origin);
+            long expected = connection.getContentLengthLong();
+            NativePolicy.require(expected <= NativeAccountPolicy.MAX_RESPONSE);
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            try (InputStream input = response.status >= 400 ? connection.getErrorStream() : connection.getInputStream()) {
+                if (input != null) { byte[] buffer = new byte[16384]; int length;
+                    while ((length = input.read(buffer)) != -1) { checkAccount(operation);
+                        NativePolicy.require(output.size() + length <= NativeAccountPolicy.MAX_RESPONSE); output.write(buffer, 0, length); }
+                }
+            }
+            checkAccount(operation); response.body = output.toByteArray();
+            NativePolicy.require(expected < 0 || response.body.length == expected);
+            return response;
+        } finally { connection.disconnect(); operation.connection = null; }
+    }
+    private void checkAccount(AccountOperation operation) throws IOException {
+        synchronized (lock) {
+            if (operation.closed.get() || destroyed || accountBroken || operation.epoch != accountEpoch
+                || operation.generation != generation || operation.generation != accountGeneration || !Objects.equals(origin, operation.origin)
+                || !Objects.equals(accountOrigin, operation.origin) || !NativeCookieBoundary.permits(operation.boundaryEpoch)
+                || SystemClock.elapsedRealtime() > operation.deadline || operation.crossWorkspace && operation.workspaceEpoch != authGeneration) throw new IOException();
+        }
+    }
+    private void deliverAccount(AccountOperation operation, Response response) {
+        getActivity().runOnUiThread(() -> { synchronized (lock) {
+            try {
+                checkAccount(operation);
+                JSObject result = new JSObject(); result.put("generation", operation.generation); result.put("status", response.status);
+                result.put("headers", response.headers); result.put("bodyBase64", Base64.encodeToString(response.body, Base64.NO_WRAP));
+                boolean delivered = resolveCurrent(operation.call, result, () -> {
+                    try { checkAccount(operation); return bundleAllowed(); } catch (Exception stale) { return false; }
+                });
+                if (!delivered) throw new IOException();
+                operation.closed.set(true); accountOperations.remove(operation.id);
+                if (operation.timeout != null) operation.timeout.cancel(false);
+            } catch (Exception stale) { failAccount(operation, "Account response scope changed", "STALE_SESSION"); }
+        } });
+    }
+    private void failAccount(AccountOperation operation, String message, String code) {
+        synchronized (lock) {
+            if (!operation.closed.compareAndSet(false, true)) return;
+            accountOperations.remove(operation.id);
+            if (operation.timeout != null) operation.timeout.cancel(false);
+            if (operation.connection != null) operation.connection.disconnect();
+            operation.call.setKeepAlive(false); operation.call.reject(message, code);
+        }
+    }
+    private void cancelAccounts(AccountOperation except, String reason) {
+        for (AccountOperation operation : new ArrayList<>(accountOperations.values()))
+            if (operation != except) failAccount(operation, "Account operation was superseded", reason);
+    }
+
+    private String workspaceCookie() { return workspaceScope == null ? activeCookie : accountActive; }
+    private boolean workspaceBlocked() { return workspaceScope == null ? outboxBlocked() : accountBroken || accountActive == null || accountRevoke != null || accountVault.invalidated(origin) || accountExpiresAt > 0 && System.currentTimeMillis() >= accountExpiresAt || System.currentTimeMillis() >= workspaceScope.optLong("expiresAt", 0); }
+    private void closeAccountWorkspaces() throws Exception {closeAccountWorkspaces("ACCOUNT_CHANGED");}
+    private void closeAccountWorkspaces(String reason) throws Exception {
+        workspaceEpoch++; authGeneration++; cancelAll(null, reason);
+        cancelOrganizationCrossJobs();
+        workspaceScope = null; lastWorkspaceSnapshot = null; sealedWorkspaceScopes=new JSONObject();workspaceObservationOrder.clear();workspaceObservationSequence=0;
+        try { if (outboxEnabled() && origin != null) durableOutbox().revokeAccountWorkspaces(); }
+        catch(Exception unavailable) { accountBroken=true; try {quarantineAccount();}catch(Exception ignored){} throw unavailable; }
+    }
+    private void cancelOrganizationCrossJobs() {
+        for (OrganizationOperation operation : new ArrayList<>(organizationOperations.values()))
+            if (operation.crossWorkspace) failOrganization(operation, "Workspace changed", "STALE_SESSION");
+    }
+    private void parkWorkspaceNow() throws Exception {
+        workspaceEpoch++; authGeneration++; cancelAll(null, "WORKSPACE_CHANGED"); cancelOrganizationCrossJobs();
+        workspaceScope = null; sessionBinding.clear(); publicWeb.clear();
+        try { if (outboxEnabled() && origin != null) durableOutbox().parkWorkspace(); }
+        catch(Exception unavailable) { accountBroken=true; throw unavailable; }
+    }
+    @PluginMethod public void parkWorkspace(PluginCall call) {
+        entry(call, () -> {
+            try {
+                NativePolicy.require(call.getData().length() == 2 && integer(call,"generation",0,OutboxPolicy.SAFE-1)==generation
+                    && integer(call,"workspaceEpoch",0,OutboxPolicy.SAFE-1)==workspaceEpoch);
+                parkWorkspaceNow(); JSObject reply=new JSObject(); reply.put("generation",generation); reply.put("workspaceEpoch",workspaceEpoch); call.resolve(reply);
+            } catch(Exception failure) { call.reject("Workspace park failed", "STALE_WORKSPACE"); }
+        });
+    }
+    @PluginMethod public void activateWorkspace(PluginCall call) {
+        entry(call, () -> {
+            try {
+                JSONObject wire=call.getData(); NativePolicy.require(wire.length()==6);
+                for(String key:Arrays.asList("id","generation","workspace_id","session_binding","account_binding","timeoutMs")) NativePolicy.require(wire.has(key));
+                String workspace=call.getString("workspace_id"), binding=NativeAccountPolicy.binding(call.getString("session_binding"));
+                String parent=NativeAccountPolicy.binding(call.getString("account_binding"));
+                NativePolicy.require(workspace!=null&&workspace.matches("[A-Za-z0-9_-]{1,160}") && Objects.equals(parent,accountActiveBinding)
+                    && accountActive!=null&&accountRevoke==null&&!accountBroken&&!accountVault.invalidated(origin)
+                    && integer(call,"generation",0,OutboxPolicy.SAFE-1)==generation);
+                int timeout=(int)integer(call,"timeoutMs",1,45000);
+                final long observationOrder=nextWorkspaceObservation();
+                accountWorkspaceMode=true; parkWorkspaceNow(); final long expectedEpoch=workspaceEpoch, expectedAccount=accountEpoch;
+                Operation operation=begin(call,false,timeout); final String cookie=accountActive;
+                operation.workspacePrefix="/api/w/"+workspace+"/"+binding; operation.workspaceEpoch=expectedEpoch;operation.observationWorkspace=workspace;operation.observationOrder=observationOrder;operation.sessionObservationAdmitted=true;
+                workers.execute(() -> {
+                    try {
+                        Response response=exchange(operation,operation.origin,"/api/session","GET",new HashMap<>(),new byte[0],cookie,null,65536);
+                        synchronized(lock) {
+                            check(operation); NativePolicy.require(expectedAccount==accountEpoch&&Objects.equals(cookie,accountActive)&&response.status==200&&response.cookie==null);
+                            JSONObject session=new JSONObject(OutboxPolicy.utf8(response.body)), member=session.optJSONObject("member");
+                            NativePolicy.require(session.opt("authenticated")==Boolean.TRUE&&"accounts".equals(session.optString("mode"))&&member!=null&&member.opt("active")==Boolean.TRUE
+                                && workspace.equals(session.optString("workspace_id"))&&binding.equals(session.optString("cache_binding"))&&parent.equals(session.optString("account_binding")));
+                            String memberId=OutboxPolicy.text(member.opt("id"),1000); long expires=OutboxPolicy.expiry(session.getString("expires_at"));
+                            NativePolicy.require(expires>System.currentTimeMillis()&&expires<=System.currentTimeMillis()+604800000L);
+                            NativePolicy.require(observationOrder>=workspaceObservationOrder.getOrDefault(workspace,0L));
+                            durableOutbox().grant(session,cookie);
+                            publicWeb.observe(operation.origin,operation.generation,operation.authGeneration,operation.boundaryEpoch,session.opt("public_web_origin"));
+                            workspaceScope=new JSONObject().put("workspaceId",workspace).put("memberId",memberId).put("binding",binding).put("accountBinding",parent).put("expiresAt",expires);
+                            lastWorkspaceSnapshot=new JSONObject(workspaceScope.toString());
+                            NativePolicy.require(sealedWorkspaceScopes.has(workspace) || sealedWorkspaceScopes.length()<128);
+                            sealedWorkspaceScopes.put(workspace,new JSONObject(workspaceScope.toString()).put("session",session)); persistAccount();commitWorkspaceObservation(workspace,observationOrder);
+                            JSObject scope=new JSObject(workspaceScope.toString()); scope.put("session",session);
+                            JSObject reply=new JSObject(); reply.put("generation",generation);reply.put("workspaceEpoch",expectedEpoch);reply.put("workspace",scope);
+                            getActivity().runOnUiThread(() -> { synchronized(lock) { try {check(operation); NativePolicy.require(bundleAllowed()&&workspaceScope!=null&&expectedAccount==accountEpoch); if(!resolveCurrent(call,reply,()->workspaceEpoch==expectedEpoch&&accountEpoch==expectedAccount&&bundleAllowed()))throw new IOException(); operation.closed.set(true); operations.remove(operation.id);if(operation.timeout!=null)operation.timeout.cancel(false);}catch(Exception stale){fail(operation,"Workspace changed","STALE_WORKSPACE");} } });
+                        }
+                    }catch(Exception failure){fail(operation,"Workspace activation requires current account authority",NativeWorkspacePolicy.networkUnreachable(failure)?"NATIVE_NETWORK_UNREACHABLE":"WORKSPACE_ACTIVATION_FAILED");}
+                });
+            } catch(Exception invalid){call.reject("Invalid workspace activation", "NATIVE_INPUT");}
+        });
+    }
+    private JSONObject offlineWorkspaceProof(JSONObject wire) throws Exception {
+        NativePolicy.require(wire.length()==6);
+        for(String key:Arrays.asList("generation","workspace_id","member_id","session_binding","account_binding","expires_at_ms"))NativePolicy.require(wire.has(key));
+        NativePolicy.require(wire.opt("workspace_id") instanceof String && wire.opt("member_id") instanceof String && wire.opt("session_binding") instanceof String && wire.opt("account_binding") instanceof String);
+        String workspace=wire.getString("workspace_id"),member=wire.getString("member_id"),binding=NativeAccountPolicy.binding(wire.getString("session_binding")),parent=NativeAccountPolicy.binding(wire.getString("account_binding"));
+        long expiry=OutboxPolicy.integer(wire.opt("expires_at_ms"),1,OutboxPolicy.SAFE-1);
+        NativePolicy.require(OutboxPolicy.integer(wire.opt("generation"),0,OutboxPolicy.SAFE-1)==generation && accountActive!=null&&accountRevoke==null&&!accountBroken&&!accountVault.invalidated(origin)
+            && accountExpiresAt>System.currentTimeMillis()&&Objects.equals(parent,accountActiveBinding)&&workspace.matches("[A-Za-z0-9_-]{1,160}"));
+        JSONObject sealed=sealedWorkspaceScopes.optJSONObject(workspace);
+        NativePolicy.require(sealed!=null&&member.equals(sealed.getString("memberId"))&&binding.equals(sealed.getString("binding"))&&parent.equals(sealed.getString("accountBinding"))&&expiry==sealed.getLong("expiresAt")&&expiry>System.currentTimeMillis());
+        return new JSONObject(sealed.toString());
+    }
+    @PluginMethod public void resumeWorkspaceOffline(PluginCall call) {
+        entry(call, () -> { try {
+            JSONObject sealed=offlineWorkspaceProof(call.getData());
+            accountWorkspaceMode=true;parkWorkspaceNow();durableOutbox().resumeWorkspaceOffline(sealed.getJSONObject("session"),accountActive);
+            workspaceScope=new JSONObject(sealed.toString());workspaceScope.remove("session");lastWorkspaceSnapshot=new JSONObject(workspaceScope.toString());
+            JSObject reply=new JSObject();reply.put("generation",generation);reply.put("workspaceEpoch",workspaceEpoch);reply.put("offline",true);reply.put("workspace",new JSONObject(workspaceScope.toString()).put("session",sealed.getJSONObject("session")));
+            final long expectedWorkspace=workspaceEpoch,expectedAccount=accountEpoch;
+            if(!resolveCurrent(call,reply,()->workspaceEpoch==expectedWorkspace&&accountEpoch==expectedAccount&&workspaceScope!=null&&!workspaceBlocked()&&bundleAllowed()))throw new IOException();
+        } catch(Exception stale) {call.reject("Previously verified offline workspace required","OFFLINE_WORKSPACE_UNAVAILABLE");} });
+    }
+    private String admitWorkspacePath(PluginCall call,String path) throws Exception {
+        NativePolicy.require(!NativeOrganizationPolicy.namespace(path)&&!NativeAccountPolicy.namespace(path));
+        if(NativeWorkspacePolicy.namespace(path)) {
+            NativeWorkspacePolicy.Route route=NativeWorkspacePolicy.route(path);
+            NativePolicy.require(workspaceScope!=null&&!workspaceBlocked()&&integer(call,"workspaceEpoch",0,OutboxPolicy.SAFE-1)==workspaceEpoch
+                &&route.workspace.equals(workspaceScope.getString("workspaceId"))&&route.binding.equals(workspaceScope.getString("binding")));
+            NativePolicy.require(!durableOutbox().offlineWorkspace()); return route.logical;
+        }
+        NativePolicy.require(workspaceScope==null && !accountWorkspaceMode); return path;
+    }
+    private void captureSelectedWorkspace(PluginCall call,Operation operation) throws Exception {
+        if(workspaceScope!=null || call.getData().has("workspaceEpoch")) {
+            NativePolicy.require(workspaceScope!=null&&!workspaceBlocked()&&integer(call,"workspaceEpoch",0,OutboxPolicy.SAFE-1)==workspaceEpoch);
+            operation.workspaceEpoch=workspaceEpoch;operation.workspacePrefix="/api/w/"+workspaceScope.getString("workspaceId")+"/"+workspaceScope.getString("binding");
+        } else NativePolicy.require(!accountWorkspaceMode);
+    }
+    private void captureWorkspace(Operation operation, String wire) {
+        if(NativeWorkspacePolicy.namespace(wire)) { NativeWorkspacePolicy.Route route=NativeWorkspacePolicy.route(wire);operation.workspaceEpoch=workspaceEpoch;operation.workspacePrefix="/api/w/"+route.workspace+"/"+route.binding; }
+    }
+
     @PluginMethod public void getConfiguration(PluginCall call) { entry(call, () -> call.resolve(configuration())); }
 
     @PluginMethod public void configure(PluginCall call) {
@@ -568,6 +1050,7 @@ public class FountainNativePlugin extends Plugin {
                     persist(next, generation + 1, null, null, null);
                     if (outbox != null) { outbox.close(); outbox = null; }
                     origin = next; generation++; authGeneration++; cancelAll(null, "CONFIGURATION_CHANGED");
+                    closeAccountWorkspaces(); accountConfigurationChanged();
                     organizationConfigurationChanged();
                     call.resolve(configuration());
                 } catch (Exception error) { broken = true; call.reject("Native configuration storage unavailable", "UNAVAILABLE"); }
@@ -597,24 +1080,28 @@ public class FountainNativePlugin extends Plugin {
                     if (recoveryMode && !recoveryMetadata) throw new NativeOutbox.AccessRequired();
                     NativePolicy.require(!broken && !destroyed && NativeCookieBoundary.permits(ownerBoundaryEpoch)
                         && integer(call, "generation", 0, OutboxPolicy.SAFE - 1) == generation);
+                    NativePolicy.require(!accountWorkspaceMode || workspaceScope!=null);
+                    final boolean scoped = workspaceScope != null; final long admittedWorkspaceEpoch = workspaceEpoch;
+                    if(call.getData().has("workspaceEpoch") || scoped) { NativePolicy.require(scoped && integer(call,"workspaceEpoch",0,OutboxPolicy.SAFE-1)==workspaceEpoch); call.getData().remove("workspaceEpoch"); }
                     NativeOutbox storage = durableOutbox();
-                    if(recoveryMode){JSONObject grant=storage.verified(activeCookie,outboxBlocked());if((grant==null||recovery==null||!recovery.qualifiesOutbox(origin,grant,activeCookie,generation+":"+authGeneration+":"+ownerBoundaryEpoch)) && storage.knownBlockedProfile(activeCookie,outboxBlocked())==null)throw new NativeOutbox.AccessRequired();}
+                    if(recoveryMode){JSONObject grant=storage.verified(workspaceCookie(),workspaceBlocked());if((grant==null||recovery==null||!recovery.qualifiesOutbox(origin,grant,workspaceCookie(),generation+":"+authGeneration+":"+ownerBoundaryEpoch)) && storage.knownBlockedProfile(workspaceCookie(),workspaceBlocked())==null)throw new NativeOutbox.AccessRequired();}
                     JSObject result = action.run(storage);
                     long expected = generation, expectedAuth = authGeneration, expectedBoundary = storage.boundary(), expectedProof = storage.proofEpoch();
                     long expectedDeadline = result.has("expiresAt") ? result.getLong("expiresAt") : result.has("fragments") || "verified".equals(result.optString("identityState")) ? storage.deliveryDeadline() : Long.MAX_VALUE;
                     if (Arrays.asList("committed", "settled").contains(result.optString("state"))) {
-                        JSONObject current = storage.verified(activeCookie, outboxBlocked());
+                        JSONObject current = storage.verified(workspaceCookie(), workspaceBlocked());
                         if (current == null) {
-                            if (!storage.terminalMetadataCurrent(call.getData(), result, generation, activeCookie, outboxBlocked())) throw new NativeOutbox.AccessRequired();
+                            if (!storage.terminalMetadataCurrent(call.getData(), result, generation, workspaceCookie(), workspaceBlocked())) throw new NativeOutbox.AccessRequired();
                         } else expectedDeadline = Math.min(expectedDeadline, current.getLong("validUntil"));
                     }
                     final long deliveryUntil = expectedDeadline;
                     String expectedOrigin = origin;
                     getActivity().runOnUiThread(() -> { synchronized (lock) {
                         try {
-                            if (!resolveCurrent(call, result, () -> !broken && !destroyed && generation == expected && authGeneration == expectedAuth
+                            JSObject delivery = new JSObject(result.toString()); if(scoped)delivery.put("workspaceEpoch",admittedWorkspaceEpoch);
+                            if (!resolveCurrent(call, delivery, () -> !broken && !destroyed && generation == expected && authGeneration == expectedAuth && (!scoped || workspaceEpoch == admittedWorkspaceEpoch)
                                 && Objects.equals(origin, expectedOrigin) && outbox == storage && storage.boundary() == expectedBoundary
-                                && storage.proofEpoch() == expectedProof && storage.deliveryCurrent(call.getData(), result, expected, activeCookie, outboxBlocked(), outboxOwner + ":" + expectedAuth) && System.currentTimeMillis() < deliveryUntil
+                                && storage.proofEpoch() == expectedProof && storage.deliveryCurrent(call.getData(), result, expected, workspaceCookie(), workspaceBlocked(), outboxOwner + ":" + expectedAuth) && System.currentTimeMillis() < deliveryUntil
                                 && NativeCookieBoundary.permits(ownerBoundaryEpoch) && bundleAllowed())) call.reject("Native outbox owner changed", "STALE_SESSION");
                         } catch (Exception unsupported) { call.setKeepAlive(false); call.reject("Native response could not be delivered", "NATIVE_INPUT"); }
                     } });
@@ -631,20 +1118,20 @@ public class FountainNativePlugin extends Plugin {
         }); });
     }
     @PluginMethod public void outboxOpen(PluginCall call) {
-        outboxCall(call, true, storage -> storage.open(generation, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration));
+        outboxCall(call, true, storage -> storage.open(generation, workspaceCookie(), workspaceBlocked(), outboxOwner + ":" + authGeneration));
     }
-    @PluginMethod public void stageDelta(PluginCall call) { outboxCall(call, true, storage -> {if(storage.verified(activeCookie,outboxBlocked())==null)throw new NativeOutbox.AccessRequired();return storage.stage(call.getData(), generation);}); }
+    @PluginMethod public void stageDelta(PluginCall call) { outboxCall(call, true, storage -> {if(storage.verified(workspaceCookie(),workspaceBlocked())==null)throw new NativeOutbox.AccessRequired();return storage.stage(call.getData(), generation);}); }
     @PluginMethod public void commitDelta(PluginCall call) {
-        outboxCall(call, true, storage -> {if(storage.verified(activeCookie,outboxBlocked())==null&&!storage.acceptedTerminal(call.getData(),generation,activeCookie,outboxBlocked()))throw new NativeOutbox.AccessRequired();return storage.commit(call.getData(), generation, activeCookie, outboxBlocked(), recoveryMode);});
+        outboxCall(call, true, storage -> {if(storage.verified(workspaceCookie(),workspaceBlocked())==null&&!storage.acceptedTerminal(call.getData(),generation,workspaceCookie(),workspaceBlocked()))throw new NativeOutbox.AccessRequired();return storage.commit(call.getData(), generation, workspaceCookie(), workspaceBlocked(), recoveryMode);});
     }
     @PluginMethod public void readPage(PluginCall call) {
-        outboxCall(call, storage -> storage.read(call.getData(), generation, activeCookie, outboxBlocked()));
+        outboxCall(call, storage -> storage.read(call.getData(), generation, workspaceCookie(), workspaceBlocked()));
     }
     @PluginMethod public void outboxReconcile(PluginCall call) {
         outboxCall(call, true, storage -> {
             boolean exitRecovery=recoveryMode&&"prepare".equals(call.getString("phase"));
             if(recoveryMode){NativePolicy.require(Arrays.asList("settle","cancel").contains(call.getString("phase"))||exitRecovery&&!call.getData().has("planId")&&Arrays.asList("current","upgrade","promote").contains(call.getString("mode")));}
-            JSObject result=storage.reconcile(call.getData(),generation,activeCookie,outboxBlocked(),outboxOwner+":"+authGeneration,outboxAdmissionSequence);
+            JSObject result=storage.reconcile(call.getData(),generation,workspaceCookie(),workspaceBlocked(),outboxOwner+":"+authGeneration,outboxAdmissionSequence);
             if(exitRecovery){recoveryMode=false;invalidateRecovery();}
             return result;
         });
@@ -708,10 +1195,11 @@ public class FountainNativePlugin extends Plugin {
     @PluginMethod public void request(PluginCall call) {
         entry(call, () -> sessionWrite(() -> {
             synchronized (lock) { try {
-            String path = NativePolicy.path(call.getString("path"), false);
-            NativePolicy.require(!NativeOrganizationPolicy.namespace(path));
+            String wirePath = NativePolicy.path(call.getString("path"), false);
+            String path = admitWorkspacePath(call, wirePath);
             String method = call.getString("method");
             NativePolicy.require(NativePolicy.METHODS.contains(method));
+            if(NativeWorkspacePolicy.namespace(wirePath)&&!method.equals("GET")&&durableOutbox().requiresWorkspaceReconcile()){call.reject("Fresh canonical workspace reconciliation required","OUTBOX_ACCESS_REQUIRED");return;}
             byte[] body;
             try { body = decodeBody(call, NativePolicy.MAX_REQUEST); }
             catch (IllegalArgumentException malformed) {
@@ -723,6 +1211,7 @@ public class FountainNativePlugin extends Plugin {
             int timeout = (int) integer(call, "timeoutMs", 1, 45000);
             boolean session = NativePolicy.sessionPath(path);
             boolean mutation = session && (method.equals("POST") || method.equals("DELETE"));
+            NativePolicy.require(!NativeWorkspacePolicy.namespace(wirePath) || !mutation);
             if(recoveryMode&&!session&&!"GET".equals(method)){call.reject("Recovery mode requires an explicit return before syncing","RECOVERY_ACCESS_REQUIRED");return;}
             NativePolicy.require(!session || method.equals("GET") || mutation);
             // Validate scope/id before a malformed call can mutate auth state.
@@ -752,12 +1241,14 @@ public class FountainNativePlugin extends Plugin {
             }
             final NativeSessionBinding.Admission admittedLogout = publicLogout;
             Operation operation = begin(call, session && method.equals("DELETE"), timeout, session && !method.equals("DELETE"));
+            captureWorkspace(operation, wirePath);
+            if(operation.workspacePrefix!=null&&session&&method.equals("GET")) {operation.observationWorkspace=NativeWorkspacePolicy.route(wirePath).workspace;operation.observationOrder=nextWorkspaceObservation();operation.sessionObservationAdmitted=true;}
             try {
                 if (outboxEnabled() && !recoveryMode && !session) {
                     NativePolicy.require(outboxAdmissionSequence < OutboxPolicy.SAFE - 1);
                     NativeOutbox storage = durableOutbox();
-                    operation.reconciliationTag = storage.admitReconcile(++outboxAdmissionSequence, method, path, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration);
-                    operation.syncAdmission = storage.admitSync(method, path, body, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration);
+                    operation.reconciliationTag = storage.admitReconcile(++outboxAdmissionSequence, method, path, workspaceCookie(), workspaceBlocked(), outboxOwner + ":" + authGeneration);
+                    operation.syncAdmission = storage.admitSync(method, path, body, workspaceCookie(), workspaceBlocked(), outboxOwner + ":" + authGeneration);
                     operation.admittedOutboxStore = storage; operation.admittedOutboxLease = storage.get("lease");
                 }
             } catch (NativeReconcile.Failure invalid) { fail(operation, "Native request requires reconciliation", invalid.code); return; }
@@ -765,7 +1256,7 @@ public class FountainNativePlugin extends Plugin {
             catch (Exception invalid) { fail(operation, "Native request input was rejected", "NATIVE_INPUT"); return; }
             Runnable work = () -> {
                 try {
-                    if (session && !operation.logout) revokePending(null, method.equals("POST")); // Explicit login may leave a proven-empty negative context until actual success.
+                    if (session && operation.workspacePrefix == null && !operation.logout) revokePending(null, method.equals("POST")); // Explicit login may leave a proven-empty negative context until actual success.
                     check(operation);
                     if (operation.logout) {
                         Response response = exchange(operation, admittedLogout.origin, path, "DELETE", headers, admittedLogout.body, admittedLogout.cookie, null);
@@ -779,7 +1270,7 @@ public class FountainNativePlugin extends Plugin {
                         deliverResponse(operation, response);
                     } else {
                         String cookie;
-                        synchronized (lock) { check(operation); cookie = activeCookie; }
+                        synchronized (lock) { check(operation); cookie = workspaceCookie(); }
                         Response response = exchange(operation, operation.origin, path, method, headers, body, cookie, null);
                         if (session) {
                             applySessionResponse(operation, response, method.equals("POST"), true, cookie);
@@ -795,7 +1286,7 @@ public class FountainNativePlugin extends Plugin {
                     boolean pending;
                     synchronized (lock) { pending = revokeCookie != null || broken; }
                     fail(operation, pending ? "Session revocation is pending" : "Native HTTPS request failed",
-                        pending ? "SESSION_REVOCATION_PENDING" : "NETWORK_ERROR");
+                        pending ? "SESSION_REVOCATION_PENDING" : NativeWorkspacePolicy.networkUnreachable(error)?"NATIVE_NETWORK_UNREACHABLE":"NETWORK_ERROR");
                 }
             };
             (session ? sessions : workers).execute(work);
@@ -887,8 +1378,12 @@ public class FountainNativePlugin extends Plugin {
     private Response exchange(Operation operation, String server, String path, String method, Map<String, String> headers,
                               byte[] body, String cookie, File destination, int memoryLimit) throws Exception {
         check(operation);
-        HttpsURLConnection connection = open(server, path, method, headers, body, cookie,
+        boolean internalSession=operation.workspacePrefix!=null&&"GET".equals(method)&&NativePolicy.sessionPath(path)&&!operation.sessionObservationAdmitted;
+        if(internalSession)synchronized(lock){check(operation);operation.observationWorkspace=NativeWorkspacePolicy.route(operation.workspacePrefix+"/session").workspace;operation.observationOrder=nextWorkspaceObservation();}
+        String target = operation.workspacePrefix == null ? path : operation.workspacePrefix + path.substring(4);
+        HttpsURLConnection connection = open(server, target, method, headers, body, operation.workspacePrefix == null ? cookie : null,
             (int) Math.max(1, operation.deadline - SystemClock.elapsedRealtime()), operation.boundaryEpoch);
+        if(operation.workspacePrefix != null && cookie != null) connection.setRequestProperty("Cookie", "fountain_account_session="+cookie);
         try {
             synchronized (lock) { operation.connection = connection; check(operation); }
             if (connection.getDoOutput()) try (OutputStream stream = connection.getOutputStream()) {
@@ -899,8 +1394,13 @@ public class FountainNativePlugin extends Plugin {
             check(operation);
             Response response = new Response(); response.status = connection.getResponseCode();
             NativePolicy.require(response.status >= 100 && response.status <= 599);
+            if(operation.workspacePrefix!=null&&response.status==401) synchronized(lock) {
+                check(operation);
+                if(Objects.equals(cookie,accountActive)) {accountEpoch++;quarantineAccount();closeAccountWorkspaces("ACCOUNT_AUTH_REQUIRED");}
+                throw new IOException("Account authentication required");
+            }
             response.headers = safeHeaders(connection.getHeaderFields());
-            response.cookie = NativePolicy.sessionCookie(connection.getHeaderFields(), server);
+            response.cookie = operation.workspacePrefix == null ? NativePolicy.sessionCookie(connection.getHeaderFields(), server) : NativeAccountPolicy.cookie(connection.getHeaderFields(), server);
             if (destination != null && response.status != 200) throw new IOException();
             long expected = connection.getContentLengthLong();
             if (response.status == 204 || response.status == 304) expected = 0;
@@ -923,6 +1423,13 @@ public class FountainNativePlugin extends Plugin {
                 output.flush();
             }
             response.body = memory == null ? null : memory.toByteArray();
+            if(internalSession&&response.status==200) synchronized(lock) {
+                check(operation);NativeWorkspacePolicy.Route route=NativeWorkspacePolicy.route(operation.workspacePrefix+"/session");JSONObject description=new JSONObject(OutboxPolicy.utf8(response.body));
+                NativePolicy.require(route.binding.equals(description.optString("cache_binding")));
+                JSONObject observed=new JSONObject().put("workspace_id",route.workspace).put("account_binding",accountActiveBinding).put("session",description);
+                applyAccountOpenEvidence(route.workspace,accountActiveBinding,cookie,observed.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8),operation.observationOrder);
+                check(operation);
+            }
             return response;
         } finally { connection.disconnect(); operation.connection = null; }
     }
@@ -945,6 +1452,20 @@ public class FountainNativePlugin extends Plugin {
     private void applySessionResponse(Operation operation, Response response, boolean login, boolean session, String sentCookie) throws Exception {
         synchronized (lock) {
             check(operation);
+            if(operation.workspacePrefix != null) {
+                if(response.status==401 && Objects.equals(sentCookie,accountActive)) {
+                    accountEpoch++; quarantineAccount(); closeAccountWorkspaces(); operation.authGeneration=authGeneration; operation.workspaceEpoch=workspaceEpoch;
+                    operation.admittedOutboxStore=null;operation.admittedOutboxLease=null;
+                } else NativePolicy.require(response.cookie==null);
+                if(session && response.status==200) { JSONObject description=new JSONObject(OutboxPolicy.utf8(response.body)); NativePolicy.require(workspaceScope!=null && description.opt("authenticated")==Boolean.TRUE
+                    &&"accounts".equals(description.optString("mode"))&&description.getJSONObject("member").opt("active")==Boolean.TRUE&&workspaceScope.getString("memberId").equals(description.getJSONObject("member").optString("id"))
+                    && workspaceScope.getString("workspaceId").equals(description.optString("workspace_id")) && workspaceScope.getString("binding").equals(description.optString("cache_binding"))
+                    && workspaceScope.getString("accountBinding").equals(description.optString("account_binding"))&&operation.observationOrder>=workspaceObservationOrder.getOrDefault(operation.observationWorkspace,0L));
+                    long expiry=OutboxPolicy.expiry(description.getString("expires_at"));NativePolicy.require(expiry>System.currentTimeMillis());durableOutbox().grant(description,accountActive);
+                    workspaceScope.put("expiresAt",expiry);lastWorkspaceSnapshot=new JSONObject(workspaceScope.toString());sealedWorkspaceScopes.put(operation.observationWorkspace,new JSONObject(workspaceScope.toString()).put("session",description));persistAccount();commitWorkspaceObservation(operation.observationWorkspace,operation.observationOrder);
+                }
+                return;
+            }
             if (login && response.status >= 200 && response.status < 300) {
                 NativePolicy.require(response.cookie != null && !response.cookie.isEmpty());
                 NativeSessionBinding.Admission actualRollback=null;
@@ -1032,7 +1553,7 @@ public class FountainNativePlugin extends Plugin {
                     if (operation.responseProofStore != null && (outbox != operation.responseProofStore
                         || !outbox.currentOwner(outboxOwner + ":" + authGeneration) || outbox.proofEpoch() != operation.responseProofEpoch || outbox.boundary() != operation.responseProofBoundary
                         || System.currentTimeMillis() >= operation.responseProofDeadline)) throw new NativeOutbox.AccessRequired();
-                    JSObject result = new JSObject(); result.put("status", response.status);
+                    JSObject result = new JSObject(); if(operation.workspacePrefix!=null)result.put("workspaceEpoch",operation.workspaceEpoch); result.put("status", response.status);
                     result.put("headers", response.headers); result.put("bodyBase64", Base64.encodeToString(response.body, Base64.NO_WRAP));
                     result.put("generation", operation.generation);
                     succeed(operation, result);
@@ -1044,15 +1565,15 @@ public class FountainNativePlugin extends Plugin {
 
     private void observeResourceResponse(Operation operation, Response response, String method, String path, String sentCookie) throws Exception {
         if (recoveryMode) {
-            if(recovery!=null&&NativeRecovery.authorityPath(method,path))synchronized(lock) { check(operation); if(!Objects.equals(sentCookie,activeCookie))throw new NativeRecovery.Failure("RECOVERY_STALE");
+            if(recovery!=null&&NativeRecovery.authorityPath(method,path))synchronized(lock) { check(operation); if(!Objects.equals(sentCookie,workspaceCookie()))throw new NativeRecovery.Failure("RECOVERY_STALE");
                 recovery.observe(method,path,response.status,response.status==200?new JSONObject(OutboxPolicy.utf8(response.body)):new JSONObject()); }
             return;
         }
         if (outboxEnabled() && operation.syncAdmission != null) {
             synchronized (lock) {
-                check(operation); if (!Objects.equals(sentCookie, activeCookie)) throw new NativeOutbox.AccessRequired();
-                durableOutbox().observeSync(operation.syncAdmission, response.status, response.body, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration);
-                durableOutbox().captureReconcile(null, response.status, response.body, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration);
+                check(operation); if (!Objects.equals(sentCookie, workspaceCookie())) throw new NativeOutbox.AccessRequired();
+                durableOutbox().observeSync(operation.syncAdmission, response.status, response.body, workspaceCookie(), workspaceBlocked(), outboxOwner + ":" + authGeneration);
+                durableOutbox().captureReconcile(null, response.status, response.body, workspaceCookie(), workspaceBlocked(), outboxOwner + ":" + authGeneration);
             }
             return;
         }
@@ -1061,20 +1582,20 @@ public class FountainNativePlugin extends Plugin {
         }
         if (outboxEnabled() && operation.reconciliationTag != null && (operation.reconciliationTag.kind.equals("attachment") || response.status != 200 && response.status != 403 && response.status != 404)) {
             synchronized (lock) {
-                check(operation); if (!Objects.equals(sentCookie, activeCookie)) throw new NativeOutbox.AccessRequired();
-                NativeOutbox storage = durableOutbox(); storage.beforeReconcileObservation(operation.reconciliationTag, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration);
-                storage.captureReconcile(operation.reconciliationTag, response.status, response.body, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration);
+                check(operation); if (!Objects.equals(sentCookie, workspaceCookie())) throw new NativeOutbox.AccessRequired();
+                NativeOutbox storage = durableOutbox(); storage.beforeReconcileObservation(operation.reconciliationTag, workspaceCookie(), workspaceBlocked(), outboxOwner + ":" + authGeneration);
+                storage.captureReconcile(operation.reconciliationTag, response.status, response.body, workspaceCookie(), workspaceBlocked(), outboxOwner + ":" + authGeneration);
             }
             return;
         }
         if (!outboxEnabled() || OutboxPolicy.observedResource(method, path, response.status) == null) return;
         synchronized (lock) {
-            check(operation); if (!Objects.equals(sentCookie, activeCookie)) throw new NativeOutbox.AccessRequired();
+            check(operation); if (!Objects.equals(sentCookie, workspaceCookie())) throw new NativeOutbox.AccessRequired();
             try {
                 NativeOutbox storage = durableOutbox();
-                storage.beforeReconcileObservation(operation.reconciliationTag, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration);
-                storage.observe(method, path, response.status, response.body, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration);
-                storage.captureReconcile(operation.reconciliationTag, response.status, response.body, activeCookie, outboxBlocked(), outboxOwner + ":" + authGeneration);
+                storage.beforeReconcileObservation(operation.reconciliationTag, workspaceCookie(), workspaceBlocked(), outboxOwner + ":" + authGeneration);
+                storage.observe(method, path, response.status, response.body, workspaceCookie(), workspaceBlocked(), outboxOwner + ":" + authGeneration);
+                storage.captureReconcile(operation.reconciliationTag, response.status, response.body, workspaceCookie(), workspaceBlocked(), outboxOwner + ":" + authGeneration);
                 operation.responseProofStore = storage; operation.responseProofEpoch = storage.proofEpoch();
                 operation.responseProofBoundary = storage.boundary(); operation.responseProofDeadline = storage.deliveryDeadline();
             } catch (NativeOutbox.AccessRequired required) { throw required; }
@@ -1088,7 +1609,7 @@ public class FountainNativePlugin extends Plugin {
     private void check(Operation operation) throws IOException {
         synchronized (lock) {
             if (operation.closed.get() || broken || destroyed || operation.generation != generation
-                || operation.authGeneration != authGeneration || !Objects.equals(operation.origin, origin)
+                || operation.authGeneration != authGeneration || operation.workspaceEpoch >= 0 && operation.workspaceEpoch != workspaceEpoch || !Objects.equals(operation.origin, origin)
                 || !NativeCookieBoundary.permits(operation.boundaryEpoch)
                 || operation.admittedOutboxStore != null && (outbox != operation.admittedOutboxStore || !operation.admittedOutboxStore.currentLease(operation.admittedOutboxLease))
                 || operation.sessionDeliveryStore != null && (outbox != operation.sessionDeliveryStore || !operation.sessionDeliveryStore.currentLease(operation.sessionDeliveryLease))
@@ -1106,7 +1627,7 @@ public class FountainNativePlugin extends Plugin {
         return new NativeRecovery.Authority() {
             public void check() throws Exception {
                 FountainNativePlugin.this.check(operation);
-                synchronized(lock){if(!recoveryMode||recoveryEpoch!=epoch||!Objects.equals(cookie,activeCookie))throw new NativeRecovery.Failure("RECOVERY_STALE");}
+                synchronized(lock){if(!recoveryMode||recoveryEpoch!=epoch||!Objects.equals(cookie,workspaceCookie()))throw new NativeRecovery.Failure("RECOVERY_STALE");}
             }
             public JSONObject get(String path)throws Exception {
                 check();Response response=exchange(operation,operation.origin,path,"GET",new HashMap<>(),new byte[0],cookie,null);check();
@@ -1125,7 +1646,7 @@ public class FountainNativePlugin extends Plugin {
         synchronized(scopeLock) { authority.check(); publication.run(); }
     }
     private NativeRecovery.Authority refreshRecovery(Operation operation,long epoch)throws Exception {
-        String cookie;synchronized(lock){check(operation);cookie=activeCookie;if(revokeCookie!=null||vault.invalidated(origin))throw new NativeRecovery.Failure("RECOVERY_AUTH_REQUIRED");}
+        String cookie;synchronized(lock){check(operation);cookie=workspaceCookie();if(workspaceBlocked())throw new NativeRecovery.Failure("RECOVERY_AUTH_REQUIRED");}
         String[] returnedSessionCookie=new String[1];
         NativeRecovery.Authority authority=recoveryAuthority(operation,epoch,cookie,returnedSessionCookie);
         JSONObject description;
@@ -1136,7 +1657,7 @@ public class FountainNativePlugin extends Plugin {
         catch(Exception unauthenticated){publishRecoveryAuthority(lock,authority,()->{sessionBinding.clear();if(recovery!=null)recovery.invalidate();recoveryEpoch++;});throw new NativeRecovery.Failure("RECOVERY_AUTH_REQUIRED");}
         publishRecoveryAuthority(lock,authority,()->{
             if(recovery==null)recovery=new NativeRecovery(getContext());recovery.refresh(identity);
-            sessionBinding.observe(origin,activeCookie,operation.origin,cookie,returnedSessionCookie[0],false,description);
+            if(operation.workspacePrefix==null)sessionBinding.observe(origin,workspaceCookie(),operation.origin,cookie,returnedSessionCookie[0],false,description);
             if(outboxEnabled())try{durableOutbox().grant(description,cookie);}catch(NativeOutbox.AccessRequired requiresFreshBinding){/* Dedicated recovery authority still refreshes while the Outbox binding is suspended. */}
         });
         return authority;
@@ -1147,12 +1668,12 @@ public class FountainNativePlugin extends Plugin {
             if(inventory)recoveryMode=true;
             if(!recoveryMode){call.reject("Open recovery inventory first","RECOVERY_STALE");return;}
             Operation operation;
-            try {operation=begin(call,false,45000);}catch(Exception invalid){call.reject("Recovery request is stale","RECOVERY_STALE");return;}
+            try {operation=begin(call,false,45000);captureSelectedWorkspace(call,operation);NativePolicy.require(operation.workspacePrefix==null||!durableOutbox().offlineWorkspace());}catch(Exception invalid){call.reject("Recovery request is stale","RECOVERY_STALE");return;}
             final long epoch=recoveryEpoch;
             sessions.execute(()->{
                 try {
                     NativeRecovery.Authority authority=refreshRecovery(operation,epoch);operation.recoveryAuthority=authority;
-                    if(inventory&&outboxEnabled())synchronized(lock){check(operation);durableOutbox().open(generation,activeCookie,outboxBlocked(),outboxOwner+":"+authGeneration);}
+                    if(inventory&&outboxEnabled())synchronized(lock){check(operation);durableOutbox().open(generation,workspaceCookie(),workspaceBlocked(),outboxOwner+":"+authGeneration);}
                     JSObject result=action.run(operation,authority);if(result==null)return;
                     synchronized(lock){if(result.has("exportToken")){operation.undeliveredRecoveryInventory=call.getString("inventoryToken");operation.undeliveredRecoveryExport=result.getString("exportToken");}if(operation.closed.get()){cleanupFile(operation);return;}}
                     getActivity().runOnUiThread(()->{synchronized(lock){try{authority.check();recovery.checkResponse(result,authority);if(!bundleAllowed())throw new NativeRecovery.Failure("RECOVERY_STALE");succeed(operation,result);}catch(Exception stale){fail(operation,"Recovery request was superseded","RECOVERY_STALE");}}});
@@ -1169,7 +1690,7 @@ public class FountainNativePlugin extends Plugin {
     @PluginMethod public void recoveryExport(PluginCall call) {
         if("cancel".equals(call.getString("phase"))){
             entry(call,()->{long requested=integer(call,"generation",0,OutboxPolicy.SAFE-1);if(requested!=generation){call.reject("Recovery request is stale","RECOVERY_STALE");return;}
-                Operation operation=begin(call,false,45000);
+                Operation operation=begin(call,false,45000);try{captureSelectedWorkspace(call,operation);}catch(Exception stale){fail(operation,"Recovery scope changed","RECOVERY_STALE");return;}
                 sessions.execute(()->{try{check(operation);if(recovery!=null)recovery.cancel(call.getString("inventoryToken"),call.getString("exportToken"));JSObject result=new JSObject();result.put("generation",generation);result.put("cancelled",true);
                     getActivity().runOnUiThread(()->{synchronized(lock){try{check(operation);succeed(operation,result);}catch(Exception stale){fail(operation,"Recovery request is stale","RECOVERY_STALE");}}});
                 }catch(Exception stale){fail(operation,"Recovery request is stale","RECOVERY_STALE");}});
@@ -1195,6 +1716,7 @@ public class FountainNativePlugin extends Plugin {
     }
     private void succeed(Operation operation, JSObject result) {
         if (operation.closed.get()) return;
+        if(operation.workspacePrefix!=null)result.put("workspaceEpoch",operation.workspaceEpoch);
         try {
             boolean delivered = resolveCurrent(operation.call, result, () -> {
                 try {
@@ -1244,15 +1766,16 @@ public class FountainNativePlugin extends Plugin {
     @PluginMethod public void download(PluginCall call) {
         entry(call, () -> {
             String raw = call.getString("path");
-            String backupId = backupJobId(raw);
-            String path = NativePolicy.path(raw, backupId == null);
+            String logical; try { logical=admitWorkspacePath(call,raw); } catch(Exception invalid){call.reject("Invalid workspace download","NATIVE_INPUT");return;}
+            String backupId = backupJobId(logical);
+            String path = NativePolicy.path(logical, backupId == null);
             String filename = NativePolicy.filename(call.getString("filename"));
-            Operation operation = begin(call, false, 45000);
+            Operation operation = begin(call, false, 45000); captureWorkspace(operation,raw);
             workers.execute(() -> {
                 try {
                     operation.file = temporaryFile();
                     String cookie;
-                    synchronized (lock) { check(operation); cookie = activeCookie; }
+                    synchronized (lock) { check(operation); cookie = workspaceCookie(); }
                     if (backupId != null) downloadBackup(operation, backupId, cookie);
                     else exchange(operation, operation.origin, path, "GET", new HashMap<>(), new byte[0], cookie, operation.file);
                     showSave(operation, filename);
@@ -1295,14 +1818,14 @@ public class FountainNativePlugin extends Plugin {
 
     private void backupOwner(Operation operation) throws Exception {
         backupDeadline(operation);
-        synchronized (lock) { check(operation); NativePolicy.require(operation.backupCookie != null && Objects.equals(activeCookie, operation.backupCookie)); }
+        synchronized (lock) { check(operation); NativePolicy.require(operation.backupCookie != null && Objects.equals(workspaceCookie(), operation.backupCookie)); }
         Response response = exchange(operation, operation.origin, "/api/session", "GET", new HashMap<>(), new byte[0], operation.backupCookie, null, 65536);
         NativePolicy.require(response.status == 200);
         JSONObject body = new JSONObject(OutboxPolicy.utf8(response.body));
         NativePolicy.require("owner".equals(body.getJSONObject("member").opt("role")));
         NativeRecovery.Session proof = new NativeRecovery.Session(operation.origin, body, operation.backupCookie, "backup");
         synchronized (lock) {
-            check(operation); NativePolicy.require(Objects.equals(activeCookie, operation.backupCookie));
+            check(operation); NativePolicy.require(Objects.equals(workspaceCookie(), operation.backupCookie));
             if (operation.backupScope == null) operation.backupScope = proof.scope;
             NativePolicy.require(operation.backupScope.equals(proof.scope));
             operation.backupUntil = proof.validUntil;
@@ -1325,7 +1848,7 @@ public class FountainNativePlugin extends Plugin {
                 Map<String,String> headers = new HashMap<>(); headers.put("Range", "bytes=" + offset + "-" + (offset + length - 1));
                 Response piece = exchange(operation, operation.origin, "/api/backup?job_id=" + id, "GET", headers, new byte[0], cookie, null, length);
                 plan.piece(offset, length, piece.status, piece.headers.optString("content-range"), piece.headers.optString("content-length"), piece.body.length);
-                synchronized (lock) { check(operation); NativePolicy.require(Objects.equals(activeCookie, cookie)); }
+                synchronized (lock) { check(operation); NativePolicy.require(Objects.equals(workspaceCookie(), cookie)); }
                 output.write(piece.body); hash.update(piece.body); offset += length;
             }
             output.getFD().sync();
@@ -1338,7 +1861,7 @@ public class FountainNativePlugin extends Plugin {
         entry(call, () -> {
             String filename = NativePolicy.filename(call.getString("filename"));
             byte[] bytes = decodeBody(call, NativePolicy.MAX_SAVE);
-            Operation operation = begin(call, false, 45000);
+            Operation operation = begin(call, false, 45000); try{captureSelectedWorkspace(call,operation);}catch(Exception stale){fail(operation,"Export scope changed","STALE_WORKSPACE");return;}
             workers.execute(() -> {
                 try {
                     operation.file = temporaryFile();
@@ -1388,7 +1911,7 @@ public class FountainNativePlugin extends Plugin {
             synchronized (lock) {
                 try {
                     check(operation);
-                    if (operation.backupScope != null) NativePolicy.require(Objects.equals(activeCookie, operation.backupCookie) && operation.backupUntil > System.currentTimeMillis());
+                    if (operation.backupScope != null) NativePolicy.require(Objects.equals(workspaceCookie(), operation.backupCookie) && operation.backupUntil > System.currentTimeMillis());
                     if(operation.recoveryExport!=null)recovery.checkPrepared(operation.recoveryExport,operation.recoveryAuthority);
                     if (!bundleAllowed() || picker != null) throw new IOException();
                     picker = operation;
@@ -1478,10 +2001,10 @@ public class FountainNativePlugin extends Plugin {
     @Override public Boolean shouldOverrideLoad(Uri url) { return !localUrl(url); }
 
     @Override protected void handleOnDestroy() {
-        synchronized (lock) { invalidateRecovery(); destroyed = true; authGeneration++; cancelAll(null, "APP_CLOSED"); organizationEpoch++; cancelOrganizations(null, "APP_CLOSED"); }
+        synchronized (lock) { invalidateRecovery(); destroyed = true; authGeneration++; cancelAll(null, "APP_CLOSED"); organizationEpoch++; cancelOrganizations(null, "APP_CLOSED"); accountEpoch++; cancelAccounts(null,"APP_CLOSED"); workspaceEpoch++; }
         NativeCookieBoundary.unregister(boundaryInvalidated);
         workers.shutdownNow();
-        organizationWorkers.shutdownNow();
+        organizationWorkers.shutdownNow(); accountWorkers.shutdownNow();
         // Already-running revocation is allowed to finish; its encrypted slot
         // survives process death and is retried before the next session call.
         sessions.execute(() -> { if(recovery!=null)recovery.invalidate();if (outbox != null) { outbox.close(); outbox = null; } deadlines.shutdown(); });

@@ -647,11 +647,16 @@
         "command": "PostgreSQL rollback SQL2 + actual GoTrue2 + two-connection owner/consent races + exact13 bodies/RLS7",
         "passed": true,
         "evidence": "evidence/organization-authority-increment.json"
+      },
+      {
+        "command": "Actual GoTrue2/WS2/org2 HTTP8 + Chrome7/final6 + SDK iOS2/Android26 + main28exact52/SQL47/web25 + scoped cleanup/verifier111",
+        "passed": true,
+        "evidence": "evidence/organization-portal-increment.json"
       }
     ],
     "limitations": [
-      "명시적 Auth 조직 소유권·작업공간 양측 동의·권한 세대·재전송·두 SQL 연결 경합의 DB 기반을 구현·검증했다. 작업공간 세션 보관은 SQL fixture이며 조직 브라우저 로그인·화면 검증은 아니다.",
-      "공개 조직 관리·작업공간 전환/탐색·정책 적용과 우선순위·멤버/게스트 중복 제거·조직 검색/감사·법적 보류와 실제 다섯 플랫폼 여정은 남아 있다. 독립 구현·실제 조직 운영·유료 원본 비교 증거는 전체 계약을 충족하지 않는다."
+      "명시적 조직 소유권 DB와 독립 GoTrue 로그인·조직/소유자/작업공간 동의 UI를 실제 두 계정·두 작업공간·Chrome에서 검증했다. iOS·Android는 별도 SDK와 OS vault/SQLite 경계 검증이며 공개 운영 가족 계정의 전체 네이티브 여정과 구분한다.",
+      "작업공간 전환·탐색·정책 적용과 우선순위·멤버/게스트 중복 제거·조직 검색/감사·법적 보류와 실제 다섯 플랫폼 여정은 남아 있다. 전체 계약과 유료 원본 비교를 충족한 verified 상태는 아니다."
     ],
     "original_source_ids": [
       "organization-controls"

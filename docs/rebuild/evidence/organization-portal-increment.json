@@ -1,0 +1,36 @@
+{
+  "scope": "조직 로그인·관리 기능의 제한된 증가분",
+  "wholeFeatureVerified": false,
+  "wholeGoalComplete": false,
+  "featureStatus": "discovered",
+  "publicEvidence": "../../research/organization-portal-evidence.json",
+  "main": 28,
+  "mainFilesExact": 52,
+  "migrations": 47,
+  "actualGoTrueAccounts": 2,
+  "actualWorkspaces": 2,
+  "actualOrganizations": 2,
+  "actualHTTPGroups": 8,
+  "actualChromeFullFlowChecks": 7,
+  "actualChromeFinalRechecks": 6,
+  "chromeChecksAreOverlapping": true,
+  "nativeSDKTests": {
+    "iosSimulator": 2,
+    "androidEmulator": 26
+  },
+  "visualScore": 94,
+  "webPublicChecks": 25,
+  "temporaryDataCleaned": true,
+  "verifierRetired": 111,
+  "oldNonce404Checks": 6,
+  "originalFingerprintsUnchanged": true,
+  "knownSecretValuesScanned": 136,
+  "privateMatches": 0,
+  "noNewDependencies": true,
+  "remaining": [
+    "현재 운영 작업공간의 사람 소유자 연결과 가족의 다섯 플랫폼 여정",
+    "여러 작업공간 전환·탐색·정책/멤버 중복 제거",
+    "조직 검색·감사·법적 보류",
+    "전체 유료 원본과의 동등성 검증"
+  ]
+}

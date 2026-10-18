@@ -5,8 +5,8 @@ import SQLite3
 #endif
 
 private final class AccountMemory: FountainAccountStorage {
-    var values: [String: FountainAccountCookies] = [:], markers = Set<String>()
-    func read(_ origin: String) throws -> FountainAccountCookies { values[origin] ?? FountainAccountCookies() }
+    var values: [String: FountainAccountCookies] = [:], markers = Set<String>(), failRead = false
+    func read(_ origin: String) throws -> FountainAccountCookies { if failRead { throw FountainAccountError.storage }; return values[origin] ?? FountainAccountCookies() }
     func write(_ value: FountainAccountCookies, origin: String) throws { values[origin] = value }
     func blocked(_ origin: String) throws -> Bool { markers.contains(origin) }
     func block(_ origin: String) throws { markers.insert(origin) }
@@ -485,12 +485,20 @@ enum IOSMultiworkspaceFixture {
         let networkRealm = FountainAccount(queue: networkQueue, storage: networkMemory, protocolClasses: [WorkspaceProtocol.self])
         try networkQueue.sync { try networkRealm.configure(origin: origin, generation: 1) }
         defer { networkQueue.sync { networkRealm.shutdown() } }
-        for (code, expected) in [(URLError.Code.notConnectedToInternet, "NATIVE_NETWORK_UNREACHABLE"), (.cannotConnectToHost, "NATIVE_NETWORK_UNREACHABLE"), (.serverCertificateUntrusted, "NATIVE_NETWORK"), (.secureConnectionFailed, "NATIVE_NETWORK"), (.timedOut, "NATIVE_TIMEOUT")] {
+        for (code, expected) in [(URLError.Code.notConnectedToInternet, "NATIVE_NETWORK_UNREACHABLE"), (.cannotConnectToHost, "NATIVE_NETWORK_UNREACHABLE"), (.cannotFindHost, "NATIVE_NETWORK_UNREACHABLE"), (.dnsLookupFailed, "NATIVE_NETWORK_UNREACHABLE"), (.networkConnectionLost, "NATIVE_NETWORK_UNREACHABLE"), (.serverCertificateUntrusted, "NATIVE_NETWORK"), (.secureConnectionFailed, "NATIVE_NETWORK"), (.clientCertificateRejected, "NATIVE_NETWORK"), (.cancelled, "NATIVE_NETWORK"), (.badServerResponse, "NATIVE_NETWORK"), (.userAuthenticationRequired, "NATIVE_NETWORK"), (.timedOut, "NATIVE_TIMEOUT")] {
             WorkspaceProtocol.handler = { $0.client?.urlProtocol($0, didFailWithError: URLError(code)) }
             let done = DispatchSemaphore(value: 0); var actual: String?
             try networkQueue.sync { try networkRealm.request(FountainAccount.Request(["id": UUID().uuidString, "generation": 1, "path": "/api/account/session"]), workspaceCookie: { nil }, url: { URL(string: $0 + $1)! }) { result in if case .failure(let error) = result { actual = error.code }; done.signal() } }
             try check(done.wait(timeout: .now() + 5) == .success && actual == expected, "TLS/timeout/unreachable classification collapsed")
         }
+        var storageFailureReachedNetwork = false
+        WorkspaceProtocol.handler = { _ in storageFailureReachedNetwork = true }
+        networkMemory.failRead = true
+        do {
+            try networkQueue.sync { try networkRealm.request(FountainAccount.Request(["id": "storage-failure", "generation": 1, "path": "/api/account/session"]), workspaceCookie: { nil }, url: { URL(string: $0 + $1)! }) { _ in } }
+            throw NSError(domain: "IOSMultiworkspace", code: -1)
+        } catch let failure as FountainAccountError { try check(failure.code == "NATIVE_STORAGE" && !storageFailureReachedNetwork, "Private vault failure became network-unreachable admission") }
+        networkMemory.failRead = false
         var expiredInvalidation = 0
         networkRealm.onInvalidation = { expiredInvalidation += 1 }
         networkMemory.values[origin] = FountainAccountCookies(active: cookie, binding: parent, expiresAt: 1)

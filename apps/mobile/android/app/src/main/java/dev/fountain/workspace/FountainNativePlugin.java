@@ -746,7 +746,7 @@ public class FountainNativePlugin extends Plugin {
                         }
                         deliverAccount(operation, response);
                     } catch (Exception failure) {
-                        failAccount(operation, "Account request failed or was superseded", "ORGANIZATION_REQUEST_FAILED");
+                        failAccount(operation, "Account request failed or was superseded", NativeWorkspacePolicy.networkUnreachable(failure) ? "NATIVE_NETWORK_UNREACHABLE" : "ORGANIZATION_REQUEST_FAILED");
                     }
                 });
             } catch (Exception invalid) { call.reject("Invalid account input or secure storage unavailable", "NATIVE_INPUT"); }
@@ -865,6 +865,7 @@ public class FountainNativePlugin extends Plugin {
             Response response = new Response(); response.status = connection.getResponseCode();
             NativePolicy.require(response.status >= 200 && response.status <= 599 && (response.status < 300 || response.status >= 400));
             response.headers = safeHeaders(connection.getHeaderFields());
+            if (NativeAccountPolicy.directoryAbsent(method, path, connection.getHeaderFields())) response.headers.put("x-fountain-account-directory", "absent");
             response.cookie = NativeAccountPolicy.cookie(connection.getHeaderFields(), operation.origin);
             long expected = connection.getContentLengthLong();
             NativePolicy.require(expected <= NativeAccountPolicy.MAX_RESPONSE);

@@ -42,6 +42,18 @@ final class NativeAccountPolicy {
     static String binding(String value) { NativePolicy.require(value != null && value.matches("[a-f0-9]{32}")); return value; }
     static String token(String value) { NativePolicy.require(value != null && value.matches("[A-Za-z0-9_-]{43}")); return value; }
 
+    /** A public capability observation from this exact trusted HTTP response. */
+    static boolean directoryAbsent(String method, String path, Map<String, List<String>> headers) {
+        if (!"GET".equals(method) || !"/api/account/session".equals(path)) return false;
+        int observed = 0;
+        for (Map.Entry<String, List<String>> entry : headers.entrySet()) {
+            if (entry.getKey() == null || !entry.getKey().equalsIgnoreCase("X-Fountain-Account-Directory")) continue;
+            if (entry.getValue() == null || entry.getValue().size() != 1 || !"absent".equals(entry.getValue().get(0))) return false;
+            observed++;
+        }
+        return observed == 1;
+    }
+
     /** Null means absent; empty means explicit expiry. Cookie attributes are mandatory. */
     static String cookie(Map<String, List<String>> headers, String origin) {
         String result = null;

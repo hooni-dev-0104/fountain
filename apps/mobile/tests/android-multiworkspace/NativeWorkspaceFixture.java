@@ -22,6 +22,13 @@ public final class NativeWorkspaceFixture {
         yes(NativeAccountPolicy.namespace("/api/%2561ccount/session"));yes(!NativeAccountPolicy.namespace("/api/session"));
         for(String path:Arrays.asList("/api/account/session","/api/account/workspaces?session_binding="+b,"/api/account/workspaces?session_binding="+b+"&cursor=workspace-A"))yes(NativeAccountPolicy.path(path,"GET").equals(path));
         for(String path:Arrays.asList("/api/account/workspaces?session_binding="+b+"&session_binding="+b,"/api/account/workspaces?session_binding="+b+"&cursor=a%2Fb","/api/account/session?x=1","/api/account/workspaces/abc/open/","/api/account/%73ession"))denied(()->NativeAccountPolicy.path(path,"GET"));
+        Map<String,List<String>> marker=Collections.singletonMap("X-Fountain-Account-Directory",Collections.singletonList("absent"));
+        yes(NativeAccountPolicy.directoryAbsent("GET","/api/account/session",marker));
+        for(String method:Arrays.asList("POST","DELETE","PATCH"))yes(!NativeAccountPolicy.directoryAbsent(method,"/api/account/session",marker));
+        for(String path:Arrays.asList("/api/account/workspaces","/api/account/session?x=1","/api/account/%73ession","/api/session"))yes(!NativeAccountPolicy.directoryAbsent("GET",path,marker));
+        for(List<String> values:Arrays.asList(Collections.singletonList("present"),Collections.singletonList("Absent"),Collections.singletonList(" absent"),Arrays.asList("absent","absent")))yes(!NativeAccountPolicy.directoryAbsent("GET","/api/account/session",Collections.singletonMap("x-fountain-account-directory",values)));
+        yes(!NativeAccountPolicy.directoryAbsent("GET","/api/account/session",Collections.emptyMap()));
+        Map<String,List<String>> duplicate=new HashMap<>(marker);duplicate.put("x-fountain-account-directory",Collections.singletonList("absent"));yes(!NativeAccountPolicy.directoryAbsent("GET","/api/account/session",duplicate));
         String suffix="; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=604800",token="abcdefghijklmnopqrstuvwxyz0123456789_-ABCDE";
         yes(token.equals(NativeAccountPolicy.cookie(Collections.singletonMap("Set-Cookie",Collections.singletonList("fountain_account_session="+token+suffix)),"https://fountain.invalid")));
         for(String name:Arrays.asList("fountain_session","fountain_organization_session"))denied(()->NativeAccountPolicy.cookie(Collections.singletonMap("Set-Cookie",Collections.singletonList(name+"="+token+suffix)),"https://fountain.invalid"));

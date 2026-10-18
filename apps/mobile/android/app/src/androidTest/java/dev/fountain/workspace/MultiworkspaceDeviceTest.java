@@ -52,6 +52,27 @@ public class MultiworkspaceDeviceTest {
             f.store.grant(session("A",key("3")),TOKEN);assertEquals(f.profile("A",key("3")),f.open().getString("profileId"));
         }
     }
+    @Test public void anonymousAccount401CapabilityProbePreservesLegacyPrivateGrantAndPending()throws Exception {
+        try(Fixture f=new Fixture()) {
+            JSONObject legacy=session("legacy",key("1"));legacy.remove("account_binding");
+            f.store.grant(legacy,TOKEN);f.open();f.anchor("legacy",key("1"));String profile=f.profile("legacy",key("1"));
+            f.store.db.execSQL("INSERT INTO records VALUES(?,?,?,?,?,?)",new Object[]{"quarantine","drafts","legacy-pending",profile,profile+"|page","Legacy IME 초안".getBytes("UTF-8")});
+            String grant=f.store.get("grant"),lease=f.store.get("lease");long boundary=f.store.boundary();FountainNativePlugin plugin=new FountainNativePlugin();
+            try {
+                set(plugin,"origin",f.origin);set(plugin,"activeCookie",TOKEN);set(plugin,"outbox",f.store);set(plugin,"authGeneration",7L);set(plugin,"workspaceEpoch",9L);
+                Class<?> op=Class.forName(FountainNativePlugin.class.getName()+"$AccountOperation"),responseType=Class.forName(FountainNativePlugin.class.getName()+"$Response");
+                Constructor<?> create=op.getDeclaredConstructors()[0];create.setAccessible(true);Object operation=create.newInstance("legacy-probe",f.origin,1L,0L,null,false,false);
+                Constructor<?> responseConstructor=responseType.getDeclaredConstructor();responseConstructor.setAccessible(true);Object response=responseConstructor.newInstance();
+                Field status=responseType.getDeclaredField("status");status.setAccessible(true);status.set(response,401);
+                Method apply=FountainNativePlugin.class.getDeclaredMethod("applyAccountResponse",op,responseType,boolean.class,String.class);apply.setAccessible(true);
+                assertTrue(NativeAccountPolicy.directoryAbsent("GET","/api/account/session",Collections.singletonMap("X-Fountain-Account-Directory",Collections.singletonList("absent"))));
+                apply.invoke(plugin,operation,response,true,null);
+                assertEquals(TOKEN,get(plugin,"activeCookie"));assertNull(get(plugin,"accountActive"));assertEquals(7L,get(plugin,"authGeneration"));assertEquals(9L,get(plugin,"workspaceEpoch"));
+                assertEquals(grant,f.store.get("grant"));assertEquals(lease,f.store.get("lease"));assertEquals(boundary,f.store.boundary());assertNull(f.store.get("suspended:"+profile));assertNotNull(f.store.verified(TOKEN,false));
+                try(Cursor rows=f.store.db.rawQuery("SELECT payload FROM records WHERE key='legacy-pending'",null)){assertTrue(rows.moveToFirst());assertEquals("Legacy IME 초안",new String(rows.getBlob(0),"UTF-8"));}
+            }finally{for(String executor:Arrays.asList("workers","sessions","deadlines","organizationWorkers","accountWorkers"))((ExecutorService)get(plugin,executor)).shutdownNow();}
+        }
+    }
     @Test public void canonicalResumeUsesScopedPointersAndKeepsNativeAttributedFormInput()throws Exception {
         try(Fixture f=new Fixture()) {
             String binding=key("1"),profile=f.profile("A",binding);f.store.grant(session("A",binding),TOKEN);JSONObject first=f.open();f.anchor("A",binding);first=f.open();

@@ -6,6 +6,10 @@ It also composes the actual native JavaScript `publicURL` and `publicShareURL` o
 
 Resource tails use exact JavaScript `encodeURIComponent` spelling per segment. The workspace ID and child prefix remain literal ASCII. UTF-8, spaces and encoded `?`/`#` are preserved as ID data; encoded aliases, malformed UTF-8, slash/backslash, dots and C0/DEL/C1 controls remain denied, including nested encodings. `uri-composition.mjs` passes actual production scope-helper outputs into Java. `WorkspaceURIRequestDeviceTest` checks actual Android URI and HTTPS connection construction without connecting; the opt-in cloud journey separately checks a unique multilingual resource ID through real creation, canonical GET and resumed pending patch.
 
+The account adapter forwards `x-fountain-account-directory: absent` only from a trusted `GET /api/account/session` response with exactly one literal `absent` value. Unmarked 401 responses, other methods/routes and unknown values cannot announce legacy capability. `PublicWebNavigationDeviceTest` also probes this real Capacitor response path using anonymous fixture 401 replies and verifies cookies and unknown headers remain hidden.
+
+The same SDK component fixture checks account error projection: only the existing network-unreachable predicate's DNS/route/connect failures produce `NATIVE_NETWORK_UNREACHABLE`. TLS, timeout and storage failures retain denial codes; cancellation remains `CANCELLED` even if its disconnected fixture later throws a connect error. These are controlled component failures, not real TLS/provider tests.
+
 `MultiworkspaceDeviceTest` runs production Android SQLite and AndroidKeyStore on an isolated QA emulator. Its session and canonical HTTP response objects are fixtures; it does not claim a real Supabase login or the native activation bridge's end-to-end HTTP journey.
 
 The device checks cover parking versus permanent suspension, A → B → A source retention, canonical reconciliation with scoped pointers and original form input, account logout across active and parked children, independent encrypted realms, exact parent/member/child/absolute expiry requirements for offline resume, native retained hints after encrypted reload, offline CRDT/title/draft durability, cached native creation authority for local page and row mutations, and the inability to SEND while the canonical floor is missing.
@@ -20,7 +24,7 @@ apps/mobile/android/gradlew -p apps/mobile/android \
   -Pandroid.builder.sdkDownload=false
 ```
 
-Install the two resulting APKs on the dedicated QA AVD and run `dev.fountain.workspace.MultiworkspaceDeviceTest` using `androidx.test.runner.AndroidJUnitRunner`. Android instrumentation may return shell exit 0 after failures: inspect `OK (13 tests)` and the absence of `FAILURES` explicitly.
+Install the two resulting APKs on the dedicated QA AVD and run `dev.fountain.workspace.MultiworkspaceDeviceTest` using `androidx.test.runner.AndroidJUnitRunner`. Android instrumentation may return shell exit 0 after failures: inspect `OK (14 tests)` and the absence of `FAILURES` explicitly.
 
 The native account vault uses its own preferences, AES key, negative marker and bounded encrypted state. The original workspace and organization vaults retain their existing 32 KiB bound; account state allows 512 KiB to retain at most 128 prior native session proofs. Configuration publishes at most 100 token-free hints and exposes `retainedWorkspaceScopesTruncated` when bounded. Hints alone grant no admission. Explicit online activation always performs native HTTPS; explicit offline resume never creates a new grant, extends expiry, or supplies a canonical floor. Cached native resource proofs remain separate from live `resource_proofs`. Online canonical reconciliation is required before pending SEND resumes.
 

@@ -642,9 +642,16 @@
       "조직 생성·조직 소유자와 여러 작업공간을 관리하고 조직별 멤버/게스트 중복 제거, 작업공간별 탐색·정책·검색/감사 범위를 제공한다.",
       "조직 관리 설정과 작업공간/팀스페이스의 구체적인 적용·우선순위를 검사한다. 단일 작업공간과 팀스페이스를 여러 작업공간 구현 완료로 취급하지 않는다."
     ],
-    "verification": [],
+    "verification": [
+      {
+        "command": "PostgreSQL rollback SQL2 + actual GoTrue2 + two-connection owner/consent races + exact13 bodies/RLS7",
+        "passed": true,
+        "evidence": "evidence/organization-authority-increment.json"
+      }
+    ],
     "limitations": [
-      "공식 문서 본문에서 기능을 확인했다. 독립 구현·실제 공급자/기기/조직 운영·유료 원본 비교 증거는 아직 전체 계약을 충족하지 않는다."
+      "명시적 Auth 조직 소유권·작업공간 양측 동의·권한 세대·재전송·두 SQL 연결 경합의 DB 기반을 구현·검증했다. 작업공간 세션 보관은 SQL fixture이며 조직 브라우저 로그인·화면 검증은 아니다.",
+      "공개 조직 관리·작업공간 전환/탐색·정책 적용과 우선순위·멤버/게스트 중복 제거·조직 검색/감사·법적 보류와 실제 다섯 플랫폼 여정은 남아 있다. 독립 구현·실제 조직 운영·유료 원본 비교 증거는 전체 계약을 충족하지 않는다."
     ],
     "original_source_ids": [
       "organization-controls"

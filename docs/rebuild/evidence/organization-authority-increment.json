@@ -1,0 +1,16 @@
+{
+  "scope": "조직 소유권·명시적 작업공간 연결의 PostgreSQL 기반만 검증",
+  "implemented": true,
+  "source": "../../research/organization-authority-evidence.json",
+  "productionSchemaApplied": true,
+  "migrationCount": 45,
+  "mainVersion": 27,
+  "mainChanged": false,
+  "actualGoTrueSessionsVerified": true,
+  "actualTwoConnectionConcurrencyVerified": true,
+  "workspaceVaultIsSQLFixture": true,
+  "organizationBrowserOrLoginVerified": false,
+  "wholeFeatureOrProductParityVerified": false,
+  "verifierRetired": 107,
+  "cleaned": true
+}

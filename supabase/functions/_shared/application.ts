@@ -85,7 +85,7 @@ export function createApplication(config:Config):(request:Request)=>Promise<Resp
       const response=await accountDirectory.handle(current,path);
       if(response){if(config.background){const task=accountAuth.maintain(2).catch(()=>undefined);try{config.background(task);}catch{}}return response;}
       const route=workspaceRoute(path);if(!route)return null;
-      const cookie=current.headers.get('Cookie'),authorize=()=>accountDirectory.authorizeWorkspace(cookie,route.workspaceId,route.binding);
+      const cookie=current.headers.get('Cookie'),authorize=await accountDirectory.makeWorkspaceAuthorizer(cookie,route.workspaceId,route.binding);
       const context=await authorize();
       if(route.path==='/api/session'){
         if(!['GET','HEAD'].includes(current.method))throw new HttpError(405,'작업공간 선택은 계정 화면에서 변경해주세요.');

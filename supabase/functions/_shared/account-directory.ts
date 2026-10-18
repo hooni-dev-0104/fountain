@@ -35,10 +35,12 @@ export function createAccountDirectory(config:Config){
  if(config.serviceKey.startsWith('sb_secret_'))check(/^sb_secret_[A-Za-z0-9_-]{10,}$/.test(config.serviceKey),503,'ACCOUNT_CONFIGURATION');else{try{const p=config.serviceKey.split('.');check(p.length===3);const claims=JSON.parse(atob(p[1].replaceAll('-','+').replaceAll('_','/')+'='.repeat((4-p[1].length%4)%4)));check(claims.role==='service_role');headers.Authorization='Bearer '+config.serviceKey;}catch{throw new HttpError(503,'계정 서비스 설정을 확인해주세요.','ACCOUNT_CONFIGURATION');}}
  function parent(c:AccountPrivateSessionContext){return{sessionHash:c.hash,cacheBinding:c.cacheBinding,userId:c.userId,authSessionId:c.authSessionId};}
  async function fresh(initial:AccountPrivateSessionContext,cookie:string|null){const current=await config.auth.authorize(cookie);if(current.hash!==initial.hash||current.userId!==initial.userId||current.authSessionId!==initial.authSessionId||current.cacheBinding!==initial.cacheBinding||current.expiresAt<=clock())throw new HttpError(409,'계정 로그인이 변경되었습니다.','ACCOUNT_SESSION_CHANGED');return current;}
- async function call(initial:AccountPrivateSessionContext,cookie:string|null,operation:string,workspaceId:string|null,workspaceBinding:string|null,commandId:string|null,value:Record<string,unknown>){
-  await fresh(initial,cookie);let response:Response;try{response=await request(origin+'/rest/v1/rpc/fountain_cloud_account_directory',{method:'POST',redirect:'error',signal:AbortSignal.timeout(timeout),headers:{...headers},body:JSON.stringify({p_session:parent(initial),p_operation:operation,p_workspace_id:workspaceId,p_workspace_binding:workspaceBinding,p_command_id:commandId,p_value:value})});}catch{throw new HttpError(503,'계정 요청을 처리하지 못했습니다.','ACCOUNT_UNAVAILABLE');}
+ async function directoryRequest(initial:AccountPrivateSessionContext,operation:string,workspaceId:string|null,workspaceBinding:string|null,commandId:string|null,value:Record<string,unknown>){
+  let response:Response;try{response=await request(origin+'/rest/v1/rpc/fountain_cloud_account_directory',{method:'POST',redirect:'error',signal:AbortSignal.timeout(timeout),headers:{...headers},body:JSON.stringify({p_session:parent(initial),p_operation:operation,p_workspace_id:workspaceId,p_workspace_binding:workspaceBinding,p_command_id:commandId,p_value:value})});}catch{throw new HttpError(503,'계정 요청을 처리하지 못했습니다.','ACCOUNT_UNAVAILABLE');}
   if(response.redirected){await response.body?.cancel();throw new HttpError(503,'계정 요청을 처리하지 못했습니다.','ACCOUNT_UNAVAILABLE');}
-  const result=await read(response,response.ok?2097152:8192);await fresh(initial,cookie);
+  return{response,result:await read(response,response.ok?2097152:8192)};
+ }
+ function directoryResult({response,result}:{response:Response;result:unknown}){
   if(!response.ok){const code=object(result)?result.code:undefined,status=typeof code==='string'&&/^PT(?:401|403|404|409|413)$/.test(code)?Number(code.slice(2)):code==='22023'?400:503;
    // Only this fixed database diagnostic proves that a previously selected
    // incarnation ended. Busy transitions and receipt conflicts remain retryable.
@@ -46,16 +48,30 @@ export function createAccountDirectory(config:Config){
    throw new HttpError(status,status===401?'계정 로그인이 필요합니다.':status===403?'작업공간 권한을 확인해주세요.':status===409?'작업공간 상태가 변경되었습니다.':'계정 요청을 처리하지 못했습니다.',grantChanged?'WORKSPACE_GRANT_CHANGED':status===401?'AUTH_REQUIRED':status===409?'WORKSPACE_SESSION_CHANGED':status===403?'WORKSPACE_ACCESS_REQUIRED':'ACCOUNT_REQUEST_FAILED');}
   check(object(result),503,'ACCOUNT_RESPONSE_INVALID');return result;
  }
+ async function call(initial:AccountPrivateSessionContext,cookie:string|null,operation:string,workspaceId:string|null,workspaceBinding:string|null,commandId:string|null,value:Record<string,unknown>){
+  await fresh(initial,cookie);const result=await directoryRequest(initial,operation,workspaceId,workspaceBinding,commandId,value);await fresh(initial,cookie);return directoryResult(result);
+ }
  function responseCheck(v:unknown):asserts v{check(v,503,'ACCOUNT_RESPONSE_INVALID');}
  function publicWorkspace(value:Record<string,any>,initial:AccountPrivateSessionContext,expectedId:string){
   responseCheck(value.workspaceId===expectedId&&value.accountBinding===initial.cacheBinding&&object(value.session));const s=value.session;responseCheck(s.enabled===true&&s.authenticated===true&&s.mode==='accounts'&&s.workspace_id===expectedId&&s.account_binding===initial.cacheBinding&&typeof s.cache_binding==='string'&&WORKSPACE_BINDING.test(s.cache_binding)&&typeof s.expires_at==='string'&&Number.isFinite(Date.parse(s.expires_at))&&Date.parse(s.expires_at)>clock()&&Date.parse(s.expires_at)<=initial.expiresAt&&object(s.member));const m=s.member;responseCheck(text(m.id)&&display(m.name)&&typeof m.email==='string'&&m.email.length<=1000&&['owner','admin','member','guest'].includes(m.role)&&m.active===true);
   return{workspace_id:expectedId,account_binding:initial.cacheBinding,session:{enabled:true,required:true,authenticated:true,mode:'accounts',identity:m.name,member:{id:m.id,name:m.name,email:m.email,role:m.role,active:true},workspace_id:expectedId,cache_binding:s.cache_binding,expires_at:s.expires_at,account_binding:initial.cacheBinding}};
  }
- async function authorizeWorkspace(cookie:string|null,workspaceId:string,workspaceBinding:string):Promise<AccountWorkspaceContext>{
-  workspace(workspaceId);binding(workspaceBinding);const initial=await config.auth.authorize(cookie);const v=await call(initial,cookie,'context',workspaceId,workspaceBinding,null,{});
+ function workspaceContext(v:Record<string,any>,initial:AccountPrivateSessionContext,workspaceId:string,workspaceBinding:string):AccountWorkspaceContext{
   responseCheck(Object.keys(v).length===8&&HASH.test(v.hash)&&v.parentHash===initial.hash&&v.userId===initial.userId&&v.authSessionId===initial.authSessionId&&v.cacheBinding===workspaceBinding&&v.accountBinding===initial.cacheBinding&&integer(v.expiresAt)&&v.expiresAt>clock()&&v.expiresAt<=initial.expiresAt&&object(v.profile));
   const p=v.profile;responseCheck(Object.keys(p).length===3&&p.workspaceId===workspaceId&&p.authSessionActive===true&&object(p.member));const m=p.member;responseCheck(Object.keys(m).length===5&&text(m.id)&&display(m.name)&&typeof m.email==='string'&&m.email.length<=1000&&['owner','admin','member','guest'].includes(m.role)&&m.active===true);
   return{hash:v.hash,userId:v.userId,authSessionId:v.authSessionId,cacheBinding:v.cacheBinding,expiresAt:v.expiresAt,profile:{workspaceId,authSessionActive:true,member:{id:m.id,name:m.name,email:m.email,role:m.role,active:true}},accountBinding:v.accountBinding,parentHash:v.parentHash};
+ }
+ async function authorizeWorkspace(cookie:string|null,workspaceId:string,workspaceBinding:string):Promise<AccountWorkspaceContext>{
+  workspace(workspaceId);binding(workspaceBinding);const initial=await config.auth.authorize(cookie);return workspaceContext(await call(initial,cookie,'context',workspaceId,workspaceBinding,null,{}),initial,workspaceId,workspaceBinding);
+ }
+ /** Create only at one scoped HTTP entry. SQL rechecks live parent/SID and child
+  * authority on every use, including SSE polls; no context result is cached.
+  * Provider-only policy changes are checked again at the next HTTP entry (SSE
+  * already has a maximum 125-second lifetime). Never retain this across requests.
+  */
+ async function makeWorkspaceAuthorizer(cookie:string|null,workspaceId:string,workspaceBinding:string):Promise<()=>Promise<AccountWorkspaceContext>>{
+  workspace(workspaceId);binding(workspaceBinding);const initial={...await config.auth.authorize(cookie)};
+  return async()=>workspaceContext(directoryResult(await directoryRequest(initial,'context',workspaceId,workspaceBinding,null,{})),initial,workspaceId,workspaceBinding);
  }
  async function handle(request:Request,path:string):Promise<Response|null>{
   if(!accountNamespace(path))return null;const route=path.slice('/api/account'.length),url=new URL(request.url),method=request.method,cookie=request.headers.get('Cookie');
@@ -77,5 +93,5 @@ export function createAccountDirectory(config:Config){
   responseCheck(result.workspaceId===workspaceId&&result.accountBinding===initial.cacheBinding);const output:Record<string,unknown>={workspace_id:workspaceId,account_binding:initial.cacheBinding};if(operation==='invitation_preview'){responseCheck(label(result.name)&&['admin','member','guest'].includes(result.role));output.workspace_name=result.name;output.role=result.role;}
   responseCheck(typeof result.expiresAt==='string'&&Number.isFinite(Date.parse(result.expiresAt)));output.expires_at=result.expiresAt;if(operation==='invite'){responseCheck(typeof result.invitationId==='string'&&UUID.test(result.invitationId)&&['admin','member','guest'].includes(result.role));output.invitation_id=result.invitationId.toLowerCase();output.role=result.role;}return jsonResponse(output);
  }
- return Object.freeze({handle,authorizeWorkspace});
+ return Object.freeze({handle,authorizeWorkspace,makeWorkspaceAuthorizer});
 }

@@ -40,6 +40,7 @@ final class CookieVault {
     private final KeyFault keyFault;
     private final File dataDirectory,preferencesFile;
     private boolean writesDisabled;
+    private int maxSealedBytes=32768;
     private String lastPublicOrigin;
     interface KeyFault {
         void beforeKey(boolean create) throws Exception; void beforeDelete() throws Exception;
@@ -54,6 +55,10 @@ final class CookieVault {
         this(context, context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE), keyAlias, null,
             new File(context.getDataDir(), "shared_prefs/" + preferencesName + ".xml"));
         NativePolicy.require(preferencesName.matches("[a-z0-9_]{1,100}") && keyAlias.matches("[a-z0-9_.]{1,200}"));
+    }
+    CookieVault(Context context,String preferencesName,String keyAlias,int maxSealedBytes) {
+        this(context,preferencesName,keyAlias);
+        NativePolicy.require(maxSealedBytes>=32768&&maxSealedBytes<=524288);this.maxSealedBytes=maxSealedBytes;
     }
     CookieVault(Context context,SharedPreferences preferences,String keyAlias,KeyFault keyFault) {
         this(context,preferences,keyAlias,keyFault,keyFault==null?null:keyFault.backingFile());
@@ -80,8 +85,9 @@ final class CookieVault {
     synchronized JSONObject read() throws Exception {
         String encoded = preferences.getString("sealed", null);
         if (encoded == null) return new JSONObject();
+        if(encoded.length()>((maxSealedBytes+2L)/3L)*4L)throw new IllegalStateException("Secure session storage unavailable");
         byte[] bytes = Base64.decode(encoded, Base64.NO_WRAP);
-        if (bytes.length < 12 + 16 || bytes.length > 32768) throw new IllegalStateException("Secure session storage unavailable");
+        if (bytes.length < 12 + 16 || bytes.length > maxSealedBytes) throw new IllegalStateException("Secure session storage unavailable");
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.DECRYPT_MODE, key(false), new GCMParameterSpec(128, bytes, 0, 12));
         cipher.updateAAD(associatedData);
@@ -96,7 +102,9 @@ final class CookieVault {
         cipher.init(Cipher.ENCRYPT_MODE, key(true));
         cipher.updateAAD(associatedData);
         if (cipher.getIV().length != 12) throw new IllegalStateException("Secure session storage unavailable");
-        byte[] ciphertext = cipher.doFinal(state.toString().getBytes(StandardCharsets.UTF_8));
+        byte[] plaintext=state.toString().getBytes(StandardCharsets.UTF_8);
+        if(plaintext.length>maxSealedBytes-28)throw new IllegalStateException("Secure session storage unavailable");
+        byte[] ciphertext = cipher.doFinal(plaintext);
         byte[] sealed = ByteBuffer.allocate(cipher.getIV().length + ciphertext.length).put(cipher.getIV()).put(ciphertext).array();
         String encoded=Base64.encodeToString(sealed, Base64.NO_WRAP);
         if(publicState)assertNoPublicBackup();

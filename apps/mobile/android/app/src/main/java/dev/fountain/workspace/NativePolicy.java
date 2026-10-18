@@ -3,6 +3,9 @@ package dev.fountain.workspace;
 import java.net.HttpCookie;
 import java.net.URI;
 import java.net.URLDecoder;
+import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HashSet;
@@ -44,8 +47,10 @@ final class NativePolicy {
             require(!uri.isAbsolute() && uri.getRawAuthority() == null && uri.getRawFragment() == null);
             String decodedPath = uri.getRawPath();
             for (int pass = 0; pass < 12; pass++) {
+                // Encoded ?/# are ID data only in canonical, safe segments;
+                // raw URL delimiters were already separated by URI above.
                 require(decodedPath.startsWith("/api/") && !controls(decodedPath) && !decodedPath.contains("\\")
-                    && !decodedPath.contains("?") && !decodedPath.contains("#"));
+                    && ((!decodedPath.contains("?") && !decodedPath.contains("#")) || canonicalDataPath(uri.getRawPath())));
                 for (String segment : decodedPath.split("/", -1)) require(!segment.equals(".") && !segment.equals(".."));
                 String next = decode(decodedPath);
                 if (next.equals(decodedPath)) break;
@@ -102,12 +107,63 @@ final class NativePolicy {
                 if (!canonical.equals(server) || uri.getPort() == -1 && uri.getHost().matches("[a-z0-9]{20}\\.supabase\\.co")) return false;
                 trusted = canonical;
             } catch (IllegalArgumentException invalid) { return false; }
-            return target.startsWith(trusted + "/") && target.substring(trusted.length()).matches("/(forms|sites)/[A-Za-z0-9_-]{1,160}");
+            if(!target.startsWith(trusted+"/"))return false;
+            if(target.substring(trusted.length()).matches("/(forms|sites)/[A-Za-z0-9_-]{1,160}"))return true;
+            try {
+                URI url=new URI(target);if(!"/".equals(url.getRawPath())||url.getRawQuery()!=null||url.getRawFragment()==null)return false;
+                String[] parts=url.getRawFragment().split("/",-1);
+                if(parts.length!=4||!parts[0].equals("w")||!parts[1].matches("[A-Za-z0-9_-]{1,160}")||!(parts[2].equals("form")||parts[2].equals("site")))return false;
+                return parts[3].matches("[A-Za-z0-9_-]{1,160}");
+            } catch(Exception invalid) {return false;}
         }
     }
 
     static String decode(String value) throws Exception {
         return URLDecoder.decode(value.replaceAll("%(?![0-9A-Fa-f]{2})", "%25").replace("+", "%2B"), StandardCharsets.UTF_8.name());
+    }
+
+    /** decodeURIComponent/encodeURIComponent spelling, without form '+' semantics. */
+    static String canonicalSegment(String raw) throws Exception {
+        String decoded = strictDecode(raw);
+        require(raw.equals(encodeComponent(decoded)));
+        String current = decoded;
+        for (int pass = 0; pass < 12; pass++) {
+            require(!current.isEmpty() && !current.equals(".") && !current.equals("..")
+                && !current.contains("/") && !current.contains("\\"));
+            for (int i = 0; i < current.length(); i++) require(current.charAt(i) >= 32
+                && !(current.charAt(i) >= 127 && current.charAt(i) <= 159));
+            String next = strictDecode(current);
+            if (next.equals(current)) return decoded;
+            require(pass < 11); current = next;
+        }
+        throw new IllegalArgumentException("Invalid URI segment");
+    }
+    private static boolean canonicalDataPath(String raw) throws Exception {
+        String[] segments = raw.split("/", -1);
+        for (int i = 1; i < segments.length; i++) canonicalSegment(segments[i]);
+        return true;
+    }
+    private static String strictDecode(String value) throws Exception {
+        byte[] source = value.getBytes(StandardCharsets.UTF_8);
+        ByteArrayOutputStream decoded = new ByteArrayOutputStream(source.length);
+        for (int i = 0; i < source.length; i++) {
+            if (source[i] == '%') {
+                require(i + 2 < source.length);
+                int a = Character.digit((char) source[++i], 16), b = Character.digit((char) source[++i], 16);
+                require(a >= 0 && b >= 0); decoded.write(a * 16 + b);
+            } else decoded.write(source[i]);
+        }
+        return StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(decoded.toByteArray())).toString();
+    }
+    private static String encodeComponent(String value) {
+        StringBuilder encoded = new StringBuilder();
+        for (byte raw : value.getBytes(StandardCharsets.UTF_8)) {
+            int c = raw & 255;
+            if (c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || "-_.!~*'()".indexOf(c) >= 0) encoded.append((char)c);
+            else encoded.append('%').append("0123456789ABCDEF".charAt(c >>> 4)).append("0123456789ABCDEF".charAt(c & 15));
+        }
+        return encoded.toString();
     }
 
     static boolean sessionPath(String value) {

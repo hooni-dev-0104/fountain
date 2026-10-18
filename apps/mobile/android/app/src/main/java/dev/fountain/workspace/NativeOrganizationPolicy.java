@@ -39,9 +39,22 @@ final class NativeOrganizationPolicy {
             || (path.equals("/api/organization/bootstrap") || path.equals("/api/organization/workspace-preview") || path.equals("/api/organization/workspace-accept")) && method.equals("POST");
         NativePolicy.require(allowed);
         String query = uri.getRawQuery();
-        if (method.equals("GET") && !session(value)) NativePolicy.require(query != null && query.matches("session_binding=[a-f0-9]{32}"));
+        if (method.equals("GET") && !session(value)) {
+            Map<String,String> values=query(value);
+            NativePolicy.require(values.containsKey("session_binding")&&values.get("session_binding").matches("[a-f0-9]{32}"));
+            if(path.equals("/api/organization/setup-eligibility") && values.size()==3) {
+                NativePolicy.require(values.get("workspace_id")!=null && values.get("workspace_id").matches("[A-Za-z0-9_-]{1,160}")
+                    && values.get("workspace_binding")!=null&&values.get("workspace_binding").matches("[a-f0-9]{32}"));
+            } else NativePolicy.require(values.size()==1);
+        }
         else NativePolicy.require(query == null);
         return value;
+    }
+    static Map<String,String> query(String value) {
+        Map<String,String> values=new HashMap<>(); String raw=URI.create(value).getRawQuery();
+        if(raw==null)return values;
+        for(String part:raw.split("&",-1)) {String[] pair=part.split("=",-1);NativePolicy.require(pair.length==2&&!values.containsKey(pair[0]));values.put(pair[0],pair[1]);}
+        return values;
     }
     static boolean session(String value) { return URI.create(value).getRawPath().equals("/api/organization/session"); }
     static boolean workspace(String value, String method) {
@@ -63,7 +76,7 @@ final class NativeOrganizationPolicy {
                 NativePolicy.require(line != null && line.length() <= 8192 && !NativePolicy.controls(line));
                 List<HttpCookie> cookies = HttpCookie.parse(line);
                 for (HttpCookie cookie : cookies) {
-                    NativePolicy.require(!cookie.getName().equals("fountain_session"));
+                    NativePolicy.require(!cookie.getName().equals("fountain_session") && !cookie.getName().equals("fountain_account_session"));
                     if (!cookie.getName().equals(COOKIE)) continue;
                     NativePolicy.require(!seen && cookies.size() == 1); seen = true;
                     String[] parts = line.split(";", -1);

@@ -133,6 +133,9 @@ public final class NativePolicyFixture {
         trust.observe(cloud,1,2,3,web);
         for(String route:Arrays.asList("/forms/a","/sites/a_-9","/forms/"+String.join("",Collections.nCopies(160,"a"))))equal(trust.allows(web+route,cloud,1,2,3,true),true);
         for(String target:Arrays.asList(other+"/forms/a",web+":443/forms/a",web+"/forms/a?x=1",web+"/sites/a#x",web+"/forms/%61",web+"/forms/../a",web+"/forms/a/extra",web+"/api/session",web+"/forms/",web+"/forms/"+String.join("",Collections.nCopies(161,"a")),"https://user@family.example/forms/a","https://FAMILY.example/forms/a",web+"/sites/a%250a"))equal(trust.allows(target,cloud,1,2,3,true),false);
+        for(String route:Arrays.asList("/#w/workspace-A/form/public_1","/#w/workspace-A/site/public_1"))equal(trust.allows(web+route,cloud,1,2,3,true),true);
+        for(String route:Arrays.asList("#w/workspace-A/site/a","/?query=1#w/workspace-A/site/a","/other#w/workspace-A/site/a","/#%77/workspace-A/site/a","/#w/%61/site/a","/#w/workspace-A/page/a","/#w/workspace-A/site/%61","/#w/workspace-A/site/a%2Fb","/#w/workspace-A/site/%252F","/#w/workspace-A/site/%0a","/#w/workspace-A/site/%2e%2e","/#w/workspace-A/site/a/extra","/#w/workspace-A/site/a?query=1","/#w/workspace-A/site/한글","/#w/workspace-A/site/%ED%95%9C%EA%B8%80"))equal(trust.allows(web+route,cloud,1,2,3,true),false);
+        equal(trust.allows(other+"/#w/workspace-A/site/a",cloud,1,2,3,true),false);
         equal(trust.allows(web+"/forms/a",cloud,2,2,3,true),false);
         equal(trust.allows(web+"/forms/a",cloud,1,3,3,true),false);
         equal(trust.allows(web+"/forms/a",cloud,1,2,4,true),false);
@@ -157,7 +160,7 @@ public final class NativePolicyFixture {
         equal(NativePolicy.origin("https://127.0.0.1:8443"), "https://127.0.0.1:8443");
         equal(NativePolicy.origin("https://[::1]:8443/"), "https://[::1]:8443");
         for (String origin : Arrays.asList("http://example.com", "https://user:pass@example.com", "https://example.com/x", "https://example.com?x", "https://example.com#x", "https://example.com:0", "https://example.com:65536", "https://example.com\\evil", "https://example.com\n")) rejects(() -> NativePolicy.origin(origin));
-        for (String path : Arrays.asList("/api/session", "/api/pages/a?title=hello+world", "/api/pages?q=100%25", "/api/pages?q=%23tag", "/api/pages/%ED%95%9C")) equal(NativePolicy.path(path, false), path);
+        for (String path : Arrays.asList("/api/session", "/api/pages/a?title=hello+world", "/api/pages?q=100%25", "/api/pages?q=%23tag", "/api/pages/%ED%95%9C", "/api/pages/%EA%B0%80%EC%A1%B1%20%E6%96%87%E6%9B%B8%3F", "/api/pages/tag%23id?cursor=literal%25", "/api/pages/a%253Fb")) equal(NativePolicy.path(path, false), path);
         for (String path : Arrays.asList("https://evil/api/x", "//evil/api/x", "/other", "/api/../x", "/api/./x", "/api/%2e%2e/x", "/api/%252e%252e/x", "/api/%25252e%25252e/x", "/api/x\\..\\y", "/api/x%255c..%255cy", "/api/x%250a", "/api/x#fragment", "/api/x%3f/%252e%252e/y", "/api/x?y=%250d%250a", "/api/x?y=%255c")) rejects(() -> NativePolicy.path(path, false));
         equal(NativePolicy.path("/api/backup", true), "/api/backup");
         equal(NativePolicy.path("/api/attachments/attachment_1/download", true), "/api/attachments/attachment_1/download");

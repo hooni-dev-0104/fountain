@@ -25,9 +25,131 @@ enum FountainOutboxError: Error, Equatable {
 }
 
 extension FountainOutbox {
+    private struct MirrorLocation {
+        let kind: String, ref: String
+        var value: [String: String] { ["kind": kind, "ref": ref] }
+    }
+    private func mirrorReader() throws -> String? {
+        guard let value = try control("mirrorBaseReader") else {
+            guard try integer("SELECT count(*) FROM mirror_locations WHERE kind='base'") == 0 else { throw FountainOutboxError.storage }
+            return nil
+        }
+        guard let reader = value as? String,
+              try integer("SELECT count(*) FROM mirror_locations WHERE profile_id=? AND kind='base' AND pair_ref='base'", [reader]) == 1 else { throw FountainOutboxError.storage }
+        return reader
+    }
+    private func mirrorLocation(_ profile: String, context: String, actor: String) throws -> MirrorLocation? {
+        guard let row = try rows("SELECT kind,pair_ref,context_ref,actor FROM mirror_locations WHERE profile_id=?", [profile]).first else { return nil }
+        guard let kind = row[0] as? String, let ref = row[1] as? String, let stored = row[2] as? String, let storedActor = row[3] as? String,
+              stored == context, storedActor == actor else { throw FountainOutboxError.access }
+        guard kind == "base" && ref == "base" || kind == "profile" && ref.range(of: "^v1-[a-f0-9]{64}$", options: .regularExpression) != nil else { throw FountainOutboxError.storage }
+        return MirrorLocation(kind: kind, ref: ref)
+    }
+    private func mirrorRevision() throws -> Int { try control("mirrorRevision").map(checkedInteger) ?? 0 }
+    private func bumpMirrorRevision() throws {
+        let revision = try mirrorRevision(); guard revision < 9_007_199_254_740_991 else { throw FountainOutboxError.storage }
+        try setControl("mirrorRevision", revision + 1)
+    }
+    private func mirrorToken() -> String { "v1-" + Self.hash(Data((UUID().uuidString + UUID().uuidString).utf8)) }
+    private func allocateMirror(_ profile: String, context: String, actor: String) throws -> MirrorLocation {
+        for _ in 0..<3 {
+            let ref = mirrorToken()
+            if try integer("SELECT count(*) FROM mirror_locations WHERE pair_ref=?", [ref]) == 0 {
+                try execute("INSERT INTO mirror_locations(profile_id,context_ref,actor,kind,pair_ref) VALUES(?,?,?,'profile',?)", [profile, context, actor, ref])
+                try bumpMirrorRevision()
+                return MirrorLocation(kind: "profile", ref: ref)
+            }
+        }
+        throw FountainOutboxError.storage
+    }
+    // Locations are private discovery metadata. They never acknowledge IDB
+    // bytes, change a receipt, grant access or advance the business epoch/head.
+    func mirror(_ input: [String: Any]) throws -> [String: Any] {
+        let required = Set(["version", "generation", "action", "expectedProfileId", "expectedEpoch"])
+        guard try checkedInteger(input["version"]) == 1, let action = input["action"] as? String,
+              ["resolve", "confirm-base", "separate", "catalog"].contains(action),
+              required.isSubset(of: Set(input.keys)), Set(input.keys).isSubset(of: action == "catalog" ? required.union(["limit", "cursor"]) : required),
+              let expected = input["expectedProfileId"] as? String else { throw FountainOutboxError.invalid }
+        let generation = try checkedInteger(input["generation"]), expectedEpoch = try checkedInteger(input["expectedEpoch"])
+        return try transaction {
+            let profile = try self.verifiedProfile(), epoch = try self.proofEpoch(), grant = try self.identity()
+            guard profile == expected, epoch == expectedEpoch, let owner = self.owner, let auth = self.authEpoch, let lease = self.lease else { throw FountainOutboxError.stale }
+            try self.checkLease(lease)
+            guard let parent = try self.control("account:" + profile) as? String, FountainAccountPolicy.validBinding(parent),
+                  let reference = grant["sessionRef"] as? String,
+                  let seal = try self.control("sealedAccount:" + profile) as? [String: Any], seal["reference"] as? String == reference, seal["parent"] as? String == parent,
+                  let session = seal["session"] as? [String: Any], session["account_binding"] as? String == parent else { throw FountainOutboxError.access }
+            let parts = try self.profileParts(profile)
+            guard session["workspace_id"] as? String == parts[1].removingPercentEncoding,
+                  (session["member"] as? [String: Any])?["id"] as? String == parts[2].removingPercentEncoding,
+                  session["cache_binding"] as? String == parts[3].removingPercentEncoding else { throw FountainOutboxError.access }
+            let actor = parts.prefix(3).joined(separator: "|"), context = Self.hash(try self.json(["parent": parent, "sessionRef": reference]))
+            var location = try self.mirrorLocation(profile, context: context, actor: actor)
+            var reader = try self.mirrorReader()
+            if action == "confirm-base" {
+                let offline = grant["offline"] as? Bool == true
+                guard try self.accessIssues(profile).issues.isEmpty,
+                      offline ? (try self.control("accountOfflineDenied:" + profile) == nil) : (try self.accountCanTransmit()) else { throw FountainOutboxError.access }
+                if let location { guard location.kind == "base", reader == profile else { throw FountainOutboxError.conflict } }
+                else {
+                    guard reader == nil else { throw FountainOutboxError.conflict }
+                    try self.execute("INSERT INTO mirror_locations(profile_id,context_ref,actor,kind,pair_ref) VALUES(?,?,?,'base','base')", [profile, context, actor])
+                    try self.setControl("mirrorBaseReader", profile); try self.bumpMirrorRevision()
+                    reader = profile; location = MirrorLocation(kind: "base", ref: "base")
+                }
+            } else if action == "separate" {
+                if let location { guard location.kind == "profile" else { throw FountainOutboxError.conflict } }
+                else { guard reader == nil else { throw FountainOutboxError.conflict }; location = try self.allocateMirror(profile, context: context, actor: actor) }
+            } else if location == nil {
+                if reader == nil { location = MirrorLocation(kind: "base", ref: "base") }
+                else { location = try self.allocateMirror(profile, context: context, actor: actor) }
+            }
+            guard let location else { throw FountainOutboxError.storage }
+            if location.kind == "base", let reader { guard reader == profile else { throw FountainOutboxError.storage } }
+            let disposition = location.kind == "base" ? (reader == nil ? "candidate" : "current") : (reader == nil ? "unresolved" : "preserved")
+            var result: [String: Any] = ["generation": generation, "version": 1, "profileId": profile, "epoch": epoch, "pair": location.value, "baseDisposition": disposition]
+            if action == "catalog" {
+                let limit = try input["limit"].map(self.checkedInteger) ?? 20
+                guard (1...100).contains(limit), let deadline = grant["validUntil"] as? Double else { throw FountainOutboxError.invalid }
+                let revision = try self.mirrorRevision(), now = Date().timeIntervalSince1970 * 1000
+                var prefixOffset = 0, lastRef = ""
+                if let supplied = input["cursor"], !(supplied is NSNull) {
+                    guard let token = supplied as? String, let cursor = self.mirrorCursors[token], cursor.profile == profile, cursor.context == context, cursor.epoch == epoch,
+                          cursor.revision == revision, cursor.owner == owner, cursor.auth == auth, cursor.lease == lease, cursor.deadline > now else { throw FountainOutboxError.stale }
+                    prefixOffset = cursor.prefixOffset; lastRef = cursor.lastRef
+                }
+                var prefix: [[String: Any]] = [["pair": location.value, "relation": "current", "unresolved": location.kind == "base"]]
+                if location.kind != "base" { prefix.append(["pair": ["kind": "base", "ref": "base"], "relation": "preserved", "unresolved": true]) }
+                var entries: [[String: Any]] = Array(prefix.dropFirst(prefixOffset).prefix(limit + 1))
+                if entries.count <= limit {
+                    let older = try self.rows("SELECT pair_ref FROM mirror_locations WHERE actor=? AND kind='profile' AND pair_ref>? AND pair_ref<>? ORDER BY pair_ref LIMIT ?", [actor, lastRef, location.ref, limit + 1 - entries.count])
+                    for row in older {
+                        guard let ref = row[0] as? String, ref.range(of: "^v1-[a-f0-9]{64}$", options: .regularExpression) != nil else { throw FountainOutboxError.storage }
+                        entries.append(["pair": ["kind": "profile", "ref": ref], "relation": "recovery", "unresolved": true])
+                    }
+                }
+                let more = entries.count > limit
+                result["entries"] = Array(entries.prefix(limit)); result["next"] = NSNull()
+                if more {
+                    self.mirrorCursors = self.mirrorCursors.filter { $0.value.deadline > now }
+                    if self.mirrorCursors.count >= 64, let oldest = self.mirrorCursors.min(by: { $0.value.deadline < $1.value.deadline })?.key { self.mirrorCursors.removeValue(forKey: oldest) }
+                    let token = self.mirrorToken()
+                    let delivered = Array(entries.prefix(limit))
+                    let nextPrefix = min(prefix.count, prefixOffset + min(limit, prefix.count - prefixOffset))
+                    let nextRef = delivered.last(where: { $0["relation"] as? String == "recovery" }).flatMap { ($0["pair"] as? [String: String])?["ref"] } ?? lastRef
+                    self.mirrorCursors[token] = MirrorCursor(profile: profile, context: context, epoch: epoch, revision: revision, owner: owner, auth: auth, lease: lease, deadline: min(deadline, now + 300000), prefixOffset: nextPrefix, lastRef: nextRef)
+                    result["next"] = token
+                }
+            }
+            return result
+        }
+    }
+}
+
+extension FountainOutbox {
     // The adapter checks the current workspace epoch before calling this codec.
     // Retain every engine field, including unknown fields its exact DTO rejects.
-    static func reconciliationBridgePayload(_ options: [AnyHashable: Any]) throws -> [String: Any] {
+    static func scopedBridgePayload(_ options: [AnyHashable: Any]) throws -> [String: Any] {
         var input: [String: Any] = [:]
         for (key, value) in options {
             guard let key = key as? String else { throw FountainOutboxError.invalid }
@@ -1544,6 +1666,8 @@ final class FountainOutbox {
     // Kept as one literal so portable SQLite tests exercise this actual schema.
     static let schema = """
     CREATE TABLE IF NOT EXISTS control (id TEXT PRIMARY KEY NOT NULL,value BLOB NOT NULL);
+    CREATE TABLE IF NOT EXISTS mirror_locations (profile_id TEXT PRIMARY KEY NOT NULL,context_ref TEXT NOT NULL,actor TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('base','profile')),pair_ref TEXT NOT NULL UNIQUE);
+    CREATE INDEX IF NOT EXISTS mirror_actor ON mirror_locations(actor,pair_ref);
     CREATE TABLE IF NOT EXISTS records (bucket TEXT NOT NULL,key TEXT NOT NULL,profile_id TEXT NOT NULL,resource_key TEXT,value BLOB NOT NULL,PRIMARY KEY(bucket,key));
     CREATE INDEX IF NOT EXISTS records_profile ON records(profile_id,bucket,key);
     CREATE INDEX IF NOT EXISTS records_resource ON records(resource_key);
@@ -1556,6 +1680,10 @@ final class FountainOutbox {
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
     private let origin: String
     private var database: OpaquePointer?
+    private struct MirrorCursor {
+        let profile: String, context: String, epoch: Int, revision: Int, owner: String, auth: Int, lease: String, deadline: Double, prefixOffset: Int, lastRef: String
+    }
+    private var mirrorCursors: [String: MirrorCursor] = [:]
     private var poisoned = false
     private var owner: String?
     private var authEpoch: Int?
@@ -1639,7 +1767,7 @@ final class FountainOutbox {
     }
 
     deinit { close() }
-    func close() { cancelReconciliation(); if let database = database { sqlite3_close_v2(database) }; database = nil }
+    func close() { mirrorCursors.removeAll(); cancelReconciliation(); if let database = database { sqlite3_close_v2(database) }; database = nil }
     private static func privateItem(_ url: URL, directory: Bool) throws {
         let info = try FileManager.default.attributesOfItem(atPath: url.path)
         guard info[.type] as? FileAttributeType == (directory ? .typeDirectory : .typeRegular),

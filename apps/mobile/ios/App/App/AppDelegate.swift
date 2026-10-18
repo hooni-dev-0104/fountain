@@ -72,7 +72,7 @@ final class FountainBridgeGate: NSObject, WKScriptMessageHandler {
               let body = message.body as? [String: Any], body["type"] as? String == "message",
               body["pluginId"] as? String == "FountainNative",
               let method = body["methodName"] as? String,
-              ["getConfiguration", "configure", "request", "cancel", "organizationRequest", "organizationCancel", "accountRequest", "accountCancel", "activateWorkspace", "parkWorkspace", "resumeWorkspaceOffline", "download", "saveData", "outboxOpen", "outboxReconcile", "stageDelta", "commitDelta", "readPage", "recoveryInventory", "recoveryExport"].contains(method) else { return }
+              ["getConfiguration", "configure", "request", "cancel", "organizationRequest", "organizationCancel", "accountRequest", "accountCancel", "activateWorkspace", "parkWorkspace", "resumeWorkspaceOffline", "download", "saveData", "outboxOpen", "outboxMirror", "outboxReconcile", "stageDelta", "commitDelta", "readPage", "recoveryInventory", "recoveryExport"].contains(method) else { return }
         delegate?.userContentController(userContentController, didReceive: message)
     }
 }
@@ -339,7 +339,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     private static func qaOutboxRecord(_ call: CAPPluginCall, _ event: String) {
         guard ProcessInfo.processInfo.environment["FOUNTAIN_QA"] == "1", (ProcessInfo.processInfo.environment["FOUNTAIN_OUTBOX_QA"] == "1" || ProcessInfo.processInfo.environment["FOUNTAIN_DEFAULT_OUTBOX_QA"] == "1"),
               (ProcessInfo.processInfo.environment["SIMULATOR_DEVICE_NAME"] ?? "").hasPrefix("Fountain QA"),
-              let method = call.methodName, ["outboxOpen", "outboxReconcile", "stageDelta", "commitDelta", "readPage"].contains(method) else { return }
+              let method = call.methodName, ["outboxOpen", "outboxMirror", "outboxReconcile", "stageDelta", "commitDelta", "readPage"].contains(method) else { return }
         var label = method
         if method == "outboxReconcile" { let phase = call.getString("phase") ?? "invalid"; label += "." + (["prepare", "commit", "cancel", "settle"].contains(phase) ? phase : "invalid") }
         let allowed = ["start", "actionDone", "deliveryScheduled", "delivered", "deliveryFailed", "NATIVE_OUTBOX_INVALID", "NATIVE_OUTBOX_LIMIT", "NATIVE_OUTBOX_STALE", "NATIVE_OUTBOX_HEAD", "NATIVE_OUTBOX_CONFLICT", "NATIVE_OUTBOX_BLOCKED", "NATIVE_STORAGE", "OUTBOX_ACCESS_REQUIRED", "OUTBOX_RECONCILE_RETRY", "OUTBOX_CONFIRMATION_REQUIRED", "otherError"]
@@ -370,7 +370,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
 #endif
     let identifier = "FountainNative"
     let jsName = "FountainNative"
-    let pluginMethods: [CAPPluginMethod] = ["getConfiguration", "configure", "request", "cancel", "organizationRequest", "organizationCancel", "accountRequest", "accountCancel", "activateWorkspace", "parkWorkspace", "resumeWorkspaceOffline", "download", "saveData", "outboxOpen", "outboxReconcile", "stageDelta", "commitDelta", "readPage", "recoveryInventory", "recoveryExport"].map {
+    let pluginMethods: [CAPPluginMethod] = ["getConfiguration", "configure", "request", "cancel", "organizationRequest", "organizationCancel", "accountRequest", "accountCancel", "activateWorkspace", "parkWorkspace", "resumeWorkspaceOffline", "download", "saveData", "outboxOpen", "outboxMirror", "outboxReconcile", "stageDelta", "commitDelta", "readPage", "recoveryInventory", "recoveryExport"].map {
         CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
     }
     private let queue = DispatchQueue(label: "dev.fountain.native-state")
@@ -558,7 +558,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         }
         return ["origin": origin as Any? ?? NSNull(), "generation": generation,
                 "outboxVersion": 1, "outboxEnabled": ACTIVE_OUTBOX_ENABLED, "recoveryVersion": 1, "recoveryEnabled": true,
-                "workspaceVersion": 1, "workspaceEpoch": workspaceEpoch, "workspace": lastWorkspace?.publicValue as Any? ?? NSNull(), "retainedWorkspaceScopes": retained]
+                "workspaceVersion": 1, "mirrorVersion": 1, "workspaceEpoch": workspaceEpoch, "workspace": lastWorkspace?.publicValue as Any? ?? NSNull(), "retainedWorkspaceScopes": retained]
     }
 
     // All callers hold ownership and execute on queue; the default transport
@@ -619,7 +619,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         return store
     }
 
-    private func outboxCall(_ call: CAPPluginCall, _ action: @escaping (FountainOutbox) throws -> [String: Any]) {
+    private func outboxCall(_ call: CAPPluginCall, requiresWorkspace: Bool = false, _ action: @escaping (FountainOutbox) throws -> [String: Any]) {
         #if DEBUG
         Self.qaOutboxRecord(call, "start")
         #endif
@@ -628,6 +628,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         fromMainFrame(call) {
             do {
                 guard try self.integer(call, "generation") == self.generation else { throw FountainOutboxError.stale }
+                if requiresWorkspace { guard self.workspace != nil else { throw FountainOutboxError.blocked } }
                 if self.workspace != nil { guard try self.integer(call, "workspaceEpoch") == self.workspaceEpoch else { throw FountainOutboxError.stale } }
                 let store = try self.validatedOutbox()
                 if self.recoveryMode {
@@ -637,7 +638,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                           self.recoveryGrantAuth == self.auth, self.recoveryGrantGeneration == self.generation,
                           try store.matchesReconciliationAuthority(workspace: authority.workspace, member: authority.member, binding: authority.binding, reference: authority.reference) else { throw FountainOutboxError.access }
                 }
-                if call.methodName == "stageDelta" || call.methodName == "commitDelta" || call.methodName == "outboxReconcile" {
+                if call.methodName == "stageDelta" || call.methodName == "commitDelta" || call.methodName == "outboxReconcile" || call.methodName == "outboxMirror" {
                     guard self.exportID == nil else { throw FountainOutboxError.stale }
                     // DELETE-journal writers must never wait for this same
                     // process's inventory snapshot. Keep authority/latch; only
@@ -714,9 +715,14 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     @objc func outboxOpen(_ call: CAPPluginCall) {
         outboxCall(call) { try $0.open() }
     }
+    @objc func outboxMirror(_ call: CAPPluginCall) {
+        outboxCall(call, requiresWorkspace: true) { store in
+            try store.mirror(FountainOutbox.scopedBridgePayload(call.options))
+        }
+    }
     @objc func outboxReconcile(_ call: CAPPluginCall) {
         outboxCall(call) { store in
-            let input = try FountainOutbox.reconciliationBridgePayload(call.options)
+            let input = try FountainOutbox.scopedBridgePayload(call.options)
             let result = try store.reconcile(input, admissionWatermark: self.httpAdmissionSequence,
                                              sessionRef: self.outboxReference(try self.currentCookie()))
             if self.recoveryMode, input["phase"] as? String == "prepare" {

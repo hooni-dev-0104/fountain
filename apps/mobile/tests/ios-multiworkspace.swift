@@ -45,13 +45,13 @@ enum IOSMultiworkspaceFixture {
         var wire: [AnyHashable: Any] = [:]
         for (key, value) in input { wire[key] = value }
         wire["workspaceEpoch"] = 7
-        return try store.reconcile(FountainOutbox.reconciliationBridgePayload(wire), admissionWatermark: admissionWatermark, sessionRef: sessionRef)
+        return try store.reconcile(FountainOutbox.scopedBridgePayload(wire), admissionWatermark: admissionWatermark, sessionRef: sessionRef)
     }
-    static func reconcile(_ store: FountainOutbox, _ ws: String, _ binding: String) throws {
+    static func reconcile(_ store: FountainOutbox, _ ws: String, _ binding: String, sessionRef: String = reference) throws {
         try store.ensureOwner("multiworkspace", epoch: 7)
         let opened = try store.open(), lease = opened["lease"] as! String
         var sequence = 0
-        var state = try scopedReconcile(store, ["generation": 1, "phase": "prepare", "lease": lease, "baseHead": opened["head"]!, "proofEpoch": opened["proofEpoch"]!, "mode": "current"], admissionWatermark: sequence, sessionRef: reference)
+        var state = try scopedReconcile(store, ["generation": 1, "phase": "prepare", "lease": lease, "baseHead": opened["head"]!, "proofEpoch": opened["proofEpoch"]!, "mode": "current"], admissionWatermark: sequence, sessionRef: sessionRef)
         let plan = state["planId"] as! String
         let page: [String: Any] = ["id": "page", "access_level": 3, "locked": false, "archived": false, "revision": 1]
         let workspace: [String: Any] = ["workspace_id": ws, "current_member_id": "member-" + ws, "session_binding": binding, "access_revision": 1, "data_revision": 1, "pages": [page], "databases": [], "teamspaces": [["id": "general", "access_level": 4]]]
@@ -61,14 +61,14 @@ enum IOSMultiworkspaceFixture {
             for needed in state["needed"] as! [[String: String]] {
                 sequence += 1
                 let path = needed["kind"] == "workspace" ? "/api/workspace" : "/api/pages/page/collaboration"
-                let admission = try store.admitReconcile(path: path, method: "GET", sessionRef: reference, sequence: sequence)
+                let admission = try store.admitReconcile(path: path, method: "GET", sessionRef: sessionRef, sequence: sequence)
                 try check(admission != nil, "Missing canonical admission")
-                try store.observeReconcileResource(admission: admission, path: path, method: "GET", status: 200, data: bytes(needed["kind"] == "workspace" ? workspace : snapshot), sessionRef: reference)
+                try store.observeReconcileResource(admission: admission, path: path, method: "GET", status: 200, data: bytes(needed["kind"] == "workspace" ? workspace : snapshot), sessionRef: sessionRef)
             }
-            state = try scopedReconcile(store, ["generation": 1, "phase": "prepare", "lease": lease, "planId": plan], admissionWatermark: sequence, sessionRef: reference)
+            state = try scopedReconcile(store, ["generation": 1, "phase": "prepare", "lease": lease, "planId": plan], admissionWatermark: sequence, sessionRef: sessionRef)
         }
         try check(state["state"] as? String == "ready" && state["requiresConfirmation"] as? Bool == false, "Same-incarnation resume unexpectedly needs adoption")
-        let result = try scopedReconcile(store, ["generation": 1, "phase": "commit", "lease": lease, "baseHead": state["baseHead"]!, "proofEpoch": state["proofEpoch"]!, "planId": plan, "checksum": state["checksum"]!, "confirm": false], admissionWatermark: sequence, sessionRef: reference)
+        let result = try scopedReconcile(store, ["generation": 1, "phase": "commit", "lease": lease, "baseHead": state["baseHead"]!, "proofEpoch": state["proofEpoch"]!, "planId": plan, "checksum": state["checksum"]!, "confirm": false], admissionWatermark: sequence, sessionRef: sessionRef)
         try check(result["state"] as? String == "committed", "Canonical reconciliation did not commit")
         try check(try store.open()["resourceAccess"] as? String == "ready", "Fresh canonical scope is not ready")
         try check(try store.accountCanTransmit(), "Canonical commit failed to open native mutation admission")
@@ -108,6 +108,135 @@ enum IOSMultiworkspaceFixture {
         sqlite3_bind_text(statement, 2, "parked:" + profile, -1, transient)
         guard sqlite3_step(statement) == SQLITE_DONE else { throw FountainOutboxError.storage }
     }
+    static func writeFixtureControl(_ file: URL, _ key: String, _ value: Any) throws {
+        var db: OpaquePointer?, statement: OpaquePointer?
+        guard sqlite3_open_v2(file.path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK else { throw FountainOutboxError.storage }
+        defer { sqlite3_finalize(statement); sqlite3_close(db) }
+        guard sqlite3_prepare_v2(db, "UPDATE control SET value=? WHERE id=?", -1, &statement, nil) == SQLITE_OK else { throw FountainOutboxError.storage }
+        let data = try bytes(value), transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        _ = data.withUnsafeBytes { sqlite3_bind_blob(statement, 1, $0.baseAddress, Int32(data.count), transient) }
+        sqlite3_bind_text(statement, 2, key, -1, transient)
+        guard sqlite3_step(statement) == SQLITE_DONE else { throw FountainOutboxError.storage }
+    }
+    static func executeFixtureSQL(_ file: URL, _ sql: String) throws {
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(file.path, &db, SQLITE_OPEN_READWRITE, nil) == SQLITE_OK else { throw FountainOutboxError.storage }
+        defer { sqlite3_close(db) }
+        guard sqlite3_exec(db, sql, nil, nil, nil) == SQLITE_OK else { throw FountainOutboxError.storage }
+    }
+    static func mirrors(_ directory: URL) throws {
+        let root = directory.appendingPathComponent("mirrors", isDirectory: true)
+        var store = try FountainOutbox(origin: origin, testingDirectory: root)
+        defer { store.close() }
+        let file = root.appendingPathComponent(FountainOutbox.hash(Data(origin.utf8)) + ".sqlite")
+        let a = session("A", bindingA), b = session("B", bindingB)
+        func invoke(_ action: String, _ extra: [String: Any] = [:]) throws -> [String: Any] {
+            let opened = try store.open()
+            var input: [String: Any] = ["version": 1, "generation": 1, "action": action, "expectedProfileId": opened["profileId"]!, "expectedEpoch": opened["proofEpoch"]!]
+            for (key, value) in extra { input[key] = value }
+            return try store.mirror(input)
+        }
+        func pair(_ value: [String: Any]) -> [String: String] { value["pair"] as! [String: String] }
+        try store.activateAccount(a, sessionRef: reference, parentBinding: parent); try store.ensureOwner("mirror-fixture", epoch: 1)
+        let beforeCandidate = try store.open(), candidate = try invoke("resolve")
+        try check(pair(candidate) == ["kind": "base", "ref": "base"] && candidate["baseDisposition"] as? String == "candidate", "Initial mirror did not resolve BASE candidate")
+        try check(Set(candidate.keys) == Set(["generation", "version", "profileId", "epoch", "pair", "baseDisposition"]), "Mirror reply leaked unspecified authority fields")
+        try check(try bytes(beforeCandidate) == bytes(store.open()), "Location resolve mutated private business state")
+        try denied { _ = try invoke("confirm-base") }
+        for extra: [String: Any] in [["version": true], ["expectedEpoch": -1], ["expectedEpoch": 999999], ["expectedProfileId": "forged"], ["ref": "base"], ["parent": parent], ["owner": "forged"], ["limit": 1]] { try denied { _ = try invoke("resolve", extra) } }
+        let separated = try invoke("separate"), aRef = pair(separated)["ref"]!
+        try check(aRef.range(of: "^v1-[a-f0-9]{64}$", options: .regularExpression) != nil && separated["baseDisposition"] as? String == "unresolved", "Explicit separate did not preserve unresolved BASE")
+        try check(pair(try invoke("separate"))["ref"] == aRef, "Separate callback-loss retry allocated a new location")
+        try denied { _ = try invoke("confirm-base") }
+        let firstCatalog = try invoke("catalog", ["limit": 1]), firstEntries = firstCatalog["entries"] as! [[String: Any]]
+        try check(firstEntries.count == 1 && firstEntries[0]["unresolved"] as? Bool == false && firstEntries[0]["relation"] as? String == "current", "Current profile location catalog is malformed")
+        let secondCatalog = try invoke("catalog", ["limit": 1, "cursor": firstCatalog["next"]!]), secondEntries = secondCatalog["entries"] as! [[String: Any]]
+        try check(secondEntries.count == 1 && secondEntries[0]["unresolved"] as? Bool == true && (secondEntries[0]["pair"] as? [String: String])?["ref"] == "base", "Unresolved BASE disappeared after separate")
+        try store.parkAccount(); try store.activateAccount(b, sessionRef: reference, parentBinding: parent); try store.ensureOwner("mirror-fixture", epoch: 2)
+        try check(try invoke("resolve")["baseDisposition"] as? String == "candidate", "Failed A candidate hid rightful B BASE originals")
+        try reconcile(store, "B", bindingB)
+        let beforeConfirm = try store.open(), bBase = try invoke("confirm-base")
+        try check(pair(bBase)["ref"] == "base" && bBase["baseDisposition"] as? String == "current", "Canonical current B did not pin BASE")
+        try check(try bytes(beforeConfirm) == bytes(store.open()), "BASE confirmation changed lease/head/proof/TTL/readiness")
+        try check(pair(try invoke("confirm-base"))["ref"] == "base", "Confirmed BASE retry was not idempotent")
+        try denied { _ = try invoke("separate") }
+        try denied { _ = try invoke("confirm-base", ["expectedEpoch": 0]) }
+        try store.parkAccount(); try store.activateAccount(a, sessionRef: reference, parentBinding: parent); try store.ensureOwner("mirror-fixture", epoch: 3)
+        try check(pair(try invoke("resolve"))["ref"] == aRef && (try invoke("resolve"))["baseDisposition"] as? String == "preserved", "A location was reassigned after B BASE confirmation")
+        store.close(); store = try FountainOutbox(origin: origin, testingDirectory: root); try store.ensureOwner("cold-mirror", epoch: 4)
+        try check(pair(try invoke("resolve"))["ref"] == aRef, "Cold reopen lost immutable A pair")
+        let a3 = String(repeating: "3", count: 32), parent2 = String(repeating: "b", count: 32)
+        var reincarnated = session("A", a3); reincarnated["account_binding"] = parent2
+        try store.suspendAccounts(); try store.activateAccount(reincarnated, sessionRef: "new-private-cookie-reference", parentBinding: parent2); try store.ensureOwner("new-parent", epoch: 5)
+        let current = try invoke("resolve"), newRef = pair(current)["ref"]!
+        try check(newRef != aRef && current["baseDisposition"] as? String == "preserved", "New parent/child adopted old mirror")
+        let catalog = try invoke("catalog"), entries = catalog["entries"] as! [[String: Any]], encodedCatalog = String(data: try bytes(catalog), encoding: .utf8)!
+        try check(entries.count == 3 && entries[0]["relation"] as? String == "current" && entries[1]["relation"] as? String == "preserved" && entries[2]["relation"] as? String == "recovery", "Same-actor old raw-journal location is undiscoverable")
+        try check((entries[2]["pair"] as? [String: String])?["ref"] == aRef && entries[2]["unresolved"] as? Bool == true, "Old pair recovery metadata changed provenance")
+        try check(!encodedCatalog.contains(reference) && !encodedCatalog.contains("new-private-cookie-reference") && !encodedCatalog.contains("member-B") && !encodedCatalog.contains(origin + "|A|member-A|" + bindingA), "Catalog exposed another actor/profile/private reference")
+        let page = try invoke("catalog", ["limit": 1]), cursor = page["next"] as! String
+        try denied { _ = try invoke("catalog", ["limit": 0]) }; try denied { _ = try invoke("catalog", ["limit": 101]) }
+        try denied { _ = try invoke("catalog", ["cursor": "v1-" + String(repeating: "0", count: 64)]) }
+        let currentProfile = (try store.open())["profileId"] as! String
+        let identity = try readControl(file, "identity") as! [String: Any], seal = try readControl(file, "sealedAccount:" + currentProfile) as! [String: Any]
+        var changedIdentity = identity, changedSeal = seal
+        changedIdentity["sessionRef"] = "forced-different-private-incarnation"; changedSeal["reference"] = "forced-different-private-incarnation"
+        try writeFixtureControl(file, "identity", changedIdentity); try writeFixtureControl(file, "sealedAccount:" + currentProfile, changedSeal)
+        try denied { _ = try invoke("resolve") }
+        try writeFixtureControl(file, "identity", identity); try writeFixtureControl(file, "sealedAccount:" + currentProfile, seal)
+        try check(pair(try invoke("resolve"))["ref"] == newRef, "Forced private-incarnation collision destroyed old location")
+        try reconcile(store, "A", a3, sessionRef: "new-private-cookie-reference")
+        try denied { _ = try invoke("catalog", ["cursor": cursor]) }
+        try store.parkAccount()
+        var newest = session("A", String(repeating: "5", count: 32)); newest["account_binding"] = parent2
+        try store.activateAccount(newest, sessionRef: "new-private-cookie-reference", parentBinding: parent2); try store.ensureOwner("seek-mirror", epoch: 8)
+        let newestRef = pair(try invoke("resolve"))["ref"]!
+        var pageRefs: [String] = [], seek: Any? = nil
+        repeat {
+            var extra: [String: Any] = ["limit": 1]; if let seek { extra["cursor"] = seek }
+            let result = try invoke("catalog", extra), rows = result["entries"] as! [[String: Any]]
+            try check(rows.count == 1, "Bounded catalog seek returned incorrect page size")
+            pageRefs.append((rows[0]["pair"] as! [String: String])["ref"]!)
+            seek = result["next"] is NSNull ? nil : result["next"]
+        } while seek != nil && pageRefs.count < 10
+        try check(pageRefs.count == 4 && pageRefs[0] == newestRef && pageRefs[1] == "base" && Set(pageRefs.suffix(2)) == Set([aRef, newRef]), "Indexed catalog seek skipped or repeated a same-actor recovery location")
+        let currentCursor = try invoke("catalog", ["limit": 1])["next"] as! String
+        try store.parkAccount()
+        var c = session("C", String(repeating: "4", count: 32)); c["account_binding"] = parent2
+        try store.activateAccount(c, sessionRef: "new-private-cookie-reference", parentBinding: parent2); try store.ensureOwner("cross-actor", epoch: 8)
+        try denied { _ = try invoke("catalog", ["cursor": currentCursor]) }
+        let otherActorCatalog = String(data: try bytes(invoke("catalog")), encoding: .utf8)!
+        try check(!otherActorCatalog.contains(aRef) && !otherActorCatalog.contains(newRef), "Catalog exposed an unrelated native actor location")
+        let faultRoot = directory.appendingPathComponent("mirror-fault", isDirectory: true)
+        var fault = try FountainOutbox(origin: origin, testingDirectory: faultRoot); defer { fault.close() }
+        try fault.activateAccount(a, sessionRef: reference, parentBinding: parent); try reconcile(fault, "A", bindingA)
+        let faultFile = faultRoot.appendingPathComponent(FountainOutbox.hash(Data(origin.utf8)) + ".sqlite"), faultBefore = try fault.open()
+        let faultInput: [String: Any] = ["version": 1, "generation": 1, "action": "confirm-base", "expectedProfileId": faultBefore["profileId"]!, "expectedEpoch": faultBefore["proofEpoch"]!]
+        try executeFixtureSQL(faultFile, "CREATE TRIGGER mirror_fault BEFORE INSERT ON mirror_locations BEGIN SELECT RAISE(ABORT,'isolated fixture fault'); END")
+        try denied { _ = try fault.mirror(faultInput) }
+        try denied { _ = try fault.open() }
+        fault.close()
+        try check(try readControl(faultFile, "mirrorBaseReader") == nil && readControl(faultFile, "mirrorRevision") == nil, "Failed location transaction left a partial BASE assignment")
+        try executeFixtureSQL(faultFile, "DROP TRIGGER mirror_fault")
+        fault = try FountainOutbox(origin: origin, testingDirectory: faultRoot); try fault.ensureOwner("mirror-fault-reopen", epoch: 1)
+        let faultAfter = try fault.open()
+        for key in ["head", "proofEpoch", "validUntil", "resourceAccess", "profileId"] { try check(try bytes(faultBefore[key]!) == bytes(faultAfter[key]!), "Failed registry write changed private " + key) }
+        try check(pair(try fault.mirror(faultInput))["ref"] == "base", "Atomic assignment retry after storage fault failed")
+                let offlineRoot = directory.appendingPathComponent("offline-mirror", isDirectory: true)
+        let offline = try FountainOutbox(origin: origin, testingDirectory: offlineRoot); defer { offline.close() }
+        try offline.activateAccount(a, sessionRef: reference, parentBinding: parent); try reconcile(offline, "A", bindingA); try offline.parkAccount()
+        try offline.resumeAccountOffline(a, sessionRef: reference, parentBinding: parent); try offline.ensureOwner("offline-location", epoch: 1)
+        let offlineBefore = try offline.open(), offlineProfile = offlineBefore["profileId"] as! String
+        let offlineInput: [String: Any] = ["version": 1, "generation": 1, "action": "confirm-base", "expectedProfileId": offlineProfile, "expectedEpoch": offlineBefore["proofEpoch"]!]
+        let offlineConfirmed = try offline.mirror(offlineInput)
+        try check(pair(offlineConfirmed)["ref"] == "base" && (try offline.open())["resourceAccess"] as? String == "ready", "Valid sealed offline cache could not commit BASE reader location")
+        try check(try bytes(offlineBefore) == bytes(offline.open()) && !offline.accountCanTransmit(), "Offline location confirmation granted SEND or extended authority")
+        let legacy = try FountainOutbox(origin: origin, testingDirectory: directory.appendingPathComponent("legacy-mirror", isDirectory: true)); defer { legacy.close() }
+        try legacy.grant(a, sessionRef: reference); try legacy.ensureOwner("legacy", epoch: 1)
+        let old = try legacy.open()
+        try denied { _ = try legacy.mirror(["version": 1, "generation": 1, "action": "resolve", "expectedProfileId": old["profileId"]!, "expectedEpoch": old["proofEpoch"]!]) }
+    }
+
     static func run(directory: URL) throws {
         for path in ["/api/w/A/" + bindingA + "/session", "/api/organization/session", "/api/account/%73ession", "/api/account/session/", "/api/account/workspaces?session_binding=" + parent + "&session_binding=" + parent, "/api/account/workspaces?session_binding=bad"] {
             try denied { _ = try FountainAccount.Request(["id": "bad", "generation": 1, "path": path]) }
@@ -163,9 +292,9 @@ enum IOSMultiworkspaceFixture {
         try FountainWorkspacePolicy.invalidatePersistedAccount(origin: origin) { try switchStore.suspendAccounts() }
         let switchFile = switchDirectory.appendingPathComponent(FountainOutbox.hash(Data(origin.utf8)) + ".sqlite")
         try check(try readControl(switchFile, "suspended:" + origin + "|A|member-A|" + bindingA) as? Bool == true, "Origin switch did not durably suspend old account scope")
-        let bridgePayload = try FountainOutbox.reconciliationBridgePayload(["generation": 1, "workspaceEpoch": 7, "phase": "prepare", "unknown": true])
+        let bridgePayload = try FountainOutbox.scopedBridgePayload(["generation": 1, "workspaceEpoch": 7, "phase": "prepare", "unknown": true])
         try check(bridgePayload["workspaceEpoch"] == nil && bridgePayload["unknown"] as? Bool == true && bridgePayload["phase"] as? String == "prepare", "Bridge codec dropped an engine field or forwarded consumed epoch")
-        try denied { _ = try FountainOutbox.reconciliationBridgePayload([AnyHashable(7): "not-a-string-key"]) }
+        try denied { _ = try FountainOutbox.scopedBridgePayload([AnyHashable(7): "not-a-string-key"]) }
         let store = try FountainOutbox(origin: origin, testingDirectory: directory); defer { store.close() }
         let file = directory.appendingPathComponent(FountainOutbox.hash(Data(origin.utf8)) + ".sqlite")
         try store.activateAccount(a, sessionRef: reference, parentBinding: parent)
@@ -515,6 +644,7 @@ enum IOSMultiworkspaceFixture {
         networkMemory.values[origin] = FountainAccountCookies(active: cookie, binding: parent, expiresAt: 1)
         try denied { _ = try networkQueue.sync { try networkRealm.activeCookie(binding: parent) } }
         try check(expiredInvalidation == 1 && networkMemory.markers.contains(origin) && networkMemory.values[origin]?.revoke == cookie, "Expired parent failed durable account invalidation")
+        try mirrors(directory)
         print("iOS multiworkspace production URLSession + SQLite parking/resume: \(checks) checks passed")
     }
 }

@@ -104,7 +104,9 @@ public class PublicWebNavigationDeviceTest {
         promise("await FountainTransport.configure({origin:"+JSONObject.quote(origin)+"});return {configured:true};");
     }
     private JSONObject session()throws Exception {
-        return promise("const r=await FountainTransport.request('/api/session'),s=await r.json();return {status:r.status,anonymous:s.authenticated===false,cookieEmpty:document.cookie==='',hidden:!r.headers.has('set-cookie')};");
+        // This component fixture observes the anonymous legacy session directly;
+        // account-directory startup intentionally has no selected JS workspace.
+        return promise("const r=await Capacitor.nativePromise('FountainNative','request',{id:'public-session-'+Date.now(),generation:FountainTransport.generation,path:'/api/session',method:'GET',headers:{},bodyBase64:'',timeoutMs:45000}),s=JSON.parse(atob(r.bodyBase64));return {status:r.status,anonymous:s.authenticated===false,cookieEmpty:document.cookie==='',hidden:!Object.keys(r.headers).some(k=>k.toLowerCase()==='set-cookie')};");
     }
     private void navigation(BrowserMonitor monitor,String target,boolean accepted)throws Exception {
         int before=monitor.targets.size();
@@ -145,7 +147,10 @@ public class PublicWebNavigationDeviceTest {
                 fixture.mode.set("valid");assertEquals(200,session().getInt("status"));
                 navigation(monitor,FRONT+"/forms/allowed_1",true);
                 navigation(monitor,FRONT+"/sites/allowed-2",true);
-                for(String target:Arrays.asList("https://foreign.example.invalid/forms/x",FRONT+"/forms/x?query=1",FRONT+"/forms/%78",FRONT+"/sites/x#fragment",FRONT+"/api/session"))navigation(monitor,target,false);
+                navigation(monitor,FRONT+"/#w/family-1/form/allowed_1",true);
+                navigation(monitor,FRONT+"/#w/family-1/site/allowed-2",true);
+                for(String target:Arrays.asList("https://foreign.example.invalid/forms/x",FRONT+"/forms/x?query=1",FRONT+"/forms/%78",FRONT+"/sites/x#fragment",FRONT+"/api/session",
+                    FRONT+"/?query=1#w/family-1/site/x",FRONT+"/#w/family-1/site/%78",FRONT+"/#w/family-1/page/x",FRONT+"/api/w/family-1/native-child/sites/x"))navigation(monitor,target,false);
                 int before=monitor.targets.size();subframeBoundary();assertEquals("Subframe has no OS navigation",before,monitor.targets.size());
                 // A forged renderer property cannot update native authority.
                 evaluate("globalThis.public_web_origin='https://foreign.example.invalid';true");

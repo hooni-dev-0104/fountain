@@ -130,8 +130,9 @@ enum FountainOrganizationPolicy {
         if pieces.count == 2 {
             guard method == "GET", tail != "session", !pieces[1].isEmpty,
                   let components = URLComponents(string: "https://organization.invalid" + raw),
-                  let items = components.queryItems, items.count == 1, items[0].name == "session_binding",
-                  let value = items[0].value, validBinding(value), !value.contains("%") else { throw FountainOrganizationError.invalid }
+                  let items = components.queryItems, Set(items.map { $0.name }).count == items.count,
+                  let value = items.first(where: { $0.name == "session_binding" })?.value, validBinding(value), !value.contains("%"),
+                  (items.count == 1 || (tail == "setup-eligibility" && items.count == 3 && items.contains(where: { $0.name == "workspace_id" && ($0.value ?? "").range(of: "^[A-Za-z0-9_-]{1,160}$", options: .regularExpression) != nil }) && items.contains(where: { $0.name == "workspace_binding" && ($0.value ?? "").range(of: "^[a-f0-9]{32}$", options: .regularExpression) != nil }))) else { throw FountainOrganizationError.invalid }
         } else if method == "GET", tail != "session" { throw FountainOrganizationError.invalid }
         return path
     }
@@ -160,10 +161,11 @@ enum FountainOrganizationPolicy {
         return data.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "") == token
     }
     static func responseCookie(_ response: HTTPURLResponse, now: Date = Date()) throws -> String? {
-        guard let header = response.value(forHTTPHeaderField: "Set-Cookie") else { return nil }
-        guard header.utf8.count <= 8192, !header.contains("\r"), !header.contains("\n") else { throw FountainOrganizationError.invalid }
-        // Only one host-only cookie is admitted. In particular a merged second
-        // cookie cannot disguise an organization token overwrite.
+        guard let supplied = response.value(forHTTPHeaderField: "Set-Cookie") else { return nil }
+        let header: String
+        do { header = try FountainCookieHeaders.target(supplied, name: "fountain_organization_session") }
+        catch { throw FountainOrganizationError.invalid }
+        // Only one host-only realm cookie can enter this private vault.
         let parts = header.split(separator: ";", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
         guard let first = parts.first, first.hasPrefix("fountain_organization_session="), validStoredCookie(first) else { throw FountainOrganizationError.invalid }
         var names = Set<String>(); var secure = false; var httpOnly = false; var sameSite = false; var root = false; var expiry: Date?; var maxAge: Date?
@@ -230,6 +232,7 @@ final class FountainOrganization: NSObject, URLSessionDataDelegate {
         var task: URLSessionDataTask?; var timer: DispatchSourceTimer?
         var data = Data(); var response: HTTPURLResponse?; var expected = -1; var failure: FountainOrganizationError?
         var sent: String?; var revoking = false
+        var workspaceFence: (() -> Bool)?
         var deadline: DispatchTime
         init(_ request: Request, epoch: Int, origin: String, done: @escaping (Result<[String: Any], FountainOrganizationError>) -> Void) {
             self.request = request; self.epoch = epoch; self.origin = origin; self.done = done
@@ -237,6 +240,8 @@ final class FountainOrganization: NSObject, URLSessionDataDelegate {
         }
     }
     private let queue: DispatchQueue
+    private let ownership: NSRecursiveLock?
+    private let admission: () -> Bool
     private let storage: FountainOrganizationStorage
     private var session: URLSession!
     private var origin: String?
@@ -247,8 +252,8 @@ final class FountainOrganization: NSObject, URLSessionDataDelegate {
     private var transition: String?
     private var poisoned = false
     private var closed = false
-    init(queue: DispatchQueue, storage: FountainOrganizationStorage = FountainOrganizationKeychain(), protocolClasses: [AnyClass]? = nil) {
-        self.queue = queue; self.storage = storage; super.init()
+    init(queue: DispatchQueue, storage: FountainOrganizationStorage = FountainOrganizationKeychain(), protocolClasses: [AnyClass]? = nil, ownership: NSRecursiveLock? = nil, admission: @escaping () -> Bool = { true }) {
+        self.queue = queue; self.storage = storage; self.ownership = ownership; self.admission = admission; super.init()
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieStorage = nil; configuration.httpShouldSetCookies = false
         configuration.urlCredentialStorage = nil; configuration.urlCache = nil
@@ -289,7 +294,10 @@ final class FountainOrganization: NSObject, URLSessionDataDelegate {
         finish(job, .failure(.cancelled)); return true
     }
     private func current(_ job: Job) -> Bool {
-        jobs[job.request.id] === job && origin == job.origin && generation == job.request.generation && epoch == job.epoch
+        admission() && jobs[job.request.id] === job && origin == job.origin && generation == job.request.generation && epoch == job.epoch && (job.workspaceFence?() ?? true)
+    }
+    func fenceWorkspaceJobs() {
+        for job in Array(jobs.values) where job.workspaceFence != nil { finish(job, .failure(.stale)) }
     }
     private func state(_ origin: String) throws -> FountainOrganizationCookies {
         var value = try storage.read(origin)
@@ -307,9 +315,9 @@ final class FountainOrganization: NSObject, URLSessionDataDelegate {
         do { try storage.write(next, origin: origin) } catch { poisoned = true; throw FountainOrganizationError.storage }
         return next
     }
-    func request(_ request: Request, workspaceCookie: () throws -> String?, url: @escaping (String, String) throws -> URL,
+    func request(_ request: Request, workspaceCookie: () throws -> String?, workspaceFence: (() -> Bool)? = nil, url: @escaping (String, String) throws -> URL,
                  done: @escaping (Result<[String: Any], FountainOrganizationError>) -> Void) throws {
-        guard !closed, !poisoned, let origin, request.generation == generation else { throw FountainOrganizationError.stale }
+        guard admission(), !closed, !poisoned, let origin, request.generation == generation else { throw FountainOrganizationError.stale }
         guard jobs[request.id] == nil, jobs.count < 16, transition == nil else { throw FountainOrganizationError.busy }
         let path = try FountainOrganizationPolicy.route(request.path, method: request.method)
         var value = try state(origin)
@@ -325,6 +333,7 @@ final class FountainOrganization: NSObject, URLSessionDataDelegate {
         } else if try value.revoke != nil || storage.blocked(origin) { throw FountainOrganizationError.revoke }
         let workspace = FountainOrganizationPolicy.needsWorkspace(path: path, method: request.method) ? try workspaceCookie() : nil
         let job = Job(request, epoch: epoch, origin: origin, done: done)
+        job.workspaceFence = workspaceFence
         jobs[request.id] = job; if request.transition { transition = request.id }
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: job.deadline); timer.setEventHandler { [weak self, weak job] in if let self, let job { self.finish(job, .failure(.timeout)) } }
@@ -390,6 +399,7 @@ final class FountainOrganization: NSObject, URLSessionDataDelegate {
         if job.expected >= 0 && job.data.count > job.expected { job.failure = .incomplete; dataTask.cancel() }
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        ownership?.lock(); defer { ownership?.unlock() }
         guard let job = tasks.removeValue(forKey: task.taskIdentifier), current(job) else { return }
         if let failure = job.failure { finish(job, .failure(failure)); return }
         if let error = error as? URLError { finish(job, .failure(error.code == .timedOut ? .timeout : .network)); return }

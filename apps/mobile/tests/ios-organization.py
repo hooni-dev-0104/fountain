@@ -6,7 +6,8 @@ import tempfile
 root = Path(__file__).resolve().parents[3]
 with tempfile.TemporaryDirectory(prefix='fountain-ios-organization-') as temporary:
     binary = Path(temporary) / 'organization'
-    sources = ['apps/mobile/ios/App/App/FountainOrganization.swift',
+    sources = ['apps/mobile/ios/App/App/FountainCookieHeaders.swift',
+               'apps/mobile/ios/App/App/FountainOrganization.swift',
                'apps/mobile/ios/App/App/FountainOutbox.swift',
                'apps/mobile/ios/App/App/FountainRecovery.swift',
                'apps/mobile/tests/ios-organization.swift']

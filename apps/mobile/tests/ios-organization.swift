@@ -76,6 +76,15 @@ enum IOSOrganizationFixture {
         for path in ["session", "bootstrap", "organizations/00000000-0000-0000-0000-000000000000/owners"] {
             try check(!FountainOrganizationPolicy.needsWorkspace(path: "/api/organization/" + path, method: "POST"), "Workspace cookie leaked to organization-only path"); checks += 1
         }
+        let infrastructure = "__cf_bm=independent.bot.cookie; HttpOnly; SameSite=None; Secure; Path=/; Domain=.supabase.co; Expires=Sun, 18 Oct 2026 13:00:00 GMT"
+        try check(try FountainOrganizationPolicy.responseCookie(response(setCookie + ", " + infrastructure)) == cookie, "Infrastructure cookie prevented organization login"); checks += 1
+        try check(try FountainOrganizationPolicy.responseCookie(response(infrastructure + ", " + setCookie)) == cookie, "Infrastructure expiry comma changed organization cookie"); checks += 1
+        try rejects { _ = try FountainOrganizationPolicy.responseCookie(response(setCookie + ", " + infrastructure + ", fountain_account_session=leak")) }; checks += 1
+        for control in ["\t", "\u{1}", "\u{7f}"] {
+            try rejects { _ = try FountainOrganizationPolicy.responseCookie(response(setCookie + ", " + infrastructure + control)) }; checks += 1
+        }
+        try rejects { _ = try FountainOrganizationPolicy.responseCookie(response(setCookie.replacingOccurrences(of: "; Path", with: ";\tPath") + ", " + infrastructure)) }; checks += 1
+
         let outbox = try FountainOutbox(origin: origin, testingDirectory: directory); defer { outbox.close() }
         let profile: [String: Any] = ["authenticated": true, "required": true, "mode": "accounts", "workspace_id": "workspace", "cache_binding": "workspace-binding", "expires_at": ISO8601DateFormatter().string(from: Date().addingTimeInterval(3600)), "member": ["id": "member", "active": true, "role": "owner"]]
         try outbox.grant(profile, sessionRef: "workspace-secret"); try outbox.ensureOwner("organization-fixture", epoch: 8)

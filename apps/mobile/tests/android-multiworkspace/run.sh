@@ -6,8 +6,9 @@ java_home=${FOUNTAIN_JAVA_HOME:-${JAVA_HOME:-}}
 if [ -n "$java_home" ]; then javac_bin="$java_home/bin/javac"; java_bin="$java_home/bin/java"; else javac_bin=$(command -v javac); java_bin=$(command -v java); fi
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/fountain-android-multiworkspace.XXXXXX")
 trap 'rm -rf "$scratch"' EXIT HUP INT TERM
-"$javac_bin" --release 8 -d "$scratch" "$sources/NativePolicy.java" "$sources/NativeAccountPolicy.java" "$sources/NativeOrganizationPolicy.java" "$sources/NativeWorkspacePolicy.java" "$fixture_dir/NativeWorkspaceFixture.java" "$fixture_dir/PublicationCompositionFixture.java" "$fixture_dir/URIComponentCompositionFixture.java"
+"$javac_bin" --release 8 -d "$scratch" "$sources/NativePolicy.java" "$sources/NativeAccountPolicy.java" "$sources/NativeOrganizationPolicy.java" "$sources/NativeWorkspacePolicy.java" "$sources/NativeMirrorPolicy.java" "$fixture_dir/NativeWorkspaceFixture.java" "$fixture_dir/PublicationCompositionFixture.java" "$fixture_dir/URIComponentCompositionFixture.java" "$fixture_dir/NativeMirrorPolicyFixture.java"
 "$java_bin" -cp "$scratch" dev.fountain.workspace.NativeWorkspaceFixture
+"$java_bin" -cp "$scratch" dev.fountain.workspace.NativeMirrorPolicyFixture
 
 node "$fixture_dir/publication-composition.mjs" "$scratch/publication-urls.txt"
 "$java_bin" -cp "$scratch" dev.fountain.workspace.PublicationCompositionFixture "$scratch/publication-urls.txt"

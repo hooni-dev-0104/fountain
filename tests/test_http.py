@@ -78,6 +78,17 @@ class HTTPTests(unittest.TestCase):
         self.assertIn("Fountain", self.request("GET", "/")[1])
         self.assertEqual(self.request("GET", "/api/missing")[0], 404)
 
+    def test_legacy_server_declares_account_directory_absent_on_unknown_route(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
+        try:
+            connection.request("GET", "/api/account/session", headers={"X-Fountain-Request": "1"})
+            response = connection.getresponse()
+            self.assertEqual(response.status, 404)
+            self.assertEqual(response.getheader("X-Fountain-Account-Directory"), "absent")
+            self.assertNotIn('"mode": "account"', response.read().decode())
+        finally:
+            connection.close()
+
     def test_invalid_json_and_method_bounds(self):
         connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
         connection.request("POST", "/api/pages", "{", {"Content-Type": "application/json", "X-Fountain-Request": "1"})

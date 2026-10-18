@@ -555,6 +555,7 @@ def handler_for(application):
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Fountain-Account-Directory", "absent")
             if self.close_connection: self.send_header('Connection', 'close')
             if getattr(self, '_cookie_header', None): self.send_header('Set-Cookie', self._cookie_header)
             self.send_header("X-Content-Type-Options", "nosniff")

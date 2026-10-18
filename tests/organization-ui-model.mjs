@@ -75,8 +75,8 @@ check('private console has no HTML string injection or workspace storage/bootstr
 check('login and all settings roles can reach the same-window organization document', () => {
   const login = app.slice(app.indexOf('function renderLogin('), app.indexOf('async function boot()'));
   const settings = app.slice(app.indexOf('async function renderSettings()'), app.indexOf('async function renderScimSettings'));
-  assert.match(login, /href="\.\/organization\.html"/);
-  assert.match(settings, /href="\.\/organization\.html"/);
-  assert.doesNotMatch(login.match(/<a href="\.\/organization\.html"[^>]*>/)[0], /target=/);
+  assert.match(login, /href="\$\{esc\(organizationURL\(\)\)\}"/);
+  assert.match(settings, /href="\$\{esc\(organizationURL\(\)\)\}"/);
+  assert.doesNotMatch(login.match(/<a href="\$\{esc\(organizationURL\(\)\)\}"[^>]*>/)[0], /target=/);
 });
 console.log(JSON.stringify({ passed: checks, scope: 'organization UI model and static boundary', browserVisualVerified: false }));

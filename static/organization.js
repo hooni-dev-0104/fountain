@@ -43,6 +43,12 @@
   root.FountainOrganizationModel = Object.freeze({ parseConnectionCode, encodeConnectionCode, createSessionFence, createCommand, pathAllowed });
   if (!root.document) return;
 
+  const workspaceQuery = new URL(root.location.href).searchParams;
+  const explicitWorkspace = workspaceQuery.has('workspace_id') || workspaceQuery.has('workspace_binding') ? (() => {
+    const workspace_id=workspaceQuery.get('workspace_id'),workspace_binding=workspaceQuery.get('workspace_binding');
+    if(workspaceQuery.getAll('workspace_id').length!==1||workspaceQuery.getAll('workspace_binding').length!==1||!/^[A-Za-z0-9_-]{1,160}$/.test(workspace_id||'')||!/^[a-f0-9]{32}$/.test(workspace_binding||''))throw Error('조직에 연결할 작업공간 주소를 확인해 주세요.');
+    return Object.freeze({workspace_id,workspace_binding});
+  })() : null;
   const app = root.document.getElementById('organization-app');
   const fence = createSessionFence();
   const state = { session: null, organizations: [], selected: null, detail: null, eligibility: null, error: '', notice: '', loading: true, busy: false, pending: null, connection: null, preview: null, confirmation: null, listSequence: 0, detailSequence: 0, sessionSequence: 0, logoutBinding: null };
@@ -77,6 +83,10 @@
   }
   async function wire(path, options = {}) {
     if (!pathAllowed(path)) throw Error('허용되지 않는 조직 요청입니다.');
+    const isEligibility=path.split('?')[0]===PREFIX+'/setup-eligibility'&&(options.method||'GET')==='GET';
+    const isCross=['/organizations','/workspace-preview','/workspace-accept'].some(suffix=>path.split('?')[0]===PREFIX+suffix)&&(options.method||'GET')==='POST';
+    if(explicitWorkspace&&isEligibility)path+=(path.includes('?')?'&':'?')+new URLSearchParams(explicitWorkspace);
+    if(explicitWorkspace&&isCross)options={...options,body:JSON.stringify({...JSON.parse(options.body||'{}'),...explicitWorkspace})};
     const headers = new Headers(options.headers);
     headers.set('X-Fountain-Request', '1');
     if (options.body) headers.set('Content-Type', 'application/json');

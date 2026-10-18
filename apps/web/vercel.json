@@ -8,6 +8,8 @@
   "rewrites": [
     {"source": "/sites/:slug", "destination": "/api/public-relay?kind=sites&slug=:slug"},
     {"source": "/forms/:slug", "destination": "/api/public-relay?kind=forms&slug=:slug"},
+    {"source": "/api/w/:workspace/:binding/sites/:slug", "destination": "/api/public-relay?workspace=:workspace&binding=:binding&kind=sites&slug=:slug"},
+    {"source": "/api/w/:workspace/:binding/forms/:slug", "destination": "/api/public-relay?workspace=:workspace&binding=:binding&kind=forms&slug=:slug"},
     {"source": "/api/:path((?!public-relay(?:/|$)).*)", "destination": "https://ehnovtfadpkwtubmwltl.supabase.co/functions/v1/fountain-api/api/:path"},
     {"source": "/scim/:path*", "destination": "https://ehnovtfadpkwtubmwltl.supabase.co/functions/v1/fountain-api/scim/:path*"},
     {"source": "/health", "destination": "https://ehnovtfadpkwtubmwltl.supabase.co/functions/v1/fountain-api/health"}

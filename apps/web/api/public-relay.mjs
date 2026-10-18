@@ -4,7 +4,8 @@
  */
 export const UPSTREAM='https://ehnovtfadpkwtubmwltl.supabase.co/functions/v1/fountain-api';
 export const CSP="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'";
-const SLUG=/^[A-Za-z0-9_-]{1,160}$/,LIMIT=16*1024*1024;
+const SLUG=/^[A-Za-z0-9_-]{1,160}$/,BINDING=/^[a-f0-9]{32}$/,LIMIT=16*1024*1024;
+const REALMS=['fountain_session','fountain_account_session','fountain_organization_session'];
 const security=()=>new Headers({'Cache-Control':'private, no-store, max-age=0','CDN-Cache-Control':'no-store','Vercel-CDN-Cache-Control':'no-store','x-vercel-enable-rewrite-caching':'0','X-Content-Type-Options':'nosniff','Referrer-Policy':'same-origin','Content-Security-Policy':CSP,'Cross-Origin-Resource-Policy':'same-origin','Vary':'Cookie, Origin, Accept, Sec-Fetch-Dest, Sec-Fetch-Mode'});
 function failure(status){const headers=security();headers.set('Content-Type','application/json; charset=utf-8');return new Response(JSON.stringify({error:status===405?'Method not allowed':status===404?'Not found':'Public page is unavailable'}),{status,headers});}
 function documentNavigation(request){
@@ -18,26 +19,42 @@ function documentNavigation(request){
   const range=/^text\/html(?:\s*;\s*q\s*=\s*(0(?:\.[0-9]{0,3})?|1(?:\.0{0,3})?))?$/i.exec(html[0]);
   return !!range&&(range[1]===undefined||Number(range[1])>0);
 }
+function publication(kind,slug,workspace=null,binding=null){
+  const path=(workspace?'/api/w/'+workspace+'/'+binding:'')+'/'+kind+'/'+slug;
+  return {path,cookie:workspace?'fountain_account_session':'fountain_session',login:workspace?'/#w/'+workspace+'/'+(kind==='sites'?'site':'form')+'/'+slug:'/#open-public='+encodeURIComponent(path)};
+}
 function target(request){
   const url=new URL(request.url);if(url.username||url.password||url.hash||url.pathname.length>1024||url.search.length>1024)return null;
-  const direct=/^\/(sites|forms)\/([A-Za-z0-9_-]{1,160})$/.exec(url.pathname);
-  if(direct&&!url.search)return '/'+direct[1]+'/'+direct[2];
-  // Rewrites attach only these routing values; a caller cannot supply a URL,
-  // alternate origin, nested path, query to the upstream, or duplicate values.
+  const legacy=/^\/(sites|forms)\/([A-Za-z0-9_-]{1,160})$/.exec(url.pathname);
+  const scoped=/^\/api\/w\/([A-Za-z0-9_-]{1,160})\/([a-f0-9]{32})\/(sites|forms)\/([A-Za-z0-9_-]{1,160})$/.exec(url.pathname);
+  const direct=legacy?publication(legacy[1],legacy[2]):scoped?publication(scoped[3],scoped[4],scoped[1],scoped[2]):null;
+  if(direct&&!url.search)return direct;
+  // Only finite literal rewrite fields are accepted. Encoded keys/values,
+  // duplicate fields or a caller's extra query cannot create routing aliases.
   if(url.pathname!=='/api/public-relay'&&!direct)return null;
-  const values=url.searchParams,kind=values.get('kind'),slug=values.get('slug');
-  if([...values.keys()].some(key=>!['kind','slug'].includes(key))||values.getAll('kind').length!==1||values.getAll('slug').length!==1||!['sites','forms'].includes(kind)||!SLUG.test(slug??''))return null;
-  if(direct&&(direct[1]!==kind||direct[2]!==slug))return null;
-  return '/'+kind+'/'+slug;
+  if(!/^\?(?:[A-Za-z]+=[A-Za-z0-9_-]+)(?:&[A-Za-z]+=[A-Za-z0-9_-]+)*$/.test(url.search))return null;
+  const values=url.searchParams,keys=[...values.keys()],kind=values.get('kind'),slug=values.get('slug');
+  const account=values.has('workspace')||values.has('binding'),allowed=account?['workspace','binding','kind','slug']:['kind','slug'];
+  if(keys.length!==allowed.length||allowed.some(key=>values.getAll(key).length!==1)||keys.some(key=>!allowed.includes(key))||!['sites','forms'].includes(kind)||!SLUG.test(slug??''))return null;
+  const workspace=values.get('workspace'),binding=values.get('binding');
+  if(account&&(!SLUG.test(workspace??'')||!BINDING.test(binding??'')))return null;
+  const rewritten=publication(kind,slug,workspace,binding);
+  if(direct&&direct.path!==rewritten.path)return null;
+  return rewritten;
 }
-function forwarded(request){
+function forwarded(request,realm){
   const headers=new Headers({'Accept':'text/html, application/json;q=0.9, text/plain;q=0.8','Accept-Encoding':'identity'});
   const cookie=request.headers.get('Cookie');
   if(cookie!==null){
     if(cookie.length>16384||/[^\x20-\x7e]/.test(cookie))throw Error();
-    const session=cookie.split(';').map(value=>value.trim()).filter(value=>value.startsWith('fountain_session='));
-    if(session.length>1||session.length===1&&!/^fountain_session=[A-Za-z0-9_-]{43}$/.test(session[0]))throw Error();
-    if(session.length)headers.set('Cookie',session[0]);
+    const sessions=new Map();
+    for(const value of cookie.split(';').map(value=>value.trim())){
+      const equals=value.indexOf('='),name=equals<0?value:value.slice(0,equals),key=name.trim();
+      if(!REALMS.includes(key))continue;
+      if(name!==key||equals<0||sessions.has(key)||!/^[A-Za-z0-9_-]{43}$/.test(value.slice(equals+1)))throw Error();
+      sessions.set(key,value);
+    }
+    if(sessions.has(realm))headers.set('Cookie',sessions.get(realm));
   }
   const origin=request.headers.get('Origin');
   if(origin!==null){
@@ -54,8 +71,8 @@ export function createPublicRelay({fetch:request=globalThis.fetch,timeoutMs=1500
   if(typeof request!=='function'||!Number.isSafeInteger(timeoutMs)||timeoutMs<1||timeoutMs>30000||!Number.isSafeInteger(maxBytes)||maxBytes<1||maxBytes>LIMIT)throw Error('Invalid relay configuration');
   return async function relay(incoming){
     if(!['GET','HEAD'].includes(incoming.method))return failure(405);
-    const path=target(incoming);if(!path)return failure(404);
-    let headers;try{headers=forwarded(incoming);}catch{return failure(400);}
+    const route=target(incoming);if(!route)return failure(404);
+    let headers;try{headers=forwarded(incoming,route.cookie);}catch{return failure(400);}
     const abort=new AbortController(),signal=AbortSignal.any([incoming.signal,abort.signal]);
     let reader,finished=false;
     const timer=setTimeout(()=>abort.abort(),timeoutMs);
@@ -63,12 +80,12 @@ export function createPublicRelay({fetch:request=globalThis.fetch,timeoutMs=1500
     function cancel(){void reader?.cancel().catch(()=>{});finish();}
     signal.addEventListener('abort',cancel,{once:true});
     let upstream;
-    try{upstream=await request(UPSTREAM+path,{method:incoming.method,headers,redirect:'manual',signal});}
+    try{upstream=await request(UPSTREAM+route.path,{method:incoming.method,headers,redirect:'manual',signal});}
     catch{finish();return failure(502);}
     if(signal.aborted||upstream.redirected||upstream.status>=300&&upstream.status<400||upstream.status!==200&&upstream.status<400){await upstream.body?.cancel().catch(()=>{});finish();return failure(502);}
     if(upstream.status===401&&documentNavigation(incoming)){
       await upstream.body?.cancel().catch(()=>{});finish();
-      const headers=security();headers.set('Location','/#open-public='+encodeURIComponent(path));
+      const headers=security();headers.set('Location',route.login);
       return new Response(null,{status:303,headers});
     }
     const resultHeaders=security(),mime=(upstream.headers.get('Content-Type')??'').split(';')[0].trim().toLowerCase();

@@ -51,7 +51,7 @@ final class NativeOutbox implements AutoCloseable {
     long deliveryDeadline() { return deliveryDeadline; }
     void reconciled() { boundary++; }
     private NativeSyncReceipts syncReceipts(){if(syncReceipts==null)syncReceipts=new NativeSyncReceipts(this);return syncReceipts;}
-    NativeSyncReceipts.Admission admitSync(String method,String path,byte[] raw,String cookie,boolean blocked,String owner)throws Exception{requireOwner(owner);return syncReceipts().admit(method,path,raw,cookie,blocked,owner);}
+    NativeSyncReceipts.Admission admitSync(String method,String path,byte[] raw,String cookie,boolean blocked,String owner)throws Exception{requireOwner(owner);if("POST".equals(method)&&"/api/sync".equals(path)&&(offlineWorkspace()||requiresWorkspaceReconcile()))throw new AccessRequired();return syncReceipts().admit(method,path,raw,cookie,blocked,owner);}
     void observeSync(NativeSyncReceipts.Admission admission,int status,byte[] raw,String cookie,boolean blocked,String owner)throws Exception{requireOwner(owner);syncReceipts().observe(admission,status,raw,cookie,blocked,owner);proofCommitted();}
     JSONObject appliedSync(JSONObject grant,JSONObject operation)throws Exception{return syncReceipts().applied(grant,operation);}
     JSONObject appliedDependency(JSONObject grant,String id)throws Exception{return syncReceipts().dependency(grant,id);}
@@ -135,7 +135,7 @@ final class NativeOutbox implements AutoCloseable {
         if (owner == null || owner.isEmpty() || !owner.equals(get("owner"))) throw new AccessRequired();
     }
     NativeReconcile.Tag admitReconcile(long sequence, String method, String path, String cookie, boolean blocked, String owner) throws Exception {
-        requireOwner(owner); return reconciler().admit(sequence, method, path, cookie, blocked, owner);
+        requireOwner(owner); if(offlineWorkspace())throw new AccessRequired(); return reconciler().admit(sequence, method, path, cookie, blocked, owner);
     }
     void beforeReconcileObservation(NativeReconcile.Tag tag, String cookie, boolean blocked, String owner) throws Exception {
         requireOwner(owner); reconciler().beforeObservation(tag, cookie, blocked, owner);
@@ -349,6 +349,120 @@ final class NativeOutbox implements AutoCloseable {
         finally { db.endTransaction(); }
         proofCommitted(); boundary++;
     }
+    // A navigation park closes admission without claiming that server authority was revoked.
+    void parkWorkspace() throws Exception {
+        db.beginTransaction(); try {
+            String raw = get("grant");
+            if (raw != null) {
+                JSONObject grant = new JSONObject(raw);
+                if (grant.getJSONObject("session").has("account_binding")) {
+                    set("parked:" + grant.getString("profileId"), raw);
+                    JSONObject cached=currentLedger(grant);if(cached!=null)set("parked-proofs:"+grant.getString("profileId"),cached.toString());
+                }
+                else suspendProfile(grant.getString("profileId"));
+            }
+            db.execSQL("DELETE FROM control WHERE key='grant'");
+            set("identity_state", "parked"); clearProofs(); set("needs_floor", "1"); advanceProof();
+            set("lease", UUID.randomUUID().toString()); set("owner", ""); advance(); reconciler().invalidate();
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+        proofCommitted(); boundary++;
+    }
+    boolean observeWorkspaceDirectorySession(JSONObject fresh,String cookie)throws Exception {
+        String workspace=fresh.getString("workspace_id"),parent=fresh.getString("account_binding"),child=fresh.getString("cache_binding"),member=fresh.getJSONObject("member").getString("id"),role=fresh.getJSONObject("member").getString("role");
+        String current=get("grant"),active=current==null?null:new JSONObject(current).getString("profileId");boolean changed=false,activeChanged=false;
+        db.beginTransaction();try {
+            try(Cursor rows=db.rawQuery("SELECT value FROM control WHERE key='grant' OR key LIKE 'parked:%'",null)) {
+                while(rows.moveToNext()){JSONObject grant=new JSONObject(rows.getString(0)),old=grant.getJSONObject("session");String profile=grant.getString("profileId");
+                    if(!workspace.equals(old.optString("workspace_id"))||!parent.equals(old.optString("account_binding"))||!OutboxPolicy.hash(cookie).equals(grant.optString("session_ref")))continue;
+                    if(!child.equals(old.optString("cache_binding"))||!member.equals(old.getJSONObject("member").optString("id"))) {suspendProfile(profile);changed=true;activeChanged|=profile.equals(active);}
+                    else if(!role.equals(grant.optString("role"))||OutboxPolicy.expiry(fresh.getString("expires_at"))<OutboxPolicy.expiry(old.getString("expires_at"))) {
+                        set("offline-denied:"+profile,"1");db.execSQL("DELETE FROM control WHERE key=?",new Object[]{"parked-proofs:"+profile});changed=true;
+                        if(profile.equals(active)){clearProofs();set("needs_floor","1");set("owner","");set("lease",UUID.randomUUID().toString());advanceProof();activeChanged=true;}
+                    }
+                }
+            }db.setTransactionSuccessful();
+        }finally{db.endTransaction();}if(activeChanged){proofCommitted();boundary++;}return changed;
+    }
+    boolean retireWorkspaceScope(String workspace,String parent,String child,String cookie)throws Exception {
+        String current=get("grant");String active=current==null?null:new JSONObject(current).getString("profileId");boolean matched=false,activeChanged=false;
+        db.beginTransaction();try {
+            try(Cursor rows=db.rawQuery("SELECT value FROM control WHERE key='grant' OR key LIKE 'parked:%'",null)) {
+                while(rows.moveToNext()){JSONObject grant=new JSONObject(rows.getString(0)),session=grant.getJSONObject("session");String profile=grant.getString("profileId");
+                    if(workspace.equals(session.optString("workspace_id"))&&parent.equals(session.optString("account_binding"))&&child.equals(session.optString("cache_binding"))&&OutboxPolicy.hash(cookie).equals(grant.optString("session_ref"))){suspendProfile(profile);matched=true;activeChanged|=profile.equals(active);}
+                }
+            }db.setTransactionSuccessful();
+        }finally{db.endTransaction();}if(activeChanged){proofCommitted();boundary++;}return matched;
+    }
+    boolean retainedScopeAllowed(JSONObject scope,String cookie)throws Exception {
+        String profile=OutboxPolicy.profile(origin,scope.getString("workspaceId"),scope.getString("memberId"),scope.getString("binding"));
+        if(get("suspended:"+profile)!=null||get("offline-denied:"+profile)!=null||tombstone("profile",profile))return false;
+        String raw=get("parked:"+profile);if(raw==null)raw=get("grant");if(raw==null)return false;JSONObject grant=new JSONObject(raw);
+        return profile.equals(grant.optString("profileId"))&&OutboxPolicy.hash(cookie).equals(grant.optString("session_ref"))&&grant.getLong("validUntil")>System.currentTimeMillis()
+            &&scope.getString("accountBinding").equals(grant.getJSONObject("session").optString("account_binding"))
+            &&scope.getLong("expiresAt")==OutboxPolicy.expiry(grant.getJSONObject("session").getString("expires_at"));
+    }
+    boolean requiresWorkspaceReconcile() throws Exception {
+        if(!"1".equals(get("account_reconcile_required")))return false;String raw=get("grant");return raw!=null&&new JSONObject(raw).getJSONObject("session").has("account_binding");
+    }
+    boolean offlineWorkspace() { return "1".equals(get("offline_workspace")); }
+    void resumeWorkspaceOffline(JSONObject session,String cookie)throws Exception {
+        String profile=OutboxPolicy.profile(origin,session.getString("workspace_id"),session.getJSONObject("member").getString("id"),session.getString("cache_binding"));
+        String raw=get("parked:"+profile); if(raw==null)throw new AccessRequired(); JSONObject grant=new JSONObject(raw);
+        NativePolicy.require(grant.getString("session_ref").equals(OutboxPolicy.hash(cookie))&&grant.getLong("validUntil")>System.currentTimeMillis()
+            &&grant.getJSONObject("session").getString("account_binding").equals(session.getString("account_binding"))
+            &&grant.getJSONObject("session").getString("expires_at").equals(session.getString("expires_at")));
+        if(get("suspended:"+profile)!=null||get("offline-denied:"+profile)!=null||tombstone("profile",profile))throw new RecoveryRequired();
+        String cached=get("parked-proofs:"+profile);NativePolicy.require(cached!=null);
+        JSONObject ledger=new JSONObject(cached);NativePolicy.require(profile.equals(ledger.optString("profileId"))&&grant.getString("session_ref").equals(ledger.optString("sessionRef")));
+        db.beginTransaction();try {set("grant",raw);set("identity_state","verified");set("offline_cached_proofs",cached);set("offline_workspace","1");set("account_reconcile_required","1");set("needs_floor","1");clearProofs();advanceProof();
+            set("owner","");set("lease",UUID.randomUUID().toString());db.execSQL("DELETE FROM control WHERE key=?",new Object[]{"parked:"+profile});db.setTransactionSuccessful();
+        }finally{db.endTransaction();}proofCommitted();boundary++;
+    }
+    private boolean offlineReadable(JSONObject grant)throws Exception {
+        if(!offlineWorkspace()||grant==null)return false;String profile=grant.getString("profileId"),actor=OutboxPolicy.actorPrefix(origin,profile);
+        try(Cursor rows=db.rawQuery("SELECT bucket,key,rowid,length(payload) FROM records WHERE mode='active' AND profile_id=?",new String[]{profile})) {
+            while(rows.moveToNext()) if(!"native".equals(sourceTrust("active",rows.getString(0),rows.getString(1),profile,payload("records",rows.getLong(2),rows.getInt(3)),actor)))return false;
+        }return true;
+    }
+    private boolean offlineAppend(JSONArray changes,JSONObject grant)throws Exception {
+        if(!offlineReadable(grant)||changes.length()==0)return false;String profile=grant.getString("profileId");
+        String parent=grant.getJSONObject("session").getString("account_binding"),workspace=grant.getJSONObject("session").getString("workspace_id");
+        for(int i=0;i<changes.length();i++){
+            JSONObject item=changes.getJSONObject(i),value=item.optJSONObject("value");String bucket=item.getString("bucket"),op=item.optString("op");
+            if(!"put".equals(op)||value==null)return false;
+            if(bucket.equals("profiles")){if(!profile.equals(value.optString("id")))return false;continue;}
+            if(!profile.equals(value.optString("profileId")))return false;
+            if(Arrays.asList("operations","mutations","drafts","localPages").contains(bucket))continue;
+            if(bucket.equals("snapshots")) {
+                String resource=value.optString("key"),page=resource.substring(resource.lastIndexOf('|')+1);
+                // Existing canonical bytes cannot be replaced offline. A new local page remains subject to the complete creation graph below.
+                if(value.getJSONObject("snapshot").optJSONObject("page")==null)return false;
+                try(Cursor old=db.rawQuery("SELECT rowid,length(payload) FROM records WHERE mode='active' AND bucket='snapshots' AND key=? AND profile_id=?",new String[]{key(item.get("key")),profile})) {
+                    if(old.moveToFirst()){if(!Arrays.equals(payload("records",old.getLong(0),old.getInt(1)),value.toString().getBytes(StandardCharsets.UTF_8)))return false;}
+                    else {boolean creation=false;for(int j=0;j<changes.length();j++){JSONObject other=changes.getJSONObject(j),v=other.optJSONObject("value");if("localPages".equals(other.optString("bucket"))&&v!=null&&resource.equals(v.optString("key"))&&v.getJSONObject("metadata").opt("localOnly")==Boolean.TRUE)creation=true;}if(!creation)return false;}
+                }continue;
+            }
+            if(bucket.equals("meta")) {
+                String id=item.optString("key");if(id.equals("workspace-input:"+profile)||id.equals("parked:"+profile)||id.equals("mutation-sequence:"+profile)||id.equals("active:"+parent+":"+workspace)||id.equals("last-profile:"+parent+":"+workspace))continue;
+            }return false;
+        }return true;
+    }
+    void revokeAccountWorkspaces() throws Exception {
+        db.beginTransaction(); try {
+            try (Cursor rows = db.rawQuery("SELECT key,value FROM control WHERE key LIKE 'parked:%'", null)) {
+                while (rows.moveToNext()) {
+                    JSONObject old = new JSONObject(rows.getString(1));
+                    set("suspended:" + old.getString("profileId"), "1");
+                }
+            }
+            db.execSQL("DELETE FROM control WHERE key LIKE 'parked:%'");
+            String raw = get("grant");
+            if (raw != null && new JSONObject(raw).getJSONObject("session").has("account_binding")) suspendProfile(new JSONObject(raw).getString("profileId"));
+            db.setTransactionSuccessful();
+        } finally { db.endTransaction(); }
+        proofCommitted(); boundary++;
+    }
     String nativeActor(String cookie)throws Exception {
         String raw=get("grant");if(raw==null)return null;JSONObject grant=new JSONObject(raw);String profile=grant.getString("profileId");
         if(OutboxPolicy.actorPrefix(origin,profile)==null)return null;
@@ -392,6 +506,7 @@ final class NativeOutbox implements AutoCloseable {
     }
     void grant(JSONObject session, String cookie) throws Exception {
         // This method is called only with an actual native session HTTP response.
+        if(offlineWorkspace())set("offline_workspace","0");
         if(session.opt("authenticated")!=Boolean.TRUE||session.optJSONObject("member")==null||session.getJSONObject("member").opt("active")!=Boolean.TRUE){revoke();throw new AccessRequired();}
         String mode = session.getString("mode");
         boolean local = mode.equals("local") && session.opt("required") == Boolean.FALSE && cookie == null;
@@ -405,9 +520,34 @@ final class NativeOutbox implements AutoCloseable {
         String role = session.getJSONObject("member").getString("role");
         NativePolicy.require(Arrays.asList("owner", "admin", "member", "guest").contains(role));
         JSONObject observed = new JSONObject(), member = new JSONObject();
-        for (String name : Arrays.asList("enabled", "required", "authenticated", "mode", "identity", "expires_at", "workspace_id", "cache_binding", "public_web_origin")) if (session.has(name)) observed.put(name, session.get(name));
+        for (String name : Arrays.asList("enabled", "required", "authenticated", "mode", "identity", "expires_at", "workspace_id", "cache_binding", "account_binding", "public_web_origin")) if (session.has(name)) observed.put(name, session.get(name));
         for (String name : Arrays.asList("id", "name", "email", "role", "active")) if (session.getJSONObject("member").has(name)) member.put(name, session.getJSONObject("member").get(name));
         observed.put("member", member); grant.put("role", role).put("session", observed);
+        if(session.has("account_binding")) {
+            // A freshly observed child/member replacement retires every older incarnation of this workspace under this parent.
+            try(Cursor rows=db.rawQuery("SELECT value FROM control WHERE key LIKE 'parked:%'",null)) {
+                while(rows.moveToNext()) {JSONObject previous=new JSONObject(rows.getString(0)),identity=previous.getJSONObject("session");String oldProfile=previous.getString("profileId");
+                    if(!profile.equals(oldProfile)&&session.getString("workspace_id").equals(identity.optString("workspace_id"))
+                        &&session.getString("account_binding").equals(identity.optString("account_binding"))&&grant.getString("session_ref").equals(previous.optString("session_ref")))set("suspended:"+oldProfile,"1");
+                }
+            }
+        }
+        String parked = get("parked:" + profile);
+        String priorAuthority=parked==null?get("grant"):parked;
+        if(priorAuthority!=null) {JSONObject prior=new JSONObject(priorAuthority);
+            if(profile.equals(prior.optString("profileId")) && (!role.equals(prior.optString("role")) || !grant.getString("session_ref").equals(prior.optString("session_ref"))))
+                db.execSQL("DELETE FROM control WHERE key IN (?,?)",new Object[]{"parked-proofs:"+profile,"offline_cached_proofs"});
+        }
+        if (parked != null && session.has("account_binding")) {
+            JSONObject prior = new JSONObject(parked);
+            NativePolicy.require(prior.getString("session_ref").equals(grant.getString("session_ref"))
+                && prior.getLong("validUntil") > System.currentTimeMillis()
+                && prior.getJSONObject("session").getString("account_binding").equals(session.getString("account_binding")));
+            if (get("suspended:" + profile) != null || tombstone("profile", profile)) throw new RecoveryRequired();
+            // Fresh native GET re-established the same incarnation; canonical reads must still rebuild all resource proofs.
+            set("grant", parked); set("identity_state", "parked");
+            db.execSQL("DELETE FROM control WHERE key=?", new Object[]{"parked:" + profile});
+        }
         String existing=get("grant");
         if (existing != null && "verified".equals(get("identity_state"))) {
             JSONObject prior = new JSONObject(existing);
@@ -420,6 +560,7 @@ final class NativeOutbox implements AutoCloseable {
             if(profile.equals(prior.getString("profileId"))&&grant.getString("session_ref").equals(prior.getString("session_ref"))&&prior.getLong("validUntil")>System.currentTimeMillis()
                 &&grant.getLong("validUntil")>=prior.getLong("validUntil")&&role.equals(prior.optString("role"))&&prior.optJSONObject("session")!=null&&canonical(prior.getJSONObject("session"),false).equals(canonical(observed,false)))return;
         }
+        if(session.has("account_binding"))set("account_reconcile_required","1");
         boolean changed = false,recoveryRequired=false;
         db.beginTransaction();
         try {
@@ -485,8 +626,9 @@ final class NativeOutbox implements AutoCloseable {
         if (value instanceof JSONArray) { JSONArray array = (JSONArray) value; StringBuilder result = new StringBuilder("["); for (int i = 0; i < array.length(); i++) { if (i > 0) result.append(','); result.append(canonical(array.get(i), false)); } return result.append(']').toString(); }
         return value instanceof String ? JSONObject.quote((String) value) : String.valueOf(value);
     }
-    private JSONObject currentLedger(JSONObject grant) throws Exception {
+    JSONObject currentLedger(JSONObject grant) throws Exception {
         JSONObject ledger = ledger();
+        if(offlineWorkspace()) {String cached=get("offline_cached_proofs");ledger=cached==null?null:new JSONObject(cached);if(ledger!=null)ledger.put("owner",get("owner"));}
         if (ledger == null || !grant.getString("profileId").equals(ledger.getString("profileId"))
             || !grant.getString("session_ref").equals(ledger.getString("sessionRef"))
             || !ledger.getString("owner").equals(get("owner"))) return null;
@@ -886,7 +1028,7 @@ final class NativeOutbox implements AutoCloseable {
         out.put("profileId", grant == null ? JSONObject.NULL : grant.getString("profileId"));
         out.put("validUntil", grant == null ? JSONObject.NULL : grant.getLong("validUntil"));
         AccessReport report = grant == null ? new AccessReport(0) : preflight(grant);
-        out.put("proofEpoch", proofEpoch()); out.put("resourceAccess", grant != null && !"1".equals(get("needs_floor")) && report.issues.length() == 0 ? "ready" : "required");
+        out.put("proofEpoch", proofEpoch()); out.put("resourceAccess", grant != null && (offlineReadable(grant) || !"1".equals(get("needs_floor"))) && report.issues.length() == 0 ? "ready" : "required");
         out.put("accessIssues", grant == null ? new JSONArray() : report.issues); out.put("accessIssuesTruncated", grant != null && report.truncated);
         out.put("reconciliationHandles", grant == null ? new JSONArray() : reconciler().handles(grant, owner));
         deliveryDeadline = grant == null ? 0 : Math.min(deliveryDeadline, grant.getLong("validUntil")); return out;
@@ -957,6 +1099,7 @@ final class NativeOutbox implements AutoCloseable {
             if (value != null) NativePolicy.require(value.getString("id").equals(profile) && origin.equals(value.getString("origin"))
                 && OutboxPolicy.profile(origin, value.getString("workspaceId"), value.getString("memberId"), value.getString("cacheBinding")).equals(profile)
                 && (!mode.equals("active") || grant != null && value.getDouble("validUntil") <= grant.getLong("validUntil")));
+            if(value!=null && mode.equals("active") && grant!=null && grant.getJSONObject("session").has("account_binding")) NativePolicy.require(grant.getJSONObject("session").getString("account_binding").equals(value.optString("accountBinding")));
         } else if (bucket.equals("meta")) {
             NativePolicy.require(originalKey instanceof String);
             String id = (String) originalKey;
@@ -997,9 +1140,15 @@ final class NativeOutbox implements AutoCloseable {
                     if (previous.moveToFirst()) NativePolicy.require(Arrays.equals(payload("records",previous.getLong(0),previous.getInt(1)), value.toString().getBytes(StandardCharsets.UTF_8)));
                 }
             } else {
-                NativePolicy.require(id.equals("active") || id.equals("last-profile") || id.startsWith("mutation-sequence:"));
+                String parent=grant==null?null:grant.getJSONObject("session").optString("account_binding",null);
+                String workspace=grant==null?null:grant.getJSONObject("session").getString("workspace_id");
+                String actual=grant==null?null:grant.getString("profileId");
+                boolean scopedPointer=parent!=null && (id.equals("active:"+parent+":"+workspace)||id.equals("last-profile:"+parent+":"+workspace));
+                boolean scopedData=parent!=null && (id.equals("parked:"+actual)||id.equals("workspace-input:"+actual)||id.equals("ended-account:"+parent+":"+actual));
+                NativePolicy.require((parent==null || !mode.equals("active")) && (id.equals("active") || id.equals("last-profile")) || id.startsWith("mutation-sequence:") || scopedPointer || scopedData);
+                if(value!=null && (scopedPointer||scopedData)) NativePolicy.require(actual.equals(value.optString("profileId")) && (!id.startsWith("parked:")||parent.equals(value.optString("accountBinding"))));
                 if (op.equals("delete")) {try(Cursor original=db.rawQuery("SELECT profile_id FROM records WHERE mode=? AND bucket='meta' AND key=?",new String[]{mode,key})){if(original.moveToFirst()){String owner=original.getString(0);if(get("suspended:"+owner)!=null||grant==null||!owner.equals(grant.getString("profileId")))return;}}if(!mode.equals("quarantine"))db.execSQL("DELETE FROM records WHERE mode=? AND bucket='meta' AND key=?", new Object[]{mode, key}); return; }
-                profile = id.equals("active") || id.equals("last-profile") ? value.getString("profileId") : id.substring("mutation-sequence:".length()); NativePolicy.require(id.equals(value.getString("id")));
+                profile = id.equals("active") || id.equals("last-profile") || scopedPointer || scopedData ? value.getString("profileId") : id.substring("mutation-sequence:".length()); NativePolicy.require(id.equals(value.getString("id")));
             }
         } else {
             String resourceKey = originalKey instanceof JSONArray ? ((JSONArray) originalKey).getString(0) : (String) originalKey;
@@ -1098,7 +1247,8 @@ final class NativeOutbox implements AutoCloseable {
                 if (!"delete".equals(item.getString("op")) && !("meta".equals(item.getString("bucket")) && item.get("key") instanceof String
                     && (item.getString("key").startsWith("revoked:") || item.getString("key").startsWith("revoked-resource:")))) cleanup = false;
             }
-            if (mode.equals("active") && !cleanup && (grant == null || "1".equals(get("needs_floor")) || proof != proofEpoch())) throw new AccessRequired();
+            boolean offlineAppend=offlineAppend(changes,grant);
+            if (mode.equals("active") && !cleanup && (grant == null || "1".equals(get("needs_floor"))&&!offlineAppend || proof != proofEpoch())) throw new AccessRequired();
             Set<String> newLocalPages = new HashSet<>();
             if (mode.equals("active") && !cleanup && grant != null) for (int i = 0; i < changes.length(); i++) {
                 JSONObject change = changes.getJSONObject(i), value = change.optJSONObject("value"), operation = value == null ? null : value.optJSONObject("operation");
@@ -1144,7 +1294,7 @@ final class NativeOutbox implements AutoCloseable {
         JSObject out = new JSObject(); out.put("generation", generation); out.put("head", head); out.put("txId", tx); out.put("proofEpoch", proof); return out;
     }
     JSObject read(JSONObject input, long generation, String cookie, boolean blocked) throws Exception {
-        scope(input, generation); JSONObject grant = verified(cookie, blocked); if (grant == null||"1".equals(get("needs_floor"))) throw new AccessRequired();
+        scope(input, generation); JSONObject grant = verified(cookie, blocked); if (grant == null||"1".equals(get("needs_floor"))&&!offlineReadable(grant)) throw new AccessRequired();
         if (intentProof(input) != proofEpoch()) throw new AccessRequired();
         AccessReport report = preflight(grant); if (report.issues.length() > 0) throw new AccessRequired();
         NativePolicy.require(OutboxPolicy.integer(input.opt("head"), 0, OutboxPolicy.SAFE - 1) == head());

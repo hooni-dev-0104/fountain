@@ -34,7 +34,7 @@ final class NativeLocalGraph {
     }
     NativeLocalGraph(NativeOutbox host, JSONObject grant, String planId) throws Exception {
         this.host = host; this.grant = grant; profile = grant.getString("profileId");
-        String raw = host.get("resource_proofs"); ledger = raw == null ? null : new JSONObject(raw);
+        ledger = host.currentLedger(grant);
         workspace = ledger == null ? null : ledger.getJSONObject("entries").optJSONObject("workspace:workspace");
         long total = 0; int count = 0; Set<String> snapshotTargets = new HashSet<>();
         String query = planId == null ? "SELECT bucket,rowid,resource_key,length(payload) FROM records WHERE mode='active' AND profile_id=? AND bucket IN ('mutations','localPages','snapshots') ORDER BY CASE WHEN bucket='snapshots' THEN 1 ELSE 0 END"

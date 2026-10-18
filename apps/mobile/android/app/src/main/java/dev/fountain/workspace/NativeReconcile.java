@@ -450,6 +450,11 @@ final class NativeReconcile {
     }
     // Canonical transforms and final validation are kept beside the collector so
     // no renderer record can become a baseline or permission proof.
+    private List<String> pointerNames(JSONObject grant)throws Exception {
+        JSONObject session=grant.getJSONObject("session");String parent=session.optString("account_binding",null);
+        String suffix=parent==null?"":":"+parent+":"+session.getString("workspace_id");
+        return Arrays.asList("active"+suffix,"last-profile"+suffix);
+    }
     private void build(JSONObject p, JSONObject grant) throws Exception {
         String plan = p.getString("id"), profile = p.getString("profile");
         JSONObject workspace = response(p, "workspace", "workspace");
@@ -464,8 +469,12 @@ final class NativeReconcile {
             .put("workspaceId", workspace.getString("workspace_id")).put("memberId", workspace.getString("current_member_id"))
             .put("cacheBinding", workspace.getString("session_binding")).put("session", grant.getJSONObject("session"))
             .put("workspace", workspace).put("validUntil", grant.getLong("validUntil")).put("updatedAt", now);
+        String parent=grant.getJSONObject("session").optString("account_binding",null);
+        if(parent!=null)freshProfile.put("accountBinding",parent);
         output(p, "profiles", profile, null, freshProfile);
-        for (String name : Arrays.asList("active", "last-profile")) output(p, "meta", name, null, new JSONObject().put("id", name).put("profileId", profile));
+        for(Row row:rows(plan,"source")) if(row.profile.equals(profile)&&row.mode.equals("active")&&row.bucket.equals("meta")&&host.key("workspace-input:"+profile).equals(row.key)
+            && "native".equals(host.sourceTrust(row.mode,row.bucket,row.key,row.profile,row.raw(),OutboxPolicy.actorPrefix(host.origin,profile)))) outputRaw(p,row);
+        for (String name : pointerNames(grant)) output(p, "meta", name, null, new JSONObject().put("id", name).put("profileId", profile));
         JSONArray expected = p.getJSONArray("expected");
         for (int i = 0; i < expected.length(); i++) {
             JSONObject descriptor = expected.getJSONObject(i); String kind = descriptor.getString("kind"), id = descriptor.getString("id");
@@ -569,7 +578,7 @@ final class NativeReconcile {
                 String action = p.getJSONObject("actions").optString(row.ref(), "baseline");
                 if (!action.equals("keep")) archive(p, row, action.equals("quarantine") ? "reconcile_conflict" : "reconcile_baseline");
             }
-            for(String pointer:Arrays.asList("active","last-profile")){
+            for(String pointer:pointerNames(grant)){
                 try(Cursor old=db.rawQuery("SELECT profile_id,rowid,length(payload) FROM records WHERE mode='active' AND bucket='meta' AND key=?",new String[]{host.key(pointer)})){
                     if(old.moveToFirst()&&!old.getString(0).equals(p.getString("profile"))){
                         archiveVersion(old.getString(0),null,"meta",host.key(pointer),host.payload("records",old.getLong(1),old.getInt(2)),"native_pointer_replacement");
@@ -584,6 +593,8 @@ final class NativeReconcile {
             db.execSQL("DELETE FROM native_observed_resources WHERE profile_id=?",new Object[]{p.getString("profile")});
             if (host.preflight(grant).issues.length() != 0 || host.verified(cookie, blocked) == null || System.currentTimeMillis() >= p.getLong("expiresAt")) throw new Failure("OUTBOX_RECONCILE_RETRY");
             host.stampLocalVersions(grant, freshLocalPages, null);
+            db.execSQL("DELETE FROM control WHERE key=?",new Object[]{"offline-denied:"+grant.getString("profileId")});
+            if(grant.getJSONObject("session").has("account_binding"))host.set("account_reconcile_required","0");
             long head = host.advance();
             JSONObject receipt = new JSONObject().put("version", 1).put("planId", id).put("checksum", checksum).put("sourceHead", source).put("targetHead", head).put("mode", p.getString("mode")).put("counts", p.getJSONObject("counts"));
             result.put("generation", generation); result.put("state", "committed"); result.put("planId", id); result.put("lease", p.getString("lease")); result.put("head", head); result.put("proofEpoch", host.proofEpoch()); result.put("checksum", checksum); result.put("receipt", receipt);

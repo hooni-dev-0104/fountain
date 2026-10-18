@@ -49,6 +49,12 @@ final class CookieVault {
     CookieVault(Context context) {
         this(context,context.getSharedPreferences("fountain_native_v1", Context.MODE_PRIVATE),ALIAS,null,new File(context.getDataDir(),"shared_prefs/fountain_native_v1.xml"));
     }
+    /** Separate realm storage; names are native constants, never renderer input. */
+    CookieVault(Context context, String preferencesName, String keyAlias) {
+        this(context, context.getSharedPreferences(preferencesName, Context.MODE_PRIVATE), keyAlias, null,
+            new File(context.getDataDir(), "shared_prefs/" + preferencesName + ".xml"));
+        NativePolicy.require(preferencesName.matches("[a-z0-9_]{1,100}") && keyAlias.matches("[a-z0-9_.]{1,200}"));
+    }
     CookieVault(Context context,SharedPreferences preferences,String keyAlias,KeyFault keyFault) {
         this(context,preferences,keyAlias,keyFault,keyFault==null?null:keyFault.backingFile());
     }

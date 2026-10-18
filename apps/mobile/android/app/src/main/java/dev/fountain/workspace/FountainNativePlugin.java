@@ -56,9 +56,30 @@ public class FountainNativePlugin extends Plugin {
     private final NativeSessionBinding sessionBinding = new NativeSessionBinding();
     private long generation, authGeneration, ownerBoundaryEpoch;
     private final Runnable boundaryInvalidated = () -> {
-        synchronized (lock) { sessionBinding.clear(); invalidateRecovery(); authGeneration++; cancelAll(null, "STALE_SESSION"); }
+        synchronized (lock) { sessionBinding.clear(); invalidateRecovery(); authGeneration++; cancelAll(null, "STALE_SESSION"); this.organizationEpoch++; cancelOrganizations(null, "STALE_SESSION"); }
     };
     private CookieVault vault;
+    private CookieVault organizationVault;
+    private final ExecutorService organizationWorkers = Executors.newSingleThreadExecutor();
+    private final Map<String, OrganizationOperation> organizationOperations = new HashMap<>();
+    private String organizationOrigin, organizationActive, organizationRevoke, organizationActiveBinding, organizationRevokeBinding;
+    private long organizationGeneration, organizationEpoch;
+    private boolean organizationBroken;
+    private static final class OrganizationOperation {
+        final String id, origin;
+        final long generation, boundaryEpoch;
+        final PluginCall call;
+        final boolean login, logout;
+        final AtomicBoolean closed = new AtomicBoolean();
+        long epoch, deadline, workspaceEpoch;
+        boolean crossWorkspace;
+        volatile HttpsURLConnection connection;
+        ScheduledFuture<?> timeout;
+        OrganizationOperation(String id, String origin, long generation, long epoch, PluginCall call, boolean login, boolean logout) {
+            this.id = id; this.origin = origin; this.generation = generation; this.epoch = epoch;
+            this.call = call; this.login = login; this.logout = logout; this.boundaryEpoch = NativeCookieBoundary.epoch();
+        }
+    }
     private static final boolean OUTBOX_ENABLED = true;
     private boolean outboxEnabled() {
         return OUTBOX_ENABLED || (getContext().getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
@@ -133,6 +154,7 @@ public class FountainNativePlugin extends Plugin {
             activeCookie = restored.active; revokeCookie = restored.revoke;
             cleanAbandonedExports();
         } catch (Exception error) { broken = true; }
+        loadOrganization();
         NativeCookieBoundary.register(boundaryInvalidated);
         // Capacitor's plugin URL hook omits isForMainFrame. Keep it closed to
         // external loads and authorize OS opening only at this request boundary.
@@ -259,6 +281,272 @@ public class FountainNativePlugin extends Plugin {
         return result;
     }
 
+    private void loadOrganization() {
+        try {
+            organizationVault = new CookieVault(getContext(), "fountain_organization_native_v1", "dev.fountain.organization.native.v1");
+            JSONObject saved = organizationVault.read();
+            organizationOrigin = nullable(saved, "origin");
+            if (organizationOrigin != null) organizationOrigin = NativePolicy.origin(organizationOrigin);
+            organizationGeneration = saved.optLong("generation", 0);
+            NativePolicy.require(organizationGeneration >= 0 && organizationGeneration < 9_007_199_254_740_991L);
+            organizationActive = nullable(saved, "active"); organizationRevoke = nullable(saved, "revoke");
+            organizationActiveBinding = nullable(saved, "active_binding"); organizationRevokeBinding = nullable(saved, "revoke_binding");
+            NativePolicy.require((organizationActive == null) == (organizationActiveBinding == null)
+                && (organizationRevoke == null) == (organizationRevokeBinding == null)
+                && (organizationActive == null || organizationRevoke == null)
+                && (organizationActive == null && organizationRevoke == null || organizationOrigin != null));
+            if (organizationActive != null) { NativeOrganizationPolicy.token(organizationActive); NativeOrganizationPolicy.binding(organizationActiveBinding); }
+            if (organizationRevoke != null) { NativeOrganizationPolicy.token(organizationRevoke); NativeOrganizationPolicy.binding(organizationRevokeBinding); }
+            // An unreadable workspace config is not evidence that its origin was replaced.
+            if (broken && origin == null) return;
+            if (!Objects.equals(origin, organizationOrigin) || generation != organizationGeneration) organizationConfigurationChanged();
+            else if (organizationActive != null && organizationVault.invalidated(organizationOrigin)) {
+                organizationRevoke = organizationActive; organizationRevokeBinding = organizationActiveBinding;
+                organizationActive = null; organizationActiveBinding = null;
+                persistOrganization();
+            }
+        } catch (Exception unavailable) { organizationBroken = true; }
+    }
+
+    private NativePolicy.SessionStorage organizationStorage() {
+        return new NativePolicy.SessionStorage() {
+            public boolean markInvalidated(String server) { return organizationVault.markInvalidated(server); }
+            public boolean saveRevokeOnly(String server, String token) { return false; }
+            public boolean eraseEncryptedState() { return organizationVault.eraseEncryptedState(); }
+            public boolean destroyEncryptionKey() { return organizationVault.destroyEncryptionKey(); }
+        };
+    }
+    private void persistOrganization() throws Exception {
+        NativePolicy.require(!destroyed && NativeCookieBoundary.permits(ownerBoundaryEpoch));
+        NativePolicy.SessionInvalidation before = NativePolicy.fenceSession(organizationOrigin, organizationRevoke, organizationStorage());
+        if (!before.journaled) { organizationBroken = true; throw new NativePolicy.SessionStorageFailure(before.durable); }
+        try {
+            JSONObject saved = record(organizationOrigin, organizationGeneration, organizationActive, organizationRevoke,
+                organizationRevoke == null ? null : organizationOrigin);
+            saved.put("active_binding", organizationActiveBinding == null ? JSONObject.NULL : organizationActiveBinding);
+            saved.put("revoke_binding", organizationRevokeBinding == null ? JSONObject.NULL : organizationRevokeBinding);
+            organizationVault.write(saved);
+            organizationVault.clearInvalidated(organizationOrigin);
+        } catch (Exception unavailable) {
+            NativePolicy.SessionInvalidation after = NativePolicy.fenceSession(organizationOrigin, organizationRevoke, organizationStorage());
+            organizationBroken = true; throw new NativePolicy.SessionStorageFailure(after.durable);
+        }
+    }
+    private void quarantineOrganization() throws Exception {
+        if (organizationActive != null) {
+            organizationRevoke = organizationActive; organizationRevokeBinding = organizationActiveBinding;
+            organizationActive = null; organizationActiveBinding = null;
+        }
+        persistOrganization();
+    }
+    private void organizationConfigurationChanged() {
+        organizationEpoch++; cancelOrganizations(null, "CONFIGURATION_CHANGED");
+        // Config changes drop previous-origin credentials, never send them to the replacement host.
+        organizationOrigin = origin; organizationGeneration = generation;
+        organizationActive = null; organizationActiveBinding = null; organizationRevoke = null; organizationRevokeBinding = null;
+        if (organizationVault != null) try { persistOrganization(); } catch (Exception unavailable) { organizationBroken = true; }
+    }
+    private void organizationEntry(PluginCall call, Runnable action) {
+        getActivity().runOnUiThread(() -> { synchronized (lock) {
+            if (!bundleAllowed()) { call.reject("Bundled main frame required", "FORBIDDEN_FRAME"); return; }
+            if (destroyed || organizationBroken || !NativeCookieBoundary.permits(ownerBoundaryEpoch)) {
+                call.reject("Secure organization transport unavailable", "UNAVAILABLE"); return;
+            }
+            try { action.run(); } catch (Exception invalid) { call.reject("Invalid organization transport input", "NATIVE_INPUT"); }
+        } });
+    }
+
+    @PluginMethod public void organizationRequest(PluginCall call) {
+        organizationEntry(call, () -> {
+            try {
+                JSONObject wire = call.getData();
+                NativePolicy.require(wire.length() == 7);
+                for (String key : Arrays.asList("id", "generation", "path", "method", "headers", "bodyBase64", "timeoutMs")) NativePolicy.require(wire.has(key));
+                NativePolicy.require(wire.opt("id") instanceof String && wire.opt("path") instanceof String
+                    && wire.opt("method") instanceof String && wire.opt("headers") instanceof JSONObject && wire.opt("bodyBase64") instanceof String);
+                String method = call.getString("method"), path = NativeOrganizationPolicy.path(call.getString("path"), method);
+                String id = call.getString("id");
+                NativePolicy.require(id.matches("[A-Za-z0-9_.:-]{1,160}") && !organizationOperations.containsKey(id)
+                    && organizationOperations.size() < 32 && origin != null && Objects.equals(origin, organizationOrigin)
+                    && integer(call, "generation", 0, 9_007_199_254_740_990L) == generation && generation == organizationGeneration);
+                byte[] body = decodeBody(call, NativeOrganizationPolicy.MAX_REQUEST);
+                Map<String, String> headers = requestHeaders(call);
+                Iterator<String> headerNames = ((JSONObject)wire.opt("headers")).keys();
+                while (headerNames.hasNext()) NativePolicy.require(((JSONObject)wire.opt("headers")).opt(headerNames.next()) instanceof String);
+                NativePolicy.require(body.length == 0 && method.equals("GET") || body.length > 0 && !method.equals("GET")
+                    && "application/json".equals(headers.get("content-type")));
+                JSONObject json = body.length == 0 ? null : new JSONObject(OutboxPolicy.utf8(body));
+                int timeout = (int) integer(call, "timeoutMs", 1, 45000);
+                boolean session = NativeOrganizationPolicy.session(path), login = session && method.equals("POST"), logout = session && method.equals("DELETE");
+                if (logout) {
+                    NativePolicy.require(json != null && json.length() == 1 && json.has("session_binding"));
+                    Object supplied = json.opt("session_binding");
+                    String expected = organizationActive != null ? organizationActiveBinding : organizationRevokeBinding;
+                    NativePolicy.require(expected == null ? supplied == JSONObject.NULL : expected.equals(supplied));
+                }
+                if (login || logout) {
+                    organizationEpoch++; cancelOrganizations(null, "SESSION_CHANGED");
+                    quarantineOrganization(); // The old organization session is durably unusable before I/O.
+                }
+                OrganizationOperation operation = new OrganizationOperation(id, origin, generation, organizationEpoch, call, login, logout);
+                operation.deadline = SystemClock.elapsedRealtime() + timeout;
+                operation.crossWorkspace = NativeOrganizationPolicy.workspace(path, method);
+                operation.workspaceEpoch = authGeneration;
+                organizationOperations.put(id, operation);
+                operation.timeout = deadlines.schedule(() -> failOrganization(operation, "Organization request timed out", "TIMEOUT"), timeout, TimeUnit.MILLISECONDS);
+                organizationWorkers.execute(() -> {
+                    try {
+                        // One queue owns the realm, including retry-only revocation. It does not use workspace admission.
+                        if (session) revokeOrganizationPending(operation);
+                        String cookie, workspaceCookie;
+                        synchronized (lock) {
+                            checkOrganization(operation); cookie = organizationActive;
+                            workspaceCookie = operation.crossWorkspace && !broken && revokeCookie == null && !vault.invalidated(origin) ? activeCookie : null;
+                        }
+                        Response response;
+                        if (logout) {
+                            // The retry used exactly the quarantined cookie/binding; a subsequent anonymous DELETE is harmless.
+                            response = exchangeOrganization(operation, path, method, headers, body, null, null);
+                        } else response = exchangeOrganization(operation, path, method, headers, body, cookie, workspaceCookie);
+                        synchronized (lock) {
+                            checkOrganization(operation);
+                            applyOrganizationResponse(operation, response, session, cookie);
+                        }
+                        deliverOrganization(operation, response);
+                    } catch (Exception failure) {
+                        failOrganization(operation, "Organization request failed or was superseded", "ORGANIZATION_REQUEST_FAILED");
+                    }
+                });
+            } catch (Exception invalid) { call.reject("Invalid organization input or secure storage unavailable", "NATIVE_INPUT"); }
+        });
+    }
+    @PluginMethod public void organizationCancel(PluginCall call) {
+        organizationEntry(call, () -> {
+            NativePolicy.require(call.getData().length() == 2 && call.getData().opt("id") instanceof String
+                && call.getData().has("generation") && integer(call, "generation", 0, 9_007_199_254_740_990L) == generation);
+            OrganizationOperation operation = organizationOperations.get(call.getString("id"));
+            boolean cancelled = operation != null && operation.generation == generation && !operation.closed.get();
+            if (cancelled) failOrganization(operation, "Organization operation cancelled", "CANCELLED");
+            JSObject result = new JSObject(); result.put("cancelled", cancelled); call.resolve(result);
+        });
+    }
+    private void revokeOrganizationPending(OrganizationOperation operation) throws Exception {
+        String token, binding;
+        synchronized (lock) { checkOrganization(operation); token = organizationRevoke; binding = organizationRevokeBinding; }
+        if (token == null) return;
+        JSONObject body = new JSONObject(); body.put("session_binding", NativeOrganizationPolicy.binding(binding));
+        Map<String, String> headers = new HashMap<>(); headers.put("content-type", "application/json");
+        Response response = exchangeOrganization(operation, "/api/organization/session", "DELETE", headers,
+            body.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8), token, null);
+        synchronized (lock) {
+            checkOrganization(operation);
+            NativePolicy.require(response.status == 200 && (response.cookie == null || "".equals(response.cookie)) && Objects.equals(token, organizationRevoke)
+                && Objects.equals(binding, organizationRevokeBinding));
+            JSONObject result = new JSONObject(OutboxPolicy.utf8(response.body));
+            NativePolicy.require(Boolean.FALSE.equals(result.opt("authenticated")) && "organization".equals(result.opt("mode")));
+            organizationRevoke = null; organizationRevokeBinding = null; persistOrganization();
+        }
+    }
+    private void applyOrganizationResponse(OrganizationOperation operation, Response response, boolean session, String sentCookie) throws Exception {
+        if (operation.login && response.status == 200) {
+            NativePolicy.require(response.cookie != null && !response.cookie.isEmpty());
+            JSONObject result = new JSONObject(OutboxPolicy.utf8(response.body));
+            String binding = NativeOrganizationPolicy.binding(result.getString("cache_binding"));
+            NativePolicy.require(Boolean.TRUE.equals(result.opt("authenticated")) && "organization".equals(result.opt("mode")));
+            // Retain a retry-only record before attempting activation; uncertain writes never resurrect it.
+            organizationRevoke = response.cookie; organizationRevokeBinding = binding; persistOrganization();
+            organizationActive = response.cookie; organizationActiveBinding = binding;
+            organizationRevoke = null; organizationRevokeBinding = null; persistOrganization();
+        } else if (response.status == 401 || "".equals(response.cookie)) {
+            if (sentCookie != null && Objects.equals(sentCookie, organizationActive)) {
+                organizationEpoch++; operation.epoch = organizationEpoch; cancelOrganizations(operation, "SESSION_CHANGED");
+                quarantineOrganization();
+            }
+        } else if (response.cookie != null) {
+            NativePolicy.require(session && !operation.logout && Objects.equals(sentCookie, organizationActive)
+                && response.cookie.equals(organizationActive));
+        }
+        if (session && !operation.login && !operation.logout && response.status == 200) {
+            JSONObject result = new JSONObject(OutboxPolicy.utf8(response.body));
+            NativePolicy.require("organization".equals(result.opt("mode")));
+            if (Boolean.TRUE.equals(result.opt("authenticated"))) NativePolicy.require(sentCookie != null
+                && Objects.equals(sentCookie, organizationActive) && organizationActiveBinding.equals(result.opt("cache_binding")));
+            else {
+                NativePolicy.require(Boolean.FALSE.equals(result.opt("authenticated")));
+                if (sentCookie != null && Objects.equals(sentCookie, organizationActive)) {
+                    organizationEpoch++; operation.epoch = organizationEpoch; cancelOrganizations(operation, "SESSION_CHANGED");
+                    quarantineOrganization();
+                }
+            }
+        }
+    }
+    private Response exchangeOrganization(OrganizationOperation operation, String path, String method, Map<String, String> headers,
+                                         byte[] body, String cookie, String workspaceCookie) throws Exception {
+        checkOrganization(operation);
+        HttpsURLConnection connection = open(operation.origin, path, method, headers, body, null,
+            (int)Math.max(1, operation.deadline - SystemClock.elapsedRealtime()), operation.boundaryEpoch);
+        if (cookie != null || workspaceCookie != null) connection.setRequestProperty("Cookie",
+            (cookie == null ? "" : NativeOrganizationPolicy.COOKIE + "=" + cookie)
+                + (workspaceCookie == null ? "" : (cookie == null ? "" : "; ") + "fountain_session=" + workspaceCookie));
+        try {
+            synchronized (lock) { operation.connection = connection; checkOrganization(operation); }
+            if (connection.getDoOutput()) try (OutputStream output = connection.getOutputStream()) { checkOrganization(operation); output.write(body); }
+            checkOrganization(operation);
+            Response response = new Response(); response.status = connection.getResponseCode();
+            NativePolicy.require(response.status >= 200 && response.status <= 599 && (response.status < 300 || response.status >= 400));
+            response.headers = safeHeaders(connection.getHeaderFields());
+            response.cookie = NativeOrganizationPolicy.cookie(connection.getHeaderFields(), operation.origin);
+            long expected = connection.getContentLengthLong();
+            NativePolicy.require(expected <= NativeOrganizationPolicy.MAX_RESPONSE);
+            ByteArrayOutputStream output = new ByteArrayOutputStream();
+            try (InputStream input = response.status >= 400 ? connection.getErrorStream() : connection.getInputStream()) {
+                if (input != null) { byte[] buffer = new byte[16384]; int length;
+                    while ((length = input.read(buffer)) != -1) { checkOrganization(operation);
+                        NativePolicy.require(output.size() + length <= NativeOrganizationPolicy.MAX_RESPONSE); output.write(buffer, 0, length); }
+                }
+            }
+            checkOrganization(operation); response.body = output.toByteArray();
+            NativePolicy.require(expected < 0 || response.body.length == expected);
+            return response;
+        } finally { connection.disconnect(); operation.connection = null; }
+    }
+    private void checkOrganization(OrganizationOperation operation) throws IOException {
+        synchronized (lock) {
+            if (operation.closed.get() || destroyed || organizationBroken || operation.epoch != organizationEpoch
+                || operation.generation != generation || operation.generation != organizationGeneration || !Objects.equals(origin, operation.origin)
+                || !Objects.equals(organizationOrigin, operation.origin) || !NativeCookieBoundary.permits(operation.boundaryEpoch)
+                || SystemClock.elapsedRealtime() > operation.deadline || operation.crossWorkspace && operation.workspaceEpoch != authGeneration) throw new IOException();
+        }
+    }
+    private void deliverOrganization(OrganizationOperation operation, Response response) {
+        getActivity().runOnUiThread(() -> { synchronized (lock) {
+            try {
+                checkOrganization(operation);
+                JSObject result = new JSObject(); result.put("generation", operation.generation); result.put("status", response.status);
+                result.put("headers", response.headers); result.put("bodyBase64", Base64.encodeToString(response.body, Base64.NO_WRAP));
+                boolean delivered = resolveCurrent(operation.call, result, () -> {
+                    try { checkOrganization(operation); return bundleAllowed(); } catch (Exception stale) { return false; }
+                });
+                if (!delivered) throw new IOException();
+                operation.closed.set(true); organizationOperations.remove(operation.id);
+                if (operation.timeout != null) operation.timeout.cancel(false);
+            } catch (Exception stale) { failOrganization(operation, "Organization response scope changed", "STALE_SESSION"); }
+        } });
+    }
+    private void failOrganization(OrganizationOperation operation, String message, String code) {
+        synchronized (lock) {
+            if (!operation.closed.compareAndSet(false, true)) return;
+            organizationOperations.remove(operation.id);
+            if (operation.timeout != null) operation.timeout.cancel(false);
+            if (operation.connection != null) operation.connection.disconnect();
+            operation.call.setKeepAlive(false); operation.call.reject(message, code);
+        }
+    }
+    private void cancelOrganizations(OrganizationOperation except, String reason) {
+        for (OrganizationOperation operation : new ArrayList<>(organizationOperations.values()))
+            if (operation != except) failOrganization(operation, "Organization operation was superseded", reason);
+    }
+
     @PluginMethod public void getConfiguration(PluginCall call) { entry(call, () -> call.resolve(configuration())); }
 
     @PluginMethod public void configure(PluginCall call) {
@@ -280,6 +568,7 @@ public class FountainNativePlugin extends Plugin {
                     persist(next, generation + 1, null, null, null);
                     if (outbox != null) { outbox.close(); outbox = null; }
                     origin = next; generation++; authGeneration++; cancelAll(null, "CONFIGURATION_CHANGED");
+                    organizationConfigurationChanged();
                     call.resolve(configuration());
                 } catch (Exception error) { broken = true; call.reject("Native configuration storage unavailable", "UNAVAILABLE"); }
             }
@@ -420,6 +709,7 @@ public class FountainNativePlugin extends Plugin {
         entry(call, () -> sessionWrite(() -> {
             synchronized (lock) { try {
             String path = NativePolicy.path(call.getString("path"), false);
+            NativePolicy.require(!NativeOrganizationPolicy.namespace(path));
             String method = call.getString("method");
             NativePolicy.require(NativePolicy.METHODS.contains(method));
             byte[] body;
@@ -1188,9 +1478,10 @@ public class FountainNativePlugin extends Plugin {
     @Override public Boolean shouldOverrideLoad(Uri url) { return !localUrl(url); }
 
     @Override protected void handleOnDestroy() {
-        synchronized (lock) { invalidateRecovery(); destroyed = true; authGeneration++; cancelAll(null, "APP_CLOSED"); }
+        synchronized (lock) { invalidateRecovery(); destroyed = true; authGeneration++; cancelAll(null, "APP_CLOSED"); organizationEpoch++; cancelOrganizations(null, "APP_CLOSED"); }
         NativeCookieBoundary.unregister(boundaryInvalidated);
         workers.shutdownNow();
+        organizationWorkers.shutdownNow();
         // Already-running revocation is allowed to finish; its encrypted slot
         // survives process death and is retried before the next session call.
         sessions.execute(() -> { if(recovery!=null)recovery.invalidate();if (outbox != null) { outbox.close(); outbox = null; } deadlines.shutdown(); });

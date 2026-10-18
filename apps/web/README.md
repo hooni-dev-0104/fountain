@@ -7,7 +7,7 @@ in Supabase. There is no database connection, service key, package installation,
 or Python runtime in this web artifact. Desktop and mobile clients can select
 the same HTTPS web origin and use its `/api` contract.
 
-`dist` contains exactly 14 named public assets, `vercel.json`, and
+`dist` contains exactly 20 named public assets, `vercel.json`, and
 `api/public-relay.mjs`. Use that **directory** as the reviewed preview bundle;
 its `.mjs` entry is a standard Node Vercel Function. It is not a purely static
 hosting artifact. Alternatively, a Git project rooted at `apps/web` needs access
@@ -50,10 +50,12 @@ Before activating a hostname, add its exact HTTPS origin to
 desktop/mobile document links. Its default is `null`; an API-only Supabase origin
 does not provide a shareable frontend. Redeploy the function, then verify
 cookie login/logout, private responses, Range and SSE through that hostname.
-The bundle is prepared; Vercel deployment, real hostname cookies, streaming,
-HTML restoration, current Edge readiness and plan/usage eligibility still need
-verification by the deployment owner. The connected team's read-only metadata
-did not include its billing plan; Hobby/free status has not been established.
+The canonical hostname is `https://fountain-hoonis-projects-1ccfd37e.vercel.app`.
+The owner confirmed the existing Hobby/free team. Upload only this allowlisted
+artifact to that existing project. The same-origin `/api` rewrite keeps opaque
+HttpOnly cookies on the web hostname; native apps keep their own OS-protected
+sessions. The current account-directory release still needs its own authenticated
+canonical-host and five-platform evidence; prior deployments do not prove it.
 
 The local login-return integration and Android native URL boundary are recorded
 in [public frontend link verification](../../docs/research/public-frontend-links.md).
@@ -64,3 +66,10 @@ The standalone `.mjs` handler and rewrite syntax follow the official
 [rewrite configuration](https://vercel.com/docs/project-configuration/vercel-json#rewrites)
 documentation. Local loopback HTTP is only a test transport; the default relay
 always calls the fixed HTTPS Supabase host.
+
+Same-account workspace navigation uses `#w/{workspaceId}/home`, `page/{id}` or
+`database/{id}`. Requests capture `/api/w/{workspaceId}/{childBinding}/…` before
+starting. A workspace address or retained offline hint alone grants no access.
+The server validates the live account session and current membership for each
+request. Ordinary A → B → A keeps pending edits under their original profile;
+revoked profiles remain suspended.

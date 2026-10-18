@@ -3,7 +3,7 @@ import {readFile,lstat,realpath,mkdir,rm,writeFile,copyFile} from 'node:fs/promi
 import {dirname,join,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
 const folder=dirname(fileURLToPath(import.meta.url)),source=resolve(folder,'../../static'),destination=join(folder,'dist');
-export const ASSETS=Object.freeze(['app.js','backup.js','collaboration.js','index.html','mutations.js','offline.js','organization.html','organization.js','organization.css','presence.js','public.js','recovery-import.js','style.css','sw.js','transport.js','uploads.js','version-diff.js']);
+export const ASSETS=Object.freeze(['account.js','workspaces.js','workspace-scope.js','app.js','backup.js','collaboration.js','index.html','mutations.js','offline.js','organization.html','organization.js','organization.css','presence.js','public.js','recovery-import.js','style.css','sw.js','transport.js','uploads.js','version-diff.js']);
 export async function build(){
   try{if((await lstat(destination)).isSymbolicLink())throw Error('Web output must be a regular directory');}catch(error){if(error.code!=='ENOENT')throw error;}
   const files=[...ASSETS];

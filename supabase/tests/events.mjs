@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import {createPageEvents} from '../functions/_shared/events.ts';
 import {APIError} from '../functions/_shared/access.ts';
+import {HttpError} from '../functions/_shared/http.ts';
 const realSetTimeout=globalThis.setTimeout,realClearTimeout=globalThis.clearTimeout,timers=new Set();
 globalThis.setTimeout=(action,delay,...args)=>{const id=realSetTimeout(()=>{timers.delete(id);action(...args);},delay);timers.add(id);return id;};
 globalThis.clearTimeout=id=>{timers.delete(id);return realClearTimeout(id);};
@@ -36,6 +37,11 @@ try{
  let errors=0;const sanitized=[];
  const safe=await consume(await createPageEvents(request(),{pollMs:2,maxDurationMs:1000,resolve:async()=>{if(errors++>0)throw new Error('SECRET_APIKEY_SQL_PASSWORD');return base();}}),event=>{sanitized.push(event);return false;});
  assert.equal(sanitized.at(-1).value.status,503);assert(!safe.includes('SECRET'));checks++;
+ for(const status of[401,403,409]){
+  const error=new HttpError(status,'Public authorization denial','PUBLIC_DENIAL');let reads=0;const events=[];
+  const text=await consume(await createPageEvents(request(),{pollMs:2,maxDurationMs:1000,resolve:async()=>{if(reads++>0)throw error;return base();}}),event=>{events.push(event);return false;});
+  assert.equal(events.at(-1).type,'denied');assert.deepEqual(events.at(-1).value,{status,error:'Public authorization denial'});assert(!text.includes('PUBLIC_DENIAL'));await assert.rejects(createPageEvents(request(),{resolve:async()=>{throw error;}}),e=>e===error);checks++;
+ }
  const controller=new AbortController();let complete,signal;
  const disconnected=[];
  const active=await createPageEvents(request(controller.signal),{pollMs:2,maxDurationMs:1000,resolve:async current=>{signal=current;if(complete===undefined){complete=null;return base();}return new Promise(resolve=>{complete=resolve;});}});

@@ -1,10 +1,11 @@
 /** Authorized polling SSE transport. No Realtime subscription or delivery claim.
- * resolve must reauthenticate the ORIGINAL cookie and return page-ACL-projected
+ * resolve must reauthorize the ORIGINAL session and return page-ACL-projected
  * document + presence from one pinned staged action (snapshotWithDocument).
  */
 import {APIError,is_object,require} from './access.ts';
 import type {Entity} from './access.ts';
 import {AuthError} from './auth.ts';
+import {HttpError} from './http.ts';
 import {canonicalJSON} from './store.ts';
 export type EventSnapshot={snapshot:Entity;presence:Entity};
 type Config={resolve:(signal:AbortSignal)=>Promise<EventSnapshot>;pollMs?:number;heartbeatMs?:number;maxDurationMs?:number;writeTimeoutMs?:number;wait?:(signal:AbortSignal,timeoutMs:number)=>Promise<void>;onClose?:()=>void};
@@ -33,7 +34,7 @@ function frame(event:string,value:Entity):Uint8Array{
  const encoded=encoder.encode('event: '+event+'\ndata: '+canonicalJSON(value)+'\n\n');require(encoded.length<=MAX_EVENT_BYTES,'Document stream event is too large',413);return encoded;
 }
 function safeDenied(error:unknown):Entity{
- if(error instanceof APIError||error instanceof AuthError)return {status:error.status,error:error.message};
+ if(error instanceof APIError||error instanceof AuthError||error instanceof HttpError)return {status:error.status,error:error.message};
  return {status:503,error:'Document stream is unavailable'};
 }
 /** Initial denial rejects before headers; later denial is one final SSE event.
@@ -48,7 +49,7 @@ export async function createPageEvents(request:Request,config:Config):Promise<Re
  let first:ReturnType<typeof validated>;
  try{
   if(lifetime.signal.aborted)return aborted(lifetime.signal);
-  try{first=validated(await abortable(config.resolve(lifetime.signal),lifetime.signal));}catch(error){if(error instanceof APIError||error instanceof AuthError)throw error;throw new APIError(503,'Document stream is unavailable');}
+  try{first=validated(await abortable(config.resolve(lifetime.signal),lifetime.signal));}catch(error){if(error instanceof APIError||error instanceof AuthError||error instanceof HttpError)throw error;throw new APIError(503,'Document stream is unavailable');}
   // Validate initial byte limits before returning successful response headers.
   frame('snapshot',first.value.snapshot);frame('presence',first.value.presence);
  }catch(error){dispose();throw error;}

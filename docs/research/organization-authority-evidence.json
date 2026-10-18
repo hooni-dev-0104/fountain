@@ -1,0 +1,191 @@
+{
+  "scope": "조직 소유권·명시적 작업공간 연결의 비공개 PostgreSQL 기반",
+  "wholeGoalComplete": false,
+  "wholeFeatureOrProductParityVerified": false,
+  "featureInventory": {
+    "features": 41,
+    "wholeFeaturesVerified": 0,
+    "goalStatus": "active"
+  },
+  "references": [
+    {
+      "url": "https://www.notion.com/help/organization-level-controls",
+      "use": "공개 제품 요구사항; 비공개 서버 구조 증거 아님"
+    },
+    {
+      "url": "https://www.notion.com/help/legal-holds",
+      "use": "조직 권한과 향후 보류 범위의 공개 요구사항"
+    }
+  ],
+  "contracts": {
+    "authority": "명시적으로 부여한 확인된 Supabase Auth 사용자; 편집 가능한 작업공간 역할·이메일·메타데이터에서 추론하지 않음",
+    "identityInput": "userId/authSessionId는 신뢰된 Edge 입력; 공개 로그인 또는 두 UUID만으로 인증하는 API 아님",
+    "privateTables": 7,
+    "forceRLS": true,
+    "directClientBackendAndServiceTableAccessDenied": true,
+    "functionOwner": "postgres",
+    "functions": 13,
+    "publicServiceOnlyRPCs": 3,
+    "helperExecutionDenied": true,
+    "bootstrap": {
+      "operatorTargeted": true,
+      "nonceSHA256Only": true,
+      "singleUse": true,
+      "maxHours": 24,
+      "prepareDoesNotEnrollOwner": true
+    },
+    "freshAuthAndGrantBeforeReceipt": true,
+    "regrantCreatesNewGrant": true,
+    "lastUsableOwnerProtected": true,
+    "externalAuthBanOrDeleteStillAllowed": true,
+    "workspaceConsent": {
+      "requestMaxMinutes": 15,
+      "currentOrganizationInitiatorRequired": true,
+      "freshTargetWorkspaceOwnerRequired": true,
+      "activeOrganizationsPerWorkspace": 1,
+      "historyAndGenerationPreserved": true,
+      "detachedReceiptCannotReattach": true,
+      "distinctUnconsumedRequestAndFreshConsentRequired": true
+    },
+    "eventAttribution": {
+      "actualConsentActorSeparate": true,
+      "workspaceConsentActorGrantNull": true,
+      "initiatorGrantRecordedSeparately": true,
+      "organizationGrantActorCompositeForeignKey": true
+    },
+    "excludedFromWorkspaceBackups": "기존 v1-v4의 현재 전역 조직 권한은 제외",
+    "newBackupVersion": false,
+    "normalContentACLChanged": false
+  },
+  "deployment": {
+    "mainVersion": 27,
+    "mainChanged": false,
+    "migrations": 45,
+    "migration": {
+      "file": "supabase/migrations/20261017160540_fountain_organization_authority.sql",
+      "sha256": "f3c4e389c93620f632de19bdf71a9ea4401dc30042b9e8f6e003f4799214f648",
+      "serverVersion": "20261018005550",
+      "applied": true
+    },
+    "exactFunctionBodies": 13,
+    "ownersAndExecuteGrantsReadBack": true,
+    "gatedVerifierVersion": 106,
+    "retiredVerifierVersion": 107,
+    "retiredFiles": 1,
+    "retiredSourceExact": true,
+    "retiredUnconditional404": true,
+    "newDependencies": false
+  },
+  "verification": {
+    "sqlRegressions": {
+      "actualPostgres": true,
+      "files": [
+        "supabase/tests/organization-authority.sql",
+        "supabase/tests/organization-workspace-consent.sql"
+      ],
+      "transaction": "BEGIN/ROLLBACK",
+      "syntheticAuthRows": true,
+      "actualGoTrueLoginClaim": false,
+      "falseConsentActorRedReproduced": true,
+      "fixedGreenPassed": true,
+      "appliedRegressionsPassed": true
+    },
+    "actualAuth": {
+      "actualGoTrue": true,
+      "users": 2,
+      "sessions": 2,
+      "userInfoVerifiedByHelper": true,
+      "clientOpaqueRefreshValidationCorrected": true,
+      "providerLoginNotRepeated": true,
+      "rawTokensPrinted": false,
+      "passed": true
+    },
+    "concurrency": {
+      "actualPostgres": true,
+      "actualGoTrueSessions": true,
+      "distinctBackendPIDs": true,
+      "blockingObservedWithPgBlockingPids": true,
+      "ownerStaleRevisionStatus": 409,
+      "freshRetryLastUsableOwnerStatus": 409,
+      "remainingUsableOwners": 1,
+      "activeWorkspaceOrganizationLinks": 1,
+      "detachedOldAckStatus": 403,
+      "explicitNewConsentReattachmentPassed": true,
+      "workspaceConsentActorDiffersFromInitiator": true,
+      "workspaceVaultIsSQLFixture": true,
+      "organizationBrowserOrLoginClaim": false,
+      "earlierSerializedMCPAttemptExcluded": true,
+      "poolerProxyPIDAttemptExcluded": true,
+      "passed": true
+    },
+    "publicHTTP": {
+      "checks": 18,
+      "passed": true,
+      "mainVersion": 27,
+      "verifierVersion": 107,
+      "publicAppSHA256": "4fbeffd63bdb19dfbcf857a6a18a92770cd89bebbb19e535b70ea00614452206",
+      "frozen8787AppSHA256": "82e8d9faa6219da972bfb902d5c20efe33f51d367884429a4983fe1347fe6d1f",
+      "assetsExact": true,
+      "frozenLocalSnapshotRestarted": true,
+      "sameSnapshotAndPostgresConfiguration": true,
+      "frozenSourceFilesExact": 37,
+      "newBrowserOrNativeLaunch": false
+    }
+  },
+  "cleanup": {
+    "ownedOrganizations": 2,
+    "ownedWorkspaces": 1,
+    "organizationTableRowsAfter": 0,
+    "AuthUsersAfter": 0,
+    "AuthSessionsAfter": 0,
+    "AuthRefreshTokensAfter": 0,
+    "StorageObjectsAfter": 0,
+    "otherEntitiesAfter": 0,
+    "otherMetaAfter": 0,
+    "temporaryDriverRemoved": true,
+    "temporaryDriverGrantRemovedWithFunction": true,
+    "temporaryDriverExactScopeTicketHashAndExpiry": true,
+    "guardExceptionsOnlyExactFixtureScopes": true,
+    "guardsRestoredBeforeCommit": true,
+    "globalTriggerDisable": false,
+    "permanentRoleChanges": false,
+    "originalCounts": {
+      "entities": 153,
+      "meta": 6,
+      "identityMapping": 0
+    },
+    "originalFingerprintsExact": true,
+    "kernelBodiesAndGrantsRestored": true,
+    "passed": true
+  },
+  "secretScan": {
+    "privateValues": 18,
+    "matches": 0,
+    "valuesPrinted": false,
+    "passed": true,
+    "scope": "Working source and Git history; final post-commit counts remain in local proof"
+  },
+  "diagnostics": {
+    "existingDefaultDenyRLSInfo": 24,
+    "pgNetPublicSchemaWarningRemains": true,
+    "leakedPasswordProtectionWarningObservedWhileQAUsersActive": true,
+    "authConfigurationChanged": false,
+    "leakedPasswordProtectionWarningAbsentAtFinalZeroUsers": true
+  },
+  "remainingLimits": [
+    "공개 조직 로그인·관리 화면",
+    "여러 작업공간 전환·탐색",
+    "조직 정책 적용과 우선순위",
+    "조직 멤버·게스트 중복 제거",
+    "조직 검색·감사·법적 보류",
+    "지속 AI 대화 수명 주기",
+    "보류 원문 스냅샷·첨부 핀과 보존 정책",
+    "실제 가족 계정의 웹·macOS·Windows·iOS·Android 여정",
+    "Notion 유료 원본 전체 기능 비교"
+  ],
+  "sourceFiles": [
+    "supabase/migrations/20261017160540_fountain_organization_authority.sql",
+    "supabase/tests/organization-authority.sql",
+    "supabase/tests/organization-workspace-consent.sql"
+  ]
+}

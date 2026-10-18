@@ -1,13 +1,13 @@
 /* Generic shell only. Private API, public-site and form responses never enter CacheStorage. */
 'use strict';
-const CACHE = 'fountain-shell-admin-trash-restore-v1';
-const SHELL = ['/', '/index.html', '/app.js', '/style.css', '/collaboration.js', '/offline.js', '/uploads.js', '/transport.js', '/mutations.js', '/presence.js', '/version-diff.js', '/recovery-import.js', '/backup.js'];
+const CACHE = 'fountain-shell-workspaces-v1';
+const SHELL = ['/', '/index.html', '/app.js', '/style.css', '/collaboration.js', '/offline.js', '/uploads.js', '/transport.js', '/mutations.js', '/presence.js', '/version-diff.js', '/recovery-import.js', '/backup.js', '/workspace-scope.js', '/account.js', '/workspaces.js'];
 importScripts('/backup.js');
 const backupTickets=new Map();
 // Capabilities are issued ONLY here. Callers cannot rebind an expired, cancelled
 // or previous-worker token, so no unbounded retired-token registry is needed.
 const issueBackupToken=()=>btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32)))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
-function sameScope(session,scope){return session?.authenticated===true&&session.member?.role==='owner'&&session.member?.active===true&&session.workspace_id===scope.workspaceId&&session.member.id===scope.memberId&&session.cache_binding===scope.binding;}
+function sameScope(session,scope){return session?.authenticated===true&&session.member?.role==='owner'&&session.member?.active===true&&session.workspace_id===scope.workspaceId&&session.member.id===scope.memberId&&session.cache_binding===scope.binding&&(!scope.accountBinding||session.account_binding===scope.accountBinding);}
 self.addEventListener('message',event=>{
   const value=event.data,source=event.source;
   if(!value||!['fountain-backup-register','fountain-backup-cancel'].includes(value.type)||!source?.id)return;
@@ -18,11 +18,11 @@ self.addEventListener('message',event=>{
       const jobId=value.jobId.toLowerCase(),old=backupTickets.get(jobId);
       if(value.type==='fountain-backup-cancel'){
         if(FountainBackup.TOKEN.test(value.transferId||'')&&old?.clientId===source.id&&old.transferId===value.transferId){old.abort.abort();old.port?.close();backupTickets.delete(jobId);}ok=true;
-      }else if(!Object.hasOwn(value,'transferId')&&event.ports[0]&&(old||backupTickets.size<8)&&value.scope&&['workspaceId','memberId','binding'].every(k=>typeof value.scope[k]==='string'&&value.scope[k].length>0&&value.scope[k].length<=1000)&&(!old||old.clientId===source.id&&!old.started)){
+      }else if(!Object.hasOwn(value,'transferId')&&event.ports[0]&&(old||backupTickets.size<8)&&value.scope&&['workspaceId','memberId','binding'].every(k=>typeof value.scope[k]==='string'&&value.scope[k].length>0&&value.scope[k].length<=1000)&&(!Object.hasOwn(value.scope,'accountBinding')||/^[a-f0-9]{32}$/.test(value.scope.accountBinding)&&/^[A-Za-z0-9_-]{1,160}$/.test(value.scope.workspaceId)&&/^[a-f0-9]{32}$/.test(value.scope.binding))&&(!old||old.clientId===source.id&&!old.started)){
         // Only RAM tickets from the initiating same-origin window. The server
         // still checks the job's original Auth/session identity on every Range.
         if(old){old.abort.abort();old.port?.close();}
-        issued=issueBackupToken();const ticket={clientId:source.id,transferId:issued,scope:{workspaceId:value.scope.workspaceId,memberId:value.scope.memberId,binding:value.scope.binding},expires:Date.now()+60000,abort:new AbortController(),started:false,port:event.ports[0],proofs:new Map()};
+        issued=issueBackupToken();const ticket={clientId:source.id,transferId:issued,scope:{workspaceId:value.scope.workspaceId,memberId:value.scope.memberId,binding:value.scope.binding,...(typeof value.scope.accountBinding==='string'&&/^[a-f0-9]{32}$/.test(value.scope.accountBinding)?{accountBinding:value.scope.accountBinding}:{})},expires:Date.now()+60000,abort:new AbortController(),started:false,port:event.ports[0],proofs:new Map()};
         ticket.port.onmessage=event=>{const result=event.data,pending=ticket.proofs.get(result?.requestId);if(!pending||result.type!=='fountain-backup-proof-result')return;ticket.proofs.delete(result.requestId);clearTimeout(pending.timer);pending.resolve(result.granted===true);};
         backupTickets.set(jobId,ticket);ok=true;
       }
@@ -44,7 +44,7 @@ async function backupDownload(event,id,transferId){
   const aborted=()=>{if(settled)return;try{streamController?.error(new Error('백업 다운로드가 중단되었습니다.'));}catch{}notify('error',{status:ticket.errorStatus||499});finish();};
   signal.addEventListener('abort',aborted,{once:true});
   async function proof(){await current();const requestId=crypto.randomUUID();const allowed=await new Promise(resolve=>{const timer=setTimeout(()=>{ticket.proofs.delete(requestId);resolve(false);},4000);ticket.proofs.set(requestId,{resolve,timer});ticket.port.postMessage({type:'fountain-backup-proof',requestId});});await current();if(!allowed)throw FountainBackup.failure(401);}
-  async function request(path,extra={}){await current();const response=await fetch(path,{...extra,credentials:'same-origin',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{'X-Fountain-Request':'1',...extra.headers},signal});await current();return response;}
+  async function request(path,extra={}){await current();const wire=ticket.scope.accountBinding?'/api/w/'+ticket.scope.workspaceId+'/'+ticket.scope.binding+path.slice(4):path;const response=await fetch(wire,{...extra,credentials:'same-origin',cache:'no-store',redirect:'error',referrerPolicy:'no-referrer',headers:{'X-Fountain-Request':'1',...extra.headers},signal});await current();return response;}
   async function auth(){const response=await request('/api/session');if(response.status!==200){await response.body?.cancel();throw FountainBackup.failure(response.status);}if(!sameScope(await FountainBackup.readJSON(response),ticket.scope))throw FountainBackup.failure(401);await current();}
   try{
     await proof();await auth();const response=await request('/api/backup/jobs/'+id);if(response.status!==200){await response.body?.cancel();throw FountainBackup.failure(response.status);}
@@ -98,7 +98,7 @@ self.addEventListener('fetch', event => {
     if(request.method!=='GET'||!handoff||url.search)event.respondWith(backupRejected(409));
     else{const ticket=[...backupTickets].find(([,value])=>value.transferId===handoff[1]);event.respondWith(ticket?backupDownload(event,ticket[0],handoff[1]):backupRejected(409));}return;
   }
-  if(request.method==='GET'&&url.origin===self.location.origin&&url.pathname==='/api/backup'&&!request.headers.has('Range')&&[...url.searchParams.keys()].length===1&&url.searchParams.getAll('job_id').length===1&&FountainBackup.UUID.test(url.searchParams.get('job_id')||'')){
+  if(request.method==='GET'&&url.origin===self.location.origin&&(/^\/api\/(?:w\/[A-Za-z0-9_-]{1,160}\/[a-f0-9]{32}\/)?backup$/.test(url.pathname))&&!request.headers.has('Range')&&[...url.searchParams.keys()].length===1&&url.searchParams.getAll('job_id').length===1&&FountainBackup.UUID.test(url.searchParams.get('job_id')||'')){
     event.respondWith(backupRejected(409));return;
   }
   if (request.method !== 'GET' || url.origin !== self.location.origin || url.search || !SHELL.includes(url.pathname)) return;

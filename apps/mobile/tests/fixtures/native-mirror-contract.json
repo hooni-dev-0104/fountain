@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "capability": {
+    "mirrorVersion": 1
+  },
+  "method": "outboxMirror",
+  "engineRequest": {
+    "required": [
+      "version",
+      "generation",
+      "action",
+      "expectedProfileId",
+      "expectedEpoch"
+    ],
+    "catalogOptional": [
+      "limit",
+      "cursor"
+    ],
+    "actions": [
+      "resolve",
+      "confirm-base",
+      "separate",
+      "catalog"
+    ]
+  },
+  "epoch": "expectedEpoch and reply epoch are the current outboxOpen proofEpoch, checked at execution; they are distinct from workspaceEpoch. Refresh outboxOpen after canonical reads before confirm-base.",
+  "replyRequired": [
+    "generation",
+    "version",
+    "profileId",
+    "epoch",
+    "pair",
+    "baseDisposition"
+  ],
+  "pair": {
+    "keys": [
+      "kind",
+      "ref"
+    ],
+    "kind": [
+      "base",
+      "profile"
+    ],
+    "baseRef": "base",
+    "profileRefPattern": "^v1-[a-f0-9]{64}$",
+    "physicalName": "logicalName for base; logicalName + -- + ref for profile"
+  },
+  "baseDisposition": [
+    "candidate",
+    "current",
+    "preserved",
+    "unresolved"
+  ],
+  "catalog": {
+    "extraReplyKeys": [
+      "entries",
+      "next"
+    ],
+    "entryKeys": [
+      "pair",
+      "relation",
+      "unresolved"
+    ],
+    "relations": [
+      "current",
+      "preserved",
+      "recovery"
+    ],
+    "defaultLimit": 20,
+    "maxLimit": 100,
+    "cursor": "null or native-issued opaque v1 hex token scoped to current private profile, proofEpoch and page offset; reject arbitrary/stale/cross-profile cursor",
+    "discovery": "Current pair, BASE and older pairs with the SAME actor prefix derived exclusively from actual native grant (origin/workspace/member), matching existing NativeRecovery authority. Persist native-derived actor in an indexed registry. Bounded metadata query only; no other-actor locations, old profile IDs, private parent hashes, business bodies or DB enumeration.",
+    "unresolved": "BASE is always true because native location metadata never certifies its mixed bytes; current profile pair is false only as location metadata, never a business readiness or settlement assertion.",
+    "sourceSafety": "Recovery location is not byte provenance or receipt acceptance. Never-staged raw IDB bytes remain explicitly unconfirmed, cannot auto-hydrate/promote/SEND. Mixed BASE retains row-level actor opacity and existing resource authority; no whole-store cross-actor export. Native accepted bytes require existing exact receipt/source-CAS/actor/resource checks.",
+    "ordering": "Stable native metadata order with current pair first, distinct BASE second, then distinct older sameactor pairs. Pagination native-issued opaque cursor bound actual profile, proofEpoch and position; reject stale/forged/crossactor tokens. Default20/max100 entries per response, no all-profile body traversal."
+  },
+  "resolve": "Unassigned profile receives BASE candidate only when BASE unassigned. If BASE pinned to another private profile, atomically allocate this actual profile a random opaque profile pair. Failed candidate resolution is not an exclusive reader reservation.",
+  "confirm-base": "Require current verified private profile/incarnation, current proofEpoch and existing online OR sealed cached-private read/append readiness including TTL/actor checks. Offline needsFloor may keep SEND blocked; a location commit never clears needsFloor/accountNeedsReconcile, advances authority or extends TTL. Atomically immutable BASE reader; no overwrite of another reader/separate assignment. Same assignment idempotent only after current identity/epoch/readiness recheck.",
+  "separate": "Only current unassigned BASE candidate; atomically assign a separate random opaque pair, preserve BASE bytes. Idempotent repeated lookup/action can return existing separate current location; never select a renderer ref.",
+  "scope": "Scoped bridge validates and removes workspaceEpoch before engine, adds to reply. No unknown engine or reply fields. Legacy may keep old base initialization; scoped requires mirrorVersion1.",
+  "accountScope": "Mirror API requires actual account-scoped native identity/account seal; reject legacy mirror calls. Legacy JS retains BASE behavior.",
+  "baseDispositionSemantics": {
+    "candidate": "current pair BASE and singleton BASE has no confirmed reader",
+    "current": "current pair BASE and singleton BASE reader matches actual profile",
+    "preserved": "current pair profile and singleton BASE has a confirmed reader",
+    "unresolved": "current pair profile and singleton BASE has no confirmed reader"
+  },
+  "privateIncarnation": "Lookup/assignment derives actual private session/parent incarnation in addition to public profile P. Same public P with different native session_ref/parent must allocate distinct location or fail closed; never adopt old pair/receipts. Test forced collision even if normal child binding changes P."
+}

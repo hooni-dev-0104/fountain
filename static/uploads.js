@@ -90,7 +90,7 @@
       },onComplete=async()=>true,onDenied=()=> {
       }
     }) {
-      this.scope=clone(scope); this.scopeId=scopeIdentity(scope); this.profileId=profileIdentity(scope); this.resourceKey=this.scopeId; this.isCurrent=isCurrent; this.onChange=onChange; this.onComplete=onComplete; this.onDenied=onDenied; this.jobs=new Map(); this.closed=false; this.generation=0; this.profileCleared=event=> {
+      this.transport=FountainTransport.workspaceScope?.()?FountainTransport.capture():FountainTransport;this.scope=clone(scope); this.scopeId=scopeIdentity(scope); this.profileId=profileIdentity(scope); this.resourceKey=this.scopeId; this.isCurrent=isCurrent; this.onChange=onChange; this.onComplete=onComplete; this.onDenied=onDenied; this.jobs=new Map(); this.closed=false; this.generation=0; this.profileCleared=event=> {
         const prefix=actorPrefix(event.detail);if(event.detail?.profileId===this.profileId||prefix&&this.profileId.startsWith(prefix))this.dispose();
       }; this.profileChanged=async()=> {
         const current=await FountainOffline.getProfile().catch(()=>null); if(!this.closed&&current?.id!==this.profileId) {
@@ -154,7 +154,7 @@
     }
     async json(job,path,body,method,withStatus=false) {
       if(!this.current())throw abortError(); await this.authorized(); if(!this.current())throw abortError(); const controller=new AbortController(); job.controller=controller; try {
-        const response=await FountainTransport.request('/api'+path, {
+        const response=await this.transport.request('/api'+path, {
           method:method||(body?'POST':'GET'),signal:controller.signal,headers: {
             'Content-Type':'application/json'
           },...(body? {
@@ -209,7 +209,7 @@
     }
     chunk(job,offset,generation) {
       const blob=job.file.slice(offset,Math.min(job.size,offset+CHUNK_SIZE)); return new Promise((resolve,reject)=> {
-        const xhr=FountainTransport.xhr('PUT','/api/uploads/'+encodeURIComponent(job.id)+'/chunks?offset='+offset); job.xhr=xhr; xhr.setRequestHeader('Content-Type','application/octet-stream'); xhr.timeout=45000; xhr.upload.onprogress=event=> {
+        const xhr=this.transport.xhr('PUT','/api/uploads/'+encodeURIComponent(job.id)+'/chunks?offset='+offset); job.xhr=xhr; xhr.setRequestHeader('Content-Type','application/octet-stream'); xhr.timeout=45000; xhr.upload.onprogress=event=> {
           if(!this.current()||generation!==this.generation) {
             xhr.abort(); return;
           }

@@ -34,7 +34,7 @@
   class Controller {
     constructor({ profile, onChange = () => {}, onDenied = () => {}, onError = () => {} }) {
       require(profile?.id && globalThis.FountainOffline && globalThis.FountainTransport, '오프라인 저장소와 연결 프로필이 필요합니다.');
-      this.profile = copy(profile); this.offline = FountainOffline; this.transport = FountainTransport;
+      this.profile = copy(profile); this.offline = FountainOffline; this.transport = FountainTransport.workspaceScope?.()?FountainTransport.capture():FountainTransport;
       this.onChange = onChange; this.onDenied = onDenied; this.onError = onError;
       preparedImports.set(this,new Map()); this.importBusy=0; this.importResume=false; this.importResumeAt=Infinity; this.scheduled=false; this.scheduledAt=0;
       this.nativePause=null;

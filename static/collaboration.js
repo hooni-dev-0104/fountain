@@ -288,7 +288,7 @@
   const stripEpoch=entry=>{const value=clone(entry);delete value._epoch;return value;};
   class DocumentChannel {
     constructor({pageId,profile,fetcher,deferRemote=false,onChange=()=>{},onStatus=()=>{},onDenied=()=>{},onDraft=()=>{},onPresence=()=>{},onHistory=()=>{},onError=()=>{}}){
-      this.pageId=pageId;this.profile=profile;this.clientId=randomClient();this.fetcher=fetcher;this.onChange=onChange;this.onStatus=onStatus;this.onDenied=onDenied;this.onDraft=onDraft;this.onPresence=onPresence;this.onError=onError;this.offline=globalThis.FountainOffline;this.presenceRevision=-1;
+      this.transport=globalThis.FountainTransport?.workspaceScope?.()?globalThis.FountainTransport.capture():globalThis.FountainTransport;this.pageId=pageId;this.profile=profile;this.clientId=randomClient();this.fetcher=fetcher;this.onChange=onChange;this.onStatus=onStatus;this.onDenied=onDenied;this.onDraft=onDraft;this.onPresence=onPresence;this.onError=onError;this.offline=globalThis.FountainOffline;this.presenceRevision=-1;
       this.key=this.offline?.key(profile,pageId);this.pending=new Map();this.base=null;this.state=null;this.clock=0;this.closed=false;this.persistence=Promise.resolve();this.delay=500;this.recovering=false;this.retiredEpochs=new Set();this.remoteDeferred=deferRemote===true;
       this.networkPauseOwners=new Set();
       this.onHistory=onHistory;this.undoStack=[];this.redoStack=[];this.historyHints=new Map();this.historyHintSizes=new Map();this.historyHintBytes=0;this.historyGeneration=0;this.historyBusy=false;this.historyPending=false;
@@ -362,7 +362,7 @@
       if(!this.historyPending){this.renderedBlocks=project(this.state);this.rememberHistoryHints(this.state);}
       if(!this.closed){const selection=!this.historyPending?this.pendingHistorySelection:null;this.onChange({snapshot:this.base,state:this.state,blocks:clone(this.renderedBlocks||this.base.blocks||[]),source,pending:this.pending.size,historyPending:this.historyPending,...(selection?{selection:clone(selection)}:{})});if(selection)this.pendingHistorySelection=null;this.emitHistory();}
     }
-    async fetch(path,body){check(!this.remoteDeferred,'새 페이지가 서버에 생성될 때까지 기기에 보관합니다.',425);if(this.fetcher)return this.fetcher(path,body);const response=await FountainTransport.request('/api'+path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});const data=await response.json();if(!response.ok){const error=new Error(data.error||'문서를 동기화하지 못했습니다.');error.status=response.status;throw error;}return data;}
+    async fetch(path,body){check(!this.remoteDeferred,'새 페이지가 서버에 생성될 때까지 기기에 보관합니다.',425);if(this.fetcher)return this.fetcher(path,body);const response=await this.transport.request('/api'+path,{method:body?'POST':'GET',headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});const data=await response.json();if(!response.ok){const error=new Error(data.error||'문서를 동기화하지 못했습니다.');error.status=response.status;throw error;}return data;}
     async open(snapshot,{cached=false}={}){
       if(this.offline&&this.key)this.previousCached=await this.offline.getSnapshot(this.key);
       if(this.closed)return this;
@@ -611,7 +611,7 @@
     }
     connectEvents(){
       if(this.closed||this.remoteDeferred||this.networkPaused||typeof EventSource==='undefined'||!navigator.onLine)return;this.source?.close();
-      this.source=FountainTransport.events('/api/pages/'+encodeURIComponent(this.pageId)+'/events');
+      this.source=this.transport.events('/api/pages/'+encodeURIComponent(this.pageId)+'/events');
       this.source.addEventListener('snapshot',event=>{try{const data=JSON.parse(event.data);this.receive(data).then(()=>this.flush()).catch(error=>this.onError(error));}catch(error){this.onError(error);}});
       this.source.addEventListener('presence',event=>{try{this.receivePresence(JSON.parse(event.data));}catch(error){this.onError(error);}});
       this.source.addEventListener('denied',event=>{let data;try{data=JSON.parse(event.data);}catch{data={status:403,error:'문서 접근 권한이 변경되었습니다.'};}this.deny(data.status,data.error);});

@@ -46,7 +46,7 @@
   }
   class Manager{
     constructor({transport=root.FountainTransport,getScope,isCurrent,onChange=()=>{}}){
-      this.transport=transport;this.getScope=getScope;this.isCurrent=isCurrent;this.onChange=onChange;this.scope=getScope();this.controller=new AbortController();this.job=null;this.pending=null;this.state='idle';this.closed=false;this.running=null;this.transferId=null;
+      this.transport=transport.workspaceScope?.()?transport.capture():transport;this.getScope=getScope;this.isCurrent=isCurrent;this.onChange=onChange;this.scope=getScope();this.controller=new AbortController();this.job=null;this.pending=null;this.state='idle';this.closed=false;this.running=null;this.transferId=null;
       this.listener=event=>{const v=event.data;if(v?.type!=='fountain-backup-state'||v.jobId!==this.job?.id||v.transferId!==this.transferId||!this.current())return;if(v.state==='error'){this.state='error';this.error=failure(v.status);if(v.status===410)this.restartRequired=true;this.emit();}else if(v.state==='complete'){this.state='complete';this.emit();}else if(v.state==='downloading'){this.downloaded=v.completed;this.emit();}};
       root.navigator?.serviceWorker?.addEventListener('message',this.listener);
       this.watch=setInterval(()=>{if(!this.current())void this.cancel();},300);
@@ -82,7 +82,7 @@
     async download(){
       this.assert();const path='/api/backup?job_id='+this.job.id;
       if(this.transport.native){this.state='downloading';this.emit();await this.transport.download(path,'fountain-backup.sqlite',{signal:this.controller.signal});this.assert();this.state='complete';this.emit();return;}
-      const scope={workspaceId:this.scope.workspaceId,memberId:this.scope.memberId,binding:this.scope.binding};
+      const scope={workspaceId:this.scope.workspaceId,memberId:this.scope.memberId,binding:this.scope.binding,...(this.scope.accountBinding?{accountBinding:this.scope.accountBinding}:{})};
       if(!Object.values(scope).every(v=>typeof v==='string'&&v.length>0&&v.length<=1000))throw failure();
       this.port?.close();
       const registered=await message('fountain-backup-register',{jobId:this.job.id,scope},()=>this.current());this.port=registered.port;if(!TOKEN.test(registered.transferId||'')){this.port?.close();throw failure();}this.transferId=registered.transferId;this.assert();this.state='downloading';this.emit();

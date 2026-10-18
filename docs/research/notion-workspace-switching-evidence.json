@@ -1,0 +1,377 @@
+{
+  "schema": "fountain.notion-workspace-switching-evidence.v1",
+  "researched_at": "2026-10-18",
+  "scope": "Read-only Notion 7.39.0 desktop package, one selected preload analyzed as inert JavaScript, bounded literal source inspection, current official public documentation. No Notion execution, login, user content, cookies, private API or network capture.",
+  "prior_evidence_reused": {
+    "repository": [
+      "docs/research/notion-desktop.md",
+      "docs/research/rea-desktop-evidence.json"
+    ],
+    "inventory_path": "/tmp/fountain-notion-desktop-7.39.0/inventory.json",
+    "prior_desktop_evidence_id": "ev_d13882d624cba033fd1147da1a78a774d6697470fcc669efa560db564dfc7887",
+    "same_session_retained_application_records_before_analysis": 0
+  },
+  "artifact": {
+    "path": "/Applications/Notion.app/Contents/Resources/app.asar",
+    "version": "7.39.0",
+    "bytes": 13494814,
+    "sha256": "889137431e69a9e8795b88cb071d451f5592797dcfe4ca13499dcb23ddc8d8ac",
+    "selected_preload": {
+      "path": ".webpack/renderer/tab_browser_view/preload.js",
+      "bytes": 399524,
+      "sha256": "ff41790f66ff2acd539eda859104e6fd8940d76839185835aea9f9c677c86d28"
+    },
+    "literal_inspection_only": {
+      "path": ".webpack/main/index.js",
+      "bytes": 4407804,
+      "sha256": "a0f8e22f85309396b479c945281d70f10af39b22d8aaf63ae097e157588f5a06"
+    }
+  },
+  "rea": {
+    "parent_evidence_id": "ev_7459a5956df930a6757fe2dc1e2e2866531b96d400446d436a314d45be871749",
+    "summary_evidence_id": "ev_28e0a097c71749659b1a7760351ad739df94499a12cfc8fbadd426501cb2e56a",
+    "root_artifact_sha256": "01186a873e47110e3bcd93408be94aa416011181d4eff132296b031f4a1dddcd",
+    "selection": [
+      "preload.js"
+    ],
+    "statistics": {
+      "relevant_files": 1,
+      "nested_asar_containers": 0,
+      "text_bytes_read": 399524,
+      "invalid_utf8_files": 0,
+      "parsed_javascript_files": 1,
+      "visited_ast_nodes": 93056,
+      "findings": 267,
+      "modules": 126,
+      "parse_failures": 0
+    },
+    "coverage": {
+      "application": {
+        "status": "partial",
+        "truncated": false,
+        "omitted_count": null,
+        "limits": []
+      },
+      "semantic": {
+        "status": "partial",
+        "truncated": true,
+        "omitted_nodes": null,
+        "omitted_relations": null,
+        "limits": [
+          {
+            "name": "semantic_graph_file_node_ceiling",
+            "value": 10000,
+            "unit": "items"
+          },
+          {
+            "name": "semantic_graph_node_ceiling",
+            "value": 10000,
+            "unit": "items"
+          }
+        ],
+        "families": [
+          {
+            "family": "boundary",
+            "status": "partial",
+            "retained_relations": 0,
+            "omitted_relations": null,
+            "unknown_count": 0
+          },
+          {
+            "family": "call-flow",
+            "status": "partial",
+            "retained_relations": 722,
+            "omitted_relations": null,
+            "unknown_count": 3340
+          },
+          {
+            "family": "child-process",
+            "status": "partial",
+            "retained_relations": 0,
+            "omitted_relations": null,
+            "unknown_count": 0
+          },
+          {
+            "family": "closure",
+            "status": "partial",
+            "retained_relations": 3714,
+            "omitted_relations": null,
+            "unknown_count": 0
+          },
+          {
+            "family": "configuration",
+            "status": "partial",
+            "retained_relations": 0,
+            "omitted_relations": null,
+            "unknown_count": 0
+          },
+          {
+            "family": "data-flow",
+            "status": "partial",
+            "retained_relations": 454,
+            "omitted_relations": null,
+            "unknown_count": 4856
+          },
+          {
+            "family": "event",
+            "status": "partial",
+            "retained_relations": 0,
+            "omitted_relations": null,
+            "unknown_count": 0
+          },
+          {
+            "family": "object-flow",
+            "status": "partial",
+            "retained_relations": 0,
+            "omitted_relations": null,
+            "unknown_count": 10902
+          },
+          {
+            "family": "promise-ownership",
+            "status": "partial",
+            "retained_relations": 0,
+            "omitted_relations": null,
+            "unknown_count": 0
+          },
+          {
+            "family": "request",
+            "status": "partial",
+            "retained_relations": 0,
+            "omitted_relations": null,
+            "unknown_count": 0
+          },
+          {
+            "family": "resource-lifecycle",
+            "status": "partial",
+            "retained_relations": 0,
+            "omitted_relations": null,
+            "unknown_count": 0
+          },
+          {
+            "family": "timer",
+            "status": "partial",
+            "retained_relations": 0,
+            "omitted_relations": null,
+            "unknown_count": 0
+          }
+        ]
+      },
+      "application_unknowns": 0,
+      "semantic_unknowns": 19098
+    },
+    "workspace_switcher_trace": {
+      "evidence_id": "ev_ace0e65231935be03d519c3db0a2967125adc2d56dad8e745429048dee1b11dc",
+      "seed": "workspaceSwitcher",
+      "direction": "outgoing",
+      "coverage": {
+        "status": "partial",
+        "source_graph_status": "partial",
+        "total_seed_matches": 1
+      },
+      "summary": {
+        "matched_seeds": 1,
+        "traced_nodes": 1,
+        "traced_edges": 0,
+        "terminal_paths": 0,
+        "native_handoffs": 0,
+        "observed_facts": 0,
+        "inferred_facts": 1,
+        "unknown_facts": 0,
+        "unavailable_facts": 0
+      },
+      "node_id": "jag_node_600dd0d7dec2ba818ce1a86a93dcba4bda7d1e9b81c78777b42645cc7fa34728",
+      "observation_id": "jag_observation_8f89107b76cf68a3b3024238a699f06a7ef43d20756607faf1b4d269c0d19a0f",
+      "source_range": {
+        "source": "preload.js",
+        "start": {
+          "line": 2,
+          "column": 396644
+        },
+        "end": {
+          "line": 2,
+          "column": 396708
+        }
+      },
+      "classification": "static-relationship-inference",
+      "finding": "The inferred __electronApi context bridge has a workspaceSwitcher member. This is not proof of runtime availability or enforcement."
+    },
+    "negative_channel_trace": {
+      "evidence_id": "ev_de552da5baac0c0d8f035cd2a612f01816f541a0f798532cca102f25c1014060",
+      "seed": "notion:toggle-workspace-switcher",
+      "direction": "incoming",
+      "matches": 0,
+      "scope": "Partial retained source graph only; no match is not absence of the feature."
+    },
+    "packaged_asar_attempt": {
+      "result": "artifact_integrity_mismatch",
+      "unpacked_entry": "node_modules/@jasonscheirer/native-progress-bar/build/Release/progress_bar.node",
+      "declared_sha256": "d4774df4dd8dfac324e8b38a07d0fdc452e8191b9f563ed1d7ddda30d88783b0",
+      "calculated_sha256": "422bd752fa7fa2e33ffa65074d6dceaac93d5b14713122804cbd4881d9dbe7bf",
+      "resolution": "Did not bypass integrity policy. Reused exact inventoried preload extracted from matching ASAR; analyzed that single-file directory. No native binary analysis or signature-integrity claim."
+    }
+  },
+  "direct_static_observations": [
+    {
+      "id": "desktop-switcher-message",
+      "classification": "direct static source observation, not REA IPC pairing",
+      "description": "A main-process method names the workspace-switcher toggle message; the preload exposes an addToggleListener callback for the same literal. Exact literal agreement supports a candidate pairing only; registration and delivered events were not observed.",
+      "locations": [
+        {
+          "path": ".webpack/main/index.js",
+          "literal": "toggleWorkspaceSwitcherInNotion",
+          "utf16_offset": 171224,
+          "byte_offset": 171224,
+          "line": 2,
+          "column": 171161
+        },
+        {
+          "path": ".webpack/main/index.js",
+          "literal": "notion:toggle-workspace-switcher",
+          "utf16_offset": 171277,
+          "byte_offset": 171277,
+          "line": 2,
+          "column": 171214
+        },
+        {
+          "path": ".webpack/renderer/tab_browser_view/preload.js",
+          "literal": "notion:toggle-workspace-switcher",
+          "utf16_offset": 385156,
+          "byte_offset": 385287,
+          "line": 2,
+          "column": 385091
+        }
+      ]
+    },
+    {
+      "id": "separate-current-user-and-workspace",
+      "classification": "direct static source observation",
+      "description": "A main-process analytics path reads currentUserId and currentSpaceId separately and builds per-user/workspace counts. This supports separate identity concepts but does not establish authorization or session lifecycle.",
+      "locations": [
+        {
+          "path": ".webpack/main/index.js",
+          "literal": "currentSpaceId",
+          "utf16_offset": 179888,
+          "byte_offset": 179888,
+          "line": 2,
+          "column": 179825
+        }
+      ]
+    },
+    {
+      "id": "additional-account-and-switch-route",
+      "classification": "direct static source observation",
+      "description": "Both selected files contain an additional-account route identifier and a workspace-switch route-preservation function identifier. Existence alone does not prove the flow is enabled or how server sessions work.",
+      "locations": [
+        {
+          "path": ".webpack/main/index.js",
+          "literal": "getSpaceSwitchPreservedRoute",
+          "utf16_offset": 1530359,
+          "byte_offset": 1530585,
+          "line": 2,
+          "column": 1530296
+        },
+        {
+          "path": ".webpack/main/index.js",
+          "literal": "addAnotherAccountModal",
+          "utf16_offset": 1129377,
+          "byte_offset": 1129592,
+          "line": 2,
+          "column": 1129314
+        },
+        {
+          "path": ".webpack/renderer/tab_browser_view/preload.js",
+          "literal": "getSpaceSwitchPreservedRoute",
+          "utf16_offset": 162160,
+          "byte_offset": 162195,
+          "line": 2,
+          "column": 162095
+        },
+        {
+          "path": ".webpack/renderer/tab_browser_view/preload.js",
+          "literal": "addAnotherAccountModal",
+          "utf16_offset": 65189,
+          "byte_offset": 65224,
+          "line": 2,
+          "column": 65124
+        }
+      ]
+    }
+  ],
+  "public_requirements": [
+    {
+      "url": "https://www.notion.com/help/create-delete-and-switch-workspaces",
+      "title": "Create, join, & leave workspaces",
+      "observed_at": "2026-10-18",
+      "authority": "official public product documentation",
+      "requirements": [
+        "An email account can belong to several workspaces, listed together in a workspace switcher.",
+        "The switcher permits selecting, creating and joining workspaces. Joining requires an invitation or an enabled eligible domain policy.",
+        "Several email accounts can remain signed in simultaneously. The switcher can log out one account while keeping others, or log out all accounts.",
+        "Leaving removes workspace access and its switcher entry. Re-entry requires being added again.",
+        "The documented paid plan is workspace-scoped. Workspace content is described as separate silos."
+      ],
+      "documentation_conflict": "This page describes the desktop switcher at the bottom of the sidebar. Other help pages retain top-left wording; exact current pixel placement is unverified."
+    },
+    {
+      "url": "https://www.notion.com/help/workspaces-on-mobile",
+      "title": "Workspaces on mobile",
+      "observed_at": "2026-10-18",
+      "authority": "official public product documentation",
+      "requirements": [
+        "The mobile Home screen workspace name opens switching, creation, joining and logout actions.",
+        "An additional email account can be signed in through the workspace switcher.",
+        "Mobile search is described as searching the current workspace."
+      ],
+      "limitations": "Documentation confirms product actions, not implementation framework, native storage, refresh token handling, cache partitioning or runtime parity."
+    }
+  ],
+  "reconstruction_acceptance_implications": [
+    {
+      "requirement": "One signed-in identity must list and select all currently authorized workspaces.",
+      "origin": "official public requirement",
+      "verification_needed": "Actual same-account two-workspace journeys on web, macOS, Windows, iOS and Android."
+    },
+    {
+      "requirement": "Workspace selection must change content and permissions while preventing stale responses and offline operations from crossing workspaces.",
+      "origin": "Fountain design and security requirement inferred from workspace separation; not a recovered Notion algorithm",
+      "verification_needed": "Authoritative membership denial, stale in-flight response, distinct outbox/cache namespaces and reconnect tests."
+    },
+    {
+      "requirement": "Create/join/leave and same-account workspace switching are distinct from adding/logging out another account.",
+      "origin": "official public distinction",
+      "verification_needed": "Explicit lifecycle tests; organization login alone does not prove workspace switching."
+    }
+  ],
+  "unresolved": [
+    "Notion private backend schema, API authorization, membership checks, transaction boundaries and merge semantics.",
+    "Notion actual refresh/logout token lifecycle, cache/outbox cleanup and selected-workspace persistence.",
+    "Current original UI placement, exact rendering, enabled feature flags and desktop event reachability.",
+    "Original Notion Windows/iOS/Android artifact internals and runtime behavior; only the installed macOS artifact was inspected.",
+    "Full multi-account concurrent sign-in parity remains a separate requirement beyond a same-account workspace picker."
+  ],
+  "local_proof_files": [
+    {
+      "path": ".data/multiworkspace-original/rea-summary.json",
+      "sha256": "5d56911bbf4c52d236596378a226230040fe92fe86cfa022976b463e094d8fa0"
+    },
+    {
+      "path": ".data/multiworkspace-original/rea-workspace-switcher-trace.json",
+      "sha256": "ea7d67fda5d300c3106fb6f23885d2363306e456ea811d94dd4554c35f79928c"
+    },
+    {
+      "path": ".data/multiworkspace-original/rea-channel-trace.json",
+      "sha256": "a9fa8977a92b6451bb57ac6bfdd75529816d50757a2ae3ab38357a21e7b496bb"
+    },
+    {
+      "path": ".data/multiworkspace-original/locations.json",
+      "sha256": "e0227ce79daa084374cc0d18289caaf49c916d07ff3a9372a47bc33d91c5aec8"
+    }
+  ],
+  "limitations": [
+    "Metadata is a projection, not an authenticated full portable REA Evidence record. Complete parent Evidence remains in the active REA connection; summary and exact trace receipts are preserved locally.",
+    "The selected preload parsed successfully, but semantic extraction hit a 10,000-node ceiling: graph and semantic coverage are partial, with 19,098 semantic unknowns. No negative search establishes absence.",
+    "Source files outside the one-file extracted analysis are not represented in that REA graph. Main bundle observations were bounded literal source inspection only.",
+    "No proprietary source or bundle is committed. Ignored files contain the selected byte snapshots and local evidence.",
+    "No Fountain feature is marked complete by this research."
+  ]
+}

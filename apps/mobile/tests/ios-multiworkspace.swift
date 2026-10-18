@@ -41,11 +41,17 @@ enum IOSMultiworkspaceFixture {
     static func session(_ ws: String, _ binding: String) -> [String: Any] {
         ["enabled": true, "authenticated": true, "required": true, "mode": "accounts", "identity": "Member " + ws, "workspace_id": ws, "cache_binding": binding, "account_binding": parent, "expires_at": ISO8601DateFormatter().string(from: Date().addingTimeInterval(3600)), "member": ["id": "member-" + ws, "name": "Member " + ws, "email": "member-" + ws + "@example.invalid", "active": true, "role": "owner"]]
     }
+    static func scopedReconcile(_ store: FountainOutbox, _ input: [String: Any], admissionWatermark: Int, sessionRef: String?) throws -> [String: Any] {
+        var wire: [AnyHashable: Any] = [:]
+        for (key, value) in input { wire[key] = value }
+        wire["workspaceEpoch"] = 7
+        return try store.reconcile(FountainOutbox.reconciliationBridgePayload(wire), admissionWatermark: admissionWatermark, sessionRef: sessionRef)
+    }
     static func reconcile(_ store: FountainOutbox, _ ws: String, _ binding: String) throws {
         try store.ensureOwner("multiworkspace", epoch: 7)
         let opened = try store.open(), lease = opened["lease"] as! String
         var sequence = 0
-        var state = try store.reconcile(["generation": 1, "phase": "prepare", "lease": lease, "baseHead": opened["head"]!, "proofEpoch": opened["proofEpoch"]!, "mode": "current"], admissionWatermark: sequence, sessionRef: reference)
+        var state = try scopedReconcile(store, ["generation": 1, "phase": "prepare", "lease": lease, "baseHead": opened["head"]!, "proofEpoch": opened["proofEpoch"]!, "mode": "current"], admissionWatermark: sequence, sessionRef: reference)
         let plan = state["planId"] as! String
         let page: [String: Any] = ["id": "page", "access_level": 3, "locked": false, "archived": false, "revision": 1]
         let workspace: [String: Any] = ["workspace_id": ws, "current_member_id": "member-" + ws, "session_binding": binding, "access_revision": 1, "data_revision": 1, "pages": [page], "databases": [], "teamspaces": [["id": "general", "access_level": 4]]]
@@ -59,10 +65,10 @@ enum IOSMultiworkspaceFixture {
                 try check(admission != nil, "Missing canonical admission")
                 try store.observeReconcileResource(admission: admission, path: path, method: "GET", status: 200, data: bytes(needed["kind"] == "workspace" ? workspace : snapshot), sessionRef: reference)
             }
-            state = try store.reconcile(["generation": 1, "phase": "prepare", "lease": lease, "planId": plan], admissionWatermark: sequence, sessionRef: reference)
+            state = try scopedReconcile(store, ["generation": 1, "phase": "prepare", "lease": lease, "planId": plan], admissionWatermark: sequence, sessionRef: reference)
         }
         try check(state["state"] as? String == "ready" && state["requiresConfirmation"] as? Bool == false, "Same-incarnation resume unexpectedly needs adoption")
-        let result = try store.reconcile(["generation": 1, "phase": "commit", "lease": lease, "baseHead": state["baseHead"]!, "proofEpoch": state["proofEpoch"]!, "planId": plan, "checksum": state["checksum"]!, "confirm": false], admissionWatermark: sequence, sessionRef: reference)
+        let result = try scopedReconcile(store, ["generation": 1, "phase": "commit", "lease": lease, "baseHead": state["baseHead"]!, "proofEpoch": state["proofEpoch"]!, "planId": plan, "checksum": state["checksum"]!, "confirm": false], admissionWatermark: sequence, sessionRef: reference)
         try check(result["state"] as? String == "committed", "Canonical reconciliation did not commit")
         try check(try store.open()["resourceAccess"] as? String == "ready", "Fresh canonical scope is not ready")
         try check(try store.accountCanTransmit(), "Canonical commit failed to open native mutation admission")
@@ -157,12 +163,17 @@ enum IOSMultiworkspaceFixture {
         try FountainWorkspacePolicy.invalidatePersistedAccount(origin: origin) { try switchStore.suspendAccounts() }
         let switchFile = switchDirectory.appendingPathComponent(FountainOutbox.hash(Data(origin.utf8)) + ".sqlite")
         try check(try readControl(switchFile, "suspended:" + origin + "|A|member-A|" + bindingA) as? Bool == true, "Origin switch did not durably suspend old account scope")
+        let bridgePayload = try FountainOutbox.reconciliationBridgePayload(["generation": 1, "workspaceEpoch": 7, "phase": "prepare", "unknown": true])
+        try check(bridgePayload["workspaceEpoch"] == nil && bridgePayload["unknown"] as? Bool == true && bridgePayload["phase"] as? String == "prepare", "Bridge codec dropped an engine field or forwarded consumed epoch")
+        try denied { _ = try FountainOutbox.reconciliationBridgePayload([AnyHashable(7): "not-a-string-key"]) }
         let store = try FountainOutbox(origin: origin, testingDirectory: directory); defer { store.close() }
         let file = directory.appendingPathComponent(FountainOutbox.hash(Data(origin.utf8)) + ".sqlite")
         try store.activateAccount(a, sessionRef: reference, parentBinding: parent)
         try reconcile(store, "A", bindingA)
         try store.activateAccount(a, sessionRef: reference, parentBinding: parent, requireReconcile: false)
         try check(try store.accountCanTransmit(), "Identical scoped session refresh unnecessarily blocked canonical scope")
+        let strictOpened = try store.open()
+        try denied { _ = try scopedReconcile(store, ["generation": 1, "phase": "prepare", "lease": strictOpened["lease"]!, "baseHead": strictOpened["head"]!, "proofEpoch": strictOpened["proofEpoch"]!, "mode": "current", "unknown": true], admissionWatermark: 0, sessionRef: reference) }
         let opened = try store.open(), oldLease = opened["lease"] as! String
         let profile = origin + "|A|member-A|" + bindingA, resource = profile + "|page"
         let operation: [String: Any] = ["id": "pending-A", "kind": "page.patch", "target_id": "page", "body": ["title": "A에서 보관한 제목🙂"], "base": ["fields": [:]], "depends_on": []]

@@ -25,6 +25,16 @@ enum FountainOutboxError: Error, Equatable {
 }
 
 extension FountainOutbox {
+    // The adapter checks the current workspace epoch before calling this codec.
+    // Retain every engine field, including unknown fields its exact DTO rejects.
+    static func reconciliationBridgePayload(_ options: [AnyHashable: Any]) throws -> [String: Any] {
+        var input: [String: Any] = [:]
+        for (key, value) in options {
+            guard let key = key as? String else { throw FountainOutboxError.invalid }
+            if key != "workspaceEpoch" { input[key] = value }
+        }
+        return input
+    }
     // Tokens are constructed only at native request admission. Their private
     // nonce, scope and watermark never come from, or return to, JavaScript.
     struct ReconcileAdmission { fileprivate let plan: String, sweep: Int, key: String, nonce: String }

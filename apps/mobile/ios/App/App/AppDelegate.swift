@@ -716,8 +716,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     }
     @objc func outboxReconcile(_ call: CAPPluginCall) {
         outboxCall(call) { store in
-            var input: [String: Any] = [:]
-            for (key, value) in call.options { guard let key = key as? String else { throw FountainOutboxError.invalid }; input[key] = value }
+            let input = try FountainOutbox.reconciliationBridgePayload(call.options)
             let result = try store.reconcile(input, admissionWatermark: self.httpAdmissionSequence,
                                              sessionRef: self.outboxReference(try self.currentCookie()))
             if self.recoveryMode, input["phase"] as? String == "prepare" {

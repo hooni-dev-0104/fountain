@@ -51,7 +51,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 849,
+            "line": 850,
             "statement": "self.send_payload(200, auth.session_info(cookie))"
           }
         ]
@@ -86,7 +86,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 849,
+            "line": 850,
             "statement": "self.send_payload(200, auth.session_info(cookie))"
           }
         ]
@@ -121,7 +121,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 854,
+            "line": 855,
             "statement": "self.send_payload(200, auth.session_info('fountain_session=' + token))"
           }
         ]
@@ -156,7 +156,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 859,
+            "line": 860,
             "statement": "self.send_payload(200, {'authenticated': not auth.enabled, 'required': auth.enabled})"
           }
         ]
@@ -191,7 +191,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 844,
+            "line": 845,
             "statement": "self.send_payload(200, application.auth.renew_local(body, cookie))"
           }
         ]
@@ -894,7 +894,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 873,
+            "line": 874,
             "statement": "self.stream_page(parts[2], cookie)"
           }
         ]
@@ -6343,7 +6343,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 895,
+            "line": 896,
             "statement": "self.send_bytes(200, target.read_bytes(), mimetypes.guess_type(str(target))[0] or \"application/octet-stream\")"
           }
         ]
@@ -6372,7 +6372,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 895,
+            "line": 896,
             "statement": "self.send_bytes(200, target.read_bytes(), mimetypes.guess_type(str(target))[0] or \"application/octet-stream\")"
           }
         ]
@@ -6401,7 +6401,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 895,
+            "line": 896,
             "statement": "self.send_bytes(200, target.read_bytes(), mimetypes.guess_type(str(target))[0] or \"application/octet-stream\")"
           }
         ]
@@ -6431,7 +6431,7 @@
         "evidence": [
           {
             "source": "fountain/server.py:handler_for.Handler.handle_request",
-            "line": 895,
+            "line": 896,
             "statement": "self.send_bytes(200, target.read_bytes(), mimetypes.guess_type(str(target))[0] or \"application/octet-stream\")"
           }
         ]
@@ -7452,9 +7452,11 @@
     }
   ],
   "cloudEntryFingerprints": {
-    "supabase/functions/_shared/backend.ts": "0d813c57cc900dbf728e6c82a774f4a5f7afbda471e79e75f94edc17e0c71cec",
-    "supabase/functions/_shared/application.ts": "53f7f19f772e8975301409385f6e4ac42990df87896dc09d76335aa008577a40",
-    "supabase/functions/_shared/organization-portal.ts": "888feb1652c2abbfb2e4e95458b77a9677086bfec5fd8980e001bfbc7084f675",
+    "supabase/functions/_shared/backend.ts": "64fecb7d28cb2e13e266c71ca0027e98ed433982d66b93f34c85478a5de74ad4",
+    "supabase/functions/_shared/application.ts": "da0e8c6e485b8e6bf25ceaa93c7aad1c9b95c9d01591c3ff9649eaac43ccde0f",
+    "supabase/functions/_shared/organization-portal.ts": "ace4d54e16a1fdd6f4c54b899ff0949dd130a90632331dc46791a2f2b0123aef",
+    "supabase/functions/_shared/account-directory.ts": "e434a3316f9259305c23b1c7918b8905afe65b7fd364b57c818765798e8b2732",
+    "supabase/functions/_shared/workspace-account.ts": "fa0f83dce515e61876201dccabd1b9c2d6c9b4760eaed7eadf0562c713daa9e3",
     "supabase/functions/fountain-api/index.ts": "2a6289b32c47761351528ea1e0bc50642bda443d2ea04a6c9e6e81f20a188bf2",
     "supabase/functions/fountain-api/deployment.ts": "587b14fd375589e6309b42bdb32bc7ec99adff18c55bbd5b51cba4fb376e343e"
   },

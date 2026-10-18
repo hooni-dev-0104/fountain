@@ -23,9 +23,14 @@ function resourceAllowed(target,server){
 }
 function partitionFor(server){return 'persist:fountain-'+createHash('sha256').update(normalizeServer(server)).digest('hex');}
 function popupAllowed(details,server){
-  if(!details||details.postBody||!sameOrigin(details.url,server))return false;
+  if(!details||details.postBody||typeof details.url!=='string'||/[\s\\\u0000-\u001f\u007f]/u.test(details.url)||!sameOrigin(details.url,server))return false;
   const value=new URL(details.url);
-  return !value.search&&!value.hash&&/^\/(?:forms|sites)\/[A-Za-z0-9_-]{1,160}$/.test(value.pathname);
+  // Compare the original spelling so URL normalization cannot admit aliases,
+  // dot segments, empty queries or encoded publication routes.
+  if(value.search||details.url!==value.origin+value.pathname+value.hash)return false;
+  return !value.hash&&/^\/(?:forms|sites)\/[A-Za-z0-9_-]{1,160}$/.test(value.pathname)
+    ||!value.hash&&/^\/api\/w\/[A-Za-z0-9_-]{1,160}\/[a-f0-9]{32}\/(?:forms|sites)\/[A-Za-z0-9_-]{1,160}$/.test(value.pathname)
+    ||value.protocol==='https:'&&value.pathname==='/'&&/^#w\/[A-Za-z0-9_-]{1,160}\/(?:form|site)\/[A-Za-z0-9_-]{1,160}$/.test(value.hash);
 }
 function isSetupSender(event,contents,setupURL){
   try{return !!contents&&!contents.isDestroyed()&&event.sender===contents&&event.senderFrame===contents.mainFrame&&event.senderFrame.url===setupURL;}catch{return false;}

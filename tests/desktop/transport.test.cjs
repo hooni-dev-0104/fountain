@@ -43,3 +43,15 @@ test('share and preview helpers reject noncanonical primary origins without URL 
   for(const primary of [null,'https://share.example'])for(const route of ['page/../secret','page/%252e%252e','page/x#secret','//outside.invalid'])assert.throws(()=>value.shareURL(route,primary));
  }
 });
+test('actual workspace publication preview URLs pass the desktop popup policy without using copied share links',async()=>{
+ const origin='https://fountain.desktop.invalid',context={location:{origin},URL};
+ vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../../static/workspace-scope.js'),'utf8'),context);vm.runInNewContext(source,context);
+ const scope={workspaceId:'family_1',memberId:'member_1',binding:'a'.repeat(32),accountBinding:'b'.repeat(32),expiresAt:Date.now()+60000,workspaceEpoch:0};await context.FountainTransport.setWorkspace(scope);
+ const {popupAllowed}=require('../../apps/desktop/src/security.cjs');
+ for(const kind of ['forms','sites']){
+  const preview=context.FountainTransport.publicURL('/'+kind+'/family-notes','https://share.example');
+  assert.equal(preview,origin+'/api/w/family_1/'+scope.binding+'/'+kind+'/family-notes');assert.equal(popupAllowed({url:preview},origin+'/'),true);
+  assert.equal(context.FountainTransport.publicShareURL('/'+kind+'/family-notes','https://share.example'),'https://share.example/#w/family_1/'+(kind==='forms'?'form':'site')+'/family-notes');
+  assert.equal(popupAllowed({url:preview+'?secret=x'},origin+'/'),false);assert.equal(popupAllowed({url:preview.replace('/'+kind+'/','/pages/')},origin+'/'),false);
+ }
+});

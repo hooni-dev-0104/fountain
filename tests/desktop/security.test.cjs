@@ -55,3 +55,27 @@ test('configuration is private, atomic, validated and repairable without followi
     assert.throws(()=>config.readConfig(directory));assert.throws(()=>config.saveConfig(directory,'https://example.com/'));
   }finally{fs.rmSync(directory,{recursive:true,force:true});}
 });
+test('workspace publication popups require the exact configured HTTPS root and strict public hash',()=>{
+  const server='https://notes.example/';
+  for(const hash of ['w/workspace_1/form/family-survey','w/workspace-2/site/family_notes','w/'+ 'a'.repeat(160)+'/site/'+ 'b'.repeat(160)])assert.equal(popupAllowed({url:server+'#'+hash},server),true,hash);
+  for(const url of [
+    server+'#w/ws/page/private',server+'#w/ws/database/private',server+'#w/ws/home',server+'#w/ws/forms/form',server+'#w/ws/sites/site',
+    server+'#w//site/a',server+'#w/ws/site/',server+'#w/'+ 'a'.repeat(161)+'/site/a',server+'#w/ws/site/'+ 'a'.repeat(161),
+    server+'#w/ws/site/a/extra',server+'#w/ws/site/a?token=x',server+'?token=x#w/ws/site/a',server+'?#w/ws/site/a',
+    server+'#w/ws/site/a#extra',server+'#w/ws/site/%61',server+'#w/%77s/site/a',server+'#w/ws/site/%2561',
+    server+'#w/ws/site/..',server+'#w/ws/site/%2e%2e',server+'#w/ws/site/a\\b',server+'#w/ws/site/a\nb',
+    'https://NOTES.example/#w/ws/site/a','https://notes.example:443/#w/ws/site/a','https://notes.example./#w/ws/site/a',
+    'https://notes.example/./#w/ws/site/a','https://notes.example/x/../#w/ws/site/a','https://notes.example/%2e/#w/ws/site/a',
+    'https://user:pass@notes.example/#w/ws/site/a','https://notes.example.evil/#w/ws/site/a','http://notes.example/#w/ws/site/a',
+    'https://other.example/#w/ws/site/a','https://notes.example\\#w/ws/site/a',
+  ])assert.equal(popupAllowed({url},server),false,url);
+  assert.equal(popupAllowed({url:'http://127.0.0.1:8787/#w/ws/site/a'},'http://127.0.0.1:8787/'),false);
+  assert.equal(popupAllowed({url:server+'#w/ws/site/a',postBody:{data:[]}},server),false);
+  assert.equal(popupAllowed({url:server+'#w/ws/site/a'},'https://fountain.desktop.invalid/'),false);
+});
+test('scoped publication popup paths allow only the exact workspace child forms and sites',()=>{
+ const server='https://fountain.desktop.invalid/',prefix=server+'api/w/family_1/'+ 'a'.repeat(32)+'/';
+ for(const suffix of ['forms/survey-1','sites/family_notes'])assert.equal(popupAllowed({url:prefix+suffix},server),true);
+ for(const url of [prefix+'pages/private',prefix+'workspace',prefix+'account/session',prefix+'forms/a?x=1',prefix+'sites/a#fragment',prefix+'forms/a/extra',prefix+'forms/%61',prefix+'forms/%2561',prefix+'forms/..',prefix+'forms/a\\b',prefix+'forms/a\nb',prefix.replace('a'.repeat(32),'A'.repeat(32))+'forms/a',prefix.replace('a'.repeat(32),'a'.repeat(31))+'forms/a',prefix.replace('family_1','%66amily_1')+'forms/a',prefix.replace('/api/w/','/api/x/../w/')+'forms/a',prefix.replace('fountain.desktop.invalid','outside.invalid')+'forms/a'])assert.equal(popupAllowed({url},server),false,url);
+ assert.equal(popupAllowed({url:prefix+'forms/a',postBody:{data:[]}},server),false);
+});

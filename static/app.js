@@ -3496,7 +3496,7 @@ window.addEventListener('hashchange', () => {
   if (route === state.route && (route === 'home' || id === currentId)) return;
   navigate(['page', 'database'].includes(route) && id ? route : 'home', id);
 });
-const workspaceOpenCommands = new Map(), workspaceHints = new Map();
+const workspaceOpenCommands = new Map(), workspaceHints = new Map(), workspaceRejectedHints = new Set();
 const absentDirectoryKey=()=> 'fountain-account-directory-absent:'+encodeURIComponent(FountainTransport.origin);
 function organizationURL() { const scope=FountainTransport.workspaceScope?.(); return './organization.html'+(scope?'?workspace_id='+encodeURIComponent(scope.workspaceId)+'&workspace_binding='+scope.binding:''); }
 function workspaceRoute() { return FountainWorkspaces.parseRoute(location.hash); }
@@ -3536,7 +3536,7 @@ async function showWorkspaceDirectory({park=true}={}) {
   if(park&&state.offlineProfile)await parkCurrentWorkspace();
   state.workspaceSwitching=false;state.loaded=false;state.directory?.close();history.replaceState(null,'','#workspaces');
   document.body.classList.remove('login-mode');$('#sidebar').replaceChildren();$('#topbar').innerHTML='<span class="crumb">계정의 작업공간</span>';$('#main').replaceChildren();
-  if(!state.account.session?.authenticated||navigator.onLine===false){for(const scope of FountainTransport.previousWorkspaceScopes?.()||[])if(scope.accountBinding===offlineParent&&!workspaceHints.has(scope.workspaceId))workspaceHints.set(scope.workspaceId,{scope,name:scope.workspaceId});if(!FountainTransport.native){for(const profile of await FountainOffline.offlineWorkspaces(offlineParent))workspaceHints.set(profile.workspaceId,{scope:FountainWorkspaceScope.fromSession(profile.session,0),name:profile.workspace?.settings?.name||profile.workspaceId});}const items=[...workspaceHints.entries()].filter(([,item])=>item.scope.accountBinding===offlineParent&&item.scope.expiresAt>Date.now());$('#main').innerHTML='<section class="workspace-directory"><h1>기기에 보관한 작업공간</h1><p>인터넷에 연결되면 계정의 전체 목록을 확인할 수 있습니다.</p>'+items.map(([id,item])=>'<button class="workspace-choice" data-offline-workspace="'+esc(id)+'">'+esc(item.name)+'</button>').join('')+'<button class="outline-btn" data-action="reload">연결 다시 확인</button></section>';$$('[data-offline-workspace]').forEach(button=>button.onclick=()=>{void openOfflineWorkspace({workspaceId:button.dataset.offlineWorkspace,route:'home'}).catch(error=>toast(error.message));});return;}
+  if(!state.account.session?.authenticated||navigator.onLine===false){for(const scope of FountainTransport.previousWorkspaceScopes?.()||[])if(scope.accountBinding===offlineParent&&!workspaceRejectedHints.has(scope.accountBinding+':'+scope.workspaceId+':'+scope.binding)&&!workspaceHints.has(scope.workspaceId))workspaceHints.set(scope.workspaceId,{scope,name:scope.workspaceId});if(!FountainTransport.native){for(const profile of await FountainOffline.offlineWorkspaces(offlineParent))workspaceHints.set(profile.workspaceId,{scope:FountainWorkspaceScope.fromSession(profile.session,0),name:profile.workspace?.settings?.name||profile.workspaceId});}const items=[...workspaceHints.entries()].filter(([,item])=>item.scope.accountBinding===offlineParent&&item.scope.expiresAt>Date.now()&&!workspaceRejectedHints.has(item.scope.accountBinding+':'+item.scope.workspaceId+':'+item.scope.binding));$('#main').innerHTML='<section class="workspace-directory"><h1>기기에 보관한 작업공간</h1><p>인터넷에 연결되면 계정의 전체 목록을 확인할 수 있습니다.</p>'+items.map(([id,item])=>'<button class="workspace-choice" data-offline-workspace="'+esc(id)+'">'+esc(item.name)+'</button>').join('')+'<button class="outline-btn" data-action="reload">연결 다시 확인</button></section>';$$('[data-offline-workspace]').forEach(button=>button.onclick=()=>{void openOfflineWorkspace({workspaceId:button.dataset.offlineWorkspace,route:'home'}).catch(error=>toast(error.message));});return;}
   state.directory=FountainWorkspaces.mount($('#main'),{account:state.account,onOpen:async(id,result)=>{state.directory?.close();await selectAccountWorkspace(id,'home',undefined,result);},onLogout:logoutAccount,onError:error=>{if(error.status===401)renderAccountLogin();}});
 }
 function renderAccountLogin(){state.workspaceSwitching=false;state.session={mode:'accounts',authenticated:false,required:true,setup_supported:true};renderLogin(false);if(state.account?.pendingLogout){const form=$('#login-form');form.querySelectorAll('input,button').forEach(element=>element.disabled=true);const retry=document.createElement('button');retry.className='outline-btn';retry.type='button';retry.textContent='로그아웃 완료 다시 시도';retry.onclick=()=>logoutAccount().catch(error=>toast(error.message));form.append(retry);}}
@@ -3557,22 +3557,42 @@ async function restoreWorkspaceForms(profile){
 async function selectAccountWorkspace(workspaceId,route='home',id,opened){
   if(!FountainWorkspaces.validId(workspaceId))throw new Error('작업공간 주소를 확인해 주세요.');
   if(state.offlineProfile)await parkCurrentWorkspace();
-  const generation=(state.bootGeneration||0)+1;state.bootGeneration=generation;state.workspaceSwitching=true;let stored;
+  const generation=(state.bootGeneration||0)+1;state.bootGeneration=generation;state.workspaceSwitching=true;
+  const native=FountainTransport.native===true,connectionOrigin=FountainTransport.origin,connectionGeneration=FountainTransport.generation;let parent,stored,expectedBinding=null,activated=false,activeEpoch;
+  const current=()=>{if(generation!==state.bootGeneration||connectionOrigin!==FountainTransport.origin||connectionGeneration!==FountainTransport.generation||activeEpoch!==undefined&&activeEpoch!==FountainTransport.scopeEpoch)return false;if(!parent)return true;try{return state.account.parent()===parent;}catch{return false;}};
   try{
-    const parent=state.account.parent();stored=await FountainOffline.workspaceProfile(parent,workspaceId);
-    const key=parent+':'+workspaceId+':'+(stored?.cacheBinding||'');let command=workspaceOpenCommands.get(key);if(!command){command=uid();workspaceOpenCommands.set(key,command);}
-    const result=opened||await state.account.open(workspaceId,stored?.cacheBinding||null,command);
-    if(generation!==state.bootGeneration||state.account.parent()!==parent)return;
+    parent=state.account.parent();
+    if(native){
+      // Retained selection metadata only proposes an expected binding. The OS
+      // activation below must authorize and initialize private storage first.
+      if(!opened){let hint;try{const value=FountainTransport.previousWorkspaceScope?.(workspaceId);if(value)hint=FountainWorkspaceScope.validate(value);}catch{/* Invalid display hints cannot authorize cached data. */}
+        if(hint?.workspaceId===workspaceId&&hint.accountBinding===parent&&!workspaceRejectedHints.has(parent+':'+workspaceId+':'+hint.binding))expectedBinding=hint.binding;}
+    }else{stored=await FountainOffline.workspaceProfile(parent,workspaceId);expectedBinding=stored?.cacheBinding||null;}
+    if(!current())return;
+    const key=parent+':'+workspaceId+':'+(expectedBinding||'');let command=workspaceOpenCommands.get(key);if(!command){command=uid();workspaceOpenCommands.set(key,command);}
+    const result=opened||await state.account.open(workspaceId,expectedBinding,command);
+    if(!current())return;
     if(result.workspace_id!==workspaceId||result.account_binding!==parent||result.session?.workspace_id!==workspaceId||result.session.account_binding!==parent)throw new Error('선택한 작업공간의 권한을 확인하지 못했습니다.');
     let scope=FountainWorkspaceScope.fromSession(result.session,FountainTransport.scopeEpoch||0);
-    scope=await FountainTransport.setWorkspace(scope);if(generation!==state.bootGeneration)return;
+    scope=await FountainTransport.setWorkspace(scope);if(!current())return;if(!FountainWorkspaceScope.same(scope,FountainTransport.workspaceScope?.()))throw Object.assign(new Error('작업공간 연결이 변경되었습니다.'),{code:'STALE_REQUEST'});activated=true;activeEpoch=FountainTransport.scopeEpoch;
     FountainOffline.selectWorkspace(scope);state.session=result.session;state.offline=false;state.workspaceSwitching=false;state.directory?.close();
-    await refreshWorkspace();if(generation!==state.bootGeneration)return;await cacheProfile();if(generation!==state.bootGeneration)return;await ensureMutations();if(generation!==state.bootGeneration)return;
+    await refreshWorkspace();if(!current())return;await cacheProfile();if(!current())return;await ensureMutations();if(!current())return;
     state.loaded=true;document.body.classList.remove('login-mode');
     if(['form','site'].includes(route)){location.assign(FountainTransport.publicURL('/'+(route==='form'?'forms':'sites')+'/'+encodeURIComponent(id),state.session.public_web_origin));return;}
-    workspaceHints.set(workspaceId,{scope:FountainTransport.workspaceScope(),name:state.workspace.settings?.name||workspaceId});await navigate(route,id);await restoreWorkspaceForms(state.offlineProfile);warmOfflinePages();
-  }catch(error){if(generation!==state.bootGeneration||error.code==='STALE_REQUEST')return;state.workspaceSwitching=false;if(stored&&(error.status===403||error.code==='WORKSPACE_GRANT_CHANGED')){await FountainOffline.suspendProfile(stored).catch(()=>{});workspaceHints.delete(workspaceId);error.message='이전 작업공간 권한이 종료되어 편집을 보관했습니다. 내 작업공간에서 다시 열면 현재 권한을 확인합니다.';}if(error.status===401){await endCachedAccount(state.account.session?.cache_binding);renderAccountLogin();return;}$('#main').innerHTML='<div class="empty"><h2>작업공간을 열지 못했습니다.</h2><p>'+esc(error.message)+'</p><button class="outline-btn" data-action="workspaces">내 작업공간</button><button class="outline-btn" data-action="reload">다시 시도</button></div>';throw error;}
+    workspaceHints.set(workspaceId,{scope:FountainTransport.workspaceScope(),name:state.workspace.settings?.name||workspaceId});await navigate(route,id);if(!current())return;await restoreWorkspaceForms(state.offlineProfile);if(current())warmOfflinePages();
+  }catch(error){
+    if(!current()||error.code==='STALE_REQUEST')return;
+    state.workspaceSwitching=false;
+    if(expectedBinding&&(error.status===403||error.code==='WORKSPACE_GRANT_CHANGED')){
+      workspaceRejectedHints.add(parent+':'+workspaceId+':'+expectedBinding);
+      if(stored)await FountainOffline.suspendProfile(stored).catch(()=>{});
+      workspaceHints.delete(workspaceId);error.message='이전 작업공간 권한이 종료되어 편집을 보관했습니다. 내 작업공간에서 다시 열면 현재 권한을 확인합니다.';
+    }
+    if(error.status===401){if(!native||activated)await endCachedAccount(parent);renderAccountLogin();return;}
+    $('#main').innerHTML='<div class="empty"><h2>작업공간을 열지 못했습니다.</h2><p>'+esc(error.message)+'</p><button class="outline-btn" data-action="workspaces">내 작업공간</button><button class="outline-btn" data-action="reload">다시 시도</button></div>';throw error;
+  }
 }
+
 async function openWorkspaceInvitation(){
   if(!state.accountMode||!state.offlineProfile)return;
   const scope=FountainTransport.workspaceScope(),parent=state.account.parent();
@@ -3584,7 +3604,7 @@ async function openOfflineWorkspace(destination){
   let profile,scope;
   if(FountainTransport.native){
     const hint=workspaceHints.get(destination.workspaceId)?.scope||FountainTransport.previousWorkspaceScope?.(destination.workspaceId);
-    if(!hint||hint.workspaceId!==destination.workspaceId)return false;
+    if(!hint||hint.workspaceId!==destination.workspaceId||workspaceRejectedHints.has(hint.accountBinding+':'+hint.workspaceId+':'+hint.binding))return false;
     scope=await FountainTransport.setWorkspaceOffline(hint);FountainOffline.selectWorkspace(scope);profile=await FountainOffline.getProfile();
   }else{
     profile=await FountainOffline.offlineWorkspace(destination.workspaceId);if(!profile)return false;
@@ -3624,6 +3644,6 @@ async function boot(){
   }
 }
 window.addEventListener('fountain-workspace-auth-required',event=>{if(state.accountMode&&event.detail?.accountBinding===state.account?.session?.cache_binding)state.account.end(event.detail.accountBinding);});
-window.addEventListener('fountain-account-ended',event=>{if(!state.accountMode)return;for(const [id,item] of workspaceHints)if(item.scope.accountBinding===event.detail?.binding)workspaceHints.delete(id);for(const key of workspaceOpenCommands.keys())if(key.startsWith(event.detail?.binding+':'))workspaceOpenCommands.delete(key);state.workspaceSwitching=true;state.bootGeneration=(state.bootGeneration||0)+1;closeDocument();closeMutations();closeModal();void endCachedAccount(event.detail?.binding).catch(()=>{}).finally(()=>{void FountainTransport.parkWorkspace();state.offlineProfile=null;state.workspace=null;state.loaded=false;renderAccountLogin();});});
+window.addEventListener('fountain-account-ended',event=>{if(!state.accountMode)return;for(const [id,item] of workspaceHints)if(item.scope.accountBinding===event.detail?.binding)workspaceHints.delete(id);for(const key of workspaceOpenCommands.keys())if(key.startsWith(event.detail?.binding+':'))workspaceOpenCommands.delete(key);for(const key of workspaceRejectedHints)if(key.startsWith(event.detail?.binding+':'))workspaceRejectedHints.delete(key);state.workspaceSwitching=true;state.bootGeneration=(state.bootGeneration||0)+1;closeDocument();closeMutations();closeModal();void endCachedAccount(event.detail?.binding).catch(()=>{}).finally(()=>{void FountainTransport.parkWorkspace();state.offlineProfile=null;state.workspace=null;state.loaded=false;renderAccountLogin();});});
 
 boot();

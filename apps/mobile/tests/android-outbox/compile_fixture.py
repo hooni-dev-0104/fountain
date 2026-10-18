@@ -77,7 +77,7 @@ STUBS = {
 'com/getcapacitor/annotation/CapacitorPlugin.java': 'package com.getcapacitor.annotation; public @interface CapacitorPlugin { String name(); }',
 'dev/fountain/workspace/MainActivity.java': 'package dev.fountain.workspace; public class MainActivity extends android.app.Activity { public boolean permitsNativeBridge(){return true;} }',
 'dev/fountain/workspace/CookieVault.java': '''package dev.fountain.workspace; public class CookieVault {
- CookieVault(android.content.Context c){} org.json.JSONObject read()throws Exception{return null;} void write(org.json.JSONObject o)throws Exception{}
+ CookieVault(android.content.Context c){} CookieVault(android.content.Context c,String preferencesName,String keyAlias){} org.json.JSONObject read()throws Exception{return null;} void write(org.json.JSONObject o)throws Exception{}
  boolean invalidated(String o){return false;} boolean markInvalidated(String o){return true;} void clearInvalidated(String o)throws Exception{}
  boolean eraseEncryptedState(){return true;} boolean destroyEncryptionKey(){return true;}
 }''',
@@ -92,7 +92,7 @@ with tempfile.TemporaryDirectory(prefix='fountain-java-signatures-') as folder:
     javac = str(Path(home) / 'bin/javac') if home else 'javac'
     result = subprocess.run([javac, '--release', '8', '-d', str(root / 'compiled'),
         *map(str, root.rglob('*.java')),
-        *[str(SOURCE / name) for name in ('NativePolicy.java', 'NativeCookieBoundary.java', 'OutboxPolicy.java', 'NativeOutbox.java', 'NativeRecovery.java', 'FountainNativePlugin.java')]],
+        *[str(SOURCE / name) for name in ('NativePolicy.java', 'NativeCookieBoundary.java', 'NativeOrganizationPolicy.java', 'OutboxPolicy.java', 'NativeOutbox.java', 'NativeRecovery.java', 'FountainNativePlugin.java')]],
         capture_output=True, text=True)
     if result.returncode:
         print(result.stderr)

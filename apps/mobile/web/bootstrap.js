@@ -20,7 +20,7 @@
       const label=document.createElement('label');label.textContent='HTTPS 서버 주소';const input=document.createElement('input');input.name='origin';input.type='url';input.required=true;input.placeholder='https://fountain.example.com';input.autocomplete='url';label.append(input);
       const submit=document.createElement('button');submit.className='solid-btn';submit.textContent='서버 연결';const status=document.createElement('p');status.setAttribute('role','status');form.append(label,submit,status);
       form.addEventListener('submit',async event=>{event.preventDefault();submit.disabled=true;try{await transport.configure({origin:input.value});resolve();}catch(failure){status.textContent=failure.message;}finally{submit.disabled=false;}});
-      panel.append(heading,description,form);main.append(panel);input.focus();
+      panel.append(heading,description,form);main.append(panel);
     });
     if(globalThis.FountainNativeRecoveryPanel){recovery=FountainNativeRecoveryPanel.create({bridge,transport});globalThis.FountainNativeRecovery=recovery;}
     const load=async name=>{if(!/^[a-z][a-z0-9.-]*\.js$/.test(name))throw new Error('앱 자산 목록이 올바르지 않습니다.');await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='/'+name;script.onload=resolve;script.onerror=()=>reject(new Error('앱 파일을 열지 못했습니다.'));document.body.append(script);});};

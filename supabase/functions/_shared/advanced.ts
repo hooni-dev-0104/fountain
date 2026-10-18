@@ -10,6 +10,7 @@ import type {CoreStore} from './core.ts';
 import {MissingSelection} from './store.ts';
 import {validate_schedule,scheduleDatetime} from './scheduler.ts';
 import {blocks_html,render_public,pythonJSON} from './publishing.ts';
+import type {PublicWorkspaceScope} from './publishing.ts';
 import {scim_resource} from './scim.ts';
 import {coreRoute} from './domain.ts';
 import type {DomainRequest,DomainResult,DomainExtension} from './domain.ts';
@@ -26,7 +27,7 @@ export function pythonEqual(a:any,b:any):boolean{
   if(Array.isArray(a)&&Array.isArray(b))return a.length===b.length&&a.every((v,i)=>pythonEqual(v,b[i]));
   return is_object(a)&&is_object(b)&&Object.keys(a).length===Object.keys(b).length&&Object.keys(a).every(key=>has(b,key)&&pythonEqual(a[key],b[key]));
 }
-export type AdvancedOptions={access?:Access;actor?:string;clock?:()=>number;uid?:()=>string;env?:Record<string,string|undefined>;cloud?:boolean};
+export type AdvancedOptions={publicWorkspaceScope?:PublicWorkspaceScope;access?:Access;actor?:string;clock?:()=>number;uid?:()=>string;env?:Record<string,string|undefined>;cloud?:boolean};
 export type PreparedAI={action:string;prompt:string;context:string;page_id:any;model:string;instructions:string;endpoint:string;key:string|undefined};
 function actorStore(store:CoreStore,actor:string):CoreStore{
   // Only domain ownership/audit defaults change. The original CloudStore's
@@ -182,7 +183,7 @@ export class Advanced {
     const identity=this.id('clipboard');this.store.put('clipboard',{id:identity,owner_id:this.actor,blocks});for(const entry of this.store.list('clipboard').slice(0,-20))this.store.delete('clipboard',entry.id);return {id:identity,text:plain.join('\n'),html:blocks_html(blocks)+'<!-- fountain-copy: '+identity+' -->'};
   }
   scim(method:string,path:string,body:Entity,query:URLSearchParams|Entity):DomainResult{return scim_resource(this,method,path,body,query);}
-  public_view(path:string):DomainResult|null{return render_public(this,path);}
+  public_view(path:string):DomainResult|null{return render_public(this,path,this.options.publicWorkspaceScope);}
   dispatch(method:string,path:string,body:Entity,query:URLSearchParams|Entity):DomainResult|null{
     if(path==='/api/inbox'&&method==='GET')return{status:200,payload:new Inbox(this.store,this.access??new Access(this.store,this.store.get('member',this.actor)),this.options.clock).get(query)};
     if(path.split('/').length===4&&path.startsWith('/api/inbox/')&&method==='PATCH'){check(query instanceof URLSearchParams?!query.toString():!Object.keys(query).length,'Invalid inbox query');return{status:200,payload:new Inbox(this.store,this.access??new Access(this.store,this.store.get('member',this.actor)),this.options.clock).patch(path.slice('/api/inbox/'.length),body)};}

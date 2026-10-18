@@ -3,9 +3,10 @@ import {HttpError,canonicalOrigin,jsonResponse,readBytes} from './http.ts';
 import {parseOrganizationSessionCookie} from './organization-auth.ts';
 import type {OrganizationPrivateSessionContext} from './organization-auth.ts';
 import type {AuthContext,AuthResult} from './auth.ts';
+import {WORKSPACE_ID} from './workspace-account.ts';
 import {storeContext} from './transaction.ts';
 type OrganizationAuth={login(body:unknown,cookie?:string|null):Promise<AuthResult>;session(cookie?:string|null):Promise<AuthResult>;authorize(cookie?:string|null):Promise<OrganizationPrivateSessionContext>;logout(cookie?:string|null,options?:{expectedBinding?:string}):Promise<AuthResult>};
-type Config={supabaseUrl:string;serviceKey:string;workspaceId:string;auth:OrganizationAuth;workspaceAuthorize:(cookie?:string|null)=>Promise<AuthContext>;fetch?:typeof fetch;timeoutMs?:number;clock?:()=>number};
+type Config={supabaseUrl:string;serviceKey:string;workspaceId:string;auth:OrganizationAuth;workspaceAuthorize:(cookie?:string|null)=>Promise<AuthContext>;scopedWorkspaceAuthorize?:(cookie:string|null,workspaceId:string,binding:string)=>Promise<AuthContext>;fetch?:typeof fetch;timeoutMs?:number;clock?:()=>number};
 const UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i,BINDING=/^[a-f0-9]{32}$/,CODE=/^[a-f0-9]{64}$/,enc=new TextEncoder();
 const object=(v:unknown):v is Record<string,any>=>v!==null&&typeof v==='object'&&!Array.isArray(v);
 const string=(v:unknown,max=1000):v is string=>typeof v==='string'&&v.length>0&&v.length<=max&&!/[\x00-\x1f\x7f]/.test(v);
@@ -66,7 +67,16 @@ export function createOrganizationPortal(config:Config){
   else{const parts=config.serviceKey.split('.');check(parts.length===3&&parts.every(p=>/^[A-Za-z0-9_-]+$/.test(p)));const claims=JSON.parse(atob(parts[1].replaceAll('-','+').replaceAll('_','/')+'='.repeat((4-parts[1].length%4)%4)));check(claims.role==='service_role');headers.Authorization='Bearer '+config.serviceKey;}
  }catch{throw new HttpError(503,'조직 서비스 설정을 확인해주세요.','ORGANIZATION_CONFIGURATION');}
  async function fresh(initial:OrganizationPrivateSessionContext,cookie:string|null){const current=await config.auth.authorize(cookie);if(current.hash!==initial.hash||current.cacheBinding!==initial.cacheBinding||current.userId!==initial.userId||current.authSessionId!==initial.authSessionId||current.expiresAt<=clock())throw new HttpError(409,'조직 로그인 계정이 변경되었습니다. 다시 시도해주세요.','ORGANIZATION_SESSION_CHANGED');return current;}
- async function workspace(cookie:string|null):Promise<AuthContext>{try{const context=await config.workspaceAuthorize(cookie);check(context.expiresAt>clock()&&context.profile.workspaceId===config.workspaceId&&context.profile.authSessionActive===true&&context.profile.member.active===true&&context.profile.member.role==='owner',403);return context;}catch{throw new HttpError(403,'같은 계정의 작업공간 소유자로 로그인해주세요.','WORKSPACE_AUTH_REQUIRED');}}
+ async function workspace(cookie:string|null,workspaceId?:string,workspaceBinding?:string):Promise<AuthContext>{
+  try{
+   const scoped=workspaceId!==undefined;
+   check(!scoped||typeof workspaceId==='string'&&WORKSPACE_ID.test(workspaceId)&&typeof workspaceBinding==='string'&&BINDING.test(workspaceBinding)&&config.scopedWorkspaceAuthorize,403);
+   const context=scoped?await config.scopedWorkspaceAuthorize!(cookie,workspaceId!,workspaceBinding!):await config.workspaceAuthorize(cookie);
+   check(context.expiresAt>clock()&&context.profile.workspaceId===(workspaceId??config.workspaceId)&&context.profile.authSessionActive===true&&context.profile.member.active===true&&context.profile.member.role==='owner',403);
+   return context;
+  }catch{throw new HttpError(403,'같은 계정의 작업공간 소유자로 로그인해주세요.','WORKSPACE_AUTH_REQUIRED');}
+ }
+
  async function rpc(initial:OrganizationPrivateSessionContext,cookie:string|null,operation:string,orgId:string|null,revision:number|null,commandId:string|null,value:Record<string,unknown>,ws:AuthContext|null){
   await fresh(initial,cookie);let response:Response;try{response=await request(origin+'/rest/v1/rpc/fountain_cloud_organization_portal',{method:'POST',redirect:'error',signal:AbortSignal.timeout(timeout),headers:{...headers},body:JSON.stringify({p_session:sessionContext(initial),p_operation:operation,p_organization_id:orgId,p_expected_revision:revision,p_command_id:commandId,p_value:value,p_workspace_context:ws?storeContext(ws):null})});}catch{throw new HttpError(503,'조직 요청을 처리하지 못했습니다. 잠시 후 다시 시도해주세요.','ORGANIZATION_UNAVAILABLE');}
   if(response.redirected){await response.body?.cancel().catch(()=>{});throw new HttpError(503,'조직 요청을 처리하지 못했습니다.','ORGANIZATION_UNAVAILABLE');}
@@ -77,7 +87,9 @@ export function createOrganizationPortal(config:Config){
    const status=typeof code==='string'&&/^PT(?:401|403|404|409|413)$/.test(code)?Number(code.slice(2)):code==='22023'?400:503;
    throw new HttpError(status,status===401?'조직 로그인이 필요합니다.':status===403?'조직 작업 권한을 확인해주세요.':status===404?'조직 정보를 찾을 수 없습니다.':status===409?'조직 상태가 변경되었습니다. 새로고침 후 다시 시도해주세요.':'조직 요청을 처리하지 못했습니다.',status===401?'AUTH_REQUIRED':status===409?'ORGANIZATION_CONFLICT':'ORGANIZATION_REQUEST_FAILED');
   }
-  const result=await read(response,2097152);await fresh(initial,cookie);return projection(operation,result,initial.cacheBinding);
+  const result=await read(response,2097152);await fresh(initial,cookie);
+  if(ws&&'parentHash' in ws){const current=await workspace(cookie,ws.profile.workspaceId,ws.cacheBinding);if(JSON.stringify(storeContext(current))!==JSON.stringify(storeContext(ws)))throw new HttpError(409,'작업공간 로그인이 변경되었습니다.','WORKSPACE_SESSION_CHANGED');}
+  return projection(operation,result,initial.cacheBinding);
  }
  async function handle(request:Request,path:string):Promise<Response|null>{
   if(path!=='/api/organization'&&!path.startsWith('/api/organization/'))return null;
@@ -92,18 +104,23 @@ export function createOrganizationPortal(config:Config){
   const initial=await config.auth.authorize(cookie);check(initial.expiresAt>clock(),401,'AUTH_REQUIRED');
   let value:Record<string,unknown>={},operation='',orgId:string|null=null,revision:number|null=null,commandId:string|null=null,ws:AuthContext|null=null;
   const readMethod=method==='GET'||method==='HEAD';let v:Record<string,any>;
-  if(readMethod){check([...url.searchParams.keys()].every(k=>k==='session_binding')&&url.searchParams.getAll('session_binding').length===1);v={session_binding:url.searchParams.get('session_binding')};}
+  if(readMethod){const cross=route==='/setup-eligibility';check([...url.searchParams.keys()].every(k=>k==='session_binding'||cross&&['workspace_id','workspace_binding'].includes(k))&&url.searchParams.getAll('session_binding').length===1&&url.searchParams.getAll('workspace_id').length<=1&&url.searchParams.getAll('workspace_binding').length<=1);v=Object.fromEntries(url.searchParams);}
   else{check(!url.search);v=await body(request);}
   binding(v.session_binding);if(v.session_binding!==initial.cacheBinding)throw new HttpError(409,'조직 로그인 계정이 변경되었습니다. 다시 시도해주세요.','ORGANIZATION_SESSION_CHANGED');
+  const explicitWorkspace=Object.hasOwn(v,'workspace_id')&&['/setup-eligibility','/organizations','/workspace-preview','/workspace-accept'].includes(route);
+  if(explicitWorkspace)check(typeof v.workspace_id==='string'&&WORKSPACE_ID.test(v.workspace_id)&&typeof v.workspace_binding==='string'&&BINDING.test(v.workspace_binding));
+  if(route==='/setup-eligibility')check(Object.hasOwn(v,'workspace_id')===Object.hasOwn(v,'workspace_binding'));
+  const selectedWorkspace=explicitWorkspace?v.workspace_id:undefined;
+  const selectedBinding=explicitWorkspace?v.workspace_binding:undefined;
   const common=['session_binding','command_id','revision'];
   const match=/^\/organizations\/([a-f0-9-]+)(?:\/(owners|workspace-requests|workspaces)(?:\/([a-f0-9-]+))?)?$/i.exec(route);
-  const ineligible=()=>jsonResponse({eligible:false,reason:'workspace_auth_required',workspace_id:config.workspaceId,session_binding:initial.cacheBinding});
-  if(route==='/setup-eligibility'&&readMethod){operation='setup_eligibility';try{ws=await workspace(cookie);if(ws.userId!==initial.userId){await fresh(initial,cookie);return ineligible();}}catch(error){if(error instanceof HttpError&&error.code==='WORKSPACE_AUTH_REQUIRED'){await fresh(initial,cookie);return ineligible();}throw error;}}
+  const ineligible=()=>jsonResponse({eligible:false,reason:'workspace_auth_required',workspace_id:selectedWorkspace??config.workspaceId,session_binding:initial.cacheBinding});
+  if(route==='/setup-eligibility'&&readMethod){operation='setup_eligibility';try{ws=await workspace(cookie,selectedWorkspace,selectedBinding);if(ws.userId!==initial.userId){await fresh(initial,cookie);return ineligible();}}catch(error){if(error instanceof HttpError&&error.code==='WORKSPACE_AUTH_REQUIRED'){await fresh(initial,cookie);return ineligible();}throw error;}}
   else if(route==='/organizations'&&readMethod)operation='list';
-  else if(route==='/organizations'&&method==='POST'){exact(v,['session_binding','command_id','organization_id','name','confirm_owner','attach_workspace','workspace_binding']);check(v.confirm_owner===true&&v.attach_workspace===true&&organizationName(v.name)&&string(v.name)&&v.name.trim().length>0);orgId=uuid(v.organization_id);operation='create_from_workspace';ws=await workspace(cookie);check(binding(v.workspace_binding)===ws.cacheBinding,409,'WORKSPACE_SESSION_CHANGED');value={name:v.name,confirm_owner:true,attach_workspace:true,workspace_binding:v.workspace_binding};}
+  else if(route==='/organizations'&&method==='POST'){exact(v,['session_binding','command_id','organization_id','name','confirm_owner','attach_workspace','workspace_binding'],['workspace_id']);check(v.confirm_owner===true&&v.attach_workspace===true&&organizationName(v.name)&&string(v.name)&&v.name.trim().length>0);orgId=uuid(v.organization_id);operation='create_from_workspace';ws=await workspace(cookie,selectedWorkspace,selectedBinding);check(binding(v.workspace_binding)===ws.cacheBinding,409,'WORKSPACE_SESSION_CHANGED');value={name:v.name,confirm_owner:true,attach_workspace:true,workspace_binding:v.workspace_binding};}
   else if(route==='/bootstrap'&&method==='POST'){exact(v,['session_binding','command_id','organization_id','code']);orgId=uuid(v.organization_id);check(typeof v.code==='string'&&CODE.test(v.code));operation='bootstrap_accept';value={code:v.code};}
   else if((route==='/workspace-preview'||route==='/workspace-accept')&&method==='POST'){
-   const accept=route==='/workspace-accept';exact(v,['session_binding','organization_id','request_id','revision','code',...(accept?['command_id','workspace_binding']:[])],accept?[]:['workspace_binding']);orgId=uuid(v.organization_id);check(typeof v.code==='string'&&CODE.test(v.code));ws=await workspace(cookie);if(v.workspace_binding!==undefined)check(binding(v.workspace_binding)===ws.cacheBinding,409,'WORKSPACE_SESSION_CHANGED');operation=accept?'link_accept':'link_preview';value={requestId:uuid(v.request_id),code:v.code,workspace_binding:ws.cacheBinding};
+   const accept=route==='/workspace-accept';exact(v,['session_binding','organization_id','request_id','revision','code',...(accept?['command_id','workspace_binding']:[])],accept?['workspace_id']:['workspace_binding','workspace_id']);orgId=uuid(v.organization_id);check(typeof v.code==='string'&&CODE.test(v.code));ws=await workspace(cookie,selectedWorkspace,selectedBinding);if(v.workspace_binding!==undefined)check(binding(v.workspace_binding)===ws.cacheBinding,409,'WORKSPACE_SESSION_CHANGED');operation=accept?'link_accept':'link_preview';value={requestId:uuid(v.request_id),code:v.code,workspace_binding:ws.cacheBinding};
   }
   else if(match){orgId=uuid(match[1]);const section=match[2],item=match[3];
    if(!section&&readMethod)operation='read';

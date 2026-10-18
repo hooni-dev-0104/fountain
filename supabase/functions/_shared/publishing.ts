@@ -29,7 +29,8 @@ export function blocks_html(input:unknown):string{
     const style=depths[block.id]?' style="margin-left:'+depths[block.id]*24+'px"':'';return tag==='hr'?'<hr>':'<'+tag+style+'>'+content+'</'+tag+'>';
   }).join('');
 }
-export function render_public(service:Advanced,path:string):DomainResult|null{
+export type PublicWorkspaceScope={workspaceId:string;memberId:string;binding:string;accountBinding:string;expiresAt:number};
+export function render_public(service:Advanced,path:string,scope?:PublicWorkspaceScope):DomainResult|null{
   const parts=path.replace(/^\/+|\/+$/g,'').split('/');if(parts.length!==2)return null;
   check(!truth(get(service.settings(),'disable_public_sharing')),'공개 공유가 비활성화되었습니다',404);
   let title:string,description:string,content:string;
@@ -39,8 +40,13 @@ export function render_public(service:Advanced,path:string):DomainResult|null{
   }else{
     const form=service.item('forms',parts[1]);check(truth(get(form,'published')),'게시된 양식이 없습니다',404);title=form.name;description=get(form,'description','');content='<h1>'+escapeHTML(title)+'</h1><p>'+escapeHTML(description)+'</p><form id="public-form" data-form-id="'+escapeHTML(form.id)+'">';
     for(const field of form.fields){let attrs=' name="'+escapeHTML(field.id)+'" data-type="'+escapeHTML(get(field,'type','text'))+'"';content+=truth(get(field,'condition'))?'<label data-condition="'+escapeHTML(pythonJSON(field.condition,true))+'">':'<label>';content+=escapeHTML(get(field,'label',field.id))+(truth(get(field,'required'))?' *':'');if(truth(get(field,'required')))attrs+=' required';if(field.type==='select')content+='<select'+attrs+'><option value="">선택</option>'+get(field,'options',[]).map((value:any)=>'<option>'+escapeHTML(typeof value==='string'?value:value===true?'True':value===false?'False':value===null?'None':String(value))+'</option>').join('')+'</select>';else content+='<input type="'+escapeHTML(get(field,'type','text'))+'"'+attrs+'>';content+='</label>';}
-    content+='<button type="submit">제출</button><p role="status" id="form-status"></p></form><script src="/transport.js" defer></script><script src="/public.js" defer></script>';
+    content+='<button type="submit">제출</button><p role="status" id="form-status"></p></form>'+(scope?'<script src="/workspace-scope.js" defer></script>':'')+'<script src="/transport.js" defer></script><script src="/public.js" defer></script>';
   }
-  const document='<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>'+escapeHTML(title)+'</title><meta name="description" content="'+escapeHTML(description)+'"><style>[hidden]{display:none!important}body{font:16px/1.8 system-ui;color:#37352f;max-width:760px;margin:10vh auto;padding:24px}label{display:block;margin:20px 0}input,select{display:block;padding:10px;font:inherit;width:100%;box-sizing:border-box;border:1px solid #ddd;border-radius:6px}input[type=checkbox]{width:auto}button{padding:10px 30px;background:#2383e2;border:0;color:white;border-radius:6px;font:inherit}pre{white-space:pre-wrap;background:#f5f5f4;padding:20px}blockquote{border-left:3px solid;padding-left:20px}</style><main>'+content+'</main></html>';
+  let workspaceMeta='';
+  if(scope){
+    check(/^[A-Za-z0-9_-]{1,160}$/.test(scope.workspaceId)&&typeof scope.memberId==='string'&&scope.memberId.length>0&&scope.memberId.length<=160&&/^[a-f0-9]{32}$/.test(scope.binding)&&/^[a-f0-9]{32}$/.test(scope.accountBinding)&&Number.isSafeInteger(scope.expiresAt)&&scope.expiresAt>0,'Invalid public workspace scope',500);
+    workspaceMeta='<meta name="fountain-workspace-scope" content="'+escapeHTML(JSON.stringify({workspaceId:scope.workspaceId,memberId:scope.memberId,binding:scope.binding,accountBinding:scope.accountBinding,expiresAt:scope.expiresAt}))+'">';
+  }
+  const document='<!doctype html><html lang="ko"><meta charset="utf-8">'+workspaceMeta+'<meta name="viewport" content="width=device-width,initial-scale=1"><title>'+escapeHTML(title)+'</title><meta name="description" content="'+escapeHTML(description)+'"><style>[hidden]{display:none!important}body{font:16px/1.8 system-ui;color:#37352f;max-width:760px;margin:10vh auto;padding:24px}label{display:block;margin:20px 0}input,select{display:block;padding:10px;font:inherit;width:100%;box-sizing:border-box;border:1px solid #ddd;border-radius:6px}input[type=checkbox]{width:auto}button{padding:10px 30px;background:#2383e2;border:0;color:white;border-radius:6px;font:inherit}pre{white-space:pre-wrap;background:#f5f5f4;padding:20px}blockquote{border-left:3px solid;padding-left:20px}</style><main>'+content+'</main></html>';
   return {status:200,payload:{_html:document}};
 }

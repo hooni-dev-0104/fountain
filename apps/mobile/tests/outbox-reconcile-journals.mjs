@@ -10,6 +10,7 @@ import {join} from 'node:path';
 import {ReconcileBridge} from './reconcile-fixture.mjs';
 const corpus=JSON.parse(await readFile(new URL('./fixtures/native-reconcile-cases.json',import.meta.url))),cases=corpus.cases.filter(value=>value.id.startsWith('settle-')||value.id==='legacy-delete-no-before-image');
 const jsTargets=corpus.executionCoverage.js;assert.equal(jsTargets.length,5);assert.deepEqual(cases.filter(value=>value.executionTargets.includes('js')).map(value=>value.id).sort(),[...jsTargets].sort());assert.ok(jsTargets.every(id=>cases.some(value=>value.id===id)));
+const workspaceEpoch=process.env.FOUNTAIN_TEST_WORKSPACE_EPOCH==='1'?7:null;
 const source=await readFile(new URL('../web/native-outbox.js',import.meta.url)),temporary=await mkdtemp(join(tmpdir(),'fountain-journal-vectors-'));
 const require=createRequire(import.meta.url),{chromium}=require(join(homedir(),'.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright'));
 let server,browser;const fixtures=[];
@@ -21,15 +22,15 @@ try{
     fixture.putControl('stage:'+intent.txId,{lease:fixture.lease,baseHead:intent.baseHead,proofEpoch:intent.proofEpoch});
     if(vector.receiptLookup.accepted){fixture.db.prepare('INSERT INTO receipts VALUES (?,?,?)').run(intent.txId,createHash('sha256').update(intent.deltaJSON).digest('hex'),4);fixture.putControl('receipt:'+intent.txId,{profileId:current,proofEpoch:2,mode:'active'});fixture.db.prepare("UPDATE control SET value=4 WHERE id='head'").run();}
     if(vector.id==='settle-beforeimage-receipt-failure')fixture.failCommit=true;
-    const context=await browser.newContext();await context.exposeBinding('model',async(_,method,args)=>{try{return{value:await fixture[method](args)};}catch(error){return{error:{code:error.code,message:error.message}};}});const page=await context.newPage();await page.goto(endpoint);await page.addScriptTag({url:endpoint});
-    const observed=await page.evaluate(async({origin,intent,current})=>{
+    const context=await browser.newContext();await context.exposeBinding('model',async(_,method,args)=>{try{if(workspaceEpoch!==null)assert.equal(args.workspaceEpoch,workspaceEpoch);const value=await fixture[method](args);return{value:workspaceEpoch===null?value:{...value,workspaceEpoch}};}catch(error){return{error:{code:error.code,message:error.message}};}});const page=await context.newPage();await page.goto(endpoint);await page.addScriptTag({url:endpoint});
+    const observed=await page.evaluate(async({origin,intent,current,workspaceEpoch})=>{
       const bridge=Object.fromEntries(['outboxOpen','outboxReconcile','readPage','stageDelta','commitDelta'].map(name=>[name,async args=>{const result=await model(name,args);if(result.error)throw Object.assign(new Error(result.error.message),{code:result.error.code});return result.value;}]));
-      const initial=FountainNativeOutbox.create(bridge,{origin,generation:1});await initial.initialize();initial.close();
+      const initial=FountainNativeOutbox.create(bridge,{origin,generation:1,workspaceEpoch});await initial.initialize();initial.close();
       const db=await new Promise(resolve=>{const open=indexedDB.open('fountain-offline-v1',3);open.onsuccess=()=>resolve(open.result);});await new Promise(resolve=>{const tx=db.transaction('nativeJournal','readwrite');tx.objectStore('nativeJournal').put(intent);tx.oncomplete=resolve;});db.close();
       const driver={scope:()=>({scopeEpoch:1}),current:()=>true,pause(){},resume(){},session:async()=>{throw Object.assign(new Error('Bounded harness ends before collector'),{code:'OUTBOX_TEST_STOP'});}};
-      const storage=FountainNativeOutbox.create(bridge,{origin,generation:1,driver});let code;try{await storage.initialize();}catch(error){code=error.code;}
+      const storage=FountainNativeOutbox.create(bridge,{origin,generation:1,workspaceEpoch,driver});let code;try{await storage.initialize();}catch(error){code=error.code;}
       const read=await new Promise(resolve=>{const open=indexedDB.open('fountain-offline-v1',3);open.onsuccess=()=>resolve(open.result);});const rows=await new Promise(resolve=>{const tx=read.transaction('nativeJournal'),request=tx.objectStore('nativeJournal').getAll();request.onsuccess=()=>resolve(request.result);});read.close();storage.close();return{code,journals:rows.filter(row=>row.kind!=='checkpoint')};
-    },{origin,intent,current});
+    },{origin,intent,current,workspaceEpoch});
     if(['settle-foreign-binding','legacy-delete-no-before-image'].includes(vector.id)){assert.equal(observed.code,'OUTBOX_RECOVERY_REQUIRED');assert.deepEqual(observed.journals,[intent]);if(vector.id==='settle-foreign-binding')assert.equal(fixture.reconcileCalls.length,0);else {assert.ok(fixture.cancelled.has(intent.txId));assert.equal(fixture.records('recovery').length,0);}}
     else if(vector.id==='settle-beforeimage-receipt-failure'){assert.equal(observed.journals.length,1);assert.equal(observed.journals[0].txId,intent.txId);assert.ok(observed.journals[0].archive);assert.equal(fixture.records('recovery').length,0);}
     else{
@@ -39,6 +40,6 @@ try{
     }
     await context.close();
   }
-  const output=join(process.cwd(),'.data/native-outbox-activation');await mkdir(output,{recursive:true});await writeFile(join(output,'js-execution-coverage.json'),JSON.stringify({version:1,implementation:'production native-outbox.js',runtime:'actual Chrome IndexedDB; SQLite staging/receipt MODEL; stop before native collector',jsRequired:jsTargets,jsPassed:jsTargets,additionalPassed:cases.map(value=>value.id).filter(id=>!jsTargets.includes(id)),nativePassed:[],bridgePassed:[],corpusSha256:createHash('sha256').update(await readFile(new URL('./fixtures/native-reconcile-cases.json',import.meta.url))).digest('hex')},null,2)+'\n');
-  console.log('PASS production JS settlement on '+cases.length+' shared vectors: '+cases.map(value=>value.id).join(', ')+'; Chrome IDB + SQLite MODEL only, collector/native transform deliberately not exercised');
+  const output=join(process.cwd(),'.data/native-outbox-activation');await mkdir(output,{recursive:true});await writeFile(join(output,workspaceEpoch===null?'js-execution-coverage.json':'js-scoped-execution-coverage.json'),JSON.stringify({version:1,implementation:'production native-outbox.js',workspaceEpoch,runtime:'actual Chrome IndexedDB; SQLite staging/receipt MODEL; stop before native collector',jsRequired:jsTargets,jsPassed:jsTargets,additionalPassed:cases.map(value=>value.id).filter(id=>!jsTargets.includes(id)),nativePassed:[],bridgePassed:[],corpusSha256:createHash('sha256').update(await readFile(new URL('./fixtures/native-reconcile-cases.json',import.meta.url))).digest('hex')},null,2)+'\n');
+  console.log('PASS '+(workspaceEpoch===null?'legacy':'scoped epoch7')+' production JS settlement on '+cases.length+' shared vectors: '+cases.map(value=>value.id).join(', ')+'; Chrome IDB + SQLite MODEL only, collector/native transform deliberately not exercised');
 }finally{await browser?.close();if(server)await new Promise(resolve=>server.close(resolve));for(const fixture of fixtures)fixture.close();await rm(temporary,{recursive:true,force:true});}

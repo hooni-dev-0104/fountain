@@ -1,4 +1,4 @@
-/* Opt-in native durability foundation. No cookie, native identity grant or SQL is accepted from JavaScript. */
+/* Native durability coordinator. No cookie, native identity grant or SQL is accepted from JavaScript. */
 (function(root){
   'use strict';
   const PART=256*1024,RECORD=16*1024*1024,TRANSACTION=64*1024*1024;
@@ -18,8 +18,13 @@
   async function digest(text){if(!crypto.subtle){if(typeof root.FountainCollaboration?.sha256==='function')return root.FountainCollaboration.sha256(text);throw failure('기기 저장 검증 기능을 사용할 수 없습니다.','OUTBOX_UNAVAILABLE');}const bytes=new TextEncoder().encode(text),hash=await crypto.subtle.digest('SHA-256',bytes);return Array.from(new Uint8Array(hash),value=>value.toString(16).padStart(2,'0')).join('');}
   function raw(database,names,mode,callback){return new Promise((resolve,reject)=>{const tx=database.transaction(names,mode);let result,problem;tx.oncomplete=()=>resolve(result);tx.onabort=()=>reject(problem||tx.error||failure('기기 저장 작업이 중단되었습니다.'));tx.onerror=()=>{};Promise.resolve().then(()=>callback(tx)).then(value=>result=value).catch(error=>{problem=error;try{tx.abort();}catch{reject(error);}});});}
   function open(schema){return new Promise((resolve,reject)=>{const operation=indexedDB.open(schema.name,schema.version);operation.onupgradeneeded=()=>{const db=operation.result;for(const [name,keyPath] of Object.entries(schema.stores)){if(db.objectStoreNames.contains(name))continue;const store=db.createObjectStore(name,{keyPath});if(!['profiles','meta'].includes(name)){store.createIndex('profileId','profileId');if(['operations','drafts'].includes(name))store.createIndex('key','key');if(['databaseSnapshots','mutations','localPages'].includes(name))store.createIndex('resourceKey','resourceKey');if(name==='transfers')store.createIndex('scopeId','scopeId');}}if(!db.objectStoreNames.contains(JOURNAL))db.createObjectStore(JOURNAL,{keyPath:'txId'});};operation.onerror=()=>reject(operation.error);operation.onblocked=()=>reject(failure('다른 창의 기기 저장소가 열려 있습니다. 앱을 다시 열어 주세요.','OUTBOX_DB_BLOCKED'));operation.onsuccess=()=>{operation.result.onversionchange=()=>operation.result.close();resolve(operation.result);};});}
-  function create(bridge,{origin,generation,driver=null,confirm=null}){
+  function create(bridge,{origin,generation,workspaceEpoch=null,driver=null,confirm=null}){
     if(typeof origin!=='string'||!origin.startsWith('https://')||!Number.isSafeInteger(generation))throw new TypeError('Native outbox configuration required');
+    if(workspaceEpoch!==null){
+      if(!Number.isSafeInteger(workspaceEpoch)||workspaceEpoch<0)throw new TypeError('Native workspace epoch required');
+      const original=bridge;bridge=new Proxy({},{get(_target,name){const value=original[name];if(typeof value!=='function')return value;return async input=>{const reply=await value.call(original,{...input,workspaceEpoch});if(!reply||reply.workspaceEpoch!==workspaceEpoch)throw failure('작업공간 연결 범위가 변경되었습니다.','OUTBOX_SCOPE_CHANGED');const {workspaceEpoch:ignored,...clean}=reply;return clean;};}});
+    }
+    let parking=false;
     let queue=Promise.resolve(),initialized=false,blocked=null,identity=null,databases=[],closed=false,pause=null,activeOperation=null,reconciliations=0,preservedInputs=0,lastSummary=null;
     let owner;
     const serialize=callback=>{const result=queue.catch(()=>{}).then(callback);queue=result.catch(()=>{});return result;};
@@ -46,6 +51,7 @@
         if(--captured.users===0&&pause===captured){pause=null;const waits=[];root.dispatchEvent(new CustomEvent('fountain-native-outbox-resume',{detail:{owner,token:captured.token,origin,generation,scopeEpoch:captured.expected.scopeEpoch,committed:initialized&&!blocked,blocked:!!blocked,terminal:captured.terminal===true,reconciled:captured.revision!==reconciliations||captured.preserved!==preservedInputs,preservedInput:captured.preserved!==preservedInputs,summary:lastSummary,readCurrent:async descriptor=>{scopeCheck(captured.expected);if(blocked||!initialized||identity.identityState!=='verified'||identity.validUntil<=Date.now())throw accessRequired();const current=await opened();if(current.head!==identity.head||current.lease!==identity.lease||current.proofEpoch!==identity.proofEpoch||current.profileId!==identity.profileId||current.resourceAccess!=='ready')throw accessRequired();const profile=await raw(databases[0],['profiles'],'readonly',tx=>request(tx.objectStore('profiles').get(identity.profileId)));let snapshot=null;if(descriptor&&['page','database'].includes(descriptor.kind)&&typeof descriptor.id==='string'){const bucket=descriptor.kind==='page'?'snapshots':'databaseSnapshots',key=identity.profileId+'|'+(descriptor.kind==='database'?'database|':'')+encodeURIComponent(descriptor.id);snapshot=await raw(databases[0],[bucket],'readonly',tx=>request(tx.objectStore(bucket).get(key)));}scopeCheck(captured.expected);return{profile:clone(profile),snapshot:clone(snapshot?.snapshot||null)};},waitUntil:promise=>waits.push(Promise.resolve(promise))}}));try{await Promise.all(waits);}catch(error){if(driver.current(captured.expected))blocked=storageError(error);throw error;}finally{if(!pause)driver.resume();}}
     }
     function coordinated(callback,{force=false}={}){
+      if(parking)return Promise.reject(failure('작업공간 편집을 보관하고 있습니다.','OUTBOX_PARKED'));
       if(!driver)return serialize(callback);
       const operation={expected:driver.scope(),pause:null};
       const execute=async()=>{
@@ -176,7 +182,7 @@
       retentionPending=identity.profileId+'|'+final.map(state=>state.expected.sourceDigest).join('|');return final.map(state=>[...(state.checkpoint?[state.checkpoint]:[]),...state.current]);
     }
     async function completeRetainedProfile(){
-      return raw(databases[0],['profiles','meta'],'readonly',tx=>Promise.all([request(tx.objectStore('profiles').get(identity.profileId)),request(tx.objectStore('meta').get('active')),request(tx.objectStore('meta').get('last-profile'))]).then(([profile,active,last])=>profile?.id===identity.profileId&&profile.origin===origin&&profile.validUntil>Date.now()&&active?.profileId===identity.profileId&&last?.profileId===identity.profileId));
+      return raw(databases[0],['profiles','meta'],'readonly',tx=>Promise.all([request(tx.objectStore('profiles').get(identity.profileId)),request(tx.objectStore('meta').getAll())]).then(([profile,markers])=>{const suffix=profile?.accountBinding?':'+profile.accountBinding+':'+profile.workspaceId:'';const active=markers.find(row=>row.id==='active'+suffix),last=markers.find(row=>row.id==='last-profile'+suffix);return profile?.id===identity.profileId&&profile.origin===origin&&profile.validUntil>Date.now()&&active?.profileId===identity.profileId&&last?.profileId===identity.profileId;}));
     }
     async function captureRetentionFence(){
       if(!retentionPending)return null;const rows=[],states=[];
@@ -430,8 +436,9 @@
     });}
     async function reconcile(options={}){return coordinated(async()=>{try{await recover({...options,initial:true,explicit:true});blocked=null;return{ready:true};}catch(error){blocked=storageError(error);throw blocked;}},{force:true});}
     async function recoveryHandles(){return coordinated(async()=>{const result=await opened();return clone(result.reconciliationHandles||[]);});}
+    async function park(){parking=true;await queue.catch(()=>{});close();return{parked:true};}
     function close(){closed=true;for(const database of databases)database.close();}
-    return Object.freeze({initialize,refreshAuth,reconcile,recoveryHandles,run,close,get ready(){return initialized&&!blocked&&!closed;},get resourceAccess(){return blocked?.code==='OUTBOX_ACCESS_REQUIRED'?'required':identity?.resourceAccess||'required';},get accessIssues(){return clone(identity?.accessIssues||[]);},get identityState(){return identity?.identityState||'unknown';},get profileId(){return initialized&&!blocked&&!closed&&identity?.identityState==='verified'?identity.profileId:null;},get validUntil(){return initialized&&!blocked&&!closed&&identity?.identityState==='verified'?identity.validUntil:null;}});
+    return Object.freeze({initialize,refreshAuth,reconcile,recoveryHandles,run,close,park,get ready(){return initialized&&!blocked&&!closed;},get resourceAccess(){return blocked?.code==='OUTBOX_ACCESS_REQUIRED'?'required':identity?.resourceAccess||'required';},get accessIssues(){return clone(identity?.accessIssues||[]);},get identityState(){return identity?.identityState||'unknown';},get profileId(){return initialized&&!blocked&&!closed&&identity?.identityState==='verified'?identity.profileId:null;},get validUntil(){return initialized&&!blocked&&!closed&&identity?.identityState==='verified'?identity.validUntil:null;}});
   }
   root.FountainNativeOutbox=Object.freeze({create});
 })(globalThis);

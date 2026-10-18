@@ -47,7 +47,7 @@
     const code=error?.code;
     if(['CANCELLED','SESSION_CHANGED','NATIVE_CANCELLED','NATIVE_STALE'].includes(code)||error?.name==='AbortError')return aborted();
     if(['TIMEOUT','NATIVE_TIMEOUT'].includes(code))return new DOMException('조직 요청 시간이 초과되었습니다.','TimeoutError');
-    if(['NETWORK_ERROR','NATIVE_NETWORK'].includes(code))return new TypeError('조직 서버에 연결하지 못했습니다.');
+    if(['NETWORK_ERROR','NATIVE_NETWORK','NATIVE_NETWORK_UNREACHABLE'].includes(code))return Object.assign(new TypeError('조직 서버에 연결하지 못했습니다.'),{code});
     return Object.assign(new Error('조직 연결 또는 보안 저장소를 확인해 주세요.'),{status:code==='NATIVE_SESSION_CONFLICT'?409:['INVALID_REQUEST','NATIVE_INVALID','NATIVE_SESSION_INVALID'].includes(code)?400:503});
   }
   function create(bridge){
@@ -78,15 +78,18 @@
       const transition=value==='/api/organization/session'&&['POST','DELETE'].includes(method);
       // Fence at invocation, including a prior request still waiting for configuration/body bytes.
       if(transition){epoch++;cancel();}
+      const cross=/^\/api\/organization\/(?:setup-eligibility(?:\?|$)|organizations$|workspace-preview$|workspace-accept$)/.test(value);
+      const crossEpoch=root.FountainTransport?.scopeEpoch;
+      const crossCurrent=()=>!cross||crossEpoch===root.FountainTransport?.scopeEpoch;
       const requestedEpoch=epoch,prior=authTail;let stopped=false,rejectWaiting,abortWire;
       const interrupted=new Promise((_,reject)=>rejectWaiting=reject);
       const stop=(timeout=false)=>{if(stopped)return;stopped=true;abortWire?.();rejectWaiting(timeout?new DOMException('조직 요청 시간이 초과되었습니다.','TimeoutError'):aborted());};
       const onCancel=()=>stop(),deadline=setTimeout(()=>stop(true),timeoutMs);
       waiting.add(onCancel);options.signal?.addEventListener('abort',onCancel,{once:true});if(options.signal?.aborted)stop();
       const run=async()=>{
-        await initialize();if(stopped||options.signal?.aborted||requestedEpoch!==epoch)throw aborted();
-        const expected=scope(),body=await bodyBytes(options.body);if(stopped||!current(expected)||options.signal?.aborted)throw aborted();
-        await prior.catch(()=>{});if(stopped||!current(expected)||options.signal?.aborted)throw aborted();
+        await initialize();if(stopped||options.signal?.aborted||requestedEpoch!==epoch||!crossCurrent())throw aborted();
+        const expected=scope(),body=await bodyBytes(options.body);if(stopped||!current(expected)||!crossCurrent()||options.signal?.aborted)throw aborted();
+        await prior.catch(()=>{});if(stopped||!current(expected)||!crossCurrent()||options.signal?.aborted)throw aborted();
         if(!configuration.origin)throw Object.assign(new Error('워크스페이스로 돌아가 HTTPS 서버 주소를 먼저 설정해 주세요.'),{status:503});
         const id='organization_'+Date.now().toString(36)+'_'+(++serial);let finished=false,rejectAbort,timer;
         const interrupted=new Promise((_,reject)=>rejectAbort=reject);
@@ -94,7 +97,7 @@
         const onAbort=()=>stop();abortWire=onAbort;calls.set(id,onAbort);options.signal?.addEventListener('abort',onAbort,{once:true});timer=setTimeout(()=>stop(true),timeoutMs);
         try{
           const result=await Promise.race([Promise.resolve().then(()=>{if(finished||!current(expected))throw aborted();return bridge.organizationRequest({id,generation:expected.generation,path:value,method,headers,bodyBase64:encode(body),timeoutMs});}).catch(error=>{throw failure(error);}),interrupted]);
-          if(finished||!current(expected)||result?.generation!==expected.generation)throw aborted();
+          if(finished||!current(expected)||!crossCurrent()||result?.generation!==expected.generation)throw aborted();
           if(!Number.isInteger(result.status)||result.status<200||result.status>599||result.status>=300&&result.status<400)invalid();
           if(!result.headers||typeof result.headers!=='object'||Array.isArray(result.headers))invalid();
           const safe=new Headers();for(const [name,value]of Object.entries(result.headers))if(['content-type','content-length'].includes(name.toLowerCase())){

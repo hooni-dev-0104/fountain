@@ -58,7 +58,7 @@ const temporary=await mkdtemp(join(tmpdir(),'fountain-mobile-organization-'));tr
  const output=join(temporary,'www'),result=await build(output),files=await readdir(output),html=await readFile(join(output,'organization.html'),'utf8');
  assert.ok(files.includes('organization-native.js'));assert.ok(files.includes('organization.js'));assert.ok(result.assets.includes('organization.html'));
  assert.match(html,/Content-Security-Policy/);assert.match(html,/capacitor\.js.*organization-native\.js/s);assert.ok(!/src=["'][^"']*(?:\/transport|\/native-transport|\/native-outbox|\/native-recovery|\/bootstrap|\/app)\.js/.test(html));assert.match(html,/href="\.\/index.html"/);
- assert.deepEqual([...html.matchAll(/<script src="([^"]+)" defer><\/script>/g)].map(m=>m[1]),['./capacitor.js','./organization-native.js','./organization.js']);
+ assert.deepEqual([...html.matchAll(/<script src="([^"]+)" defer><\/script>/g)].map(m=>m[1]),['./capacitor.js','./account-native.js','./organization-native.js','./organization.js']);
  assert.ok(!files.some(name=>/\.db$|\.json$|\.env|node_modules|supabase/i.test(name)));
 }finally{await rm(temporary,{recursive:true,force:true});}
 console.log('Organization native transport: realm isolation, strict wire, cancellation/configuration races, and isolated bundle entry passed');

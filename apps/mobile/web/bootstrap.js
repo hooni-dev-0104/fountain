@@ -25,7 +25,7 @@
     if(globalThis.FountainNativeRecoveryPanel){recovery=FountainNativeRecoveryPanel.create({bridge,transport});globalThis.FountainNativeRecovery=recovery;}
     const load=async name=>{if(!/^[a-z][a-z0-9.-]*\.js$/.test(name))throw new Error('앱 자산 목록이 올바르지 않습니다.');await new Promise((resolve,reject)=>{const script=document.createElement('script');script.src='/'+name;script.onload=resolve;script.onerror=()=>reject(new Error('앱 파일을 열지 못했습니다.'));document.body.append(script);});};
     for(const name of assets.filter(name=>name!=='app.js'))await load(name);
-    if(transport.outboxEnabled===true&&transport.outboxVersion===1){
+    if(transport.workspaceVersion!==1&&transport.outboxEnabled===true&&transport.outboxVersion===1){
       // A real native request verifies the private grant; offline startup can use only an existing native grant.
       try{const session=await transport.request('/api/session');await session.json();}catch(failure){if(failure.name!=='TypeError'&&failure.name!=='NetworkError'&&failure.name!=='TimeoutError')throw failure;}
       const storage=FountainNativeOutbox.create(bridge,{origin:transport.origin,generation:transport.generation,driver:transport.outboxDriver(),confirm:summary=>recovery?.confirmReconciliation(summary)??Promise.resolve(false)});

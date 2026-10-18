@@ -15,19 +15,19 @@ export async function build(output=join(mobile,'www')) {
     const file=join(source,name);if(!(await lstat(file)).isFile()||(await realpath(file))!==file)throw new Error('Public assets must be regular files: '+name);assets.push(name);
   }
   const original=await readFile(join(source,'index.html'),'utf8');
-  const scripts=[...original.matchAll(/<script src="\/([a-z][a-z0-9.-]*\.js)" defer><\/script>/g)].map(match=>match[1]).filter(name=>name!=='transport.js');
+  const scripts=[...original.matchAll(/<script src="\/([a-z][a-z0-9.-]*\.js)" defer><\/script>/g)].map(match=>match[1]).filter(name=>!['transport.js','workspace-scope.js'].includes(name));
   if(!scripts.includes('app.js')||scripts.some(name=>!assets.includes(name)))throw new Error('Missing bundled application assets');
   const csp="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-src 'none'";
-  const html=original.replace('<head>','<head>\n<meta http-equiv="Content-Security-Policy" content="'+csp+'">').replace('</head>','<link rel="stylesheet" href="/native-configuration.css"></head>').replace(/<script src="\/[a-z][a-z0-9.-]*\.js" defer><\/script>/g,'').replace('</body>','<script src="/capacitor.js" defer></script><script src="/native-transport.js" defer></script><script src="/native-outbox.js" defer></script><script src="/native-recovery.js" defer></script><script src="/bootstrap.js" data-assets="'+scripts.join(',')+'" defer></script></body>');
+  const html=original.replace('<head>','<head>\n<meta http-equiv="Content-Security-Policy" content="'+csp+'">').replace('</head>','<link rel="stylesheet" href="/native-configuration.css"></head>').replace(/<script src="\/[a-z][a-z0-9.-]*\.js" defer><\/script>/g,'').replace('</body>','<script src="/capacitor.js" defer></script><script src="/workspace-scope.js" defer></script><script src="/account-native.js" defer></script><script src="/native-transport.js" defer></script><script src="/native-outbox.js" defer></script><script src="/native-recovery.js" defer></script><script src="/bootstrap.js" data-assets="'+scripts.join(',')+'" defer></script></body>');
   const organization=await readFile(join(source,'organization.html'),'utf8');
   if(!organization.includes('<script src="./transport.js" defer></script>')||!organization.includes('<script src="./organization.js" defer></script>')||/\b(?:app|bootstrap|native-outbox)\.js/.test(organization))throw new Error('Review organization document entry');
-  const organizationHTML=organization.replace('<head>','<head>\n<meta http-equiv="Content-Security-Policy" content="'+csp+'">').replace('<script src="./transport.js" defer></script>','<script src="./capacitor.js" defer></script><script src="./organization-native.js" defer></script>');
+  const organizationHTML=organization.replace('<head>','<head>\n<meta http-equiv="Content-Security-Policy" content="'+csp+'">').replace('<script src="./transport.js" defer></script>','<script src="./capacitor.js" defer></script><script src="./account-native.js" defer></script><script src="./organization-native.js" defer></script>');
   await rm(destination,{recursive:true,force:true});await mkdir(destination,{recursive:true});
   for(const name of assets)if(name!=='index.html'&&name!=='organization.html'&&name!=='transport.js')await copyFile(join(source,name),join(destination,name));
-  for(const name of ['organization-native.js','native-transport.js','native-outbox.js','native-recovery.js','bootstrap.js','native-configuration.css'])await copyFile(join(mobile,'web',name),join(destination,name));
+  for(const name of ['account-native.js','organization-native.js','native-transport.js','native-outbox.js','native-recovery.js','bootstrap.js','native-configuration.css'])await copyFile(join(mobile,'web',name),join(destination,name));
   await copyFile(join(mobile,'node_modules/@capacitor/core/dist/capacitor.js'),join(destination,'capacitor.js'));
   await writeFile(join(destination,'index.html'),html);
   await writeFile(join(destination,'organization.html'),organizationHTML);
-  return {destination,assets:[...assets.filter(name=>name!=='transport.js'),'organization-native.js','native-transport.js','native-outbox.js','native-recovery.js','bootstrap.js','native-configuration.css','capacitor.js']};
+  return {destination,assets:[...assets.filter(name=>name!=='transport.js'),'account-native.js','organization-native.js','native-transport.js','native-outbox.js','native-recovery.js','bootstrap.js','native-configuration.css','capacitor.js']};
 }
 if(process.argv[1]&&resolve(process.argv[1])===fileURLToPath(import.meta.url)){const result=await build();console.log('Built native shell: '+result.assets.length+' public assets');}

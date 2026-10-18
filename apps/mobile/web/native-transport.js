@@ -9,11 +9,12 @@
   const abortError=()=>new DOMException('연결 범위가 변경되었거나 요청이 취소되었습니다.','AbortError');
   function nativeFailure(error) {
     const code=error?.code;
+    if(code==='ACCOUNT_AUTH_REQUIRED')return Object.assign(new Error('계정에 다시 로그인해 주세요.'),{code,status:401});
     if(code==='NATIVE_SESSION_CONFLICT')return Object.assign(new Error('로그인 계정이 변경되었습니다. 현재 화면을 다시 확인해 주세요.'),{code,status:409});
     if(code==='NATIVE_SESSION_REQUIRED')return Object.assign(new Error('현재 로그인을 서버에서 다시 확인한 뒤 종료해 주세요.'),{code,status:503});
     if(code==='NATIVE_SESSION_INVALID')return Object.assign(new Error('로그아웃 요청의 로그인 범위를 확인해 주세요.'),{code,status:400});
     if(code==='OUTBOX_ACCESS_REQUIRED')return Object.assign(new Error('보관된 내용의 접근 권한을 다시 확인해야 합니다. 미전송 내용은 유지했습니다.'),{code,status:503});
-    if(['NETWORK_ERROR','NATIVE_NETWORK'].includes(code))return Object.assign(new TypeError('서버에 연결하지 못했습니다.'),{code});
+    if(['NETWORK_ERROR','NATIVE_NETWORK','NATIVE_NETWORK_UNREACHABLE'].includes(code))return Object.assign(new TypeError('서버에 연결하지 못했습니다.'),{code});
     if(['TIMEOUT','NATIVE_TIMEOUT'].includes(code))return new DOMException('요청 시간이 초과되었습니다.','TimeoutError');
     if(['CANCELLED','SESSION_CHANGED','NATIVE_CANCELLED','NATIVE_STALE'].includes(code))return abortError();
     if(typeof code==='string'){
@@ -78,17 +79,39 @@
     if(body.byteLength>limit)throw new RangeError('데이터가 허용된 크기를 넘었습니다.');return body;
   }
   function create(bridge,{pollInterval=1000}={}) {
-    let configuration={origin:null,generation:0,outboxVersion:0,outboxEnabled:false,recoveryVersion:0,recoveryEnabled:false},authGeneration=0,configurationFence=0,publicScopeEpoch=0,authTail=Promise.resolve(),serial=0;
+    let workspace=null,workspaceHint=null,workspaceHints=[],workspaceSerial=0,workspaceTail=Promise.resolve(),legacyMode=false,scopedUsed=false;
+    const helper=()=>{if(!root.FountainWorkspaceScope)invalid();return root.FountainWorkspaceScope;};
+    let configuration={origin:null,generation:0,workspaceVersion:0,outboxVersion:0,outboxEnabled:false,recoveryVersion:0,recoveryEnabled:false},authGeneration=0,configurationFence=0,publicScopeEpoch=0,authTail=Promise.resolve(),serial=0;
     const calls=new Map(),sources=new Set(),sourceWake=new WeakMap(),downloadLinks=new Map();let outboxPaused=false,pauseGate=Promise.resolve(),releaseGate=null;
     const id=()=>`mobile_${Date.now().toString(36)}_${++serial}`;
     function configured(){if(!configuration.origin)throw new Error('먼저 HTTPS 서버 주소를 설정해 주세요.');}
     function announceScope(reason){publicScopeEpoch++;root.dispatchEvent(new CustomEvent('fountain-native-scope-changed',{detail:{scopeEpoch:publicScopeEpoch,reason}}));}
+    const hintKeys=['workspaceId','memberId','binding','accountBinding','expiresAt'];
+    const sameHint=(a,b)=>!!a&&!!b&&hintKeys.every(key=>a[key]===b[key]);
+    function readWorkspaceHints(value){
+      workspaceHint=null;workspaceHints=[];if(!root.FountainWorkspaceScope)return;
+      const epoch=Number.isSafeInteger(value.workspaceEpoch)?value.workspaceEpoch:0;
+      let last=null;try{if(value.workspace)last=helper().validate({...value.workspace,workspaceEpoch:epoch});}catch{/* Older bridges expose only a last-selection hint. */}
+      if(!Object.hasOwn(value,'retainedWorkspaceScopes')){if(last){workspaceHint=last;workspaceHints=[last];}return;}
+      try{
+        if(!Array.isArray(value.retainedWorkspaceScopes)||value.retainedWorkspaceScopes.length>100)invalid();
+        const found=new Map();let parent=null;
+        for(const raw of value.retainedWorkspaceScopes){
+          if(!raw||typeof raw!=='object'||Array.isArray(raw)||Object.keys(raw).sort().join(',')!==[...hintKeys].sort().join(','))invalid();
+          const hint=helper().validate({...raw,workspaceEpoch:epoch});if(hint.expiresAt>Date.now()+604801000||parent!==null&&hint.accountBinding!==parent)invalid();parent=hint.accountBinding;
+          const previous=found.get(hint.workspaceId);if(previous&&!sameHint(previous,hint))invalid();found.set(hint.workspaceId,hint);
+        }
+        workspaceHints=[...found.values()];workspaceHint=workspaceHints.find(hint=>sameHint(hint,last))||workspaceHints[0]||null;
+      }catch{/* Malformed, mixed-parent or conflicting hints never fall back to the last workspace. */workspaceHint=null;workspaceHints=[];}
+    }
     function setConfiguration(value) {
       if(!value||!Number.isSafeInteger(value.generation)||value.generation<configuration.generation)invalid();
-      const previous=configuration;
+      const previous=configuration;if(previous.origin!==null&&value.generation===previous.generation&&value.origin!==previous.origin)invalid();readWorkspaceHints(value);
       configuration={origin:value.origin===null?null:validateOrigin(value.origin),generation:value.generation,
+        workspaceVersion:value.workspaceVersion===1?1:0,workspaceEpoch:Number.isSafeInteger(value.workspaceEpoch)?value.workspaceEpoch:0,
         outboxVersion:value.outboxVersion===1?1:0,outboxEnabled:value.outboxVersion===1&&value.outboxEnabled===true,
         recoveryVersion:value.recoveryVersion===1?1:0,recoveryEnabled:value.recoveryVersion===1&&value.recoveryEnabled===true};
+      if(previous.origin!==configuration.origin||previous.generation!==configuration.generation){workspace=null;legacyMode=false;scopedUsed=false;workspaceSerial++;cancelCalls();root.FountainNativeStorage?.close?.();root.FountainNativeStorage=null;}
       if(previous.origin!==configuration.origin||previous.generation!==configuration.generation
           ||previous.recoveryVersion!==configuration.recoveryVersion||previous.recoveryEnabled!==configuration.recoveryEnabled)announceScope('configuration');
       return {...configuration};
@@ -96,8 +119,17 @@
     function cancelCalls() {
       for(const call of calls.values())call.abort();for(const source of [...sources])source.close();downloadLinks.clear();
     }
-    function scope(){return {generation:configuration.generation,auth:authGeneration,fence:configurationFence,origin:configuration.origin};}
-    function current(expected){return expected.generation===configuration.generation&&expected.auth===authGeneration&&expected.fence===configurationFence&&expected.origin===configuration.origin;}
+    function scope(){return {generation:configuration.generation,auth:authGeneration,fence:configurationFence,origin:configuration.origin,workspaceSerial,workspace};}
+    function current(expected){return expected.generation===configuration.generation&&expected.auth===authGeneration&&expected.fence===configurationFence&&expected.origin===configuration.origin&&expected.workspaceSerial===workspaceSerial&&expected.workspace===workspace&&(!expected.workspace||expected.workspace.expiresAt>Date.now());}
+    function rejectAccountScope(expected,parent){
+      if(!current(expected)||! /^[a-f0-9]{32}$/.test(parent))throw abortError();
+      // Only invoke's current native RPC rejection reaches this transition. The OS
+      // already revoked the parent; do not issue a stale workspace park RPC.
+      authGeneration++;workspaceSerial++;workspace=null;legacyMode=false;
+      workspaceHints=workspaceHints.filter(hint=>hint.accountBinding!==parent);if(workspaceHint?.accountBinding===parent)workspaceHint=null;
+      cancelCalls();const storage=root.FountainNativeStorage;root.FountainNativeStorage=null;try{storage?.close?.();}catch{/* The OS parent fence remains authoritative; retained input cannot reopen admission. */}
+      announceScope('unauthenticated');root.dispatchEvent(new CustomEvent('fountain-workspace-auth-required',{detail:{accountBinding:parent}}));
+    }
     async function invoke(method,payload,expected,signal,timeoutMs=null) {
       if(!current(expected)||signal?.aborted)throw abortError();
       const callId=payload.id||id();let rejectAbort,timer,finished=false;
@@ -109,15 +141,19 @@
         const result=await Promise.race([Promise.resolve().then(()=>{if(finished||!current(expected))throw abortError();return bridge[method]({...payload,id:callId,generation:expected.generation});}),interrupted]);
         if(finished||!current(expected)||result?.generation!==expected.generation)throw abortError();
         return result;
-      }catch(error){throw nativeFailure(error);}
+      }catch(error){
+        if(error?.code==='ACCOUNT_AUTH_REQUIRED'){if(!current(expected)||signal?.aborted)throw abortError();const parent=expected.workspace?.accountBinding||payload.account_binding;if(parent)rejectAccountScope(expected,parent);}
+        throw nativeFailure(error);
+      }
       finally{finished=true;clearTimeout(timer);signal?.removeEventListener('abort',abort);calls.delete(callId);}
     }
     async function initialize(){const fence=configurationFence,result=await bridge.getConfiguration();if(fence!==configurationFence)throw abortError();return setConfiguration(result);}
     async function configure(input) {
-      const origin=validateOrigin(input?.origin),fence=++configurationFence;authGeneration++;cancelCalls();announceScope('configuration');
+      const origin=validateOrigin(input?.origin),fence=++configurationFence;workspace=null;workspaceHint=null;workspaceHints=[];legacyMode=false;scopedUsed=false;workspaceSerial++;authGeneration++;cancelCalls();announceScope('configuration');
       const result=await bridge.configure({origin});if(fence!==configurationFence)throw abortError();return setConfiguration(result);
     }
-    function apiURL(value){configured();return new URL(path(value),configuration.origin).href;}
+    function routed(value,captured=workspace){path(value);if(/^\/api\/(?:account|organization)(?:\/|$)/.test(value))invalid();if(configuration.workspaceVersion===1&&!captured&&!legacyMode||captured&&captured.expiresAt<=Date.now())throw abortError();return captured?helper().wire(value,captured):value;}
+    function apiURL(value){configured();return new URL(routed(value),configuration.origin).href;}
     function request(value,options={}) {return exchange(value,options,false);}
     function anonymousSession(value){
       const fields=['authenticated','required','enabled','mode','member','identity','cache_binding','workspace_id','expires_at','setup_supported','public_web_origin'];
@@ -126,7 +162,7 @@
       return Object.fromEntries(fields.filter(key=>Object.hasOwn(value,key)).map(key=>[key,value[key]]));
     }
     function exchange(value,options={},internal=false) {
-      path(value);configured();const method=String(options.method||'GET').toUpperCase();if(!methods.has(method))invalid();
+      path(value);configured();const capturedWorkspace=workspace,wirePath=routed(value,capturedWorkspace);if(capturedWorkspace?.offline)throw new TypeError('인터넷 연결 후 작업공간을 다시 확인해 주세요.');const method=String(options.method||'GET').toUpperCase();if(!methods.has(method))invalid();
       if(options.redirect&&options.redirect!=='error')invalid();
       const headers=Object.create(null);for(const [key,val] of new Headers(options.headers)){if(!requestHeaders.has(key))invalid();headers[key]=val;}
       const timeoutMs=options.timeoutMs??45000;if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>45000)invalid();
@@ -136,11 +172,12 @@
       const expected=scope(),expectedEpoch=publicScopeEpoch,priorAuth=authTail;
       const perform=async body=>{
         if(!current(expected)||options.signal?.aborted)throw abortError();
-        const result=await invoke('request',{path:value,method,headers,bodyBase64:base64(body),timeoutMs},expected,options.signal,timeoutMs);
+        const result=await invoke('request',{path:wirePath,method,headers,bodyBase64:base64(body),timeoutMs,...(capturedWorkspace?{workspaceEpoch:capturedWorkspace.workspaceEpoch}:{})},expected,options.signal,timeoutMs);
+        if(capturedWorkspace&&result.workspaceEpoch!==capturedWorkspace.workspaceEpoch)throw abortError();
         if(!Number.isInteger(result.status)||result.status<200||result.status>599||result.status>=300&&result.status<400&&result.status!==304)throw new TypeError('리디렉션 또는 잘못된 서버 응답을 거부했습니다.');
         const safe=new Headers();for(const [key,val] of Object.entries(result.headers||{}))if(responseHeaders.has(key.toLowerCase()))safe.set(key,String(val));
         const decoded=decode(result.bodyBase64,RESPONSE_LIMIT);
-        if(result.status===401&&!transition)announceScope('unauthenticated');
+        if(result.status===401&&!transition){announceScope('unauthenticated');if(capturedWorkspace)root.dispatchEvent(new CustomEvent('fountain-workspace-auth-required',{detail:{accountBinding:capturedWorkspace.accountBinding}}));}
         return new Response([204,205,304].includes(result.status)?null:decoded,{status:result.status,headers:safe});
       };
       const wire=async()=>{
@@ -194,7 +231,7 @@
       });
     }
     function events(value) {
-      path(value);configured();const match=value.match(/^\/api\/pages\/([^/?]+)\/events$/);if(!match)invalid();
+      path(value);configured();if(workspace?.offline)throw new TypeError('인터넷 연결 후 작업공간을 다시 확인해 주세요.');const match=value.match(/^\/api\/pages\/([^/?]+)\/events$/);if(!match)invalid();
       const target=new EventTarget(),expected=scope();let closed=false,running=false,timer,abort,paused=false;
       const visible=()=>!closed&&!paused&&!outboxPaused&&root.document.visibilityState==='visible'&&root.navigator.onLine&&current(expected);
       const emit=(type,data)=>{if(visible())target.dispatchEvent(new MessageEvent(type,{data:JSON.stringify(data)}));};
@@ -218,7 +255,7 @@
       root.document.addEventListener('visibilitychange',visibility);for(const name of ['online','offline'])root.addEventListener(name,visibility);root.addEventListener('pagehide',hide);root.addEventListener('pageshow',show);sources.add(target);sourceWake.set(target,visibility);queueMicrotask(poll);return target;
     }
     function xhr(method,value) {
-      path(value);configured();const expected=scope();if(method!=='PUT'||!/^\/api\/uploads\/[^/?]+\/chunks\?offset=(?:0|[1-9][0-9]*)$/.test(value))invalid();
+      path(value);configured();if(workspace?.offline)throw new TypeError('인터넷 연결 후 작업공간을 다시 확인해 주세요.');const expected=scope();if(method!=='PUT'||!/^\/api\/uploads\/[^/?]+\/chunks\?offset=(?:0|[1-9][0-9]*)$/.test(value))invalid();
       let sent=false,closed=false,controller;const headers=new Headers();
       const connection={status:0,responseText:'',timeout:45000,upload:{},
         setRequestHeader(key,val){if(sent)throw new DOMException('요청이 이미 시작되었습니다.','InvalidStateError');if(!requestHeaders.has(key.toLowerCase()))invalid();headers.set(key,val);},
@@ -236,12 +273,12 @@
       };return connection;
     }
     async function download(value,name='fountain-download',options={}) {
-      path(value,'download');configured();filename(name);const expected=scope();const result=await invoke('download',{path:value,filename:name},expected,options.signal);
-      if(result.saved!==true)throw new Error('파일 내보내기를 완료하지 않았습니다.');return result;
+      path(value,'download');configured();if(workspace?.offline)throw new TypeError('인터넷 연결 후 작업공간을 다시 확인해 주세요.');filename(name);const expected=scope(),capturedWorkspace=workspace,wirePath=routed(value,capturedWorkspace);const result=await invoke('download',{path:wirePath,filename:name,...(capturedWorkspace?{workspaceEpoch:capturedWorkspace.workspaceEpoch}:{})},expected,options.signal);
+      if(capturedWorkspace&&result.workspaceEpoch!==capturedWorkspace.workspaceEpoch)throw abortError();if(result.saved!==true)throw new Error('파일 내보내기를 완료하지 않았습니다.');return result;
     }
     async function saveData(name,content,mime='text/plain') {
       configured();filename(name);const expected=scope(),body=await bytes(content,EXPORT_LIMIT);if(!current(expected))throw abortError();
-      const result=await invoke('saveData',{filename:name,bodyBase64:base64(body)},expected);if(result.saved!==true)throw new Error('파일 내보내기를 완료하지 않았습니다.');return result;
+      const result=await invoke('saveData',{filename:name,bodyBase64:base64(body),...(expected.workspace?{workspaceEpoch:expected.workspace.workspaceEpoch}:{})},expected);if(expected.workspace&&result.workspaceEpoch!==expected.workspace.workspaceEpoch)throw abortError();if(result.saved!==true)throw new Error('파일 내보내기를 완료하지 않았습니다.');return result;
     }
     function downloadURL(value){path(value,'download');configured();const token=id();downloadLinks.set(token,{path:value,scope:scope()});while(downloadLinks.size>4096)downloadLinks.delete(downloadLinks.keys().next().value);const url=new URL(root.location.href);url.hash='fountain-download/'+token;return url.href;}
     function shareOrigin(primaryOrigin){
@@ -250,16 +287,60 @@
       return !backend.port&&/^[a-z0-9]{20}\.supabase\.co$/.test(backend.hostname)?null:configuration.origin;
     }
     function publicURL(value,primaryOrigin){
-      const validated=path(value,'public');configured();const origin=shareOrigin(primaryOrigin);
+      let validated=path(value,'public');configured();if(workspace)validated=helper().wire('/api'+validated,workspace);const origin=shareOrigin(primaryOrigin);
       return origin===null?null:new URL(validated,origin).href;
     }
+    function publicShareURL(value,primaryOrigin){if(!workspace)return publicURL(value,primaryOrigin);path(value,'public');const route=value.replace(/^\/forms\//,'form/').replace(/^\/sites\//,'site/');const origin=shareOrigin(primaryOrigin);return origin===null?null:origin+'/#'+helper().navigation(route,workspace);}
     function appURL(route='home') {
-      configured();if(typeof route!=='string'||! /^(home|page\/[^/]+|database\/[^/]+)$/.test(route)||/[\\\u0000-\u0020\u007f#?]/.test(route))invalid();path('/'+route,'app');return configuration.origin+'/#'+route;
+      configured();if(typeof route!=='string'||! /^(home|page\/[^/]+|database\/[^/]+)$/.test(route)||/[\\\u0000-\u0020\u007f#?]/.test(route))invalid();path('/'+route,'app');return configuration.origin+'/#'+(workspace?helper().navigation(route,workspace):route);
     }
     function shareURL(route='home',primaryOrigin) {
       appURL(route);const origin=shareOrigin(primaryOrigin);
-      return origin===null?null:origin+'/#'+route;
+      return origin===null?null:origin+'/#'+(workspace?helper().navigation(route,workspace):route);
     }
+    function workspaceScope(){return workspace;}
+    function previousWorkspaceScopes(){return Object.freeze(workspaceHints.flatMap(hint=>{try{return[helper().validate(hint)];}catch{return[];}}));}
+    function previousWorkspaceScope(workspaceId){if(workspaceId!==undefined)return previousWorkspaceScopes().find(hint=>hint.workspaceId===workspaceId)||null;if(!workspaceHint)return null;try{return helper().validate(workspaceHint);}catch{return null;}}
+    function fenceWorkspace(){workspaceSerial++;cancelCalls();announceScope('workspace');}
+    function parkWorkspace(){
+      const old=workspace;fenceWorkspace();workspace=null;
+      const prior=workspaceTail;
+      const result=prior.catch(()=>{}).then(async()=>{
+        await root.FountainNativeStorage?.park?.();root.FountainNativeStorage=null;
+        if(configuration.workspaceVersion===1&&old)await bridge.parkWorkspace({generation:configuration.generation,workspaceEpoch:old.workspaceEpoch});
+      });workspaceTail=result.catch(()=>{});return result;
+    }
+    async function useLegacyWorkspace(input){
+      if(!input||Object.keys(input).join(',')!=='accountDirectoryAbsent'||input.accountDirectoryAbsent!==true||workspace||scopedUsed)invalid();
+      if(configuration.workspaceVersion!==1)return null;
+      await parkWorkspace();legacyMode=true;
+      await exchange('/api/session',{},true);
+      if(configuration.outboxEnabled&&root.FountainNativeOutbox){const storage=root.FountainNativeOutbox.create(bridge,{origin:configuration.origin,generation:configuration.generation,driver:outboxDriver(),confirm:summary=>root.FountainNativeRecovery?.confirmReconciliation(summary)??Promise.resolve(false)});root.FountainNativeStorage=storage;try{await storage.initialize();}catch(error){if(error?.code!=='OUTBOX_IDENTITY_REQUIRED')throw error;}}
+      return null;
+    }
+    function setWorkspace(input){return activateWorkspace(input,false);}
+    function setWorkspaceOffline(input){return activateWorkspace(input,true);}
+    function isNetworkUnavailable(error){return error?.code==='NATIVE_NETWORK_UNREACHABLE';}
+    function activateWorkspace(input,offline){
+      const requested=helper().validate(input),ticket=workspaceSerial+1;legacyMode=false;scopedUsed=true;
+      const parked=parkWorkspace();
+      const result=parked.then(async()=>{
+        if(ticket!==workspaceSerial)throw abortError();if(configuration.workspaceVersion!==1)throw new Error('여러 작업공간을 지원하는 앱 업데이트가 필요합니다.');
+        const expectedGeneration=configuration.generation,reply=offline?await Promise.resolve().then(()=>bridge.resumeWorkspaceOffline({generation:expectedGeneration,workspace_id:requested.workspaceId,member_id:requested.memberId,session_binding:requested.binding,account_binding:requested.accountBinding,expires_at_ms:requested.expiresAt})).catch(error=>{throw nativeFailure(error);}):await invoke('activateWorkspace',{workspace_id:requested.workspaceId,session_binding:requested.binding,account_binding:requested.accountBinding,timeoutMs:45000},scope(),null,45000);
+        if(offline&&reply?.offline!==true)throw abortError();
+        if(ticket!==workspaceSerial||configuration.generation!==expectedGeneration||reply?.generation!==expectedGeneration||!Number.isSafeInteger(reply.workspaceEpoch))throw abortError();
+        const verified=helper().validate({...reply.workspace,workspaceEpoch:reply.workspaceEpoch});
+        if(verified.workspaceId!==requested.workspaceId||verified.memberId!==requested.memberId||verified.binding!==requested.binding||verified.accountBinding!==requested.accountBinding||verified.expiresAt!==requested.expiresAt)throw abortError();
+        const checked=helper().fromSession(reply.workspace.session,reply.workspaceEpoch);if(!helper().same(verified,checked))throw abortError();workspace=Object.freeze({...verified,...(offline?{offline:true}:{})});workspaceHint=verified;workspaceHints=[...workspaceHints.filter(hint=>hint.accountBinding===verified.accountBinding&&hint.workspaceId!==verified.workspaceId),verified].slice(-100);
+        if(configuration.outboxEnabled&&root.FountainNativeOutbox){const storage=root.FountainNativeOutbox.create(bridge,{origin:configuration.origin,generation:configuration.generation,workspaceEpoch:workspace.workspaceEpoch,driver:outboxDriver(),confirm:summary=>root.FountainNativeRecovery?.confirmReconciliation(summary)??Promise.resolve(false)});root.FountainNativeStorage=storage;await storage.initialize();}
+        if(ticket!==workspaceSerial)throw abortError();return workspace;
+      });workspaceTail=result.catch(()=>{});return result;
+    }
+    function capture(){const expected=scope();const check=()=>{if(!current(expected))throw abortError();};const api={};for(const name of ['request','events','xhr','apiURL','downloadURL','appURL','shareURL','publicURL','publicShareURL','download','saveData']){const fn={request,events,xhr,apiURL,downloadURL,appURL,shareURL,publicURL,publicShareURL,download,saveData}[name];api[name]=(...args)=>{check();return fn(...args);};}return Object.freeze({...api,native:true,origin:expected.origin,generation:expected.generation,scopeEpoch:publicScopeEpoch,outboxEnabled:configuration.outboxEnabled,workspaceScope:()=>expected.workspace,current:()=>current(expected),recoveryRequest(method,payload){
+      check();if(!['recoveryInventory','recoveryExport'].includes(method)||!payload||payload.generation!==expected.generation||expected.workspace&&payload.workspaceEpoch!==expected.workspace.workspaceEpoch)invalid();
+      return invoke(method,payload,expected,null,45000);
+    }});}
+    root.addEventListener('fountain-account-scope-changed',()=>{authGeneration++;void parkWorkspace().catch(()=>{});});
     root.document.addEventListener('click',event=>{
       const anchor=event.target.closest?.('a');if(!anchor)return;
       let url;try{url=new URL(anchor.href);}catch{return;}
@@ -267,7 +348,7 @@
       event.preventDefault();event.stopImmediatePropagation();const entry=downloadLinks.get(url.hash.slice('#fountain-download/'.length));if(!entry||!current(entry.scope))return;
       download(entry.path,anchor.download||'fountain-download').catch(error=>{if(error.name!=='AbortError')root.dispatchEvent(new CustomEvent('fountain-native-error',{detail:{message:error.message}}));});
     },true);
-    return Object.freeze({native:true,get origin(){return configuration.origin;},get generation(){return configuration.generation;},get outboxVersion(){return configuration.outboxVersion;},get outboxEnabled(){return configuration.outboxEnabled;},get recoveryVersion(){return configuration.recoveryVersion;},get recoveryEnabled(){return configuration.recoveryEnabled;},get scopeEpoch(){return publicScopeEpoch;},initialize,configure,apiURL,request,outboxDriver,events,xhr,download,saveData,downloadURL,publicURL,publicShareURL:publicURL,appURL,shareURL});
+    return Object.freeze({native:true,get origin(){return configuration.origin;},get generation(){return configuration.generation;},get outboxVersion(){return configuration.outboxVersion;},get outboxEnabled(){return configuration.outboxEnabled;},get recoveryVersion(){return configuration.recoveryVersion;},get recoveryEnabled(){return configuration.recoveryEnabled;},get scopeEpoch(){return publicScopeEpoch;},get workspaceVersion(){return configuration.workspaceVersion;},workspaceScope,previousWorkspaceScope,previousWorkspaceScopes,setWorkspace,setWorkspaceOffline,isNetworkUnavailable,useLegacyWorkspace,parkWorkspace,capture,initialize,configure,apiURL,request,outboxDriver,events,xhr,download,saveData,downloadURL,publicURL,publicShareURL,appURL,shareURL});
   }
   root.FountainNativeTransport=Object.freeze({create,validateOrigin});
 })(globalThis);

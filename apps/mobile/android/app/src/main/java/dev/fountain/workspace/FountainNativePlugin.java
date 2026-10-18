@@ -317,6 +317,7 @@ public class FountainNativePlugin extends Plugin {
         result.put("retainedWorkspaceScopes",retained);result.put("retainedWorkspaceScopesTruncated",truncated);
         result.put("workspaceEpoch",workspaceEpoch); result.put("workspaceVersion", 1); result.put("workspace", lastWorkspaceSnapshot == null ? JSONObject.NULL : lastWorkspaceSnapshot);
         result.put("outboxVersion", 1); result.put("outboxEnabled", outboxEnabled());
+        result.put("mirrorVersion",1);
         result.put("recoveryVersion", 1); result.put("recoveryEnabled", true);
         return result;
     }
@@ -1089,6 +1090,7 @@ public class FountainNativePlugin extends Plugin {
                     JSObject result = action.run(storage);
                     long expected = generation, expectedAuth = authGeneration, expectedBoundary = storage.boundary(), expectedProof = storage.proofEpoch();
                     long expectedDeadline = result.has("expiresAt") ? result.getLong("expiresAt") : result.has("fragments") || "verified".equals(result.optString("identityState")) ? storage.deliveryDeadline() : Long.MAX_VALUE;
+                    if(result.has("pair")&&result.has("epoch"))expectedDeadline=Math.min(expectedDeadline,storage.deliveryDeadline());
                     if (Arrays.asList("committed", "settled").contains(result.optString("state"))) {
                         JSONObject current = storage.verified(workspaceCookie(), workspaceBlocked());
                         if (current == null) {
@@ -1106,7 +1108,8 @@ public class FountainNativePlugin extends Plugin {
                                 && NativeCookieBoundary.permits(ownerBoundaryEpoch) && bundleAllowed())) call.reject("Native outbox owner changed", "STALE_SESSION");
                         } catch (Exception unsupported) { call.setKeepAlive(false); call.reject("Native response could not be delivered", "NATIVE_INPUT"); }
                     } });
-                } catch (NativeReconcile.Failure error) { call.reject("Native reconciliation requires refresh or retry", error.code); }
+                } catch (NativeMirrorRegistry.Conflict error) { call.reject("Native mirror reader location is immutable", "OUTBOX_MIRROR_CONFLICT"); }
+                catch (NativeReconcile.Failure error) { call.reject("Native reconciliation requires refresh or retry", error.code); }
                 catch (NativeOutbox.AccessRequired error) { call.reject("Native resource access must be refreshed", "OUTBOX_ACCESS_REQUIRED"); }
                 catch (IllegalArgumentException error) { call.reject("Native outbox scope or input rejected", "OUTBOX_REJECTED"); }
                 catch (Exception error) {
@@ -1120,6 +1123,18 @@ public class FountainNativePlugin extends Plugin {
     }
     @PluginMethod public void outboxOpen(PluginCall call) {
         outboxCall(call, true, storage -> storage.open(generation, workspaceCookie(), workspaceBlocked(), outboxOwner + ":" + authGeneration));
+    }
+    @PluginMethod public void outboxMirror(PluginCall call) {
+        outboxCall(call,true,storage->{
+            if(workspaceScope==null||workspaceBlocked())throw new NativeOutbox.AccessRequired();
+            JSONObject grant=storage.verified(workspaceCookie(),workspaceBlocked());
+            if(grant==null||!workspaceScope.getString("workspaceId").equals(grant.getJSONObject("session").optString("workspace_id"))
+                ||!workspaceScope.getString("binding").equals(grant.getJSONObject("session").optString("cache_binding"))
+                ||!workspaceScope.getString("accountBinding").equals(grant.getJSONObject("session").optString("account_binding"))
+                ||!workspaceScope.getString("memberId").equals(grant.getJSONObject("session").getJSONObject("member").optString("id"))
+                ||workspaceScope.getLong("expiresAt")!=OutboxPolicy.expiry(grant.getJSONObject("session").getString("expires_at")))throw new NativeOutbox.AccessRequired();
+            return storage.mirror(call.getData(),generation,workspaceCookie(),workspaceBlocked(),outboxOwner+":"+authGeneration);
+        });
     }
     @PluginMethod public void stageDelta(PluginCall call) { outboxCall(call, true, storage -> {if(storage.verified(workspaceCookie(),workspaceBlocked())==null)throw new NativeOutbox.AccessRequired();return storage.stage(call.getData(), generation);}); }
     @PluginMethod public void commitDelta(PluginCall call) {

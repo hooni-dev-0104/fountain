@@ -32,6 +32,11 @@ final class NativeOutbox implements AutoCloseable {
         "CREATE TABLE IF NOT EXISTS recovery (id TEXT PRIMARY KEY,reason TEXT NOT NULL,payload BLOB)",
         "CREATE TABLE IF NOT EXISTS native_record_owners(mode TEXT NOT NULL,bucket TEXT NOT NULL,key TEXT NOT NULL,profile_id TEXT NOT NULL,actor TEXT NOT NULL,digest TEXT NOT NULL,trust TEXT NOT NULL,PRIMARY KEY(mode,bucket,key))",
         "CREATE TABLE IF NOT EXISTS native_observed_resources(profile_id TEXT NOT NULL,kind TEXT NOT NULL,id TEXT NOT NULL,session_ref TEXT NOT NULL,access_revision INTEGER NOT NULL,data_revision INTEGER NOT NULL,PRIMARY KEY(profile_id,kind,id))"
+        ,"CREATE TABLE IF NOT EXISTS native_profile_mirrors_v1(sequence INTEGER PRIMARY KEY AUTOINCREMENT,profile_id TEXT NOT NULL,incarnation TEXT NOT NULL,actor TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('base','profile')),ref TEXT NOT NULL UNIQUE,UNIQUE(profile_id,incarnation))"
+        ,"CREATE INDEX IF NOT EXISTS native_profile_mirrors_actor_v1 ON native_profile_mirrors_v1(actor,sequence)"
+        ,"CREATE TABLE IF NOT EXISTS native_mirror_state_v1(singleton INTEGER PRIMARY KEY CHECK(singleton=1),revision INTEGER NOT NULL)"
+        ,"INSERT OR IGNORE INTO native_mirror_state_v1 VALUES(1,0)"
+        ,"CREATE TABLE IF NOT EXISTS native_mirror_cursors_v1(profile_id TEXT NOT NULL,incarnation TEXT NOT NULL,token TEXT NOT NULL UNIQUE,epoch INTEGER NOT NULL,revision INTEGER NOT NULL,prefix_position INTEGER NOT NULL,after_sequence INTEGER NOT NULL,expires_at INTEGER NOT NULL,PRIMARY KEY(profile_id,incarnation))"
     };
     private static final Set<String> BUCKETS = new HashSet<>(Arrays.asList("profiles", "meta", "snapshots", "databaseSnapshots", "localPages", "transfers", "operations", "drafts", "mutations"));
     final SQLiteDatabase db;
@@ -146,6 +151,23 @@ final class NativeOutbox implements AutoCloseable {
     void invalidateReconcile()throws Exception{reconciler().invalidate();}
     JSObject reconcile(JSONObject input, long generation, String cookie, boolean blocked, String owner, long watermark) throws Exception {
         return reconciler().call(input, generation, cookie, blocked, owner, watermark);
+    }
+    JSObject mirror(JSONObject input,long generation,String cookie,boolean blocked,String owner)throws Exception {
+        NativePolicy.require(input.length()>=5&&input.length()<=7);
+        Set<String> fields=new HashSet<>();Iterator<String> names=input.keys();while(names.hasNext())fields.add(names.next());
+        Object action=input.opt("action");NativePolicy.require(action instanceof String);NativeMirrorPolicy.fields(fields,(String)action);
+        NativePolicy.require(OutboxPolicy.integer(input.opt("version"),1,1)==1);
+        requireOwner(owner);if(!currentOwner(owner))throw new AccessRequired();JSONObject grant=verified(cookie,blocked);
+        if(grant==null||cookie==null||!Long.toString(generation).equals(get("generation"))||OutboxPolicy.integer(input.opt("generation"),0,OutboxPolicy.SAFE-1)!=generation
+            ||!(input.opt("expectedProfileId") instanceof String)||!grant.getString("profileId").equals(input.opt("expectedProfileId"))
+            ||OutboxPolicy.integer(input.opt("expectedEpoch"),0,OutboxPolicy.SAFE-1)!=proofEpoch()
+            ||!grant.getJSONObject("session").optString("account_binding").matches("[a-f0-9]{32}")||get("suspended:"+grant.getString("profileId"))!=null)throw new AccessRequired();
+        JSONObject session=grant.getJSONObject("session");
+        if(!grant.getString("profileId").equals(OutboxPolicy.profile(origin,session.getString("workspace_id"),session.getJSONObject("member").getString("id"),session.getString("cache_binding"))))throw new AccessRequired();
+        boolean ready=false;
+        if(action.equals("confirm-base"))ready=(offlineWorkspace()?offlineReadable(grant):!"1".equals(get("needs_floor"))&&!requiresWorkspaceReconcile())&&preflight(grant).issues.length()==0;
+        deliveryDeadline=Math.min(deliveryDeadline,grant.getLong("validUntil"));
+        return new NativeMirrorRegistry(this).call(input,generation,grant,proofEpoch(),ready);
     }
 
     NativeOutbox(Context context, String origin) throws Exception {

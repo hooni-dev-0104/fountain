@@ -235,7 +235,7 @@ print(json.dumps({'sources':sources,'collections':collections,'routes':routes,'m
 const result=spawnSync(process.env.FOUNTAIN_PYTHON||'python3',['-c',parser,root],{input:JSON.stringify(inventory),encoding:'utf8',maxBuffer:16*1024*1024});
 assert.equal(result.status,0,result.stderr);
 const parsed=JSON.parse(result.stdout);
-const cloudSources=Object.fromEntries(['supabase/functions/_shared/backend.ts','supabase/functions/_shared/application.ts','supabase/functions/fountain-api/index.ts','supabase/functions/fountain-api/deployment.ts'].map(path=>[path,createHash('sha256').update(readFileSync(root+path)).digest('hex')]));
+const cloudSources=Object.fromEntries(['supabase/functions/_shared/backend.ts','supabase/functions/_shared/application.ts','supabase/functions/_shared/organization-portal.ts','supabase/functions/fountain-api/index.ts','supabase/functions/fountain-api/deployment.ts'].map(path=>[path,createHash('sha256').update(readFileSync(root+path)).digest('hex')]));
 if(process.argv.includes('--refresh-evidence')){
  inventory.sourceFingerprints=parsed.sources;
  inventory.cloudEntryFingerprints=cloudSources;

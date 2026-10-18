@@ -7452,9 +7452,10 @@
     }
   ],
   "cloudEntryFingerprints": {
-    "supabase/functions/_shared/backend.ts": "9cb2c86f26bdcab840f9d215191dc4c956ac2ff7d3b91d5a39e7e9f79844736d",
-    "supabase/functions/_shared/application.ts": "4158953003f6afde2ec84b390faf97a3333d9ddb45086a735b151ee0ed09981c",
-    "supabase/functions/fountain-api/index.ts": "a0cdab7c410766064118e2e754dc30e4647c280d65fa02830d856613e3f33894",
+    "supabase/functions/_shared/backend.ts": "0d813c57cc900dbf728e6c82a774f4a5f7afbda471e79e75f94edc17e0c71cec",
+    "supabase/functions/_shared/application.ts": "53f7f19f772e8975301409385f6e4ac42990df87896dc09d76335aa008577a40",
+    "supabase/functions/_shared/organization-portal.ts": "888feb1652c2abbfb2e4e95458b77a9677086bfec5fd8980e001bfbc7084f675",
+    "supabase/functions/fountain-api/index.ts": "2a6289b32c47761351528ea1e0bc50642bda443d2ea04a6c9e6e81f20a188bf2",
     "supabase/functions/fountain-api/deployment.ts": "587b14fd375589e6309b42bdb32bc7ec99adff18c55bbd5b51cba4fb376e343e"
   },
   "foundationEvidence": {

@@ -12,10 +12,23 @@ export function accountNamespace(path:string):boolean{
 export function workspaceRoute(path:string):WorkspaceRoute|null{
  let decoded=path;try{for(let i=0;i<5;i++){const next=decodeURIComponent(decoded);if(next===decoded)break;decoded=next;}}catch{throw new HttpError(400,'Invalid request path');}
  if(decoded!=='/api/w'&&!decoded.startsWith('/api/w/'))return null;
- if(decoded!==path)throw new HttpError(400,'Invalid workspace path','INVALID_WORKSPACE_PATH');
  const match=/^\/api\/w\/([A-Za-z0-9_-]{1,160})\/([a-f0-9]{32})\/([^/].*)$/.exec(path);
- if(!match||match[3].endsWith('/')||match[3].split('/').some(x=>!x))throw new HttpError(400,'Invalid workspace path','INVALID_WORKSPACE_PATH');
- const rest=match[3];if(/^(?:w|account|organization)(?:\/|$)/.test(rest))throw new HttpError(400,'Invalid nested workspace path','INVALID_WORKSPACE_PATH');
+ if(!match)throw new HttpError(400,'Invalid workspace path','INVALID_WORKSPACE_PATH');
+ const rest=match[3],segments=rest.split('/').map(segment=>{
+  try{
+   let value=decodeURIComponent(segment);
+   // Only resource data may be encoded. Prefixes remain literal, and aliases
+   // such as %70 or lowercase escapes cannot name a second scoped spelling.
+   if(!segment||encodeURIComponent(value)!==segment)throw new Error();
+   for(let count=0;count<5;count++){
+    if(/[\u0000-\u001f\u007f-\u009f/\\]/.test(value)||value==='.'||value==='..')throw new Error();
+    const next=decodeURIComponent(value);if(next===value)return value;value=next;
+   }
+  }catch{/* Invalid UTF-8, percent escapes and nested hazards fail closed. */}
+  throw new HttpError(400,'Invalid workspace path','INVALID_WORKSPACE_PATH');
+ });
+ if(['w','account','organization'].includes(segments[0]))throw new HttpError(400,'Invalid nested workspace path','INVALID_WORKSPACE_PATH');
+ // Keep encoded resource segments intact; domain handlers decode exactly once.
  return{workspaceId:match[1],binding:match[2],path:/^(?:sites|forms)\//.test(rest)?'/'+rest:'/api/'+rest};
 }
 export function workspaceSession(context:AccountWorkspaceContext){

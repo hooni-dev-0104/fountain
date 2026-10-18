@@ -47,3 +47,14 @@ test('replacement login revokes the old captured request rather than adopting it
  const f=fixture();await f.login();let release,reached;f.state.gate=new Promise(resolve=>{release=resolve;});const entered=new Promise(resolve=>{reached=resolve;});f.state.reached=reached;
  const old=f.request(f.scope('alpha','pages/p'),'PATCH',{title:'old request',revision:0});await entered;await f.login();release();const response=await old;assert.equal(response.status,401);assert(!Object.hasOwn(await response.json(),'page'));assert.equal((await f.request(f.scope('beta','session'))).status,200);
 });
+test('assembled scoped create canonical GET and PATCH preserve legacy-compatible resource ID data',async()=>{
+ for(const id of['가족 문서?','space family','fragment#family','literal%41',"emoji😀-_.!~*'()"]){
+  const f=fixture();await f.login();let r=await f.request(f.scope('alpha','pages'),'POST',{id,title:'Created '+id,blocks:[]});assert.equal(r.status,201,id+' create');
+  const rest='pages/'+encodeURIComponent(id);r=await f.request(f.scope('alpha',rest));assert.equal(r.status,200,id+' canonical GET');const page=(await r.json()).page;assert.equal(page.id,id);assert.equal(page.title,'Created '+id);
+  r=await f.request(f.scope('alpha',rest),'PATCH',{title:'Patched '+id,revision:page.revision});assert.equal(r.status,200,id+' canonical PATCH');r=await f.request(f.scope('alpha',rest));assert.equal((await r.json()).page.title,'Patched '+id);
+ }
+});
+test('assembled malformed scoped resource spellings are rejected before provider or data RPC',async()=>{
+ const f=fixture();await f.login();const prefix=f.scope('alpha','');
+ for(const tail of['pages/%70','pages/%ea%b0%80','pages/%FF','pages/%F0%28%8C%28','pages/%','pages/%2F','pages/%252F','pages/%255C','pages/%252e','pages/%252e%252e','pages/%00','pages/%7F','pages/%C2%80','pages/%C2%9F','pages/%2500','pages//p','pages/p/','%2561ccount/session','%2577/pages/p']){const before=f.calls.length;const response=await f.request(prefix+tail);assert.equal(response.status,400,tail);assert.equal(f.calls.length,before,tail+' must not authenticate or reach data');}
+});

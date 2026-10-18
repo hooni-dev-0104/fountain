@@ -65,3 +65,12 @@ test('real SSE polls recheck SQL and preserve parent401 and child403 denial with
   const text=await response.text();assert.match(text,/event: snapshot/);assert.match(text,/event: denied/);const denied=text.split('event: denied\ndata: ')[1].split('\n\n')[0];assert.equal(JSON.parse(denied).status,status);assert.equal(polls,2);assert.equal(f.state.calls.length,3);assert.equal(f.state.authCalls,1);assert(!text.includes('PRIVATE_DIAGNOSTIC'));
  }
 });
+test('scoped canonical URI resource segments preserve UTF8 space question fragment and safe percent data',()=>{
+ const prefix='/api/w/family/'+wb;
+ for(const id of['가족 문서?','space family','fragment#family','literal%41',"emoji😀-_.!~*'()"]){const encoded=encodeURIComponent(id);assert.deepEqual(workspaceRoute(prefix+'/pages/'+encoded),{workspaceId:'family',binding:wb,path:'/api/pages/'+encoded});}
+});
+test('scoped canonical URI validation rejects encoded prefixes aliases and repeatedly decoded hazards',()=>{
+ const prefix='/api/w/family/'+wb;
+ const paths=['/api/%77/family/'+wb+'/pages/p','/api/%2577/family/'+wb+'/pages/p','/api/w/%66amily/'+wb+'/pages/p','/api/w/family/%62'+wb.slice(1)+'/pages/p',prefix+'/pages/%70',prefix+'/pages/%ea%b0%80',prefix+'/pages/%F0%28%8C%28',prefix+'/pages/%FF',prefix+'/pages/%',prefix+'/pages/%2F',prefix+'/pages/%5C',prefix+'/pages/%252F',prefix+'/pages/%255C',prefix+'/pages/%252e',prefix+'/pages/%252e%252e',prefix+'/pages/.',prefix+'/pages/..',prefix+'/pages/%00',prefix+'/pages/%7F',prefix+'/pages/%C2%80',prefix+'/pages/%C2%9F',prefix+'/pages/%2500',prefix+'/pages//p',prefix+'/pages/p/',prefix+'/%2561ccount/session',prefix+'/%2577/pages/p',prefix+'/organization/session'];
+ for(const path of paths)assert.throws(()=>workspaceRoute(path),e=>e.status===400,path);
+});

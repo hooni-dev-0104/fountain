@@ -7453,10 +7453,10 @@
   ],
   "cloudEntryFingerprints": {
     "supabase/functions/_shared/backend.ts": "64fecb7d28cb2e13e266c71ca0027e98ed433982d66b93f34c85478a5de74ad4",
-    "supabase/functions/_shared/application.ts": "da0e8c6e485b8e6bf25ceaa93c7aad1c9b95c9d01591c3ff9649eaac43ccde0f",
+    "supabase/functions/_shared/application.ts": "b35c7852c27913701ba5a5530aed36bb01219f2c998bb9cd7b877a6f3a54b04b",
     "supabase/functions/_shared/organization-portal.ts": "ace4d54e16a1fdd6f4c54b899ff0949dd130a90632331dc46791a2f2b0123aef",
-    "supabase/functions/_shared/account-directory.ts": "e434a3316f9259305c23b1c7918b8905afe65b7fd364b57c818765798e8b2732",
-    "supabase/functions/_shared/workspace-account.ts": "fa0f83dce515e61876201dccabd1b9c2d6c9b4760eaed7eadf0562c713daa9e3",
+    "supabase/functions/_shared/account-directory.ts": "165cfc9e7f99086f020fde3f8a1163ab54ac8956b32e43e59f8c34394eabd134",
+    "supabase/functions/_shared/workspace-account.ts": "a0735398e3569db0aac4b403315ae899d38b62b95f0a35aaf26282324b6b4d36",
     "supabase/functions/fountain-api/index.ts": "2a6289b32c47761351528ea1e0bc50642bda443d2ea04a6c9e6e81f20a188bf2",
     "supabase/functions/fountain-api/deployment.ts": "587b14fd375589e6309b42bdb32bc7ec99adff18c55bbd5b51cba4fb376e343e"
   },

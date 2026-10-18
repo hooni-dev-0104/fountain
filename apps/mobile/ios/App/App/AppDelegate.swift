@@ -72,7 +72,7 @@ final class FountainBridgeGate: NSObject, WKScriptMessageHandler {
               let body = message.body as? [String: Any], body["type"] as? String == "message",
               body["pluginId"] as? String == "FountainNative",
               let method = body["methodName"] as? String,
-              ["getConfiguration", "configure", "request", "cancel", "download", "saveData", "outboxOpen", "outboxReconcile", "stageDelta", "commitDelta", "readPage", "recoveryInventory", "recoveryExport"].contains(method) else { return }
+              ["getConfiguration", "configure", "request", "cancel", "organizationRequest", "organizationCancel", "download", "saveData", "outboxOpen", "outboxReconcile", "stageDelta", "commitDelta", "readPage", "recoveryInventory", "recoveryExport"].contains(method) else { return }
         delegate?.userContentController(userContentController, didReceive: message)
     }
 }
@@ -353,11 +353,12 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
 #endif
     let identifier = "FountainNative"
     let jsName = "FountainNative"
-    let pluginMethods: [CAPPluginMethod] = ["getConfiguration", "configure", "request", "cancel", "download", "saveData", "outboxOpen", "outboxReconcile", "stageDelta", "commitDelta", "readPage", "recoveryInventory", "recoveryExport"].map {
+    let pluginMethods: [CAPPluginMethod] = ["getConfiguration", "configure", "request", "cancel", "organizationRequest", "organizationCancel", "download", "saveData", "outboxOpen", "outboxReconcile", "stageDelta", "commitDelta", "readPage", "recoveryInventory", "recoveryExport"].map {
         CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
     }
     private let queue = DispatchQueue(label: "dev.fountain.native-state")
     private var session: URLSession!
+    private var organizationTransport: FountainOrganization?
     private var origin: String?
     private var generation = 0
     private var auth = 0
@@ -427,6 +428,8 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         delegates.maxConcurrentOperationCount = 1
         delegates.underlyingQueue = queue
         session = URLSession(configuration: configuration, delegate: self, delegateQueue: delegates)
+        organizationTransport = FountainOrganization(queue: queue, protocolClasses: configuration.protocolClasses)
+        try? organizationTransport?.configure(origin: origin, generation: generation)
     }
 
     private static func cleanAbandonedExports() {
@@ -469,6 +472,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
             for job in Array(self.jobs.values) { self.end(job, failure: .stale) }
             self.authQueue.removeAll()
             self.session?.invalidateAndCancel()
+            self.organizationTransport?.shutdown()
             self.recovery?.close(); self.recovery = nil
             self.outbox?.close(); self.outbox = nil
         }
@@ -981,6 +985,8 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                 let current = try self.cookies()
                 guard current.active == nil, current.revoke == nil else { throw FountainFailure.revoke }
             }
+            do { try self.organizationTransport?.configure(origin: updated, generation: self.generation + 1) }
+            catch { throw FountainFailure.storage }
             if ACTIVE_OUTBOX_ENABLED, !self.recoveryMode { try self.outbox?.suspend() }
             self.recovery?.close(); self.recovery = nil
             self.outbox?.close(); self.outbox = nil
@@ -998,6 +1004,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
               origin != nil, try integer(call, "generation") == generation else { throw FountainFailure.stale }
         let path = mode == "saveData" || mode.hasPrefix("recovery") ? "/api/" : (call.getString("path") ?? "")
         let decoded = try Self.validPath(path)
+        guard !decoded.hasPrefix(FountainOrganizationPolicy.prefix) else { throw FountainFailure.invalid }
         let method = mode == "request" ? (call.getString("method") ?? "GET").uppercased() : "GET"
         guard ["GET", "POST", "PUT", "PATCH", "DELETE"].contains(method) else { throw FountainFailure.invalid }
         var headers: [String: String] = [:]
@@ -1060,6 +1067,48 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                 guard self.authJob == nil else { self.end(job, failure: .busy); return }
                 self.send(job)
             }
+        }
+    }
+
+    @objc func organizationRequest(_ call: CAPPluginCall) {
+        fromMainFrame(call) {
+            do {
+                guard let transport = self.organizationTransport else { throw FountainOrganizationError.stale }
+                guard let options = call.options as? [String: Any] else { throw FountainOrganizationError.invalid }
+                let request = try FountainOrganization.Request(options)
+                try transport.request(request, workspaceCookie: {
+                    // Read-only, exact cross-realm routes are selected inside
+                    // the independent transport. Never grant Outbox admission.
+                    let value = try self.cookies()
+                    guard value.revoke == nil else { return nil }
+                    return value.active
+                }, url: Self.requestURL) { result in
+                    let fence = transport.deliveryFence()
+                    DispatchQueue.main.async {
+                        guard fence(), self.ownsBridge(), !self.terminated,
+                              let controller = self.bridge?.viewController as? FountainBridgeViewController,
+                              controller.bundled(controller.webView?.url) else {
+                            call.reject("Organization response is stale", "NATIVE_STALE"); return
+                        }
+                        switch result {
+                        case .success(let value): call.resolve(value)
+                        case .failure(let failure): call.reject("Organization request failed", failure.code)
+                        }
+                    }
+                }
+            } catch {
+                call.reject("Organization request failed", (error as? FountainOrganizationError)?.code ?? "NATIVE_STORAGE")
+            }
+        }
+    }
+
+    @objc func organizationCancel(_ call: CAPPluginCall) {
+        fromMainFrame(call) {
+            do {
+                guard let options = call.options as? [String: Any], Set(options.keys).isSubset(of: ["id", "generation"]), let id = call.getString("id") else { throw FountainOrganizationError.invalid }
+                let generation = try FountainOrganizationPolicy.integer(call.options["generation"])
+                call.resolve(["cancelled": self.organizationTransport?.cancel(id: id, generation: generation) ?? false])
+            } catch { call.reject("Organization cancellation failed", "NATIVE_INVALID") }
         }
     }
 

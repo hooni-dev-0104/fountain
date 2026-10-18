@@ -39,9 +39,9 @@
         F05000000000000000000015 = {isa = PBXBuildFile; fileRef = F05000000000000000000005; };
         F04900000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FountainNativeTests.swift; sourceTree = "<group>"; };
         F04900000000000000000002 = {isa = PBXBuildFile; fileRef = F04900000000000000000001; };
-        F04900000000000000000003 = {isa = PBXGroup; children = (F05700000000000000000001,F05700000000000000000002,F04900000000000000000001,F05000000000000000000001,F05000000000000000000002,F05000000000000000000003,F05000000000000000000004,F05000000000000000000005,F05100000000000000000001,F05100000000000000000002,F05100000000000000000003,F05300000000000000000001,F05300000000000000000002,F05400000000000000000001,F05500000000000000000001,); path = AppTests; sourceTree = "<group>"; };
+        F04900000000000000000003 = {isa = PBXGroup; children = (F09000000000000000000002,F09000000000000000000001,F05700000000000000000001,F05700000000000000000002,F04900000000000000000001,F05000000000000000000001,F05000000000000000000002,F05000000000000000000003,F05000000000000000000004,F05000000000000000000005,F05100000000000000000001,F05100000000000000000002,F05100000000000000000003,F05300000000000000000001,F05300000000000000000002,F05400000000000000000001,F05500000000000000000001,); path = AppTests; sourceTree = "<group>"; };
         F04900000000000000000004 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = FountainNativeTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-        F04900000000000000000005 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (F05700000000000000000011,F05700000000000000000012,F04900000000000000000002,F05000000000000000000011,F05000000000000000000012,F05000000000000000000013,F05000000000000000000014,F05000000000000000000015,F05100000000000000000011,F05100000000000000000012,F05100000000000000000013,F05300000000000000000011,F05300000000000000000012,F05400000000000000000011,F05500000000000000000011,); runOnlyForDeploymentPostprocessing = 0; };
+        F04900000000000000000005 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (F09000000000000000000012,F09000000000000000000011,F05700000000000000000011,F05700000000000000000012,F04900000000000000000002,F05000000000000000000011,F05000000000000000000012,F05000000000000000000013,F05000000000000000000014,F05000000000000000000015,F05100000000000000000011,F05100000000000000000012,F05100000000000000000013,F05300000000000000000011,F05300000000000000000012,F05400000000000000000011,F05500000000000000000011,); runOnlyForDeploymentPostprocessing = 0; };
         F04900000000000000000006 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
         F04900000000000000000007 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
         F04900000000000000000008 = {isa = PBXContainerItemProxy; containerPortal = 504EC2FC1FED79650016851F; proxyType = 1; remoteGlobalIDString = 504EC3031FED79650016851F; remoteInfo = App; };
@@ -58,6 +58,16 @@
         F05700000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "ios-organization-sdk.swift"; path = "../../tests/ios-organization-sdk.swift"; sourceTree = SOURCE_ROOT; };
         F05700000000000000000012 = {isa = PBXBuildFile; fileRef = F05700000000000000000002; };
 
+        F08900000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FountainAccount.swift; sourceTree = "<group>"; };
+        F08900000000000000000002 = {isa = PBXBuildFile; fileRef = F08900000000000000000001; };
+        F05800000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FountainWorkspace.swift; sourceTree = "<group>"; };
+        F05800000000000000000002 = {isa = PBXBuildFile; fileRef = F05800000000000000000001; };
+        F09000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "ios-multiworkspace-sdk.swift"; path = "../../tests/ios-multiworkspace-sdk.swift"; sourceTree = SOURCE_ROOT; };
+        F09000000000000000000012 = {isa = PBXBuildFile; fileRef = F09000000000000000000002; };
+        F09000000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "ios-multiworkspace.swift"; path = "../../tests/ios-multiworkspace.swift"; sourceTree = SOURCE_ROOT; };
+        F09000000000000000000011 = {isa = PBXBuildFile; fileRef = F09000000000000000000001; };
+        F09300000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FountainCookieHeaders.swift; sourceTree = "<group>"; };
+        F09300000000000000000002 = {isa = PBXBuildFile; fileRef = F09300000000000000000001; };
         F05600000000000000000001 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FountainOrganization.swift; sourceTree = "<group>"; };
         F05600000000000000000002 = {isa = PBXBuildFile; fileRef = F05600000000000000000001; };
 
@@ -131,6 +141,9 @@
 				F04700000000000000000001 /* FountainOutbox.swift */,
 				F04800000000000000000001 /* FountainRecovery.swift */,
                 F05200000000000000000001 /* FountainSessionLogout.swift */,
+                F08900000000000000000001 /* FountainAccount.swift */,
+                F05800000000000000000001 /* FountainWorkspace.swift */,
+                F09300000000000000000001 /* FountainCookieHeaders.swift */,
                 F05600000000000000000001 /* FountainOrganization.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
@@ -228,6 +241,9 @@
 				F04700000000000000000002 /* FountainOutbox.swift in Sources */,
 				F04800000000000000000002 /* FountainRecovery.swift in Sources */,
                 F05200000000000000000002 /* FountainSessionLogout.swift in Sources */,
+                F08900000000000000000002 /* FountainAccount.swift in Sources */,
+                F05800000000000000000002 /* FountainWorkspace.swift in Sources */,
+                F09300000000000000000002 /* FountainCookieHeaders.swift in Sources */,
                 F05600000000000000000002 /* FountainOrganization.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 			);

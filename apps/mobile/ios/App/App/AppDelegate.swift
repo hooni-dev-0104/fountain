@@ -72,7 +72,7 @@ final class FountainBridgeGate: NSObject, WKScriptMessageHandler {
               let body = message.body as? [String: Any], body["type"] as? String == "message",
               body["pluginId"] as? String == "FountainNative",
               let method = body["methodName"] as? String,
-              ["getConfiguration", "configure", "request", "cancel", "organizationRequest", "organizationCancel", "download", "saveData", "outboxOpen", "outboxReconcile", "stageDelta", "commitDelta", "readPage", "recoveryInventory", "recoveryExport"].contains(method) else { return }
+              ["getConfiguration", "configure", "request", "cancel", "organizationRequest", "organizationCancel", "accountRequest", "accountCancel", "activateWorkspace", "parkWorkspace", "resumeWorkspaceOffline", "download", "saveData", "outboxOpen", "outboxReconcile", "stageDelta", "commitDelta", "readPage", "recoveryInventory", "recoveryExport"].contains(method) else { return }
         delegate?.userContentController(userContentController, didReceive: message)
     }
 }
@@ -174,7 +174,7 @@ final class FountainBridgeViewController: CAPBridgeViewController {
 }
 
 private enum FountainFailure: Error {
-    case invalid, stale, cancelled, network, timeout, storage, durableInvalidation, redirect, tooLarge, incomplete, busy, revoke, unavailable, sessionInvalid, sessionRequired, sessionConflict
+    case invalid, stale, accountRequired, cancelled, network, timeout, storage, durableInvalidation, redirect, tooLarge, incomplete, busy, revoke, unavailable, sessionInvalid, sessionRequired, sessionConflict
     var code: String {
         switch self {
         case .sessionInvalid: return "NATIVE_SESSION_INVALID"
@@ -182,6 +182,7 @@ private enum FountainFailure: Error {
         case .sessionConflict: return "NATIVE_SESSION_CONFLICT"
         case .invalid: return "NATIVE_INVALID"
         case .stale: return "NATIVE_STALE"
+        case .accountRequired: return "ACCOUNT_AUTH_REQUIRED"
         case .cancelled: return "NATIVE_CANCELLED"
         case .network: return "NATIVE_NETWORK"
         case .timeout: return "NATIVE_TIMEOUT"
@@ -205,6 +206,7 @@ private enum FountainFailure: Error {
         case .sessionConflict: return "The logout binding does not match the current native session"
         case .invalid: return "Invalid native request"
         case .stale: return "Native session or server configuration changed"
+        case .accountRequired: return "Account login is required"
         case .cancelled: return "Native request cancelled"
         case .network: return "Native network request failed"
         case .timeout: return "Native request timed out"
@@ -257,6 +259,11 @@ private final class FountainJob {
     let generation: Int
     var auth: Int
     let path: String
+    var logicalPath: String { FountainWorkspacePolicy.scoped(path)?.logical ?? path }
+    func wire(_ logical: String) -> String {
+        guard let route = FountainWorkspacePolicy.scoped(path), logical.hasPrefix("/api/") else { return logical }
+        return "/api/w/" + route.workspace + "/" + route.binding + String(logical.dropFirst(4))
+    }
     let method: String
     let headers: [String: String]
     let body: Data
@@ -268,6 +275,7 @@ private final class FountainJob {
     var backupOffset: Int64 = 0
     var backupHash = SHA256()
     var sentCookie: String?
+    var workspaceEvidence: Int?
     var logoutActor: FountainOutbox.LogoutActor?
     var logoutIntent: FountainSessionLogout.Intent?
     var logoutCookie: String?
@@ -293,6 +301,15 @@ private final class FountainJob {
 
 private final class FountainTransfer {
     var response: HTTPURLResponse?
+    var scopedAccount = false
+    var sessionEvidence: (workspace: String, binding: String, parent: String, version: Int)?
+    var sentCookie: String?
+    var accountParent: String?
+    var accountEpoch: Int?
+    var authorityOrigin: String?
+    var authorityGeneration = -1
+    var authorityAuth = -1
+    var authorityWorkspaceEpoch = -1
     var data = Data()
     var received: Int64 = 0
     var expected: Int64 = -1
@@ -353,12 +370,18 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
 #endif
     let identifier = "FountainNative"
     let jsName = "FountainNative"
-    let pluginMethods: [CAPPluginMethod] = ["getConfiguration", "configure", "request", "cancel", "organizationRequest", "organizationCancel", "download", "saveData", "outboxOpen", "outboxReconcile", "stageDelta", "commitDelta", "readPage", "recoveryInventory", "recoveryExport"].map {
+    let pluginMethods: [CAPPluginMethod] = ["getConfiguration", "configure", "request", "cancel", "organizationRequest", "organizationCancel", "accountRequest", "accountCancel", "activateWorkspace", "parkWorkspace", "resumeWorkspaceOffline", "download", "saveData", "outboxOpen", "outboxReconcile", "stageDelta", "commitDelta", "readPage", "recoveryInventory", "recoveryExport"].map {
         CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
     }
     private let queue = DispatchQueue(label: "dev.fountain.native-state")
     private var session: URLSession!
     private var organizationTransport: FountainOrganization?
+    private var accountTransport: FountainAccount?
+    private var workspace: FountainWorkspace?
+    private var lastWorkspace: FountainWorkspace?
+    private var workspaceEpoch = 0
+    private var workspaceOffline = false
+    private let workspaceVault = FountainWorkspaceKeychain()
     private var origin: String?
     private var generation = 0
     private var auth = 0
@@ -428,8 +451,23 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         delegates.maxConcurrentOperationCount = 1
         delegates.underlyingQueue = queue
         session = URLSession(configuration: configuration, delegate: self, delegateQueue: delegates)
-        organizationTransport = FountainOrganization(queue: queue, protocolClasses: configuration.protocolClasses)
+        organizationTransport = FountainOrganization(queue: queue, protocolClasses: configuration.protocolClasses, ownership: Self.ownership, admission: { [weak self] in self?.ownsBridge() == true && self?.terminated == false })
         try? organizationTransport?.configure(origin: origin, generation: generation)
+        accountTransport = FountainAccount(queue: queue, protocolClasses: configuration.protocolClasses, ownership: Self.ownership, admission: { [weak self] in self?.ownsBridge() == true && self?.terminated == false })
+        accountTransport?.onInvalidation = { [weak self] in
+            guard let self else { return }
+            try self.closeAccountWorkspaces(failure: self.accountTransport?.authorizationLost == true ? .accountRequired : .stale, cancelAccountJobs: false)
+        }
+        accountTransport?.onWorkspaceDenial = { [weak self] workspace, binding, parent in
+            guard let self, self.ownsBridge(), !self.terminated else { throw FountainAccountError.stale }
+            if ACTIVE_OUTBOX_ENABLED { try self.outboxStore().denyAccount(workspace: workspace, binding: binding, parentBinding: parent) }
+            if let current = self.workspace, current.workspaceId == workspace, current.binding == binding, current.accountBinding == parent { try self.parkSelectedWorkspace() }
+        }
+        accountTransport?.onWorkspaceObservation = { [weak self] observed in
+            guard let self, self.ownsBridge(), !self.terminated else { throw FountainAccountError.stale }
+            if ACTIVE_OUTBOX_ENABLED, try self.outboxStore().observeAccountSelection(observed.session, parentBinding: observed.accountBinding) { try self.parkSelectedWorkspace() }
+        }
+        try? accountTransport?.configure(origin: origin, generation: generation)
     }
 
     private static func cleanAbandonedExports() {
@@ -473,6 +511,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
             self.authQueue.removeAll()
             self.session?.invalidateAndCancel()
             self.organizationTransport?.shutdown()
+            self.accountTransport?.shutdown()
             self.recovery?.close(); self.recovery = nil
             self.outbox?.close(); self.outbox = nil
         }
@@ -513,8 +552,13 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     }
 
     private func configuration() -> [String: Any] {
+        var retained: [[String: Any]] = []
+        if ACTIVE_OUTBOX_ENABLED, let account = accountTransport, let parent = try? account.activeBinding(), let cookie = try? account.activeCookie(binding: parent) {
+            retained = (try? outboxStore().retainedAccountScopes(parentBinding: parent, sessionRef: outboxReference(cookie)!)) ?? []
+        }
         return ["origin": origin as Any? ?? NSNull(), "generation": generation,
-                "outboxVersion": 1, "outboxEnabled": ACTIVE_OUTBOX_ENABLED, "recoveryVersion": 1, "recoveryEnabled": true]
+                "outboxVersion": 1, "outboxEnabled": ACTIVE_OUTBOX_ENABLED, "recoveryVersion": 1, "recoveryEnabled": true,
+                "workspaceVersion": 1, "workspaceEpoch": workspaceEpoch, "workspace": lastWorkspace?.publicValue as Any? ?? NSNull(), "retainedWorkspaceScopes": retained]
     }
 
     // All callers hold ownership and execute on queue; the default transport
@@ -534,16 +578,43 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         outbox?.close(); outbox = nil
     }
 
+    private func currentCookie() throws -> String? {
+        if let workspace {
+            guard workspace.expiresAt > Date().timeIntervalSince1970 * 1000 else { try closeAccountWorkspaces(); throw FountainFailure.stale }
+            return try accountTransport?.activeCookie(binding: workspace.accountBinding)
+        }
+        return try cookies().active
+    }
+    private func fenceWorkspace(failure: FountainFailure = .stale, cancelAccountJobs: Bool = true) {
+        workspaceEpoch += 1; auth += 1
+        if cancelAccountJobs { accountTransport?.fenceWorkspaceJobs() }
+        for job in Array(jobs.values) { end(job, failure: failure) }
+        recovery?.close(); recovery = nil
+        organizationTransport?.fenceWorkspaceJobs()
+    }
+    private func closeAccountWorkspaces(failure: FountainFailure = .stale, cancelAccountJobs: Bool = true) throws {
+        fenceWorkspace(failure: failure, cancelAccountJobs: cancelAccountJobs); workspace = nil; lastWorkspace = nil; workspaceOffline = false
+        if ACTIVE_OUTBOX_ENABLED { try FountainWorkspacePolicy.invalidatePersistedAccount(origin: origin) { try self.outboxStore().suspendAccounts() } }
+    }
+    private func parkSelectedWorkspace() throws {
+        fenceWorkspace()
+        if ACTIVE_OUTBOX_ENABLED { try outboxStore().parkAccount() }
+        workspace = nil; workspaceOffline = false
+    }
     private func outboxReference(_ cookie: String?) -> String? {
         cookie.map { FountainOutbox.hash(Data($0.utf8)) }
     }
 
     private func validatedOutbox() throws -> FountainOutbox {
         let store = try outboxStore()
-        let value = try cookies()
-        let invalidated = try hasInvalidation(origin!)
-        try store.validateSession(outboxReference(value.active) ?? "local-no-cookie",
-                                  eligible: value.revoke == nil && !invalidated && !storageFailed, beforeMutation: { self.recovery?.close(); self.recovery = nil })
+        if workspace != nil {
+            try store.validateSession(outboxReference(try currentCookie()), eligible: !storageFailed, beforeMutation: { self.recovery?.close(); self.recovery = nil })
+        } else {
+            let value = try cookies()
+            let invalidated = try hasInvalidation(origin!)
+            try store.validateSession(outboxReference(value.active) ?? "local-no-cookie",
+                                      eligible: value.revoke == nil && !invalidated && !storageFailed, beforeMutation: { self.recovery?.close(); self.recovery = nil })
+        }
         try store.ensureOwner(outboxOwner, epoch: auth)
         return store
     }
@@ -557,9 +628,10 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         fromMainFrame(call) {
             do {
                 guard try self.integer(call, "generation") == self.generation else { throw FountainOutboxError.stale }
+                if self.workspace != nil { guard try self.integer(call, "workspaceEpoch") == self.workspaceEpoch else { throw FountainOutboxError.stale } }
                 let store = try self.validatedOutbox()
                 if self.recoveryMode {
-                    let reference = self.outboxReference((try self.cookies()).active) ?? "local-no-cookie"
+                    let reference = self.outboxReference(try self.currentCookie()) ?? "local-no-cookie"
                     guard call.methodName != "readPage", let authority = self.recoveryGrant, authority.deadline > Date().timeIntervalSince1970 * 1000,
                           reference == authority.reference, authority.origin == self.origin,
                           self.recoveryGrantAuth == self.auth, self.recoveryGrantGeneration == self.generation,
@@ -578,6 +650,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                 Self.qaOutboxRecord(call, "actionDone")
                 #endif
                 result["generation"] = startingGeneration
+                if self.workspace != nil { result["workspaceEpoch"] = self.workspaceEpoch }
                 let boundary = store.boundary
                 let startingProofEpoch = try store.proofEpoch()
                 var fragmentDeadline: Double?
@@ -646,7 +719,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
             var input: [String: Any] = [:]
             for (key, value) in call.options { guard let key = key as? String else { throw FountainOutboxError.invalid }; input[key] = value }
             let result = try store.reconcile(input, admissionWatermark: self.httpAdmissionSequence,
-                                             sessionRef: self.outboxReference((try self.cookies()).active))
+                                             sessionRef: self.outboxReference(try self.currentCookie()))
             if self.recoveryMode, input["phase"] as? String == "prepare" {
                 self.recoveryMode = false; self.recovery?.close(); self.recovery = nil; self.recoveryGrant = nil; self.recoveryGrantAuth = nil; self.recoveryGrantGeneration = nil
             }
@@ -659,14 +732,14 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                   let encoded = call.getString("bytesBase64"), encoded.utf8.count <= 349_528,
                   let bytes = Data(base64Encoded: encoded) else { throw FountainOutboxError.invalid }
             let part = try self.integer(call, "part")
-            try store.stage(lease: lease, txID: tx, baseHead: self.integer(call, "baseHead"), proofEpoch: self.integer(call, "proofEpoch"), part: part, bytes: bytes, sessionRef: self.outboxReference((try self.cookies()).active))
+            try store.stage(lease: lease, txID: tx, baseHead: self.integer(call, "baseHead"), proofEpoch: self.integer(call, "proofEpoch"), part: part, bytes: bytes, sessionRef: self.outboxReference(try self.currentCookie()))
             return ["part": part]
         }
     }
     @objc func commitDelta(_ call: CAPPluginCall) {
         outboxCall(call) { store in
             guard let lease = call.getString("lease"), let tx = call.getString("txId"), let digest = call.getString("digest") else { throw FountainOutboxError.invalid }
-            return try store.commit(lease: lease, txID: tx, baseHead: self.integer(call, "baseHead"), proofEpoch: self.integer(call, "proofEpoch"), digest: digest, quarantineOnly: self.recoveryMode, sessionRef: self.outboxReference((try self.cookies()).active))
+            return try store.commit(lease: lease, txID: tx, baseHead: self.integer(call, "baseHead"), proofEpoch: self.integer(call, "proofEpoch"), digest: digest, quarantineOnly: self.recoveryMode, sessionRef: self.outboxReference(try self.currentCookie()))
         }
     }
     @objc func readPage(_ call: CAPPluginCall) {
@@ -719,11 +792,11 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
 
     private func observeOutboxResource(_ job: FountainJob, response: HTTPURLResponse, data: Data) throws {
         guard ACTIVE_OUTBOX_ENABLED, !recoveryMode,
-              job.reconcileAdmission != nil || FountainOutbox.observedResource(path: job.path, method: job.method, status: response.statusCode) != nil else { return }
-        guard current(job), try cookies().active == job.sentCookie else { throw FountainOutboxError.stale }
+              job.reconcileAdmission != nil || FountainOutbox.observedResource(path: job.logicalPath, method: job.method, status: response.statusCode) != nil else { return }
+        guard current(job), try currentCookie() == job.sentCookie else { throw FountainOutboxError.stale }
         let store = try outboxStore()
         guard store.permitsHTTPObservation(job.httpAdmission) else { return }
-        try store.observeReconcileResource(admission: job.reconcileAdmission, path: job.path, method: job.method, status: response.statusCode,
+        try store.observeReconcileResource(admission: job.reconcileAdmission, path: job.logicalPath, method: job.method, status: response.statusCode,
                                                   data: data, sessionRef: outboxReference(job.sentCookie))
     }
 
@@ -985,7 +1058,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                 let current = try self.cookies()
                 guard current.active == nil, current.revoke == nil else { throw FountainFailure.revoke }
             }
-            do { try self.organizationTransport?.configure(origin: updated, generation: self.generation + 1) }
+            do { try self.accountTransport?.configure(origin: updated, generation: self.generation + 1); try self.closeAccountWorkspaces(); try self.organizationTransport?.configure(origin: updated, generation: self.generation + 1) }
             catch { throw FountainFailure.storage }
             if ACTIVE_OUTBOX_ENABLED, !self.recoveryMode { try self.outbox?.suspend() }
             self.recovery?.close(); self.recovery = nil
@@ -1002,11 +1075,21 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     private func newJob(_ call: CAPPluginCall, mode: String) throws -> FountainJob {
         guard let id = call.getString("id"), !id.isEmpty, id.utf8.count <= 160, jobs[id] == nil, jobs.count < 16,
               origin != nil, try integer(call, "generation") == generation else { throw FountainFailure.stale }
-        let path = mode == "saveData" || mode.hasPrefix("recovery") ? "/api/" : (call.getString("path") ?? "")
+        if workspace != nil { guard try integer(call, "workspaceEpoch") == workspaceEpoch else { throw FountainFailure.stale } }
+        let path = mode == "saveData" || mode.hasPrefix("recovery") ? ((workspace?.prefix ?? "/api") + "/__native-local__") : (call.getString("path") ?? "")
         let decoded = try Self.validPath(path)
-        guard !decoded.hasPrefix(FountainOrganizationPolicy.prefix) else { throw FountainFailure.invalid }
+        guard decoded != "/api/account", !decoded.hasPrefix("/api/account/"), decoded != "/api/organization", !decoded.hasPrefix(FountainOrganizationPolicy.prefix) else { throw FountainFailure.invalid }
+        if decoded == "/api/w" || decoded.hasPrefix("/api/w/") {
+            guard let route = FountainWorkspacePolicy.scoped(path), let workspace,
+                  route.workspace == workspace.workspaceId, route.binding == workspace.binding,
+                  try integer(call, "workspaceEpoch") == workspaceEpoch,
+                  workspace.expiresAt > Date().timeIntervalSince1970 * 1000 else { throw FountainFailure.stale }
+            let logical = try Self.validPath(route.logical)
+            guard logical != "/api/account", !logical.hasPrefix("/api/account/"), logical != "/api/organization", !logical.hasPrefix("/api/organization/"), logical != "/api/w", !logical.hasPrefix("/api/w/") else { throw FountainFailure.invalid }
+        } else if workspace != nil, mode != "saveData", !mode.hasPrefix("recovery") { throw FountainFailure.stale }
         let method = mode == "request" ? (call.getString("method") ?? "GET").uppercased() : "GET"
         guard ["GET", "POST", "PUT", "PATCH", "DELETE"].contains(method) else { throw FountainFailure.invalid }
+        if FountainWorkspacePolicy.scoped(path)?.logical == "/api/session", method != "GET" { throw FountainFailure.invalid }
         var headers: [String: String] = [:]
         if let input = call.options["headers"] {
             guard mode == "request" else { throw FountainFailure.invalid }
@@ -1070,22 +1153,145 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         }
     }
 
+    @objc func accountRequest(_ call: CAPPluginCall) {
+        fromMainFrame(call) {
+            do {
+                guard let transport = self.accountTransport, let options = call.options as? [String: Any] else { throw FountainAccountError.stale }
+                let request = try FountainAccount.Request(options)
+                try transport.request(request, workspaceCookie: { nil }, url: Self.requestURL) { result in
+                    let fence = transport.deliveryFence()
+                    DispatchQueue.main.async {
+                        guard fence(), self.ownsBridge(), !self.terminated,
+                              let controller = self.bridge?.viewController as? FountainBridgeViewController, controller.bundled(controller.webView?.url) else { call.reject("Account response is stale", "NATIVE_STALE"); return }
+                        switch result {
+                        case .success(let value): call.resolve(value)
+                        case .failure(let error): call.reject("Account request failed", error.code)
+                        }
+                    }
+                }
+            } catch { call.reject("Account request failed", (error as? FountainAccountError)?.code ?? "NATIVE_STORAGE") }
+        }
+    }
+    @objc func accountCancel(_ call: CAPPluginCall) {
+        fromMainFrame(call) {
+            do {
+                guard let options = call.options as? [String: Any], Set(options.keys) == Set(["id", "generation"]), let id = call.getString("id") else { throw FountainAccountError.invalid }
+                call.resolve(["cancelled": self.accountTransport?.cancel(id: id, generation: try FountainAccountPolicy.integer(options["generation"])) ?? false])
+            } catch { call.reject("Account cancellation failed", "NATIVE_INVALID") }
+        }
+    }
+    @objc func parkWorkspace(_ call: CAPPluginCall) {
+        fromMainFrame(call) {
+            do {
+                guard let options = call.options as? [String: Any], Set(options.keys) == Set(["generation", "workspaceEpoch"]),
+                      try self.integer(call, "generation") == self.generation, try self.integer(call, "workspaceEpoch") == self.workspaceEpoch else { throw FountainAccountError.stale }
+                try self.parkSelectedWorkspace()
+                call.resolve(["generation": self.generation, "workspaceEpoch": self.workspaceEpoch, "parked": true])
+            } catch { call.reject("Workspace parking failed", (error as? FountainAccountError)?.code ?? "NATIVE_STORAGE") }
+        }
+    }
+    @objc func activateWorkspace(_ call: CAPPluginCall) {
+        fromMainFrame(call) {
+            do {
+                guard let options = call.options as? [String: Any], Set(options.keys).isSubset(of: ["id", "generation", "workspace_id", "session_binding", "account_binding", "timeoutMs"]),
+                      let id = call.getString("id"), let workspace = call.getString("workspace_id"), let binding = call.getString("session_binding"), let account = call.getString("account_binding"),
+                      FountainAccountPolicy.validWorkspace(workspace), FountainAccountPolicy.validBinding(binding), FountainAccountPolicy.validBinding(account),
+                      try self.integer(call, "generation") == self.generation, let transport = self.accountTransport else { throw FountainAccountError.invalid }
+                let generation = self.generation
+                let request = try FountainAccount.Request(["id": id, "generation": generation, "path": "/api/w/" + workspace + "/" + binding + "/session", "method": "GET", "timeoutMs": options["timeoutMs"] ?? 45000], workspaceVerification: true)
+                let cookie = try transport.activeCookie(binding: account)
+                try self.parkSelectedWorkspace()
+                let epoch = self.workspaceEpoch, evidence = try transport.beginWorkspaceEvidence(workspace)
+                try transport.request(request, workspaceCookie: { nil }, workspaceFence: { self.workspaceEpoch == epoch && self.ownsBridge() && !self.terminated }, url: Self.requestURL) { result in
+                    do {
+                        let value = try result.get()
+                        if value["status"] as? Int == 401 { call.reject("Account login is required", "ACCOUNT_AUTH_REQUIRED"); return }
+                        guard self.ownsBridge(), !self.terminated, self.workspaceEpoch == epoch, self.generation == generation, transport.currentWorkspaceEvidence(workspace, evidence), try transport.activeCookie(binding: account) == cookie else { throw FountainAccountError.stale }
+                        guard value["status"] as? Int == 200, let encoded = value["bodyBase64"] as? String, let data = Data(base64Encoded: encoded) else {
+                            if let encoded = value["bodyBase64"] as? String, let deniedBody = Data(base64Encoded: encoded), FountainAccountPolicy.workspaceDenied(status: value["status"] as? Int ?? 0, body: deniedBody), ACTIVE_OUTBOX_ENABLED { try self.outboxStore().denyAccount(workspace: workspace, binding: binding, parentBinding: account) }
+                            throw FountainAccountError.stale
+                        }
+                        let verified = try FountainWorkspacePolicy.verify(data, workspace: workspace, binding: binding, account: account)
+                        try transport.acceptWorkspaceEvidence(workspace, evidence)
+                        if ACTIVE_OUTBOX_ENABLED {
+                            let store = try self.outboxStore()
+                            try store.activateAccount(verified.session, sessionRef: self.outboxReference(cookie)!, parentBinding: account)
+                            try store.ensureOwner(self.outboxOwner, epoch: self.auth)
+                        }
+                        try self.workspaceVault.seal(verified, origin: self.origin!, reference: self.outboxReference(cookie)!)
+                        self.workspace = verified; self.lastWorkspace = verified; self.workspaceOffline = false
+                        let reply: [String: Any] = ["generation": generation, "workspaceEpoch": epoch, "workspace": verified.publicValue]
+                        let fence = transport.deliveryFence()
+                        DispatchQueue.main.async {
+                            guard fence(), self.ownsBridge(), !self.terminated, self.workspaceEpoch == epoch,
+                                  let controller = self.bridge?.viewController as? FountainBridgeViewController, controller.bundled(controller.webView?.url) else { call.reject("Workspace activation is stale", "NATIVE_STALE"); return }
+                            call.resolve(reply)
+                        }
+                    } catch { call.reject("Workspace activation failed", (error as? FountainAccountError)?.code ?? "NATIVE_STORAGE") }
+                }
+            } catch { call.reject("Workspace activation failed", (error as? FountainAccountError)?.code ?? "NATIVE_STORAGE") }
+        }
+    }
+
+    @objc func resumeWorkspaceOffline(_ call: CAPPluginCall) {
+        fromMainFrame(call) {
+            do {
+                guard let options = call.options as? [String: Any], Set(options.keys) == Set(["generation", "workspace_id", "member_id", "session_binding", "account_binding", "expires_at_ms"]),
+                      try self.integer(call, "generation") == self.generation,
+                      let id = call.getString("workspace_id"), FountainAccountPolicy.validWorkspace(id),
+                      let member = call.getString("member_id"), !member.isEmpty, member.utf8.count <= 1000,
+                      let binding = call.getString("session_binding"), FountainAccountPolicy.validBinding(binding),
+                      let parent = call.getString("account_binding"), FountainAccountPolicy.validBinding(parent),
+                      let origin = self.origin, let transport = self.accountTransport else { throw FountainAccountError.invalid }
+                let expires = Double(try self.integer(call, "expires_at_ms")), cookie = try transport.activeCookie(binding: parent)
+                let sealed = try self.workspaceVault.open(origin: origin, workspace: id, member: member, binding: binding, account: parent, expires: expires, reference: self.outboxReference(cookie)!)
+                try self.parkSelectedWorkspace()
+                let store = try self.outboxStore()
+                try store.resumeAccountOffline(sealed.session, sessionRef: self.outboxReference(cookie)!, parentBinding: parent)
+                try store.ensureOwner(self.outboxOwner, epoch: self.auth)
+                self.workspace = sealed; self.lastWorkspace = sealed; self.workspaceOffline = true
+                let epoch = self.workspaceEpoch, generation = self.generation, fence = transport.deliveryFence()
+                let result: [String: Any] = ["generation": generation, "workspaceEpoch": epoch, "workspace": sealed.publicValue, "offline": true]
+                DispatchQueue.main.async {
+                    guard fence(), self.ownsBridge(), !self.terminated, self.workspaceEpoch == epoch,
+                          let controller = self.bridge?.viewController as? FountainBridgeViewController, controller.bundled(controller.webView?.url) else { call.reject("Offline workspace response is stale", "NATIVE_STALE"); return }
+                    call.resolve(result)
+                }
+            } catch { call.reject("Offline workspace admission failed", (error as? FountainAccountError)?.code ?? "NATIVE_STALE") }
+        }
+    }
+
     @objc func organizationRequest(_ call: CAPPluginCall) {
         fromMainFrame(call) {
             do {
                 guard let transport = self.organizationTransport else { throw FountainOrganizationError.stale }
                 guard let options = call.options as? [String: Any] else { throw FountainOrganizationError.invalid }
                 let request = try FountainOrganization.Request(options)
+                var explicitWorkspace: (String, String)?
+                if FountainOrganizationPolicy.needsWorkspace(path: String(request.path.split(separator: "?", maxSplits: 1)[0]), method: request.method) {
+                    let fields: [String: Any]
+                    if request.method == "GET" {
+                        fields = Dictionary(uniqueKeysWithValues: (URLComponents(string: "https://local.invalid" + request.path)?.queryItems ?? []).map { ($0.name, $0.value as Any) })
+                    } else { fields = (try? JSONSerialization.jsonObject(with: request.body)) as? [String: Any] ?? [:] }
+                    if fields["workspace_id"] != nil {
+                        guard let id = fields["workspace_id"] as? String, let binding = fields["workspace_binding"] as? String,
+                              let current = self.workspace, !self.workspaceOffline, current.workspaceId == id, current.binding == binding else { throw FountainOrganizationError.stale }
+                        explicitWorkspace = (id, binding)
+                    }
+                }
+                let capturedEpoch = self.workspaceEpoch
+                let crossFence: (() -> Bool)? = explicitWorkspace == nil ? nil : { self.workspaceEpoch == capturedEpoch }
                 try transport.request(request, workspaceCookie: {
+                    if explicitWorkspace != nil { return try self.currentCookie() }
                     // Read-only, exact cross-realm routes are selected inside
                     // the independent transport. Never grant Outbox admission.
                     let value = try self.cookies()
                     guard value.revoke == nil else { return nil }
                     return value.active
-                }, url: Self.requestURL) { result in
+                }, workspaceFence: crossFence, url: Self.requestURL) { result in
                     let fence = transport.deliveryFence()
                     DispatchQueue.main.async {
-                        guard fence(), self.ownsBridge(), !self.terminated,
+                        guard fence(), self.ownsBridge(), !self.terminated, explicitWorkspace == nil || self.workspaceEpoch == capturedEpoch,
                               let controller = self.bridge?.viewController as? FountainBridgeViewController,
                               controller.bundled(controller.webView?.url) else {
                             call.reject("Organization response is stale", "NATIVE_STALE"); return
@@ -1226,17 +1432,17 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     private func send(_ job: FountainJob) {
         guard current(job) else { end(job, failure: .stale); return }
         do {
-            job.sentCookie = try cookies().active
-            let recoveryObservation = try recoveryObservation(job, path: job.path, method: job.method)
+            job.sentCookie = try currentCookie()
+            let recoveryObservation = try recoveryObservation(job, path: job.logicalPath, method: job.method)
             job.task = try network(path: job.path, method: job.method, headers: job.headers, body: job.body,
                                    cookie: job.sentCookie, timeout: job.timeout, file: job.mode == "download" ? job.file : nil,
-                                   admitted: { job.reconcileAdmission = $0; job.syncAdmission = $1; job.httpAdmission = $2; job.deliveryAdmission = $2 }) { response, data, error in
+                                   admitted: { job.reconcileAdmission = $0; job.syncAdmission = $1; job.httpAdmission = $2; job.deliveryAdmission = $2 }, sessionEvidence: { job.workspaceEvidence = $0 }) { response, data, error in
                 guard self.current(job) else { return }
                 guard error == nil, let response = response else { self.outbox?.failedReconcile(job.reconcileAdmission); self.end(job, failure: error ?? .network); return }
                 do {
                     if response.statusCode != 401, let admission = job.httpAdmission {
                         guard let store = self.outbox else { throw FountainOutboxError.stale }
-                        try store.checkHTTPAdmission(admission, sessionRef: self.outboxReference((try self.cookies()).active))
+                        try store.checkHTTPAdmission(admission, sessionRef: self.outboxReference(try self.currentCookie()))
                     }
                     if response.statusCode == 401 { self.recovery?.close(); self.recovery = nil }
                     if job.mode == "login", (200..<300).contains(response.statusCode) {
@@ -1250,6 +1456,9 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                               !found[0].value.unicodeScalars.contains(where: { $0.value <= 32 || $0.value >= 127 || $0.value == 59 }) else { throw FountainFailure.invalid }
                         let rollbackBody = try FountainSessionLogout.actualResponseBody(data)
                         try self.saveCookies(FountainCookies(active: "fountain_session=" + found[0].value, revoke: nil), actualRollbackBody: rollbackBody)
+                    } else if response.statusCode == 401, FountainWorkspacePolicy.scoped(job.path) != nil {
+                        try self.accountTransport?.invalidate(authRequired: true)
+                        self.end(job, failure: .stale); return
                     } else if response.statusCode == 401, let sent = job.sentCookie {
                         let value = try self.cookies()
                         if value.active == sent {
@@ -1262,15 +1471,31 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                             self.authDrainSuspended -= 1
                         }
                     }
+                    if let route = FountainWorkspacePolicy.scoped(job.path), route.logical == "/api/session", let current = self.workspace {
+                        if response.statusCode == 200 {
+                            guard let evidence = job.workspaceEvidence, self.accountTransport?.currentWorkspaceEvidence(current.workspaceId, evidence) == true else { throw FountainFailure.stale }
+                            let verified = try FountainWorkspacePolicy.verify(data, workspace: current.workspaceId, binding: current.binding, account: current.accountBinding)
+                            try self.accountTransport?.acceptWorkspaceEvidence(current.workspaceId, evidence)
+                            if ACTIVE_OUTBOX_ENABLED {
+                                let store = try self.outboxStore()
+                                try store.activateAccount(verified.session, sessionRef: self.outboxReference(job.sentCookie)!, parentBinding: current.accountBinding, requireReconcile: false)
+                                try store.ensureOwner(self.outboxOwner, epoch: self.auth)
+                            }
+                            try self.workspaceVault.seal(verified, origin: self.origin!, reference: self.outboxReference(job.sentCookie)!)
+                            self.workspace = verified; self.lastWorkspace = verified
+                        } else if FountainAccountPolicy.workspaceDenied(status: response.statusCode, body: data) {
+                            if ACTIVE_OUTBOX_ENABLED { try self.outboxStore().denyAccount(workspace: current.workspaceId, binding: current.binding, parentBinding: current.accountBinding) }
+                        }
+                    }
                     if self.recoveryMode, ["check", "login"].contains(job.mode), let reader = self.recovery,
-                       !reader.sameSession(data, origin: self.origin ?? "", reference: self.outboxReference((try self.cookies()).active) ?? "local-no-cookie") {
+                       !reader.sameSession(data, origin: self.origin ?? "", reference: self.outboxReference(try self.currentCookie()) ?? "local-no-cookie") {
                         reader.close(); self.recovery = nil
                     }
                     if let (store, admission, authority) = recoveryObservation {
                         try self.noteRecoveryServerObservation(store, admission: admission, authority: authority, job: job, path: job.path, status: response.statusCode, data: data)
                     }
-                    if self.recoveryMode, job.method == "GET", self.recovery?.observes(job.path) == true {
-                        self.recovery?.noteCanonical(path: job.path, status: response.statusCode, data: data)
+                    if self.recoveryMode, job.method == "GET", self.recovery?.observes(job.logicalPath) == true {
+                        self.recovery?.noteCanonical(path: job.logicalPath, status: response.statusCode, data: data)
                     }
                     if ["check", "login"].contains(job.mode) {
                         try self.observePrivateSession(job, response: response, data: data, method: job.method)
@@ -1278,11 +1503,11 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                     try self.observeOutboxSession(job, response: response, data: data)
                     if ACTIVE_OUTBOX_ENABLED, job.path == "/api/session", response.statusCode == 200 {
                         let store = try self.outboxStore(); try store.ensureOwner(self.outboxOwner, epoch: self.auth)
-                        job.deliveryAdmission = try store.captureHTTPDelivery(sessionRef: self.outboxReference((try self.cookies()).active), allowBlockedMetadata: true)
+                        job.deliveryAdmission = try store.captureHTTPDelivery(sessionRef: self.outboxReference(try self.currentCookie()), allowBlockedMetadata: true)
                     }
                     if response.statusCode != 401 { try self.observeOutboxResource(job, response: response, data: data) }
                     if ACTIVE_OUTBOX_ENABLED, !self.recoveryMode, job.syncAdmission != nil {
-                        guard try self.cookies().active == job.sentCookie else { throw FountainOutboxError.stale }
+                        guard try self.currentCookie() == job.sentCookie else { throw FountainOutboxError.stale }
                         try self.outboxStore().observeSync(job.syncAdmission, status: response.statusCode, data: data, sessionRef: self.outboxReference(job.sentCookie))
                     }
                     if job.mode == "download" {
@@ -1321,8 +1546,11 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     private func network(path: String, method: String, headers: [String: String], body: Data, cookie: String?,
                          timeout: TimeInterval, file: URL?, maximum: Int64 = 16 * 1024 * 1024,
                          admitted: ((FountainOutbox.ReconcileAdmission?, FountainOutbox.SyncAdmission?, FountainOutbox.HTTPAdmission?) -> Void)? = nil,
+                         sessionEvidence: ((Int) -> Void)? = nil,
                          done: @escaping (HTTPURLResponse?, Data, FountainFailure?) -> Void) throws -> URLSessionDataTask {
         guard let backend = origin else { throw FountainFailure.invalid }
+        if workspaceOffline, FountainWorkspacePolicy.scoped(path) != nil { throw FountainFailure.network }
+        if FountainWorkspacePolicy.scoped(path) != nil, method != "GET", ACTIVE_OUTBOX_ENABLED, !(try outboxStore().accountCanTransmit()) { throw FountainOutboxError.access }
         #if DEBUG && targetEnvironment(simulator)
         let environment = ProcessInfo.processInfo.environment
         if environment["FOUNTAIN_QA"] == "1", (environment["FOUNTAIN_OUTBOX_QA"] == "1" || environment["FOUNTAIN_DEFAULT_OUTBOX_QA"] == "1"), (environment["SIMULATOR_DEVICE_NAME"] ?? "").hasPrefix("Fountain QA"), !qaSessionOptedIn { Self.qaPreinstallBlocked += 1; throw FountainFailure.network }
@@ -1337,9 +1565,10 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         guard httpAdmissionSequence < 9_007_199_254_740_991 else { throw FountainOutboxError.storage }
         httpAdmissionSequence += 1
         let nativeStore = ACTIVE_OUTBOX_ENABLED && !recoveryMode ? try outboxStore() : nil
-        let http = ACTIVE_OUTBOX_ENABLED && !recoveryMode ? try nativeStore?.admitHTTP(path: path, sessionRef: outboxReference(cookie)) : nil
-        let tag = ACTIVE_OUTBOX_ENABLED && !recoveryMode ? try outbox?.admitReconcile(path: path, method: method, sessionRef: outboxReference(cookie), sequence: httpAdmissionSequence) : nil
-        let sync = ACTIVE_OUTBOX_ENABLED && !recoveryMode ? try outbox?.admitSync(path: path, method: method, body: body, sessionRef: outboxReference(cookie)) : nil
+        let logicalPath = FountainWorkspacePolicy.scoped(path)?.logical ?? path
+        let http = ACTIVE_OUTBOX_ENABLED && !recoveryMode ? try nativeStore?.admitHTTP(path: logicalPath, sessionRef: outboxReference(cookie)) : nil
+        let tag = ACTIVE_OUTBOX_ENABLED && !recoveryMode ? try outbox?.admitReconcile(path: logicalPath, method: method, sessionRef: outboxReference(cookie), sequence: httpAdmissionSequence) : nil
+        let sync = ACTIVE_OUTBOX_ENABLED && !recoveryMode ? try outbox?.admitSync(path: logicalPath, method: method, body: body, sessionRef: outboxReference(cookie)) : nil
         admitted?(tag, sync, http)
         #if DEBUG && targetEnvironment(simulator)
         if environment["FOUNTAIN_QA"] == "1", (environment["FOUNTAIN_OUTBOX_QA"] == "1" || environment["FOUNTAIN_DEFAULT_OUTBOX_QA"] == "1"), (environment["SIMULATOR_DEVICE_NAME"] ?? "").hasPrefix("Fountain QA"), !qaSessionOptedIn { Self.qaPreinstallAllocated += 1 }
@@ -1347,6 +1576,20 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         let sink = try file.map { try FileHandle(forWritingTo: $0) }
         let transfer = FountainTransfer(streamed: file != nil, sink: sink, done: done)
         transfer.maximum = maximum
+        transfer.scopedAccount = FountainWorkspacePolicy.scoped(path) != nil
+        transfer.sentCookie = cookie
+        transfer.authorityOrigin = backend; transfer.authorityGeneration = generation
+        transfer.authorityAuth = auth; transfer.authorityWorkspaceEpoch = workspaceEpoch
+        if transfer.scopedAccount, let workspace, let accountTransport {
+            guard try accountTransport.activeCookie(binding: workspace.accountBinding) == cookie else { throw FountainFailure.stale }
+            transfer.accountParent = workspace.accountBinding; transfer.accountEpoch = accountTransport.privateEpoch
+        }
+        if let route = FountainWorkspacePolicy.scoped(path), route.logical == "/api/session", method == "GET", let workspace, let accountTransport {
+            guard route.workspace == workspace.workspaceId, route.binding == workspace.binding else { throw FountainFailure.stale }
+            let version = try accountTransport.beginWorkspaceEvidence(route.workspace)
+            transfer.sessionEvidence = (route.workspace, route.binding, workspace.accountBinding, version)
+            sessionEvidence?(version)
+        }
         let task = session.dataTask(with: request)
         transfers[task.taskIdentifier] = transfer
         task.resume()
@@ -1396,6 +1639,32 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         if let error = error as? URLError {
             networkFailure = error.code == .timedOut ? .timeout : error.code == .cancelled ? .cancelled : .network
         } else { networkFailure = error == nil ? nil : .network }
+        if transfer.scopedAccount {
+            let validParent: Bool
+            if ownsBridge(), !terminated, transfer.authorityOrigin == origin, transfer.authorityGeneration == generation,
+               transfer.authorityAuth == auth, transfer.authorityWorkspaceEpoch == workspaceEpoch,
+               let parent = transfer.accountParent, let epoch = transfer.accountEpoch, let accountTransport, accountTransport.privateEpoch == epoch {
+                validParent = (try? accountTransport.activeCookie(binding: parent)) == transfer.sentCookie
+            } else { validParent = false }
+            if !validParent { transfer.done(transfer.response, transfer.data, .stale); return }
+            // A trusted matching-parent401 header is negative authority even
+            // when a binary stream/body contract cancels the remaining bytes.
+            if transfer.response?.statusCode == 401 { try? accountTransport?.invalidate(authRequired: true) }
+        }
+        if transfer.error == nil, networkFailure == nil, let evidence = transfer.sessionEvidence, let response = transfer.response, let accountTransport {
+            do {
+                guard try accountTransport.activeCookie(binding: evidence.parent) == transfer.sentCookie else { throw FountainFailure.stale }
+                if response.statusCode == 200 {
+                    guard accountTransport.currentWorkspaceEvidence(evidence.workspace, evidence.version) else { throw FountainFailure.stale }
+                    let observed = try FountainWorkspacePolicy.verify(transfer.data, workspace: evidence.workspace, binding: evidence.binding, account: evidence.parent)
+                    try accountTransport.acceptWorkspaceEvidence(evidence.workspace, evidence.version)
+                    if ACTIVE_OUTBOX_ENABLED, try outboxStore().observeAccountSelection(observed.session, parentBinding: evidence.parent) { try parkSelectedWorkspace() }
+                } else if FountainAccountPolicy.workspaceDenied(status: response.statusCode, body: transfer.data), ACTIVE_OUTBOX_ENABLED {
+                    try outboxStore().denyAccount(workspace: evidence.workspace, binding: evidence.binding, parentBinding: evidence.parent)
+                    if let current = workspace, current.workspaceId == evidence.workspace, current.binding == evidence.binding, current.accountBinding == evidence.parent { try parkSelectedWorkspace() }
+                }
+            } catch { transfer.error = .stale }
+        }
         transfer.done(transfer.response, transfer.data, transfer.error ?? networkFailure)
     }
 
@@ -1409,8 +1678,9 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
 
     private func resolve(_ job: FountainJob, response: HTTPURLResponse, data: Data) {
         let headers = renderedHeaders(response)
-        end(job, result: ["status": response.statusCode, "headers": headers,
-                          "bodyBase64": data.base64EncodedString(), "generation": job.generation])
+        var result: [String: Any] = ["status": response.statusCode, "headers": headers, "bodyBase64": data.base64EncodedString(), "generation": job.generation]
+        if FountainWorkspacePolicy.scoped(job.path) != nil { result["workspaceEpoch"] = workspaceEpoch }
+        end(job, result: result)
     }
 
     private func end(_ job: FountainJob, result: [String: Any]? = nil, failure: FountainFailure? = nil) {
@@ -1434,11 +1704,12 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         if !job.callClosed {
             job.callClosed = true
             if let failure = failure { job.call.reject(failure.message, failure.code) }
-            else if job.generation == generation && job.auth == auth, let result = result {
+            else if job.generation == generation && job.auth == auth, var result = result {
+                if FountainWorkspacePolicy.scoped(job.path) != nil { result["workspaceEpoch"] = workspaceEpoch }
                 let capturedOrigin = origin, capturedAuth = auth, capturedGeneration = generation, store = outbox, admission = job.deliveryAdmission
                 let deliveryFence: FountainOutbox.HTTPDeliveryFence?
                 do {
-                    if let admission { guard let store else { throw FountainOutboxError.stale }; deliveryFence = try store.captureHTTPFence(admission, path: job.path, method: job.method, status: (result["status"] as? Int) ?? 0) }
+                    if let admission { guard let store else { throw FountainOutboxError.stale }; deliveryFence = try store.captureHTTPFence(admission, path: job.logicalPath, method: job.method, status: (result["status"] as? Int) ?? 0) }
                     else { deliveryFence = nil }
                 } catch { job.call.reject(FountainFailure.stale.message, FountainFailure.stale.code); if authJob === job { authJob = nil }; nextAuth(); return }
                 DispatchQueue.main.async { [weak self] in
@@ -1486,15 +1757,17 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
             guard self.authJob == nil else { throw FountainFailure.busy }
             let name = try self.filename(call)
             let path = call.getString("path") ?? ""
-            let decoded = try Self.validPath(path)
+            _ = try Self.validPath(path)
+            let logical = FountainWorkspacePolicy.scoped(path)?.logical ?? path
+            let decoded = try Self.validPath(logical)
             let pieces = decoded.split(separator: "/")
-            let backupID = try FountainBackupPlan.id(path)
-            guard backupID != nil || (!path.contains("?") && (decoded == "/api/backup" ||
+            let backupID = try FountainBackupPlan.id(logical)
+            guard backupID != nil || (!logical.contains("?") && (decoded == "/api/backup" ||
                     (pieces.count == 4 && pieces[0] == "api" && pieces[1] == "attachments" && pieces[3] == "download"))) else { throw FountainFailure.invalid }
             let job = try self.newJob(call, mode: "download")
             do {
                 job.file = try self.temporary(name)
-                if let id = backupID { job.sentCookie = try self.cookies().active; self.startBackup(job, id: id) }
+                if let id = backupID { job.sentCookie = try self.currentCookie(); self.startBackup(job, id: id) }
                 else { self.send(job) }
             }
             catch { self.end(job, failure: .storage) }
@@ -1503,11 +1776,11 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
 
     private func backupOwner(_ job: FountainJob, done: @escaping () -> Void) {
         do {
-            guard current(job), let cookie = job.sentCookie, try cookies().active == cookie, let backend = origin else { throw FountainFailure.stale }
-            job.task = try network(path: "/api/session", method: "GET", headers: [:], body: Data(), cookie: cookie, timeout: job.timeout, file: nil, maximum: 65536) { response, data, error in
+            guard current(job), let cookie = job.sentCookie, try currentCookie() == cookie, let backend = origin else { throw FountainFailure.stale }
+            job.task = try network(path: job.wire("/api/session"), method: "GET", headers: [:], body: Data(), cookie: cookie, timeout: job.timeout, file: nil, maximum: 65536) { response, data, error in
                 guard self.current(job) else { return }
                 do {
-                    guard error == nil, response?.statusCode == 200, try self.cookies().active == cookie,
+                    guard error == nil, response?.statusCode == 200, try self.currentCookie() == cookie,
                           let body = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                           let member = body["member"] as? [String: Any], member["role"] as? String == "owner" else { throw error ?? FountainFailure.stale }
                     let proof = try FountainRecovery.Authority.session(data, origin: backend, reference: cookie)
@@ -1521,7 +1794,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     private func startBackup(_ job: FountainJob, id: String) {
         backupOwner(job) {
             do {
-                job.task = try self.network(path: "/api/backup/jobs/" + id, method: "GET", headers: [:], body: Data(), cookie: job.sentCookie, timeout: job.timeout, file: nil, maximum: 65536) { response, data, error in
+                job.task = try self.network(path: job.wire("/api/backup/jobs/" + id), method: "GET", headers: [:], body: Data(), cookie: job.sentCookie, timeout: job.timeout, file: nil, maximum: 65536) { response, data, error in
                     guard self.current(job) else { return }
                     do {
                         guard error == nil, response?.statusCode == 200 else { throw error ?? FountainFailure.network }
@@ -1545,10 +1818,10 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                     self.export(job); return
                 }
                 let offset = job.backupOffset, length = Int(min(262144, plan.size - offset))
-                job.task = try self.network(path: "/api/backup?job_id=" + id, method: "GET", headers: ["Range": "bytes=\(offset)-\(offset + Int64(length) - 1)"], body: Data(), cookie: job.sentCookie, timeout: job.timeout, file: nil, maximum: Int64(length)) { response, data, error in
+                job.task = try self.network(path: job.wire("/api/backup?job_id=" + id), method: "GET", headers: ["Range": "bytes=\(offset)-\(offset + Int64(length) - 1)"], body: Data(), cookie: job.sentCookie, timeout: job.timeout, file: nil, maximum: Int64(length)) { response, data, error in
                     guard self.current(job) else { return }
                     do {
-                        guard error == nil, let response = response, try self.cookies().active == job.sentCookie else { throw error ?? FountainFailure.stale }
+                        guard error == nil, let response = response, try self.currentCookie() == job.sentCookie else { throw error ?? FountainFailure.stale }
                         try plan.piece(response, offset: offset, length: length, received: data.count)
                         let sink = try FileHandle(forWritingTo: file); defer { try? sink.close() }
                         try sink.seekToEnd(); try sink.write(contentsOf: data); try sink.synchronize()
@@ -1641,16 +1914,19 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     private func recoverySession(_ job: FountainJob, _ completion: @escaping (FountainRecovery.Authority) throws -> Void) {
         do {
             guard current(job), let backend = origin else { throw FountainRecoveryError.stale }
-            let cookies = try self.cookies()
-            guard cookies.revoke == nil, !(try hasInvalidation(backend)) else { throw FountainRecoveryError.auth }
-            job.sentCookie = cookies.active
-            job.task = try network(path: "/api/session", method: "GET", headers: [:], body: Data(), cookie: job.sentCookie, timeout: job.timeout, file: nil) { response, data, error in
+            if workspace != nil { job.sentCookie = try currentCookie() }
+            else {
+                let cookies = try self.cookies()
+                guard cookies.revoke == nil, !(try hasInvalidation(backend)) else { throw FountainRecoveryError.auth }
+                job.sentCookie = cookies.active
+            }
+            job.task = try network(path: job.wire("/api/session"), method: "GET", headers: [:], body: Data(), cookie: job.sentCookie, timeout: job.timeout, file: nil) { response, data, error in
                 guard self.current(job) else { return }
                 do {
                     if response?.statusCode == 401 { try self.recoveryUnauthorized(job) }
                     guard error == nil, let response = response, response.statusCode == 200 else { throw FountainRecoveryError.auth }
-                    guard try self.cookies().active == job.sentCookie else { throw FountainRecoveryError.stale }
-                    try self.observePrivateSession(job, response: response, data: data, method: "GET")
+                    guard try self.currentCookie() == job.sentCookie else { throw FountainRecoveryError.stale }
+                    if FountainWorkspacePolicy.scoped(job.path) == nil { try self.observePrivateSession(job, response: response, data: data, method: "GET") }
                     let authority = try FountainRecovery.Authority.session(data, origin: backend, reference: self.outboxReference(job.sentCookie) ?? "local-no-cookie")
                     // This explicit Recovery session remains authoritative even
                     // when a permanently suspended Outbox grant cannot mutate.
@@ -1680,12 +1956,12 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         guard current(job), let authority = recoveryGrant, authority.origin == origin,
               recoveryGrantAuth == auth, recoveryGrantGeneration == generation,
               authority.reference == (outboxReference(job.sentCookie) ?? "local-no-cookie"),
-              try cookies().active == job.sentCookie else { throw FountainRecoveryError.stale }
+              try currentCookie() == job.sentCookie else { throw FountainRecoveryError.stale }
         let store = try outboxStore()
         return (store, try store.admitRecoveryObservation(authority, sessionRef: outboxReference(job.sentCookie)), authority)
     }
     private func noteRecoveryServerObservation(_ store: FountainOutbox, admission: FountainOutbox.RecoveryObservation, authority: FountainRecovery.Authority, job: FountainJob, path: String, status: Int, data: Data) throws {
-        guard current(job), outbox === store, try cookies().active == job.sentCookie,
+        guard current(job), outbox === store, try currentCookie() == job.sentCookie,
               recoveryGrantAuth == auth, recoveryGrantGeneration == generation,
               let currentAuthority = recoveryGrant, currentAuthority.matches(authority),
               min(currentAuthority.deadline, authority.deadline) > Date().timeIntervalSince1970 * 1000 else { throw FountainRecoveryError.stale }
@@ -1708,11 +1984,11 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
             guard let path = paths.first else { try completion(initial); return }
             _ = try Self.validPath(path)
             let recoveryObservation = try recoveryObservation(job, path: path, method: "GET")
-            job.task = try network(path: path, method: "GET", headers: [:], body: Data(), cookie: job.sentCookie, timeout: job.timeout, file: nil) { response, data, error in
+            job.task = try network(path: job.wire(path), method: "GET", headers: [:], body: Data(), cookie: job.sentCookie, timeout: job.timeout, file: nil) { response, data, error in
                 guard self.current(job) else { return }
                 do {
                     guard error == nil, let response = response else { throw FountainRecoveryError.storage }
-                    guard try self.cookies().active == job.sentCookie else { throw FountainRecoveryError.stale }
+                    guard try self.currentCookie() == job.sentCookie else { throw FountainRecoveryError.stale }
                     guard response.statusCode != 401 else { throw FountainRecoveryError.auth }
                     if let (store, admission, authority) = recoveryObservation {
                         try self.noteRecoveryServerObservation(store, admission: admission, authority: authority, job: job, path: path, status: response.statusCode, data: data)
@@ -1732,6 +2008,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         end(job, failure: .cancelled)
     }
     private func recoveryUnauthorized(_ job: FountainJob) throws {
+        if workspace != nil { try accountTransport?.invalidate(authRequired: true); return }
         if let sent = job.sentCookie, try cookies().active == sent {
             try saveCookies(FountainCookies(active: nil, revoke: sent))
             auth += 1; job.auth = auth; authDrainSuspended += 1
@@ -1744,6 +2021,8 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
     private func resolveRecovery(_ job: FountainJob, result: [String: Any], reader: FountainRecovery, authority: FountainRecovery.Authority) {
         guard current(job) else { return }
         job.callClosed = true
+        var result = result
+        if FountainWorkspacePolicy.scoped(job.path) != nil { result["workspaceEpoch"] = workspaceEpoch }
         let startingAuth = auth, startingGeneration = generation, startingBoundary = reader.boundary
         let cleanStale = { [weak self] in
             self?.queue.async {
@@ -1782,7 +2061,7 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
                     Self.ownership.lock(); defer { Self.ownership.unlock() }
                     guard self.current(job), self.exportID == job.id else { return }
                     if let proof = job.backupAuthority {
-                        guard (try? self.cookies().active) == job.sentCookie, proof.deadline > Date().timeIntervalSince1970 * 1000 else { self.queue.async { self.end(job, failure: .stale) }; return }
+                        guard (try? self.currentCookie()) == job.sentCookie, proof.deadline > Date().timeIntervalSince1970 * 1000 else { self.queue.async { self.end(job, failure: .stale) }; return }
                     }
                     if let token = self.recoverySaveTokens[job.id], let authority = self.recoverySaveAuthority[job.id], self.recovery?.validSave(token, other: authority) != true {
                         self.queue.async { self.failRecovery(job, FountainRecoveryError.stale) }; return
@@ -1802,13 +2081,13 @@ final class FountainNative: CAPPlugin, CAPBridgedPlugin, URLSessionDataDelegate,
         queue.async {
             guard self.exportID == id, let job = self.jobs[id] else { return }
             if let token = self.recoverySaveTokens[id], let authority = self.recoverySaveAuthority[id], let reader = self.recoveryReaders[id] {
-                guard self.current(job), (try? self.cookies().active) == job.sentCookie, reader.validSave(token, other: authority) else { self.failRecovery(job, FountainRecoveryError.stale); return }
+                guard self.current(job), (try? self.currentCookie()) == job.sentCookie, reader.validSave(token, other: authority) else { self.failRecovery(job, FountainRecoveryError.stale); return }
                 do { try reader.checkSource(authority) } catch { self.failRecovery(job, error); return }
                 let expected = self.recoveryFiles[id]?.count ?? 0, saved = min(savedCount, expected)
                 reader.cancelPrepared()
                 self.resolveRecovery(job, result: ["saved": saved == expected && expected > 0, "filesSaved": saved, "generation": job.generation], reader: reader, authority: authority)
             } else {
-                if let proof = job.backupAuthority { guard self.current(job), (try? self.cookies().active) == job.sentCookie, proof.deadline > Date().timeIntervalSince1970 * 1000 else { self.end(job, failure: .stale); return } }
+                if let proof = job.backupAuthority { guard self.current(job), (try? self.currentCookie()) == job.sentCookie, proof.deadline > Date().timeIntervalSince1970 * 1000 else { self.end(job, failure: .stale); return } }
                 self.end(job, result: ["saved": savedCount > 0, "generation": job.generation])
             }
         }

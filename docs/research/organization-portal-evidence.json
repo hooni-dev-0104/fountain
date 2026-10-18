@@ -1,0 +1,356 @@
+{
+  "scope": "독립 조직 인증·관리 API와 화면·모바일 전송의 구현·실제 인증 검증·운영 배포",
+  "snapshot": "운영 배포·실제 인증·브라우저·SDK 검증과 QA 정리 완료; 전체 제품 목표 진행 중",
+  "wholeGoalComplete": false,
+  "wholeFeatureOrProductParityVerified": false,
+  "featureInventory": {
+    "features": 41,
+    "wholeFeaturesVerified": 0,
+    "goalStatus": "active"
+  },
+  "contracts": {
+    "workspaceCookie": "fountain_session",
+    "organizationCookie": "fountain_organization_session",
+    "independentGoTrueLoginRequired": true,
+    "separateEncryptionPurpose": true,
+    "sharedSessionEnginePreservesWorkspaceFacade": true,
+    "organizationIdentityHasNoSyntheticWorkspaceMemberOrRole": true,
+    "loginMayHaveZeroOwnedOrganizations": true,
+    "publicIdentityHasNoAuthUUIDsOrProviderTokens": true,
+    "currentSessionBindingRequired": true,
+    "freshSessionAndGrantBeforeReceipt": true,
+    "explicitSameAccountWorkspaceOwnerConsent": true,
+    "emailIsExplicitOwnerSelectorNotAuthority": true,
+    "workspaceFailureStatus": 403,
+    "organizationFailureStatus": 401,
+    "privateOrganizationResponsesPersistedInBrowserStorage": false,
+    "organizationVaultExcludedFromWorkspaceBackup": true,
+    "organizationVaultAuthForeignKeyOrTrigger": false,
+    "forceRLS": true,
+    "publicServiceOnlyRPCsAdded": 2,
+    "directTableAccessDenied": true,
+    "nativeDedicatedRequestAndCancel": true,
+    "nativeIndependentOSVaultAndEpoch": true,
+    "nativeWorkspaceOutboxUntouchedByOrganizationRealm": true,
+    "workspaceCookieCrossRoutes": [
+      "GET /api/organization/setup-eligibility",
+      "POST /api/organization/organizations",
+      "POST /api/organization/workspace-preview",
+      "POST /api/organization/workspace-accept"
+    ]
+  },
+  "deployment": {
+    "mainVersion": 28,
+    "mainFilesExact": 52,
+    "mainSharedFilesExact": 50,
+    "newMainAPIOrPublicFrontendDeployed": true,
+    "publicFrontend": {
+      "deployment": "dpl_6nFNVBcDa5dAcyp2epekxXyUGUjZ",
+      "status": "READY",
+      "origin": "https://fountain-hoonis-projects-1ccfd37e.vercel.app",
+      "allowedDeploymentFiles": 19,
+      "exactPublicAssets": 17,
+      "additionalHTTPBoundaryChecks": 8,
+      "totalPublicChecks": 25,
+      "authenticatedHumanJourney": false,
+      "anonymousChromeLoginAndMainLinkVerified": true
+    },
+    "migrations": 47,
+    "sessionMigration": {
+      "file": "supabase/migrations/20261018012202_fountain_organization_sessions.sql",
+      "sha256": "46d6947bcb36b88d4d0586f4beac6b4499582f69baaa9cf92eefaa0a0d9c33ac",
+      "serverVersion": "20261018013625",
+      "applied": true
+    },
+    "cleanupMigration": {
+      "file": "supabase/migrations/20261018013921_fountain_organization_session_cleanup.sql",
+      "serverVersion": "20261018013940",
+      "applied": true
+    },
+    "exactFunctionBodiesOwnersAndGrants": 9,
+    "functionOwner": "postgres",
+    "cron": {
+      "name": "fountain-organization-session-prune",
+      "schedule": "17 * * * *",
+      "active": true,
+      "maxRows": 128,
+      "statementTimeoutSeconds": 15,
+      "privateOrganizationVaultOnly": true,
+      "authDMLOrEdgeInvocation": false,
+      "sameCommandActualTemporarySchedulerTestPassed": true,
+      "temporaryJobAndHistoryRemoved": true,
+      "liveProviderRetryCipherPreserved": true
+    },
+    "qaVerifierVersion": 109,
+    "qaSharedFilesExact": 50,
+    "qaWorkspaces": 2,
+    "qaEntitiesEach": 4,
+    "originalWorkspaceUsedForQA": false,
+    "cleanupVerifierVersion": 110,
+    "retiredVerifierVersion": 111,
+    "retiredVerifierFilesExact": 1,
+    "retiredVerifierUnconditional404": true,
+    "oldNonceHTTPPaths404": 6,
+    "newDependencies": false,
+    "SDKDownloaded": false
+  },
+  "verification": {
+    "sql": {
+      "actualPostgres": true,
+      "transactionalAuthFixtures": true,
+      "actualGoTrueLoginClaim": false,
+      "files": [
+        "supabase/tests/organization-sessions.sql",
+        "supabase/tests/organization-portal.sql"
+      ],
+      "passed": true
+    },
+    "organizationAuth": {
+      "checks": 26,
+      "passed": true,
+      "scope": "제어된 Auth/RPC 응답과 vault 모델; 실제 GoTrue 여정은 별도 기록"
+    },
+    "organizationHTTP": {
+      "checks": 29,
+      "passed": true,
+      "actualRemoteOrganizationJourney": "별도 actualAuthAndHTTP 항목에서 확인"
+    },
+    "organizationUIModel": {
+      "groups": 10,
+      "passed": true,
+      "actualBrowser": false
+    },
+    "productionUIControlledRaces": {
+      "checks": 2,
+      "passed": true,
+      "productionUIFunctionsWithControlledHTTP": true,
+      "actualBrowser": false,
+      "file": "tests/organization-ui-races.mjs"
+    },
+    "nodeRegression": {
+      "scripts": 76,
+      "passedAfterTargetedRechecks": true,
+      "targetedRechecks": 9,
+      "initialAccessObservationTimeoutRetained": true,
+      "initialInventoryFingerprintFailureRetained": true,
+      "allScriptsAtOneSourceRevision": false,
+      "sourceUnchangedDuringRechecks": true
+    },
+    "pythonRegression": {
+      "actualPostgresConfigured": true,
+      "tests": 802,
+      "passed": 802,
+      "skipped": 0,
+      "exitCode": 0
+    },
+    "ios": {
+      "sdk": "iPhoneSimulator27.0",
+      "actualSDKBuildAndCodesignCheck": true,
+      "simulatorTests": 2,
+      "runtimeFailures": 0,
+      "transportFixtureChecks": 54,
+      "actualKeychainAndSQLite": true,
+      "realRemoteHTTP": false,
+      "actualOrganizationHumanJourney": false,
+      "fixtureQoSRuntimeWarnings": 1,
+      "ownedSimulatorDeleted": true,
+      "finalReleaseSimulatorArtifact": true,
+      "physicalIOSIPA": false,
+      "finalPublicAssetsExact": 23,
+      "finalPackagedFilesExactIncludingGeneratedFiles": 25,
+      "fullNativeTestsRepeatedAfterFinalAssetBuild": false,
+      "existingDevicesPreserved": true
+    },
+    "android": {
+      "sdk": "preinstalled android-36/build-tools36.0.0",
+      "offlineGradle": true,
+      "appAndTestAPKAssembled": true,
+      "actualEmulatorTests": 26,
+      "organizationRealmTests": 7,
+      "existingSessionDurabilityTests": 14,
+      "existingAuthRetentionOutboxTests": 5,
+      "portableOrganizationPolicyChecks": 81,
+      "portableExistingWorkspacePolicyChecks": 195,
+      "realNetworkAuthVerified": false,
+      "fullNativeUIJourneyVerified": false,
+      "ownedEmulatorCleanupPending": false,
+      "finalAPKPublicAssetsExact": 23,
+      "finalAPKGeneratedCordovaAssetsExact": 2
+    },
+    "typeScriptCompilerExecutionProven": false,
+    "actualAuthAndHTTP": {
+      "status": "passed_in_exact_QA_scope",
+      "firstSetupServerResponseReceived": true,
+      "localClientCloudflareCookieValidationFailed": true,
+      "recoverExistingSuccessfulResponseBeforeRetryingLogin": true,
+      "lostExactProviderSIDRevokedAndAbsenceCheckedBeforeCipherClear": true,
+      "initialFailedClientProofRetained": true,
+      "identitySmokeChecks": 2,
+      "HTTPJourneyGroups": 8,
+      "workspaces": 2,
+      "organizations": 2,
+      "independentProviderSIDsVerifiedBySQL": true,
+      "organizationEventsBeforeBrowser": 11,
+      "organizationReceiptsBeforeBrowser": 13,
+      "actualOrganizationHTTPJourneyPassed": true,
+      "actualBrowserJourneyPassed": true,
+      "browser": {
+        "actualChrome": true,
+        "actualGoTrueEdgePostgres": true,
+        "temporaryLoopbackPresentation": true,
+        "publicProductionJourney": false,
+        "fullFlowChecks": 7,
+        "finalReadAndVisualRechecks": 6,
+        "combinedAs13UniqueChecks": false,
+        "serverDisplayValuesRemainInertText": true,
+        "renameAndExplicitOwnerGrant": true,
+        "viewport390NoHorizontalOverflow": true,
+        "privateBrowserStorageEntries": 0,
+        "organizationLogoutPreservesWorkspaceSession": true,
+        "visualScore": 94,
+        "visualScope": "기존 Fountain 스타일·반응형 품질; Notion 픽셀 동등성 아님",
+        "fullPageCaptureArtifactCheckedAgainstViewportAndDOM": true
+      }
+    }
+  },
+  "cleanup": {
+    "currentQADataCleanupComplete": true,
+    "qaVerifierRetired": true,
+    "protectedMarkersVerifiedBeforeOfficialPasswordAuth": true,
+    "providerTokensRemainServerOnly": true,
+    "globalProviderLogoutsBeforeAdminDelete": 2,
+    "AuthUsersDeleted": 2,
+    "AuthUsersAfter": 0,
+    "AuthSessionsAfter": 0,
+    "AuthRefreshTokensAfter": 0,
+    "workspaceAndOrganizationRealmPendingAfter": 0,
+    "exactOwnedWorkspacesRemoved": 2,
+    "exactOwnedOrganizationsRemoved": 2,
+    "guardDefinitionsRestoredBeforeCommit": true,
+    "productionCronJobPreserved": true,
+    "originalEntitySnapshotRows": 153,
+    "originalMetaSnapshotRows": 6,
+    "currentPhaseOriginalFingerprintFinalCheckComplete": true,
+    "finalKnownSecretScanComplete": true,
+    "privateCredentialsIncludedInThisDocument": false,
+    "privateQAValuesRedacted": true
+  },
+  "diagnostics": {
+    "existingDefaultDenyRLSInfo": 24,
+    "pgNetPublicSchemaWarningRemains": true,
+    "remediation": [
+      "https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy",
+      "https://supabase.com/docs/guides/database/database-linter?lint=0014_extension_in_public"
+    ]
+  },
+  "remainingLimits": [
+    "원본 작업공간의 실제 사용자 소유자 등록과 공개 운영 주소 가족 계정 여정",
+    "이번 단계의 macOS·Windows 실제 앱 여정",
+    "iOS·Android 원격 backend 조직 화면 여정",
+    "여러 작업공간 전환·탐색",
+    "조직 정책 적용·우선순위와 멤버·게스트 중복 제거",
+    "조직 검색·감사·법적 보류",
+    "지속 AI 대화·보존 정책",
+    "가족 계정의 다섯 플랫폼 실제 여정과 Notion 유료 기능 전체 비교"
+  ],
+  "evidenceInputs": [
+    ".data/organization-portal/sql-application-proof.json",
+    ".data/organization-portal/function-readback-proof.json",
+    ".data/organization-portal/cron-proof.json",
+    ".data/organization-portal/regression/node-all-final-proof.json",
+    ".data/organization-portal/python-regression-proof.json",
+    ".data/organization-portal/python-regression.log",
+    ".data/organization-portal/ios-sdk-proof.json",
+    ".data/organization-android/sdk-device-proof.json",
+    ".data/organization-portal/actual/actual-setup-reconciled-proof.json",
+    ".data/organization-portal/actual/actual-identity-proof.json",
+    ".data/organization-portal/actual/actual-journey-proof.json",
+    ".data/organization-portal/actual/actual-database-proof.json",
+    ".data/organization-portal/actual/actual-browser-full-flow-proof.json",
+    ".data/organization-portal/actual/actual-browser-proof.json",
+    ".omx/state/organization-portal/ralph-progress.json",
+    ".data/organization-portal/public-http-proof.json",
+    ".data/organization-portal/actual/actual-cleanup-delete-proof.json",
+    ".data/organization-portal/actual/database-cleanup-result.json",
+    ".data/organization-portal/actual/retired-old-nonce-proof.json",
+    ".data/organization-android/final-artifact-proof.json",
+    ".data/organization-portal/ios-final-artifact-proof.json",
+    ".data/organization-portal/actual/final-database-proof.json",
+    ".data/organization-portal/final-advisors.json",
+    ".data/organization-portal/private-history-proof.json",
+    ".data/organization-portal/installable-private-proof.json",
+    ".data/organization-portal/desktop-final-artifact-proof.json",
+    ".data/organization-portal/public-browser-proof.json"
+  ],
+  "finalDatabase": {
+    "AuthUsers": 0,
+    "otherMeta": 0,
+    "migrations": 47,
+    "AuthSessions": 0,
+    "originalMeta": 6,
+    "otherEntities": 0,
+    "refreshTokens": 0,
+    "StorageObjects": 0,
+    "originalMapping": 0,
+    "originalEntities": 153,
+    "organizationLinks": 0,
+    "organizationClaims": 0,
+    "organizationEvents": 0,
+    "productionPruneJob": 1,
+    "temporaryPruneJobs": 0,
+    "organizationReceipts": 0,
+    "organizationRegistry": 0,
+    "organizationRequests": 0,
+    "organizationSessions": 0,
+    "organizationOwnerGrants": 0,
+    "originalFingerprintsUnchanged": true
+  },
+  "artifacts": {
+    "directory": ".data/installables-organization-portal-20261018",
+    "platforms": [
+      "macOS arm64",
+      "Windows x64",
+      "Android debug",
+      "iOS Simulator Release"
+    ],
+    "files": [
+      {
+        "file": "Fountain-Android-debug.apk",
+        "bytes": 4964509,
+        "sha256": "80a6211b5141251c11d09138f022cc41ffe4ce58f2e70a5a4aeeac2d63423517"
+      },
+      {
+        "file": "Fountain-Windows-x64-organization-portal.zip",
+        "bytes": 158694100,
+        "sha256": "fee8333473c7cfed56ab1b1574ecded92c4129516934cf8b0a3930babb7443be"
+      },
+      {
+        "file": "Fountain-iOS-Simulator-Release.zip",
+        "bytes": 3269096,
+        "sha256": "948a15db0a8af16529849768589971774e544c648c44b671df7be92dd5c7ea8d"
+      },
+      {
+        "file": "Fountain-macOS-arm64-organization-portal.zip",
+        "bytes": 127669780,
+        "sha256": "a239e4bc695eef7fb807ea931aca7331ea814a81cdea84f06b57f962c526d3d1"
+      }
+    ],
+    "publicAssetsExact": {
+      "desktop": 17,
+      "mobile": 23
+    },
+    "macAdHocSignatureValid": true,
+    "windowsOSExecutionVerified": false,
+    "iOSPhysicalDeviceIPA": false,
+    "privateValuesScanned": 136,
+    "privateMatches": 0
+  },
+  "privateScan": {
+    "knownValues": 136,
+    "encodingVariants": 198,
+    "privateMatches": 0,
+    "archives": 4,
+    "redactionComplete": true,
+    "finalCommitRescanPending": false
+  }
+}

@@ -1,5 +1,7 @@
 # 조직 권한과 작업공간 연결의 DB 기반
 
+이 문서는 DB 기반을 만든 당시의 증거다. 후속 [조직 로그인·관리 화면](ORGANIZATION_PORTAL.md)에 독립 세션과 실제 GoTrue·브라우저·SDK 검증, API 28·마이그레이션 47의 현재 적용 상태를 기록했다.
+
 조직 소유권과 여러 작업공간 연결을 위한 독립된 Supabase 권한 계층을 추가했다. 조직 생성·이름 변경·소유자 부여와 철회·작업공간 연결 요청·동의·해제의 DB 계약을 구현했다. 공개 조직 화면이나 조직 로그인 경로는 아직 연결하지 않았다. [Notion 조직 통제](https://www.notion.com/help/organization-level-controls)와 [법적 보류](https://www.notion.com/help/legal-holds)는 공개 제품 요구사항의 참고 자료이며, 이 설계가 Notion 비공개 서버 구조를 복원했다는 뜻은 아니다.
 
 ## 권한 경계

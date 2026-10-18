@@ -3605,10 +3605,19 @@ async function boot(){
     if(!session.authenticated){if(state.offlineProfile)await suspendLoginInput();renderAccountLogin();return;}
     const destination=workspaceRoute();if(destination.workspaceId)await selectAccountWorkspace(destination.workspaceId,destination.route,destination.id);else await showWorkspaceDirectory();
   }catch(error){
-    if(state.accountMode===undefined&&(error.code==='ACCOUNT_DIRECTORY_ABSENT'||[404,405,501].includes(error.status))){state.accountMode=false;localStorage.setItem(absentDirectoryKey(),'1');if(FountainTransport.useLegacyWorkspace)await FountainTransport.useLegacyWorkspace({accountDirectoryAbsent:true});return bootLegacy();}
+    const unreachable=problem=>problem?.status===undefined&&(FountainTransport.native===true
+      ?problem?.code==='NATIVE_NETWORK_UNREACHABLE'&&FountainTransport.isNetworkUnavailable?.(problem)===true
+      :navigator.onLine===false&&problem instanceof TypeError&&problem.name==='TypeError'&&problem.code===undefined&&/^(?:Failed to fetch|Load failed|NetworkError when attempting to fetch resource\.?)$/.test(problem.message));
+    const absent=state.accountMode===undefined&&(error.code==='ACCOUNT_DIRECTORY_ABSENT'||[404,405,501].includes(error.status));
+    const cachedAbsence=state.accountMode===undefined&&localStorage.getItem(absentDirectoryKey())==='1'&&unreachable(error);
+    if(absent||cachedAbsence){
+      try{
+        if(FountainTransport.useLegacyWorkspace)await FountainTransport.useLegacyWorkspace({accountDirectoryAbsent:true});
+        state.accountMode=false;localStorage.setItem(absentDirectoryKey(),'1');return bootLegacy();
+      }catch(handshakeError){error=handshakeError;}
+    }
     if(error.code==='STALE_ACCOUNT'||error.code==='STALE_REQUEST')return;
-    if(state.accountMode===undefined&&navigator.onLine===false&&localStorage.getItem(absentDirectoryKey())==='1'){state.accountMode=false;if(FountainTransport.useLegacyWorkspace)await FountainTransport.useLegacyWorkspace({accountDirectoryAbsent:true});return bootLegacy();}
-    if(!error.status&&!FountainTransport.native&&navigator.onLine===false||FountainTransport.isNetworkUnavailable?.(error)){
+    if(unreachable(error)){
       try{const destination=workspaceRoute();if(destination.workspaceId&&await openOfflineWorkspace(destination))return;}catch{/* A local or native authority failure never enables another login mode. */}
     }
     $('#main').innerHTML='<div class="empty"><h2>계정에 연결하지 못했습니다.</h2><p>'+esc(error.message)+'</p><button class="outline-btn" data-action="reload">다시 시도</button></div>';

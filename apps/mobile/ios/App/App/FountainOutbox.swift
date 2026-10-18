@@ -95,7 +95,9 @@ extension FountainOutbox {
     }
     func admitSync(path: String, method: String, body: Data, sessionRef: String?) throws -> SyncAdmission? {
         guard path == "/api/sync", method == "POST" else { return nil }
+        guard try identity()["offline"] as? Bool != true, try identity()["needsFloor"] as? Bool != true else { throw FountainOutboxError.access }
         let profile = try verifiedProfile(), parts = try profileParts(profile), identity = try self.identity()
+        guard try control("accountNeedsReconcile:" + profile) == nil else { throw FountainOutboxError.access }
         guard body.count <= recordLimit, identity["sessionRef"] as? String == (sessionRef ?? "local-no-cookie"), let owner = owner, let auth = authEpoch, let lease = lease,
               let request = try decode(body) as? [String: Any], Set(request.keys) == Set(["workspace_id", "session_binding", "operations"]),
               request["workspace_id"] as? String == parts[1].removingPercentEncoding, request["session_binding"] as? String == parts[3].removingPercentEncoding,
@@ -477,13 +479,14 @@ extension FountainOutbox {
         }
         for (target, createID) in creates {
             guard local[target] != nil, let operation = mutations[createID]?.value?["operation"] as? [String: Any], let body = operation["body"] as? [String: Any] else { failure("page", target); continue }
+            guard let workspaceAuthority = fresh("workspace", "workspace", write: false) else { failure("page", target, "denied"); continue }
             if let parent = body["parent_id"] as? String {
                 if let predecessor = creates[parent] { edges[createID, default: []].insert(predecessor) }
                 else if fresh("page", parent, write: true) == nil { failure("page", target, "denied") }
             } else {
                 guard ["owner", "admin", "member"].contains(role ?? "") else { failure("page", target, "denied"); continue }
                 let space = body["teamspace_id"] as? String ?? (body["teamspace_id"] is NSNull ? "" : "general")
-                let spaces = ledger["workspace:workspace"]?["teamspaces"] as? [String: Int] ?? [:]
+                let spaces = workspaceAuthority["teamspaces"] as? [String: Int] ?? [:]
                 if !space.isEmpty && (spaces[space] ?? 0) < 3 { failure("page", target, "denied") }
             }
         }
@@ -925,9 +928,10 @@ extension FountainOutbox {
             Change(op: "delete", bucket: item.bucket, encodedKey: item.encodedKey, profile: item.profile, resource: item.resource, value: nil, payload: nil)
         }
         guard let workspace = try captured("workspace:workspace", plan: plan), let nativeSession = try control("nativeSession:" + plan.profile) as? [String: Any] else { throw FountainOutboxError.access }
-        let profileValue: [String: Any] = ["id": plan.profile, "origin": origin, "workspaceId": scope[1].removingPercentEncoding!, "memberId": scope[2].removingPercentEncoding!, "cacheBinding": scope[3].removingPercentEncoding!, "session": nativeSession, "workspace": workspace, "validUntil": try identity()["validUntil"] ?? NSNull(), "updatedAt": now]
+        var profileValue: [String: Any] = ["id": plan.profile, "origin": origin, "workspaceId": scope[1].removingPercentEncoding!, "memberId": scope[2].removingPercentEncoding!, "cacheBinding": scope[3].removingPercentEncoding!, "session": nativeSession, "workspace": workspace, "validUntil": try identity()["validUntil"] ?? NSNull(), "updatedAt": now]
+        if let parent = nativeSession["account_binding"] as? String { profileValue["accountBinding"] = parent }
         authorityOverlay.append(try change(["op": "put", "bucket": "profiles", "key": plan.profile, "value": profileValue]))
-        for pointer in ["active", "last-profile"] { authorityOverlay.append(try change(["op": "put", "bucket": "meta", "key": pointer, "value": ["id": pointer, "profileId": plan.profile]])) }
+        for pointer in try pointerKeys(plan.profile) { authorityOverlay.append(try change(["op": "put", "bucket": "meta", "key": pointer, "value": ["id": pointer, "profileId": plan.profile]])) }
         for (resource, snapshot) in fresh {
             let database = resource.components(separatedBy: "|").count == 6
             var value: [String: Any] = ["key": resource, "profileId": plan.profile, "snapshot": snapshot, "updatedAt": now]
@@ -1085,8 +1089,10 @@ extension FountainOutbox {
             if item.value == nil { changes.append(Change(op: "delete", bucket: item.bucket, encodedKey: item.encodedKey, profile: item.profile, resource: nil, value: nil, payload: nil)) }
             else { changes.append(try change(["op": "delete", "bucket": item.bucket, "key": decode(Data(item.encodedKey.utf8))])) }
         }
-        let profileValue: [String: Any] = ["id": plan.profile, "origin": origin, "workspaceId": parts[1].removingPercentEncoding!, "memberId": parts[2].removingPercentEncoding!, "cacheBinding": parts[3].removingPercentEncoding!, "session": nativeSession, "workspace": workspace, "validUntil": try identity()["validUntil"] ?? NSNull(), "updatedAt": now]
-        try put("profiles", plan.profile, profileValue); try put("meta", "active", ["id": "active", "profileId": plan.profile]); try put("meta", "last-profile", ["id": "last-profile", "profileId": plan.profile])
+        var profileValue: [String: Any] = ["id": plan.profile, "origin": origin, "workspaceId": parts[1].removingPercentEncoding!, "memberId": parts[2].removingPercentEncoding!, "cacheBinding": parts[3].removingPercentEncoding!, "session": nativeSession, "workspace": workspace, "validUntil": try identity()["validUntil"] ?? NSNull(), "updatedAt": now]
+        if let parent = nativeSession["account_binding"] as? String { profileValue["accountBinding"] = parent }
+        try put("profiles", plan.profile, profileValue)
+        for pointer in try pointerKeys(plan.profile) { try put("meta", pointer, ["id": pointer, "profileId": plan.profile]) }
         var fresh: [String: [String: Any]] = [:]
         for key in plan.required.keys.sorted() where key != "workspace:workspace" {
             guard let descriptor = plan.required[key], let kind = descriptor["kind"], kind != "attachment", let id = descriptor["id"], let body = try captured(key, plan: plan) else { continue }
@@ -1278,6 +1284,7 @@ extension FountainOutbox {
         return ready
     }
     func reconcile(_ input: [String: Any], admissionWatermark: Int, sessionRef: String?) throws -> [String: Any] {
+        guard try identity()["offline"] as? Bool != true || ["settle", "cancel"].contains(input["phase"] as? String ?? "") else { throw FountainOutboxError.access }
         #if DEBUG
         let diagnostic = input["phase"] as? String ?? "invalid"
         Self.storagePhase(diagnostic == "prepare" ? (input["planId"] == nil ? "prepare-initial" : "prepare-continued") : (["commit", "cancel", "settle"].contains(diagnostic) ? "reconcile-" + diagnostic : "reconcile-invalid"))
@@ -1467,6 +1474,9 @@ extension FountainOutbox {
             }
             try self.requireAccess(profile)
             try self.qualifyNativeLocalCreations(profile, targets: localTargets, overlay: [])
+            if try self.control("account:" + profile) != nil {
+                try self.execute("DELETE FROM control WHERE id IN (?,?)", ["accountNeedsReconcile:" + profile, "accountOfflineDenied:" + profile])
+            }
             for item in plan.changes where item.op == "put" { try self.attributeRecord(item, profile: profile) }
             let target = try self.advance()
             let receipt: [String: Any] = ["version": 1, "planId": id, "checksum": checksum, "sourceHead": plan.head, "targetHead": target, "mode": plan.mode, "counts": ready["counts"]!]
@@ -1748,6 +1758,13 @@ final class FountainOutbox {
         }
         return parts
     }
+    private func pointerKeys(_ profile: String) throws -> [String] {
+        if let parent = try control("account:" + profile) as? String {
+            let parts = try profileParts(profile)
+            return ["active:", "last-profile:"].map { $0 + parent + ":" + parts[1].removingPercentEncoding! }
+        }
+        return ["active", "last-profile"]
+    }
     private func resourceProfile(_ key: String) throws -> String {
         let parts = key.components(separatedBy: "|")
         guard parts.count == 5 || (parts.count == 6 && parts[4] == "database"),
@@ -1861,6 +1878,175 @@ final class FountainOutbox {
         owner = nil; authEpoch = nil; lease = nil; readDeadline = nil
         boundary = UUID().uuidString; rotateHTTPAuthority()
     }
+    // Switching is durable parking, never revocation. A parked profile cannot
+    // provide leases or HTTP proofs until a fresh native session is reconciled.
+    func parkAccount() throws {
+        cancelReconciliation()
+        try transaction {
+            let value = try self.identity()
+            if let profile = value["profileId"] as? String, try self.control("account:" + profile) != nil {
+                try self.setControl("parked:" + profile, value)
+                try self.setControl("parkedProofs:" + profile, try self.control("proofs:" + profile) ?? [:])
+                try self.setControl("proofs:" + profile, [:])
+                try self.setControl("identity", ["state": "parked"])
+                try self.advanceProof()
+            }
+        }
+        owner = nil; authEpoch = nil; lease = nil; readDeadline = nil
+        boundary = UUID().uuidString; rotateHTTPAuthority()
+    }
+    func suspendAccounts() throws {
+        cancelReconciliation()
+        try transaction {
+            let profiles = try self.rows("SELECT substr(id,9) FROM control WHERE substr(id,1,8)='account:'").compactMap { $0[0] as? String }
+            for profile in profiles { try self.markSuspended(profile) }
+            let current = try self.identity()
+            if let profile = current["profileId"] as? String, profiles.contains(profile) { try self.setControl("identity", ["state": "blocked"]) }
+            _ = try self.advance(); try self.advanceProof()
+        }
+        owner = nil; authEpoch = nil; lease = nil; readDeadline = nil
+        boundary = UUID().uuidString; rotateHTTPAuthority()
+    }
+    func denyAccount(workspace: String, binding: String, parentBinding: String) throws {
+        var currentAffected = false
+        try transaction {
+            let current = try self.identity()["profileId"] as? String
+            for row in try self.rows("SELECT substr(id,9),value FROM control WHERE substr(id,1,8)='account:'") {
+                guard let profile = row[0] as? String, let bytes = row[1] as? Data,
+                      try self.decode(bytes) as? String == parentBinding else { continue }
+                let parts = try self.profileParts(profile)
+                if parts[1].removingPercentEncoding == workspace && parts[3].removingPercentEncoding == binding {
+                    try self.markSuspended(profile)
+                    currentAffected = currentAffected || current == profile
+                }
+            }
+            if currentAffected { try self.advanceProof() }
+        }
+        if currentAffected { readDeadline = nil; boundary = UUID().uuidString; rotateHTTPAuthority() }
+    }
+    // A directory success is negative evidence about a previous cached scope.
+    // It cannot grant the new child or extend any lease, proof or cache TTL.
+    func observeAccountSelection(_ body: [String: Any], parentBinding: String) throws -> Bool {
+        guard let workspace = body["workspace_id"] as? String, let member = body["member"] as? [String: Any], let actor = member["id"] as? String,
+              let binding = body["cache_binding"] as? String, body["account_binding"] as? String == parentBinding else { throw FountainOutboxError.access }
+        var currentAffected = false
+        try transaction {
+            let current = try self.identity()["profileId"] as? String
+            for row in try self.rows("SELECT substr(id,9),value FROM control WHERE substr(id,1,8)='account:'") {
+                guard let profile = row[0] as? String, let bytes = row[1] as? Data,
+                      try self.decode(bytes) as? String == parentBinding else { continue }
+                let parts = try self.profileParts(profile)
+                guard parts[1].removingPercentEncoding == workspace else { continue }
+                var changed = false
+                if parts[2].removingPercentEncoding != actor || parts[3].removingPercentEncoding != binding {
+                    try self.markSuspended(profile); changed = true
+                } else if let previous = try self.control("nativeSession:" + profile) as? [String: Any], let oldMember = previous["member"] as? [String: Any] {
+                    let parser = ISO8601DateFormatter(); parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                    func deadline(_ raw: Any?) -> Double { guard let raw = raw as? String else { return 0 }; return (parser.date(from: raw) ?? ISO8601DateFormatter().date(from: raw))?.timeIntervalSince1970 ?? 0 }
+                    changed = oldMember["role"] as? String != member["role"] as? String || Self.boolean(oldMember["active"]) != Self.boolean(member["active"]) || deadline(body["expires_at"]) < deadline(previous["expires_at"])
+                    if changed {
+                        try self.execute("DELETE FROM control WHERE id IN (?,?)", ["sealedAccount:" + profile, "parkedProofs:" + profile])
+                        try self.setControl("accountOfflineDenied:" + profile, true)
+                        try self.setControl("accountNeedsReconcile:" + profile, true)
+                        try self.setControl("proofs:" + profile, [:])
+                        if current == profile { var identity = try self.identity(); identity["needsFloor"] = true; try self.setControl("identity", identity) }
+                    }
+                }
+                currentAffected = currentAffected || (changed && current == profile)
+            }
+            if currentAffected { try self.advanceProof() }
+        }
+        if currentAffected { readDeadline = nil; boundary = UUID().uuidString; rotateHTTPAuthority() }
+        return currentAffected
+    }
+    func activateAccount(_ body: [String: Any], sessionRef: String, parentBinding: String, requireReconcile: Bool = true) throws {
+        guard let workspace = body["workspace_id"] as? String, let member = body["member"] as? [String: Any],
+              let actor = member["id"] as? String, let binding = body["cache_binding"] as? String,
+              body["account_binding"] as? String == parentBinding else { throw FountainOutboxError.blocked }
+        let profile = origin + "|" + [workspace, actor, binding].map(Self.encodeURIComponent).joined(separator: "|")
+        try transaction {
+            guard try self.control("suspended:" + profile) == nil,
+                  try self.integer("SELECT count(*) FROM tombstones WHERE scope=?", [profile]) == 0 else { throw FountainOutboxError.access }
+            if let parent = try self.control("account:" + profile) as? String, parent != parentBinding { throw FountainOutboxError.access }
+            // A fresh native server verification of the same workspace with a
+            // different member/child incarnation permanently fences old input.
+            for row in try self.rows("SELECT substr(id,9),value FROM control WHERE substr(id,1,8)='account:'") {
+                guard let old = row[0] as? String, old != profile, let bytes = row[1] as? Data,
+                      try self.decode(bytes) as? String == parentBinding else { continue }
+                if try self.profileParts(old)[1].removingPercentEncoding == workspace { try self.markSuspended(old) }
+            }
+            if var parked = try self.control("parked:" + profile) as? [String: Any] {
+                guard parked["sessionRef"] as? String == sessionRef,
+                      (parked["validUntil"] as? Double ?? 0) > Date().timeIntervalSince1970 * 1000 else { throw FountainOutboxError.access }
+                parked["state"] = "verified"; parked["needsFloor"] = true; parked.removeValue(forKey: "offline")
+                try self.setControl("identity", parked)
+                try self.setControl("proofs:" + profile, [:])
+                try self.execute("DELETE FROM control WHERE id=?", ["parked:" + profile])
+                try self.advanceProof()
+            }
+            try self.setControl("account:" + profile, parentBinding)
+        }
+        let proofBeforeGrant = try proofEpoch()
+        try grant(body, sessionRef: sessionRef)
+        let grantChanged = try proofEpoch() != proofBeforeGrant
+        try transaction {
+            var current = try self.identity(); current.removeValue(forKey: "offline")
+            try self.setControl("identity", current)
+            try self.setControl("sealedAccount:" + profile, ["session": body, "reference": sessionRef, "parent": parentBinding])
+            if requireReconcile || grantChanged { try self.setControl("accountNeedsReconcile:" + profile, true) }
+        }
+    }
+    func accountCanTransmit() throws -> Bool {
+        let identity = try self.identity()
+        guard let profile = identity["profileId"] as? String, try control("account:" + profile) != nil else { return true }
+        let pending = try control("accountNeedsReconcile:" + profile), denied = try control("accountOfflineDenied:" + profile)
+        return identity["offline"] as? Bool != true && identity["needsFloor"] as? Bool != true && pending == nil && denied == nil
+    }
+    func retainedAccountScopes(parentBinding: String, sessionRef: String) throws -> [[String: Any]] {
+        var result: [[String: Any]] = []
+        let now = Date().timeIntervalSince1970 * 1000, live = try identity()
+        for row in try rows("SELECT substr(id,15),value FROM control WHERE substr(id,1,14)='sealedAccount:' ORDER BY id LIMIT 100") {
+            guard let profile = row[0] as? String, let bytes = row[1] as? Data,
+                  let sealed = try decode(bytes) as? [String: Any], sealed["parent"] as? String == parentBinding, sealed["reference"] as? String == sessionRef,
+                  try control("account:" + profile) as? String == parentBinding, try control("suspended:" + profile) == nil, try control("accountOfflineDenied:" + profile) == nil,
+                  try integer("SELECT count(*) FROM tombstones WHERE scope=?", [profile]) == 0,
+                  let session = sealed["session"] as? [String: Any], let rawExpiry = session["expires_at"] as? String,
+                  let member = session["member"] as? [String: Any], Self.boolean(member["active"]) == true else { continue }
+            guard let saved = try control("parked:" + profile) as? [String: Any] ?? (live["profileId"] as? String == profile ? live : nil),
+                  saved["state"] as? String == "verified", saved["sessionRef"] as? String == sessionRef, (saved["validUntil"] as? Double ?? 0) > now else { continue }
+            let parts = try profileParts(profile), workspace = parts[1].removingPercentEncoding!, actor = parts[2].removingPercentEncoding!, binding = parts[3].removingPercentEncoding!
+            guard session["workspace_id"] as? String == workspace, member["id"] as? String == actor, session["cache_binding"] as? String == binding, session["account_binding"] as? String == parentBinding else { continue }
+            let parser = ISO8601DateFormatter(); parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            guard let date = parser.date(from: rawExpiry) ?? ISO8601DateFormatter().date(from: rawExpiry), date.timeIntervalSince1970 * 1000 > now else { continue }
+            result.append(["workspaceId": workspace, "memberId": actor, "binding": binding, "accountBinding": parentBinding, "expiresAt": (date.timeIntervalSince1970 * 1000).rounded(.down)])
+        }
+        return result
+    }
+    func resumeAccountOffline(_ body: [String: Any], sessionRef: String, parentBinding: String) throws {
+        guard let workspace = body["workspace_id"] as? String, let member = body["member"] as? [String: Any], let actor = member["id"] as? String,
+              let binding = body["cache_binding"] as? String, body["account_binding"] as? String == parentBinding else { throw FountainOutboxError.access }
+        let profile = origin + "|" + [workspace, actor, binding].map(Self.encodeURIComponent).joined(separator: "|")
+        try transaction {
+            guard try self.control("account:" + profile) as? String == parentBinding,
+                  try self.control("suspended:" + profile) == nil, try self.control("accountOfflineDenied:" + profile) == nil,
+                  try self.integer("SELECT count(*) FROM tombstones WHERE scope=?", [profile]) == 0,
+                  let sealed = try self.control("sealedAccount:" + profile) as? [String: Any], sealed["reference"] as? String == sessionRef,
+                  sealed["parent"] as? String == parentBinding, let session = sealed["session"] as? [String: Any], try self.json(session) == self.json(body) else { throw FountainOutboxError.access }
+            let live = try self.identity()
+            guard var saved = try self.control("parked:" + profile) as? [String: Any] ?? (live["profileId"] as? String == profile ? live : nil),
+                  saved["sessionRef"] as? String == sessionRef,
+                  (saved["validUntil"] as? Double ?? 0) > Date().timeIntervalSince1970 * 1000,
+                  saved["state"] as? String == "verified" else { throw FountainOutboxError.access }
+            saved["offline"] = true; saved["needsFloor"] = true
+            try self.setControl("identity", saved)
+            try self.setControl("accountNeedsReconcile:" + profile, true)
+            if let proofs = try self.control("parkedProofs:" + profile) { try self.setControl("proofs:" + profile, proofs) }
+            try self.execute("DELETE FROM control WHERE id=?", ["parked:" + profile])
+            try self.advanceProof()
+        }
+        owner = nil; authEpoch = nil; lease = nil; readDeadline = nil
+        boundary = UUID().uuidString; rotateHTTPAuthority()
+    }
     func grant(_ body: [String: Any], sessionRef: String?, beforeMutation: (() -> Void)? = nil) throws {
         guard Self.boolean(body["authenticated"]) == true, let member = body["member"] as? [String: Any],
               let active = Self.boolean(member["active"]), ["owner", "admin", "member", "guest"].contains(member["role"] as? String ?? "") else { beforeMutation?(); try suspend(); throw FountainOutboxError.blocked }
@@ -1881,7 +2067,7 @@ final class FountainOutbox {
         let profile = origin + "|" + [workspace, actor, binding].map(Self.encodeURIComponent).joined(separator: "|")
         let reference = sessionRef ?? "local-no-cookie", previous = try identity()
         var nativeSession: [String: Any] = [:]
-        for key in ["authenticated", "required", "mode", "workspace_id", "cache_binding", "expires_at"] { nativeSession[key] = body[key] }
+        for key in ["authenticated", "required", "mode", "workspace_id", "cache_binding", "expires_at", "account_binding"] { nativeSession[key] = body[key] }
         nativeSession["member"] = member
         let suspendedMarker = try control("suspended:" + profile)
         let revoked = try integer("SELECT count(*) FROM tombstones WHERE scope=?", [profile])
@@ -2238,18 +2424,44 @@ final class FountainOutbox {
                           Self.encodeURIComponent(session["workspace_id"] as? String ?? "") == parts[1],
                           let member = session["member"] as? [String: Any],
                           Self.encodeURIComponent(member["id"] as? String ?? "") == parts[2] else { throw FountainOutboxError.invalid }
+                    if let parent = try control("account:" + profile) as? String {
+                        guard value["accountBinding"] as? String == parent, session["account_binding"] as? String == parent else { throw FountainOutboxError.invalid }
+                    } else if value["accountBinding"] != nil && !(value["accountBinding"] is NSNull) { throw FountainOutboxError.invalid }
                 }
             } else if bucket == "meta" {
                 if key.hasPrefix("revoked-resource:") { resource = String(key.dropFirst(17)); profile = try resourceProfile(resource!) }
                 else if key.hasPrefix("revoked:") { profile = String(key.dropFirst(8)) }
                 else if key.hasPrefix("mutation-sequence:") { profile = String(key.dropFirst(18)) }
                 else if key.hasPrefix("recovery-import:") { profile = try importReceiptProfile(key, op: op, value: value) }
+                else if key.hasPrefix("parked:") || key.hasPrefix("workspace-input:") || key.hasPrefix("suspended:") || key.hasPrefix("ended-account:") {
+                    let prefix = key.hasPrefix("workspace-input:") ? "workspace-input:" : key.hasPrefix("parked:") ? "parked:" : key.hasPrefix("suspended:") ? "suspended:" : "ended-account:"
+                    var tail = String(key.dropFirst(prefix.count))
+                    if prefix == "ended-account:" {
+                        guard let separator = tail.firstIndex(of: ":") else { throw FountainOutboxError.invalid }
+                        let parent = String(tail[..<separator]); tail = String(tail[tail.index(after: separator)...])
+                        guard try control("account:" + tail) as? String == parent else { throw FountainOutboxError.invalid }
+                    }
+                    profile = tail
+                    guard value == nil || value?["profileId"] as? String == profile else { throw FountainOutboxError.invalid }
+                    if prefix != "suspended:" {
+                        guard let parent = try control("account:" + profile) as? String,
+                              prefix != "parked:" || value == nil || value?["accountBinding"] as? String == parent else { throw FountainOutboxError.invalid }
+                    }
+                }
+                else if key.hasPrefix("active:") || key.hasPrefix("last-profile:") {
+                    if let supplied = value?["profileId"] as? String { profile = supplied }
+                    else if let stored = try rows("SELECT profile_id FROM records WHERE bucket='meta' AND key=?", [encoded]).first?.first as? String { profile = stored }
+                    else if let current = try identity()["profileId"] as? String { profile = current }
+                    else { throw FountainOutboxError.blocked }
+                    guard try pointerKeys(profile).contains(key) else { throw FountainOutboxError.invalid }
+                }
                 else if key == "active" || key == "last-profile" {
                     if let supplied = value?["profileId"] as? String { profile = supplied }
                     else if let stored = try rows("SELECT profile_id FROM records WHERE bucket='meta' AND key=?", [String(data: try json("active"), encoding: .utf8)!]).first?.first as? String { profile = stored }
                     else if let last = try control("lastProfile") as? String { profile = last }
                     else { throw FountainOutboxError.blocked }
                 } else { throw FountainOutboxError.invalid }
+                if (key == "active" || key == "last-profile"), try control("account:" + profile) != nil { throw FountainOutboxError.invalid }
                 if let value = value, value["id"] as? String != key { throw FountainOutboxError.invalid }
             } else {
                 let pieces = key.components(separatedBy: "|")
@@ -2287,7 +2499,7 @@ final class FountainOutbox {
     }
     private func isRevocation(_ change: Change) -> Bool {
         guard change.bucket == "meta", change.op == "put", let key = change.value?["id"] as? String else { return false }
-        return key.hasPrefix("revoked:") || key.hasPrefix("revoked-resource:")
+        return key.hasPrefix("revoked:") || key.hasPrefix("revoked-resource:") || key.hasPrefix("suspended:") || key.hasPrefix("ended-account:")
     }
     private func importReceiptProfile(_ key: String, op: String, value: [String: Any]?) throws -> String {
         guard let separator = key.lastIndex(of: ":"),
@@ -2342,7 +2554,7 @@ final class FountainOutbox {
         func issue(_ kind: String, _ id: String, _ reason: String) {
             if issues.count <= 100 && seen.insert(kind + "|" + id + "|" + reason).inserted { issues.append(["kind": kind, "id": id, "reason": reason]) }
         }
-        if try identity()["needsFloor"] as? Bool == true { issue("workspace", "workspace", "missing") }
+        if try identity()["needsFloor"] as? Bool == true, try identity()["offline"] as? Bool != true { issue("workspace", "workspace", "missing") }
         func proof(_ kind: String, _ id: String) -> [String: Any]? {
             if kind != "workspace", tombstones.contains(profile + (kind == "database" ? "|database|" : "|") + Self.encodeURIComponent(id)) { issue(kind, id, "denied"); return nil }
             guard let value = ledger[proofKey(kind, id)] else { issue(kind, id, "missing"); return nil }
@@ -2613,14 +2825,23 @@ final class FountainOutbox {
             let identity = try self.identity()
             if active == nil && identity["profileId"] != nil { throw FountainOutboxError.access }
             let cleanupOnly = try active.map { try self.ownNegativeChanges(changes, profile: $0) } ?? false
-            if mode == "active" && identity["needsFloor"] as? Bool == true && !cleanupOnly { throw FountainOutboxError.access }
+            if mode == "active" && identity["needsFloor"] as? Bool == true && identity["offline"] as? Bool != true && !cleanupOnly { throw FountainOutboxError.access }
+            if mode == "active", identity["offline"] as? Bool == true, !cleanupOnly {
+                guard changes.allSatisfy({ ["operations", "drafts", "mutations", "localPages", "transfers", "meta", "snapshots"].contains($0.bucket) }) else { throw FountainOutboxError.access }
+                if let profile = active {
+                    let local = try self.localCreationAuthority(profile, overlay: changes)
+                    for item in changes where item.bucket == "snapshots" {
+                        guard let id = item.resource?.components(separatedBy: "|").last?.removingPercentEncoding, local.pages[id]?["local"] as? Bool == true else { throw FountainOutboxError.access }
+                    }
+                }
+            }
             if let stagedOwner = try self.control("stagedOwner:" + txID) as? String {
                 guard active == stagedOwner, try self.control("suspended:" + stagedOwner) == nil else { throw FountainOutboxError.access }
             }
             let fencedProfiles = Set(changes.filter {
                 if $0.bucket == "profiles" && $0.op == "delete" { return true }
                 guard $0.bucket == "meta", let key = try? self.decode(Data($0.encodedKey.utf8)) as? String else { return false }
-                return key.hasPrefix("revoked:")
+                return key.hasPrefix("revoked:") || key.hasPrefix("suspended:") || key.hasPrefix("ended-account:")
             }.map { $0.profile })
             if mode == "active" && !cleanupOnly {
                 guard proofEpoch == (try self.proofEpoch()), let profile = active else { throw FountainOutboxError.access }
@@ -2665,7 +2886,7 @@ final class FountainOutbox {
                 }
                 if item.op == "delete" {
                     if item.bucket == "meta", let key = try self.decode(Data(item.encodedKey.utf8)) as? String,
-                       key.hasPrefix("revoked:") || key.hasPrefix("revoked-resource:") { throw FountainOutboxError.blocked }
+                       key.hasPrefix("revoked:") || key.hasPrefix("revoked-resource:") || key.hasPrefix("suspended:") || key.hasPrefix("ended-account:") { throw FountainOutboxError.blocked }
                     guard active == item.profile else { throw FountainOutboxError.access }
                     try self.execute("DELETE FROM records WHERE bucket=? AND key=?", [item.bucket, item.encodedKey])
                     continue

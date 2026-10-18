@@ -9,7 +9,7 @@ import {ASSETS} from '../web/build.mjs';
 const folder=dirname(fileURLToPath(import.meta.url));
 const MIME=Object.freeze({'.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.html':'text/html; charset=utf-8'});
 const FILE_LIMIT=4*1024*1024,TOTAL_LIMIT=16*1024*1024;
-if(ASSETS.length!==17||new Set(ASSETS).size!==17||ASSETS.some(name=>! /^[a-z0-9][a-z0-9-]*\.(js|css|html)$/.test(name)))throw Error('Review desktop public asset policy');
+if(ASSETS.length!==20||new Set(ASSETS).size!==20||ASSETS.some(name=>! /^[a-z0-9][a-z0-9-]*\.(js|css|html)$/.test(name)))throw Error('Review desktop public asset policy');
 
 async function directory(path){
   const info=await lstat(path);

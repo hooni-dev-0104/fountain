@@ -3,7 +3,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path'),http=require('node:http'),{once}=require('node:events'),{createHash}=require('node:crypto');
 const {UI_ORIGIN,isCloudServer,cloudPartitions,networkAllowed,createCloudClient}=require('../../apps/desktop/src/cloud.cjs');
 const SERVER='https://abcdefghijklmnopqrst.supabase.co',PREFIX='/functions/v1/fountain-api';
-const names=['app.js','backup.js','collaboration.js','index.html','mutations.js','offline.js','organization.html','organization.js','organization.css','presence.js','public.js','recovery-import.js','style.css','sw.js','transport.js','uploads.js','version-diff.js'];
+const names=['account.js','workspaces.js','workspace-scope.js','app.js','backup.js','collaboration.js','index.html','mutations.js','offline.js','organization.html','organization.js','organization.css','presence.js','public.js','recovery-import.js','style.css','sw.js','transport.js','uploads.js','version-diff.js'];
 const hash=value=>createHash('sha256').update(value).digest('hex');
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function fixture(t){const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'fountain-cloud-test-'))),files=[];
@@ -160,4 +160,17 @@ test('5xx recognition refuses unknown/malformed/oversized/non-JSON bodies and no
 test('public5xx body reads remain bounded by deadline and abort, with no retained active I/O',async t=>{
  let cancelled=0;const c=await client(t,async()=>new Response(new ReadableStream({cancel(){cancelled++;}}),{status:507,headers:{'Content-Type':'application/json'}}),{requestTimeoutMs:40});c.resume();assert.equal((await c.handle(req())).status,503);assert.equal(c.activeCount(),0);assert.equal(cancelled,1);
  let reading;const ready=new Promise(r=>reading=r);const suspended=await client(t,async()=>new Response(new ReadableStream({pull(){reading();},cancel(){cancelled++;}},{highWaterMark:0}),{status:503,headers:{'Content-Type':'application/json'}}));suspended.resume();const pending=suspended.handle(req());await ready;suspended.suspend();assert.equal((await pending).status,503);assert.equal(suspended.activeCount(),0);assert.equal(cancelled,2);
+});
+
+test('scoped workspace addresses preserve exact child route and private HTML while aliases fail before network',async t=>{
+ const seen=[],binding='a'.repeat(32),prefix='/api/w/family_A/'+binding;
+ const c=await client(t,async(url,init)=>{seen.push([url,init]);if(url.endsWith('/backup'))return new Response(null,{headers:{'Content-Type':'application/octet-stream','Content-Length':'5000000000'}});return new Response('private document',{headers:{'Content-Type':'text/plain','X-Fountain-Format':'html','Set-Cookie':'private'}});});c.resume();
+ for(const route of [prefix+'/pages/'+encodeURIComponent('한글 ?#%'),'/api/account/session']){
+  const result=await c.handle(req(route));assert.equal(result.status,200);await result.text();assert.equal(seen.at(-1)[0],SERVER+'/functions/v1/fountain-api'+route);
+ }
+ for(const route of [prefix+'/sites/family',prefix+'/forms/input']){const result=await c.handle(req(route));assert.equal(result.headers.get('content-type'),'text/html; charset=utf-8');assert.equal(result.headers.get('set-cookie'),null);await result.text();}
+ const backup=await c.handle(req(prefix+'/backup',{method:'HEAD'}));assert.equal(backup.status,200);assert.equal(backup.headers.get('content-length'),'5000000000');
+ const before=seen.length;
+ for(const route of ['/api/w','/api/w/family_A/'+binding,'/api/w/family_A/notbinding/pages/x','/api/%77/family_A/'+binding+'/pages/x','/api/%2577/family_A/'+binding+'/pages/x',prefix+'/account/session',prefix+'/organization/session',prefix+'/%61ccount/session',prefix+'/%256frganization/session']){const result=await c.handle(req(route));assert(result.status>=400);await result.text();}
+ assert.equal(seen.length,before);assert.equal(c.activeCount(),0);
 });

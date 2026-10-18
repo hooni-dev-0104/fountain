@@ -2,7 +2,7 @@
 const fs=require('node:fs/promises'),{constants}=require('node:fs'),path=require('node:path'),{createHash}=require('node:crypto');
 const {normalizeServer}=require('./security.cjs');
 const UI_ORIGIN='https://fountain.desktop.invalid',PREFIX='/functions/v1/fountain-api',READ=65536;
-const ASSETS=Object.freeze(['app.js','backup.js','collaboration.js','index.html','mutations.js','offline.js','organization.html','organization.js','organization.css','presence.js','public.js','recovery-import.js','style.css','sw.js','transport.js','uploads.js','version-diff.js']);
+const ASSETS=Object.freeze(['account.js','workspaces.js','workspace-scope.js','app.js','backup.js','collaboration.js','index.html','mutations.js','offline.js','organization.html','organization.js','organization.css','presence.js','public.js','recovery-import.js','style.css','sw.js','transport.js','uploads.js','version-diff.js']);
 const MIME={'.js':'text/javascript; charset=utf-8','.css':'text/css; charset=utf-8','.html':'text/html; charset=utf-8'};
 const CSP="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; worker-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'";
 const SAFE_HEADERS=['content-type','content-disposition','content-length','content-range','accept-ranges','etag'];
@@ -36,7 +36,14 @@ function checkedURL(input,origin,localFragment=false){
  return url;
 }
 function remoteRoute(url){
- if(url.pathname.startsWith('/api/'))return 'api';
+ if(url.pathname.startsWith('/api/')){
+  if(/^\/api\/w(?:\/|$)/.test(url.pathname)){
+   const match=/^\/api\/w\/([A-Za-z0-9_-]{1,160})\/([a-f0-9]{32})\/([^?]+)$/.exec(url.pathname);
+   if(!match)return null;let segment=match[3].split('/')[0];for(let n=0;n<8;n++){const next=decodeURIComponent(segment.replace(/%(?![0-9a-f]{2})/gi,'%25'));if(next===segment)break;segment=next;}if(['w','account','organization'].includes(segment))return null;
+  }else if(/%/.test(url.pathname)){let plain=url.pathname;for(let n=0;n<8;n++){const next=decodeURIComponent(plain.replace(/%(?![0-9a-f]{2})/gi,'%25'));if(next===plain)break;plain=next;}if(/^\/api\/(?:w|account|organization)(?:\/|$)/.test(plain))return null;}
+  if(/^\/api\/w\/[A-Za-z0-9_-]{1,160}\/[a-f0-9]{32}\/(?:sites|forms)\/[A-Za-z0-9_-]{1,160}$/.test(url.pathname)&&!url.search)return 'public';
+  return 'api';
+ }
  if(url.pathname==='/health'&&!url.search)return 'health';
  if(/^\/(?:sites|forms)\/[A-Za-z0-9_-]{1,160}$/.test(url.pathname)&&!url.search)return 'public';
  return null;
@@ -152,7 +159,8 @@ async function createCloudClient({server,bundleRoot,fetch:send,requestTimeoutMs=
     return new Response(body,{status:response.status,headers:secureHeaders({'Content-Type':'application/json; charset=utf-8','Content-Length':String(Buffer.byteLength(body))})});
    }
    const headers=responseHeaders(response,route),sse=headers.get('content-type').split(';',1)[0].trim().toLowerCase()==='text/event-stream';
-   const download=/^attachment(?:;|$)/i.test(headers.get('content-disposition')||'')||url.pathname==='/api/backup'||/^\/api\/attachments\/[^/]+\/download$/.test(url.pathname),maximum=download?5000000000:16*1024*1024;
+   const logicalPath=url.pathname.replace(/^\/api\/w\/[A-Za-z0-9_-]{1,160}\/[a-f0-9]{32}\//,'/api/');
+   const download=/^attachment(?:;|$)/i.test(headers.get('content-disposition')||'')||logicalPath==='/api/backup'||/^\/api\/attachments\/[^/]+\/download$/.test(logicalPath),maximum=download?5000000000:16*1024*1024;
    const length=declared(headers);requireValue(length===null||length<=maximum);
    if(request.method==='HEAD'||[204,205,304].includes(response.status)||!response.body){requireValue(request.method==='HEAD'||response.status===304||length===null||length===0);cancel(response.body);finish(record);return new Response(null,{status:response.status,headers});}
    return new Response(streamed(response,record,headers,sse?16*1024*1024:maximum,sse),{status:response.status,headers});

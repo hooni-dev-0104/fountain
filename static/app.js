@@ -634,12 +634,14 @@ async function loadDatabaseData(id,{remote=!state.offline}={}) {
   return data;
 }
 async function api(path, body, method, options={}) {
-  const transport=FountainTransport.workspaceScope?.()?FountainTransport.capture():FountainTransport;
-  const requestScope={binding:state.session?.cache_binding,memberId:state.session?.member?.id,workspaceId:state.session?.workspace_id,epoch:FountainTransport.scopeEpoch,bootGeneration:state.bootGeneration};
+  const workspaceScope=FountainTransport.workspaceScope?.(),transport=workspaceScope?FountainTransport.capture():FountainTransport;
+  const requestMethod=String(method||(body?'POST':'GET')).toUpperCase();
+  const ownLegacyTransition=FountainTransport.native===true&&!workspaceScope&&state.accountMode!==true&&path==='/session'&&['POST','DELETE'].includes(requestMethod);
+  const requestScope={origin:FountainTransport.origin,generation:FountainTransport.generation,binding:state.session?.cache_binding,memberId:state.session?.member?.id,workspaceId:state.session?.workspace_id,epoch:FountainTransport.scopeEpoch,bootGeneration:state.bootGeneration};
   const stale=()=>{const error=new Error('로그인 상태가 변경되었습니다. 다시 확인해 주세요.');error.code='STALE_REQUEST';return error;};
-  const assertCurrent=()=>{if(state.workspaceSwitching||options.current&&!options.current()||requestScope.workspaceId!==state.session?.workspace_id||requestScope.epoch!==FountainTransport.scopeEpoch||requestScope.binding!==state.session?.cache_binding||requestScope.memberId!==state.session?.member?.id||requestScope.bootGeneration!==state.bootGeneration)throw stale();};
-  const response = await transport.request('/api' + path, {
-    ...(options.signal?{signal:options.signal}:{}),method:method || (body ? 'POST':'GET'),headers: {
+  const assertCurrent=()=>{if(state.workspaceSwitching||options.current&&!options.current()||requestScope.origin!==FountainTransport.origin||requestScope.generation!==FountainTransport.generation||requestScope.workspaceId!==state.session?.workspace_id||requestScope.epoch!==FountainTransport.scopeEpoch||requestScope.binding!==state.session?.cache_binding||requestScope.memberId!==state.session?.member?.id||requestScope.bootGeneration!==state.bootGeneration)throw stale();};
+  const responsePending = transport.request('/api' + path, {
+    ...(options.signal?{signal:options.signal}:{}),method:requestMethod,headers: {
       'Content-Type':'application/json'
     }, ...(body ? {
       body:JSON.stringify(body)
@@ -647,6 +649,11 @@ async function api(path, body, method, options={}) {
     : {
     })
   });
+  // Legacy native authentication fences old requests synchronously when invoked.
+  // Admit only this exact single transition; another auth/config/workspace change
+  // must still reject the response, including changes during JSON consumption.
+  if(ownLegacyTransition&&Number.isSafeInteger(requestScope.epoch)&&FountainTransport.scopeEpoch===requestScope.epoch+1&&requestScope.origin===FountainTransport.origin&&requestScope.generation===FountainTransport.generation&&!FountainTransport.workspaceScope?.())requestScope.epoch=FountainTransport.scopeEpoch;
+  const response = await responsePending;
   assertCurrent();
   const data = await response.json().catch(()=>( {
     error:'응답을 읽을 수 없습니다.'

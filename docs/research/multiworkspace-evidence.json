@@ -1,0 +1,93 @@
+{
+  "schema": "fountain.multiworkspace-evidence.v1",
+  "recorded_at": "2026-10-18",
+  "whole_goal_complete": false,
+  "original_product_parity_verified": false,
+  "inventory": {
+    "total": 41,
+    "implemented": 28,
+    "discovered": 13,
+    "verified": 0
+  },
+  "production": {
+    "api_main_version": 30,
+    "deployment_id": "dpl_843DspM9Aweex8mTMj8eXc34XkqP",
+    "app_sha256": "47f08dfa18e59ee18ba5d05b6d46342554cde7081f6cda52e20b2816b19c257c"
+  },
+  "mobile": {
+    "actual_first_workspace_ui": "passed on iOS Simulator and Android Emulator",
+    "actual_A_B_A_ui": "failed at B mirror initialization; repair in progress",
+    "input_preserved": true,
+    "final_distributable": false,
+    "contract_review": "passed; implementation and actual SDK continuation remain required"
+  },
+  "cleanup": {
+    "complete": false,
+    "held_sdk_inputs_and_sessions": true,
+    "pre_auth_read_only_preflight": "matched exact two protected accounts; no foreign mappings, children, organization references, physical Storage or live worker/backup authority; refresh required after SDK quiescence"
+  },
+  "limits": [
+    "Models do not prove native SDK UI success",
+    "Windows OS execution unverified",
+    "Physical iPhone signing and distribution unverified",
+    "Google model successful response unverified",
+    "External raw URL alias rejection not guaranteed after upstream normalization",
+    "Original paid-plan behavior and complete product inventory not fully observed"
+  ],
+  "evidence": [
+    {
+      "kind": "supabase_api_smoke",
+      "path": ".data/multiworkspace/actual/main30-smoke-proof.json",
+      "sha256": "d07fb885b5b518c7d4ea47b394afdcfc40728bba65e93fe435720462fed0c530",
+      "private_local": true
+    },
+    {
+      "kind": "supabase_streams",
+      "path": ".data/multiworkspace/actual/actual-main30-stream-proof.json",
+      "sha256": "32fc72bb260738e948feaa66ae5b066c42fc665d027eb85d4a0150df61fae1bd",
+      "private_local": true
+    },
+    {
+      "kind": "production_static_assets",
+      "path": ".data/multiworkspace/public-web47-proof.json",
+      "sha256": "4bb522fe1d8b7405bbf4171cafe43873828927203ef5ba50081223c9940d013c",
+      "private_local": true
+    },
+    {
+      "kind": "production_query_guard",
+      "path": ".data/multiworkspace/actual/site-reserved-production-proof.json",
+      "sha256": "2d9e0eaa2031b934162d12a0585a9c21af08a7090b2083faa5a0723cb8156653",
+      "private_local": true
+    },
+    {
+      "kind": "production_deployment",
+      "path": ".data/multiworkspace/vercel47-deployment-proof.json",
+      "sha256": "e7ab694e57c40d805a6bdecb8d3ea5d330a617de6e4273b54325541337eed54a",
+      "private_local": true
+    },
+    {
+      "kind": "desktop",
+      "path": ".data/multiworkspace/desktop/desktop-final-proof.json",
+      "sha256": "1c5c900ca69b7e8dbd12b2526cc07cf4b92e3f8744debab342da73bc65ad44e4",
+      "private_local": true
+    },
+    {
+      "kind": "android_dom_red",
+      "path": ".data/multiworkspace/android-ui/proof.json",
+      "sha256": "dc45e9400c5fde1567e86e509f4783248ad67272d34f73cf3c6324828be252b1",
+      "private_local": true
+    },
+    {
+      "kind": "ios_dom_red",
+      "path": ".data/multiworkspace/ios/full-ui/real-resume-B-failure-trace.json",
+      "sha256": "8aa2157e207ba61554d973d6ef6fd80f39e9870e434120d316d72e1d0a565cc6",
+      "private_local": true
+    },
+    {
+      "kind": "mirror_contract",
+      "path": "apps/mobile/tests/fixtures/native-mirror-contract.json",
+      "sha256": "0d22cb5784ee5e32bed8d433933b96df1182b9ef68444e736bc859169aebc876",
+      "private_local": false
+    }
+  ]
+}

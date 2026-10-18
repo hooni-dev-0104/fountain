@@ -203,6 +203,42 @@ test('scoped publication limits and HTML marker remain identical to legacy relay
   let cancelled=0;const oversized=await createPublicRelay({maxBytes:3,fetch:async()=>new Response(new ReadableStream({pull(c){c.enqueue(enc.encode('four'));},cancel(){cancelled++;}},{highWaterMark:0}),{headers:{'X-Fountain-Format':'html','Content-Type':'text/plain'}})})(incoming(scoped()));await assert.rejects(oversized.text(),/Public page stream interrupted/);assert.equal(cancelled,1);
   const declared=await createPublicRelay({fetch:async()=>new Response('small',{headers:{'Content-Length':String(16*1024*1024+1)}})})(incoming(scoped()));assert.equal(declared.status,502);protectedHeaders(declared);await declared.text();
 });
+// This finite fixture deliberately models the observed deployed behavior:
+// mapped destination query fields replace caller fields before the handler.
+// It checks our config's pre-rewrite guards, not Vercel's implementation.
+function publicationRewrite(path,config){
+  const url=new URL(origin+path);
+  for(const rule of config.rewrites.filter(rule=>rule.destination.startsWith('/api/public-relay?'))){
+    const keys=[],source=rule.source.split('/').map(segment=>{
+      const param=/^:([A-Za-z]+)(?:\(([^)]+)\))?$/.exec(segment);
+      if(!param)return segment.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+      keys.push(param[1]);return '('+(param[2]??'[^/]+')+')';
+    }).join('/'),match=new RegExp('^'+source+'$').exec(url.pathname);
+    if(!match)continue;
+    const condition=entry=>entry.type==='query'&&url.searchParams.has(entry.key)&&(entry.value===undefined||url.searchParams.getAll(entry.key).some(value=>new RegExp('^(?:'+entry.value+')$').test(value)));
+    if(!(rule.has??[]).every(condition)||(rule.missing??[]).some(condition))continue;
+    const params=Object.fromEntries(keys.map((key,index)=>[key,match[index+1]]));
+    const destination=new URL(origin+rule.destination.replace(/:([A-Za-z]+)/g,(_all,key)=>params[key]));
+    const merged=new URLSearchParams(url.search);for(const [key,value]of destination.searchParams)merged.set(key,value);
+    destination.search=merged.toString();return destination.pathname+destination.search;
+  }
+  return null;
+}
+test('pre-rewrite guards reject reserved caller fields before platform destination replacement can erase them',async()=>{
+  const config=JSON.parse(await readFile(new URL('../apps/web/vercel.json',import.meta.url),'utf8'));
+  const paths=['/sites/family','/forms/family',scoped('sites'),scoped('forms')],reserved=['kind','slug','workspace','binding'];
+  let calls=0;const relay=createPublicRelay({fetch:async()=>{calls++;return new Response('<main>trusted</main>',{headers:{'Content-Type':'text/plain','X-Fountain-Format':'html'}});}});
+  for(const path of paths)for(const key of reserved)for(const query of [key+'=other',key+'=',key,key+'=first&'+key+'=second',key+'=%0A%0D',key+'=%ZZ','%'+key.charCodeAt(0).toString(16)+key.slice(1)+'=other']){
+    const transformed=publicationRewrite(path+'?'+query,config);assert(transformed,'guard matches '+path+'?'+query);
+    assert.equal(new URL(origin+transformed).searchParams.get('rejected'),'1','must reject before reserved fields are overwritten: '+path+'?'+query);
+    const result=await relay(incoming(transformed));assert.equal(result.status,404);protectedHeaders(result);await result.text();
+  }
+  assert.equal(calls,0);
+  for(const path of paths){const transformed=publicationRewrite(path,config);assert(transformed);assert.equal(new URL(origin+transformed).searchParams.has('rejected'),false);const result=await relay(incoming(transformed));assert.equal(result.status,200);assert.equal(await result.text(),'<main>trusted</main>');}
+  assert.equal(calls,4);
+  for(const path of paths){const result=await relay(incoming(publicationRewrite(path+'?extra=1',config)));assert.equal(result.status,404);await result.text();}assert.equal(calls,4);
+  for(const path of ['/api/pages/id/events','/api/w/'+workspace+'/'+binding+'/pages/id/events','/api/uploads/id/chunks','/api/w/'+workspace+'/'+binding+'/api/forms/id/submit'])assert.equal(publicationRewrite(path+'?kind=sites',config),null);
+});
 test('allowlisted artifact includes static shell and one relay, while uploads/SSE keep direct external rewrites',async()=>{
   const result=await build(),actual=[];
   async function walk(dir,prefix=''){for(const name of await readdir(dir)){const path=join(dir,name),info=await lstat(path);assert(!info.isSymbolicLink());if(info.isDirectory())await walk(path,prefix+name+'/');else actual.push(prefix+name);}}

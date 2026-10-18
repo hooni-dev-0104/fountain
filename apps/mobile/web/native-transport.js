@@ -287,10 +287,13 @@
       return !backend.port&&/^[a-z0-9]{20}\.supabase\.co$/.test(backend.hostname)?null:configuration.origin;
     }
     function publicURL(value,primaryOrigin){
-      let validated=path(value,'public');configured();if(workspace)validated=helper().wire('/api'+validated,workspace);const origin=shareOrigin(primaryOrigin);
-      return origin===null?null:new URL(validated,origin).href;
+      const validated=path(value,'public');configured();
+      // The OS browser has its own parent cookie. It must open this workspace
+      // through its own grant, rather than receiving the native child binding.
+      if(workspace){const match=/^\/(forms|sites)\/([A-Za-z0-9_-]{1,160})$/.exec(validated);if(!match)invalid();const route=helper().navigation((match[1]==='forms'?'form/':'site/')+match[2],workspace),origin=shareOrigin(primaryOrigin);return origin===null?null:origin+'/#'+route;}
+      const origin=shareOrigin(primaryOrigin);return origin===null?null:new URL(validated,origin).href;
     }
-    function publicShareURL(value,primaryOrigin){if(!workspace)return publicURL(value,primaryOrigin);path(value,'public');const route=value.replace(/^\/forms\//,'form/').replace(/^\/sites\//,'site/');const origin=shareOrigin(primaryOrigin);return origin===null?null:origin+'/#'+helper().navigation(route,workspace);}
+    function publicShareURL(value,primaryOrigin){return publicURL(value,primaryOrigin);}
     function appURL(route='home') {
       configured();if(typeof route!=='string'||! /^(home|page\/[^/]+|database\/[^/]+)$/.test(route)||/[\\\u0000-\u0020\u007f#?]/.test(route))invalid();path('/'+route,'app');return configuration.origin+'/#'+(workspace?helper().navigation(route,workspace):route);
     }
